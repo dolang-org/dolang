@@ -215,45 +215,53 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`==`"))
     }
     fn op_req<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_eq(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_eq(this, strand, other, out)
     }
 
     fn op_ne<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_bool(
-            !Self::op_eq(this, strand, other)?.op_bool(strand)?,
-        ))
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let mut out = out;
+        Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
+        let equal = out.op_bool(strand)?;
+        out.store(Value::from_bool(!equal));
+        Ok(())
     }
     fn op_rne<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_ne(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_ne(this, strand, other, out)
     }
 
     fn op_neg<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::type_error(strand, "negation not supported"))
     }
 
     fn op_bnot<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::type_error(strand, "bitwise inverse not supported"))
     }
 
@@ -261,59 +269,67 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`&`"))
     }
     fn op_rband<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_band(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_band(this, strand, other, out)
     }
 
     fn op_bor<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`|`"))
     }
     fn op_rbor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_bor(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_bor(this, strand, other, out)
     }
 
     fn op_bxor<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`^`"))
     }
     fn op_rbxor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_bxor(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_bxor(this, strand, other, out)
     }
 
     fn op_shl<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`<<`"))
     }
     fn op_rshl<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "reflected `<<`"))
     }
 
@@ -321,14 +337,16 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`>>`"))
     }
     fn op_rshr<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "reflected `>>`"))
     }
 
@@ -336,22 +354,25 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`+`"))
     }
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_add(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_add(this, strand, other, out)
     }
 
     fn op_sub<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`-`"))
     }
 
@@ -359,7 +380,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "reflected `-`"))
     }
 
@@ -367,22 +389,25 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`*`"))
     }
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Self::op_mul(this, strand, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_mul(this, strand, other, out)
     }
 
     fn op_div<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`/`"))
     }
 
@@ -390,7 +415,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "reflected `/`"))
     }
 
@@ -398,7 +424,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`//`"))
     }
 
@@ -406,7 +433,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "reflected `//`"))
     }
 
@@ -414,7 +442,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`%`"))
     }
 
@@ -422,7 +451,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "reflected `%`"))
     }
 
@@ -430,7 +460,8 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         _other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        _out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "`<`"))
     }
 
@@ -438,21 +469,28 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_bool(
-            Self::op_lt(this.clone(), strand, other)?.op_bool(strand)?
-                || Self::op_eq(this, strand, other)?.op_bool(strand)?,
-        ))
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let mut out = out;
+        Self::op_lt(this.clone(), strand, other, Slot::reborrow(&mut out))?;
+        let mut result = out.op_bool(strand)?;
+        if !result {
+            Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
+            result = out.op_bool(strand)?;
+        }
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_gt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut receiver| {
             Output::set(strand, &mut receiver, this);
-            other.op_lt_direct(strand, &receiver)
+            other.op_lt_direct(strand, &receiver, out)
         })
     }
 
@@ -460,10 +498,11 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut receiver| {
             Output::set(strand, &mut receiver, this);
-            other.op_lte_direct(strand, &receiver)
+            other.op_lte_direct(strand, &receiver, out)
         })
     }
 
@@ -763,22 +802,25 @@ pub(crate) struct Vtbl<'v> {
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
         op: UnaryOp,
+        out: Slot<'v, '_>,
         _: &'a &'v (),
-    ) -> Result<'v, 's, Value<'v>>,
+    ) -> Result<'v, 's, ()>,
     op_bin: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
         op: BinOp,
         other: &Value<'v>,
+        out: Slot<'v, '_>,
         _: &'a &'v (),
-    ) -> Result<'v, 's, Value<'v>>,
+    ) -> Result<'v, 's, ()>,
     op_cmp: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
         op: CmpOp,
         other: &Value<'v>,
+        out: Slot<'v, '_>,
         _: &'a &'v (),
-    ) -> Result<'v, 's, Value<'v>>,
+    ) -> Result<'v, 's, ()>,
     op_get: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
@@ -1364,13 +1406,14 @@ fn op_unary_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     this: ErasedRecv<'v, 'a>,
     strand: &'a mut Strand<'v, 's>,
     op: UnaryOp,
+    out: Slot<'v, '_>,
     _: &'a &'v (),
-) -> Result<'v, 's, Value<'v>> {
+) -> Result<'v, 's, ()> {
     unsafe {
         let this = Recv::from_erased(this);
         match op {
-            UnaryOp::Neg => T::op_neg(this, strand),
-            UnaryOp::Bnot => T::op_bnot(this, strand),
+            UnaryOp::Neg => T::op_neg(this, strand, out),
+            UnaryOp::Bnot => T::op_bnot(this, strand, out),
         }
     }
 }
@@ -1380,37 +1423,38 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     strand: &'a mut Strand<'v, 's>,
     op: BinOp,
     other: &'a Value<'v>,
+    out: Slot<'v, '_>,
     _: &'a &'v (),
-) -> Result<'v, 's, Value<'v>> {
+) -> Result<'v, 's, ()> {
     unsafe {
         let this = Recv::from_erased(this);
         match op {
-            BinOp::Eq => T::op_eq(this, strand, other),
-            BinOp::Req => T::op_req(this, strand, other),
-            BinOp::Ne => T::op_ne(this, strand, other),
-            BinOp::Rne => T::op_rne(this, strand, other),
-            BinOp::Band => T::op_band(this, strand, other),
-            BinOp::Rband => T::op_rband(this, strand, other),
-            BinOp::Bor => T::op_bor(this, strand, other),
-            BinOp::Rbor => T::op_rbor(this, strand, other),
-            BinOp::Bxor => T::op_bxor(this, strand, other),
-            BinOp::Rbxor => T::op_rbxor(this, strand, other),
-            BinOp::Shl => T::op_shl(this, strand, other),
-            BinOp::Rshl => T::op_rshl(this, strand, other),
-            BinOp::Shr => T::op_shr(this, strand, other),
-            BinOp::Rshr => T::op_rshr(this, strand, other),
-            BinOp::Add => T::op_add(this, strand, other),
-            BinOp::Radd => T::op_radd(this, strand, other),
-            BinOp::Sub => T::op_sub(this, strand, other),
-            BinOp::Rsub => T::op_rsub(this, strand, other),
-            BinOp::Mul => T::op_mul(this, strand, other),
-            BinOp::Rmul => T::op_rmul(this, strand, other),
-            BinOp::Div => T::op_div(this, strand, other),
-            BinOp::Rdiv => T::op_rdiv(this, strand, other),
-            BinOp::Ediv => T::op_ediv(this, strand, other),
-            BinOp::Rediv => T::op_rediv(this, strand, other),
-            BinOp::Mod => T::op_mod(this, strand, other),
-            BinOp::Rmod => T::op_rmod(this, strand, other),
+            BinOp::Eq => T::op_eq(this, strand, other, out),
+            BinOp::Req => T::op_req(this, strand, other, out),
+            BinOp::Ne => T::op_ne(this, strand, other, out),
+            BinOp::Rne => T::op_rne(this, strand, other, out),
+            BinOp::Band => T::op_band(this, strand, other, out),
+            BinOp::Rband => T::op_rband(this, strand, other, out),
+            BinOp::Bor => T::op_bor(this, strand, other, out),
+            BinOp::Rbor => T::op_rbor(this, strand, other, out),
+            BinOp::Bxor => T::op_bxor(this, strand, other, out),
+            BinOp::Rbxor => T::op_rbxor(this, strand, other, out),
+            BinOp::Shl => T::op_shl(this, strand, other, out),
+            BinOp::Rshl => T::op_rshl(this, strand, other, out),
+            BinOp::Shr => T::op_shr(this, strand, other, out),
+            BinOp::Rshr => T::op_rshr(this, strand, other, out),
+            BinOp::Add => T::op_add(this, strand, other, out),
+            BinOp::Radd => T::op_radd(this, strand, other, out),
+            BinOp::Sub => T::op_sub(this, strand, other, out),
+            BinOp::Rsub => T::op_rsub(this, strand, other, out),
+            BinOp::Mul => T::op_mul(this, strand, other, out),
+            BinOp::Rmul => T::op_rmul(this, strand, other, out),
+            BinOp::Div => T::op_div(this, strand, other, out),
+            BinOp::Rdiv => T::op_rdiv(this, strand, other, out),
+            BinOp::Ediv => T::op_ediv(this, strand, other, out),
+            BinOp::Rediv => T::op_rediv(this, strand, other, out),
+            BinOp::Mod => T::op_mod(this, strand, other, out),
+            BinOp::Rmod => T::op_rmod(this, strand, other, out),
         }
     }
 }
@@ -1420,15 +1464,16 @@ fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     strand: &'a mut Strand<'v, 's>,
     op: CmpOp,
     other: &'a Value<'v>,
+    out: Slot<'v, '_>,
     _: &'a &'v (),
-) -> Result<'v, 's, Value<'v>> {
+) -> Result<'v, 's, ()> {
     unsafe {
         let this = Recv::from_erased(this);
         match op {
-            CmpOp::Lt => T::op_lt(this, strand, other),
-            CmpOp::Lte => T::op_lte(this, strand, other),
-            CmpOp::Gt => T::op_gt(this, strand, other),
-            CmpOp::Gte => T::op_gte(this, strand, other),
+            CmpOp::Lt => T::op_lt(this, strand, other, out),
+            CmpOp::Lte => T::op_lte(this, strand, other, out),
+            CmpOp::Gt => T::op_gt(this, strand, other, out),
+            CmpOp::Gte => T::op_gte(this, strand, other, out),
         }
     }
 }
@@ -1767,180 +1812,210 @@ pub(crate) trait Dispatch<'v, 'a> {
 
     fn op_bool<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool>;
 
-    fn op_bnot<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, Value<'v>>;
+    fn op_bnot<'s>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, '_>) -> Result<'v, 's, ()>;
 
-    fn op_neg<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, Value<'v>>;
+    fn op_neg<'s>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, '_>) -> Result<'v, 's, ()>;
 
     fn op_band<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rband<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_bor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rbor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_bxor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rbxor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_shl<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rshl<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_shr<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rshr<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_add<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_radd<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_sub<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_rsub<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_mul<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rmul<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_div<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_rdiv<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_ediv<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_rediv<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_mod<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_rmod<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_eq<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_req<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_ne<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
     fn op_rne<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_lt<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_lte<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_gt<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_gte<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>>;
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()>;
 
     fn op_get<'s>(
         &self,
@@ -2104,239 +2179,269 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Eq, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Eq, other, out) }
     }
     fn op_req<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Req, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Req, other, out) }
     }
 
     fn op_ne<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Ne, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Ne, other, out) }
     }
     fn op_rne<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rne, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rne, other, out) }
     }
 
-    fn op_neg<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_unary, strand, UnaryOp::Neg) }
+    fn op_neg<'s>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, '_>) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_unary, strand, UnaryOp::Neg, out) }
     }
 
-    fn op_bnot<'s>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_unary, strand, UnaryOp::Bnot) }
+    fn op_bnot<'s>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, '_>) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_unary, strand, UnaryOp::Bnot, out) }
     }
 
     fn op_band<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Band, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Band, other, out) }
     }
     fn op_rband<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rband, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rband, other, out) }
     }
 
     fn op_bor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Bor, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Bor, other, out) }
     }
     fn op_rbor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rbor, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rbor, other, out) }
     }
 
     fn op_bxor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Bxor, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Bxor, other, out) }
     }
     fn op_rbxor<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rbxor, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rbxor, other, out) }
     }
 
     fn op_shl<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Shl, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Shl, other, out) }
     }
     fn op_rshl<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rshl, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rshl, other, out) }
     }
 
     fn op_shr<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Shr, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Shr, other, out) }
     }
     fn op_rshr<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rshr, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rshr, other, out) }
     }
 
     fn op_add<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Add, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Add, other, out) }
     }
     fn op_radd<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Radd, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Radd, other, out) }
     }
 
     fn op_sub<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Sub, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Sub, other, out) }
     }
 
     fn op_rsub<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rsub, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rsub, other, out) }
     }
 
     fn op_mul<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Mul, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Mul, other, out) }
     }
     fn op_rmul<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rmul, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rmul, other, out) }
     }
 
     fn op_div<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Div, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Div, other, out) }
     }
 
     fn op_rdiv<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rdiv, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rdiv, other, out) }
     }
 
     fn op_ediv<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Ediv, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Ediv, other, out) }
     }
 
     fn op_rediv<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rediv, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rediv, other, out) }
     }
 
     fn op_mod<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Mod, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Mod, other, out) }
     }
 
     fn op_rmod<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_bin, strand, BinOp::Rmod, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_bin, strand, BinOp::Rmod, other, out) }
     }
 
     fn op_lt<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_cmp, strand, CmpOp::Lt, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_cmp, strand, CmpOp::Lt, other, out) }
     }
 
     fn op_lte<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_cmp, strand, CmpOp::Lte, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_cmp, strand, CmpOp::Lte, other, out) }
     }
 
     fn op_gt<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_cmp, strand, CmpOp::Gt, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_cmp, strand, CmpOp::Gt, other, out) }
     }
 
     fn op_gte<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        unsafe { invoke!(self, op_cmp, strand, CmpOp::Gte, other) }
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        unsafe { invoke!(self, op_cmp, strand, CmpOp::Gte, other, out) }
     }
 
     fn op_get<'s>(
@@ -2639,7 +2744,7 @@ fn special_mcall<'v, 'a, 's>(
     delegator: Option<&Value<'v>>,
     method: Sym<'v, 'a>,
     args: Args<'v, 'a>,
-    mut out: Slot<'v, 'a>,
+    out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     macro_rules! dispatch {
         ($op:ident $(, $arg:expr)*) => {
@@ -2698,133 +2803,117 @@ fn special_mcall<'v, 'a, 's>(
         }
         sym::EQ_METHOD => {
             unpack!(strand, args => other);
-            let value = match delegator {
-                Some(delegator) => Delegated::new(receiver, delegator).op_eq(strand, &other)?,
-                None => receiver.op_eq(strand, &other)?,
-            };
-            out.store(value);
+            dispatch!(op_eq, &other, out)?;
         }
         sym::REQ_METHOD => {
             unpack!(strand, args => other);
-            let value = match delegator {
-                Some(delegator) => Delegated::new(receiver, delegator).op_req(strand, &other)?,
-                None => receiver.op_req(strand, &other)?,
-            };
-            out.store(value);
+            dispatch!(op_req, &other, out)?;
         }
         sym::NE_METHOD => {
             unpack!(strand, args => other);
-            let value = match delegator {
-                Some(delegator) => Delegated::new(receiver, delegator).op_ne(strand, &other)?,
-                None => receiver.op_ne(strand, &other)?,
-            };
-            out.store(value);
+            dispatch!(op_ne, &other, out)?;
         }
         sym::RNE_METHOD => {
             unpack!(strand, args => other);
-            let value = match delegator {
-                Some(delegator) => Delegated::new(receiver, delegator).op_rne(strand, &other)?,
-                None => receiver.op_rne(strand, &other)?,
-            };
-            out.store(value);
+            dispatch!(op_rne, &other, out)?;
         }
         sym::LT_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_lt, &other)?);
+            dispatch!(op_lt, &other, out)?;
         }
         sym::NEG_METHOD => {
-            out.store(dispatch!(op_neg)?);
+            dispatch!(op_neg, out)?;
         }
         sym::BNOT_METHOD => {
-            out.store(dispatch!(op_bnot)?);
+            dispatch!(op_bnot, out)?;
         }
         sym::ADD_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_add, &other)?);
+            dispatch!(op_add, &other, out)?;
         }
         sym::RADD_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_radd, &other)?);
+            dispatch!(op_radd, &other, out)?;
         }
         sym::SUB_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_sub, &other)?);
+            dispatch!(op_sub, &other, out)?;
         }
         sym::RSUB_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rsub, &other)?);
+            dispatch!(op_rsub, &other, out)?;
         }
         sym::MUL_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_mul, &other)?);
+            dispatch!(op_mul, &other, out)?;
         }
         sym::RMUL_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rmul, &other)?);
+            dispatch!(op_rmul, &other, out)?;
         }
         sym::DIV_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_div, &other)?);
+            dispatch!(op_div, &other, out)?;
         }
         sym::RDIV_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rdiv, &other)?);
+            dispatch!(op_rdiv, &other, out)?;
         }
         sym::EDIV_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_ediv, &other)?);
+            dispatch!(op_ediv, &other, out)?;
         }
         sym::REDIV_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rediv, &other)?);
+            dispatch!(op_rediv, &other, out)?;
         }
         sym::MOD_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_mod, &other)?);
+            dispatch!(op_mod, &other, out)?;
         }
         sym::RMOD_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rmod, &other)?);
+            dispatch!(op_rmod, &other, out)?;
         }
         sym::BAND_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_band, &other)?);
+            dispatch!(op_band, &other, out)?;
         }
         sym::RBAND_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rband, &other)?);
+            dispatch!(op_rband, &other, out)?;
         }
         sym::BOR_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_bor, &other)?);
+            dispatch!(op_bor, &other, out)?;
         }
         sym::RBOR_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rbor, &other)?);
+            dispatch!(op_rbor, &other, out)?;
         }
         sym::BXOR_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_bxor, &other)?);
+            dispatch!(op_bxor, &other, out)?;
         }
         sym::RBXOR_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rbxor, &other)?);
+            dispatch!(op_rbxor, &other, out)?;
         }
         sym::SHL_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_shl, &other)?);
+            dispatch!(op_shl, &other, out)?;
         }
         sym::RSHL_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rshl, &other)?);
+            dispatch!(op_rshl, &other, out)?;
         }
         sym::SHR_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_shr, &other)?);
+            dispatch!(op_shr, &other, out)?;
         }
         sym::RSHR_METHOD => {
             unpack!(strand, args => other);
-            out.store(dispatch!(op_rshr, &other)?);
+            dispatch!(op_rshr, &other, out)?;
         }
         _ => unreachable!("special_mcall requires a supported symbol"),
     }

@@ -161,18 +161,20 @@ impl<'v> Protocol<'v> for Struct<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().structure) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Ok(Value::from_bool(pack::eq_items(
+            out.store(Value::from_bool(pack::eq_items(
                 strand,
                 &left.items,
                 &right.items,
-            )?))
+            )?));
+            Ok(())
         })
     }
 
@@ -180,18 +182,20 @@ impl<'v> Protocol<'v> for Struct<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().structure) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Ok(Value::from_bool(pack::lt_items(
+            out.store(Value::from_bool(pack::lt_items(
                 strand,
                 &left.items,
                 &right.items,
-            )?))
+            )?));
+            Ok(())
         })
     }
 

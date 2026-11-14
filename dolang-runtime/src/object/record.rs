@@ -432,7 +432,8 @@ impl<'v> Protocol<'v> for Record<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().record) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
@@ -440,7 +441,8 @@ impl<'v> Protocol<'v> for Record<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
-                return Ok(Value::FALSE);
+                out.store(Value::FALSE);
+                return Ok(());
             }
             for (index, ((lkey, lvalue), (rkey, rvalue))) in
                 left.items().zip(right.items()).enumerate()
@@ -449,12 +451,14 @@ impl<'v> Protocol<'v> for Record<'v> {
                     strand.check_trap()?;
                 }
                 if lkey.as_ref().map(|key| key.tag()) != rkey.as_ref().map(|key| key.tag())
-                    || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
+                    || !lvalue.eq(strand, rvalue)?
                 {
-                    return Ok(Value::FALSE);
+                    out.store(Value::FALSE);
+                    return Ok(());
                 }
             }
-            Ok(Value::TRUE)
+            out.store(Value::TRUE);
+            Ok(())
         })
     }
 
@@ -641,7 +645,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 let found = match (&key, expected) {
                     (_, None) => borrow.slot(&key, None).is_some(),
                     (Key::Pos(_), Some(expected)) => match borrow.get(&key, None) {
-                        Some(value) => value.op_eq(strand, &expected)?.to_bool(strand)?,
+                        Some(value) => value.eq(strand, &expected)?,
                         None => false,
                     },
                     (Key::Sym(sym), Some(expected)) => {
@@ -657,7 +661,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                                 strand.check_trap()?;
                             }
                             let value = &borrow.order[slot].as_ref().expect("live slot").1;
-                            if value.op_eq(strand, &expected)?.to_bool(strand)? {
+                            if value.eq(strand, &expected)? {
                                 found = true;
                                 break;
                             }

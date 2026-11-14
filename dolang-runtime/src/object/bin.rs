@@ -202,10 +202,12 @@ impl<'v> Protocol<'v> for BinObj {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             let eq = with_pin!(strand, oslice, |oslice| oslice.bytes() == this.bytes());
-            Ok(Value::from_bool(eq))
+            out.store(Value::from_bool(eq));
+            Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -215,10 +217,12 @@ impl<'v> Protocol<'v> for BinObj {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             let lt = with_pin!(strand, oslice, |oslice| this.bytes() < oslice.bytes());
-            Ok(Value::from_bool(lt))
+            out.store(Value::from_bool(lt));
+            Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }

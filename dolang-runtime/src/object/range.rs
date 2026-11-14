@@ -254,18 +254,20 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().range) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.get();
         with_pin!(strand, other, |right| {
             let right = right.get();
-            Ok(Value::from_bool(
-                left.start.op_eq(strand, &right.start)?.to_bool(strand)?
-                    && left.end.op_eq(strand, &right.end)?.to_bool(strand)?
-                    && left.step.op_eq(strand, &right.step)?.to_bool(strand)?,
-            ))
+            out.store(Value::from_bool(
+                left.start.eq(strand, &right.start)?
+                    && left.end.eq(strand, &right.end)?
+                    && left.step.eq(strand, &right.step)?,
+            ));
+            Ok(())
         })
     }
 
@@ -332,18 +334,16 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
                     let in_bounds = match direction {
                         Direction::Empty => false,
                         Direction::Increasing => {
-                            start.op_lte(strand, &value)?.to_bool(strand)?
-                                && value.op_lt(strand, &borrow.end)?.to_bool(strand)?
+                            start.lte(strand, &value)? && value.lt(strand, &borrow.end)?
                         }
                         Direction::Decreasing => {
-                            borrow.end.op_lt(strand, &value)?.to_bool(strand)?
-                                && value.op_lte(strand, &start)?.to_bool(strand)?
+                            borrow.end.lt(strand, &value)? && value.lte(strand, &start)?
                         }
                         Direction::Unbounded => {
                             if ascending {
-                                start.op_lte(strand, &value)?.to_bool(strand)?
+                                start.lte(strand, &value)?
                             } else {
-                                value.op_lte(strand, &start)?.to_bool(strand)?
+                                value.lte(strand, &start)?
                             }
                         }
                     };
@@ -353,12 +353,12 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
                     // zero in the step's type.
                     let contained = match borrow.step() {
                         Some(step) if in_bounds => {
-                            let zero = step.op_sub(strand, step)?;
-                            value
-                                .op_sub(strand, &start)?
-                                .op_mod(strand, step)?
-                                .op_eq(strand, &zero)?
-                                .to_bool(strand)?
+                            with_slots!(strand, |mut zero, mut offset, mut rem| {
+                                step.op_sub(strand, step, Slot::reborrow(&mut zero))?;
+                                value.op_sub(strand, &start, Slot::reborrow(&mut offset))?;
+                                offset.op_mod(strand, step, Slot::reborrow(&mut rem))?;
+                                rem.eq(strand, &zero)
+                            })?
                         }
                         _ => in_bounds,
                     };
@@ -419,26 +419,26 @@ fn direction<'v, 's>(
 ) -> Result<'v, 's, (bool, Direction)> {
     let ascending = match step {
         None => true,
-        Some(step) => {
-            let next = start.op_add(strand, step)?;
-            if next.op_gt(strand, start)?.to_bool(strand)? {
-                true
-            } else if next.op_lt(strand, start)?.to_bool(strand)? {
-                false
+        Some(step) => with_slots!(strand, |mut next| {
+            start.op_add(strand, step, Slot::reborrow(&mut next))?;
+            if next.gt(strand, start)? {
+                Ok(true)
+            } else if next.lt(strand, start)? {
+                Ok(false)
             } else {
-                return Err(Error::value(strand, "range step must not be zero"));
+                Err(Error::value(strand, "range step must not be zero"))
             }
-        }
+        })?,
     };
     let direction = if end.is_nil() {
         Direction::Unbounded
     } else if ascending {
-        if start.op_lt(strand, end)?.to_bool(strand)? {
+        if start.lt(strand, end)? {
             Direction::Increasing
         } else {
             Direction::Empty
         }
-    } else if start.op_gt(strand, end)?.to_bool(strand)? {
+    } else if start.gt(strand, end)? {
         Direction::Decreasing
     } else {
         Direction::Empty
@@ -519,13 +519,19 @@ impl<'v> Protocol<'v> for Iter<'v> {
         let mut borrow = this.borrow_mut(strand)?;
         let res = match borrow.direction {
             Direction::Empty => false,
-            Direction::Increasing => borrow.cur.op_lt(strand, &borrow.end)?.op_bool(strand)?,
-            Direction::Decreasing => borrow.cur.op_gt(strand, &borrow.end)?.op_bool(strand)?,
+            Direction::Increasing => borrow.cur.lt(strand, &borrow.end)?,
+            Direction::Decreasing => borrow.cur.gt(strand, &borrow.end)?,
             Direction::Unbounded => true,
         };
         if res {
             Output::set(strand, out, &borrow.cur);
-            borrow.cur = borrow.cur.op_add(strand, &borrow.step)?
+            with_slots!(strand, |mut next| {
+                borrow
+                    .cur
+                    .op_add(strand, &borrow.step, Slot::reborrow(&mut next))?;
+                borrow.cur = next.take();
+                Ok(())
+            })?;
         }
         Ok(res)
     }

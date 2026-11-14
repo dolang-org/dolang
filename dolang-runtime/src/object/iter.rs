@@ -263,9 +263,9 @@ async fn iter_extrema<'v, 'a, 's>(
         }
         while obj.next(strand, &mut item).await? {
             let replace = if is_min {
-                item.op_lt(strand, &out)?.to_bool(strand)?
+                item.lt(strand, &out)?
             } else {
-                out.op_lt(strand, &item)?.to_bool(strand)?
+                out.lt(strand, &item)?
             };
             if replace {
                 Slot::swap(Slot::reborrow(&mut out), &mut item);

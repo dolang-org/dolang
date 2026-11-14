@@ -184,9 +184,10 @@ impl<'v> Protocol<'v> for Handle<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let cell = this.borrow(strand)?.cell.clone();
-        cell_eq(strand, &cell, other)
+        cell_eq(strand, &cell, other, out)
     }
 
     fn op_hash<'a, 's>(
@@ -510,9 +511,10 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let cell = stream_cell(strand, &this)?;
-        cell_eq(strand, &cell, other)
+        cell_eq(strand, &cell, other, out)
     }
 
     fn op_hash<'a, 's>(
@@ -807,9 +809,13 @@ fn cell_eq<'v, 's>(
     strand: &mut Strand<'v, 's>,
     cell: &StrandCell,
     other: &Value<'v>,
-) -> Result<'v, 's, Value<'v>> {
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
     match cell_of(strand.vm(), other) {
-        Some(other) => Ok(Value::from_bool(other.id() == cell.id())),
+        Some(other) => {
+            out.store(Value::from_bool(other.id() == cell.id()));
+            Ok(())
+        }
         None => Err(Error::unsupported(strand, "`==`")),
     }
 }
@@ -937,8 +943,9 @@ impl<'v> Protocol<'v> for StrandRefObj {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        cell_eq(strand, &this.get().cell, other)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        cell_eq(strand, &this.get().cell, other, out)
     }
 
     fn op_hash<'a, 's>(

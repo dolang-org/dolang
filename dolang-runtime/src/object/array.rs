@@ -639,12 +639,11 @@ impl<'v> Array<'v> {
                     if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
                         strand.check_trap()?;
                     }
-                    let result = if reverse {
-                        rhs.op_lt(strand, lhs)?
+                    if reverse {
+                        rhs.lt(strand, lhs)
                     } else {
-                        lhs.op_lt(strand, rhs)?
-                    };
-                    result.to_bool(strand)
+                        lhs.lt(strand, rhs)
+                    }
                 })
             })
         } else {
@@ -659,12 +658,11 @@ impl<'v> Array<'v> {
                     if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
                         strand.check_trap()?;
                     }
-                    let result = if reverse {
-                        rhs.op_lt(strand, lhs)?
+                    if reverse {
+                        rhs.lt(strand, lhs)
                     } else {
-                        lhs.op_lt(strand, rhs)?
-                    };
-                    result.to_bool(strand)
+                        lhs.lt(strand, rhs)
+                    }
                 },
             )
         }
@@ -774,7 +772,8 @@ impl<'v> Protocol<'v> for Array<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let other = if let Some(other) = other.downcast_native(strand, strand.builtin_types().array)
         {
             other
@@ -787,7 +786,8 @@ impl<'v> Protocol<'v> for Array<'v> {
             let left = &this_borrow.inner;
             let right = &other_borrow.inner;
             if left.len() != right.len() {
-                return Ok(Value::from_bool(false));
+                out.store(Value::from_bool(false));
+                return Ok(());
             }
             for i in 0..left.len() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
@@ -795,11 +795,13 @@ impl<'v> Protocol<'v> for Array<'v> {
                 }
                 let l = unsafe { left.get_unchecked(i) };
                 let r = unsafe { right.get_unchecked(i) };
-                if !l.op_eq(strand, r)?.to_bool(strand)? {
-                    return Ok(Value::from_bool(false));
+                if !l.eq(strand, r)? {
+                    out.store(Value::from_bool(false));
+                    return Ok(());
                 }
             }
-            Ok(Value::from_bool(true))
+            out.store(Value::from_bool(true));
+            Ok(())
         })
     }
 
@@ -807,7 +809,8 @@ impl<'v> Protocol<'v> for Array<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().array) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
@@ -822,11 +825,13 @@ impl<'v> Protocol<'v> for Array<'v> {
                 }
                 let l = unsafe { left.get_unchecked(i) };
                 let r = unsafe { right.get_unchecked(i) };
-                if !l.op_eq(strand, r)?.to_bool(strand)? {
-                    return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                if !l.eq(strand, r)? {
+                    out.store(Value::from_bool(l.lt(strand, r)?));
+                    return Ok(());
                 }
             }
-            Ok(Value::from_bool(right.len() > left.len()))
+            out.store(Value::from_bool(right.len() > left.len()));
+            Ok(())
         })
     }
 
@@ -1105,10 +1110,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                         strand.check_trap()?;
                     }
-                    if unsafe { borrow.inner.get_unchecked(i) }
-                        .op_eq(strand, &needle)?
-                        .to_bool(strand)?
-                    {
+                    if unsafe { borrow.inner.get_unchecked(i) }.eq(strand, &needle)? {
                         found = true;
                         break;
                     }

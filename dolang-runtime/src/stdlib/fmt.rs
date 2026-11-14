@@ -352,15 +352,10 @@ impl<'v> Object<'v> for FmtValue {
         let this_borrow = this.borrow(strand)?;
         with_instance!(strand, other, |other| {
             let other_borrow = other.borrow(strand)?;
-            if !Ref::slot::<1>(&this_borrow)
-                .op_eq(strand, Ref::slot::<1>(&other_borrow))?
-                .to_bool(strand)?
-            {
+            if !Ref::slot::<1>(&this_borrow).eq(strand, Ref::slot::<1>(&other_borrow))? {
                 return Ok(false);
             }
-            Ref::slot::<0>(&this_borrow)
-                .op_eq(strand, Ref::slot::<0>(&other_borrow))?
-                .to_bool(strand)
+            Ref::slot::<0>(&this_borrow).eq(strand, Ref::slot::<0>(&other_borrow))
         })
     }
 
@@ -465,15 +460,10 @@ impl<'v> Object<'v> for FmtParam {
         let this_borrow = this.borrow(strand)?;
         with_instance!(strand, other, |other| {
             let other_borrow = other.borrow(strand)?;
-            if !Ref::slot::<1>(&this_borrow)
-                .op_eq(strand, Ref::slot::<1>(&other_borrow))?
-                .to_bool(strand)?
-            {
+            if !Ref::slot::<1>(&this_borrow).eq(strand, Ref::slot::<1>(&other_borrow))? {
                 return Ok(false);
             }
-            Ref::slot::<0>(&this_borrow)
-                .op_eq(strand, Ref::slot::<0>(&other_borrow))?
-                .to_bool(strand)
+            Ref::slot::<0>(&this_borrow).eq(strand, Ref::slot::<0>(&other_borrow))
         })
     }
 
@@ -884,7 +874,7 @@ fn eq_segments<'v, 's>(
         for index in 0..len {
             this_segments.get(strand, index, &mut left)?;
             other_segments.get(strand, index, &mut right)?;
-            if !left.op_eq(strand, &right)?.to_bool(strand)? {
+            if !left.eq(strand, &right)? {
                 return Ok(false);
             }
         }
