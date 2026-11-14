@@ -30,19 +30,6 @@ pub(crate) fn create<'v, 's>(
     embryo.finish_imm(strand, Backtrace::new(entries), out);
 }
 
-/// Duplicate the entries of a backtrace object.
-///
-/// # Safety
-/// The entries are loose, as for [`UnwindEntry::dup`].
-pub(crate) unsafe fn entries_from_value<'v>(
-    vm: &Vm<'v>,
-    value: &Value<'v>,
-) -> Option<Vec<UnwindEntry<'v>>> {
-    let backtrace = value.downcast_ref(vm.builtin_types().backtrace)?;
-    let entries = backtrace.project(|p| &p.get().entries);
-    Some(entries.iter().map(|entry| unsafe { entry.dup() }).collect())
-}
-
 pub(crate) fn iter_from_value<'v, 'a>(
     vm: &'a Vm<'v>,
     value: &'a Value<'v>,

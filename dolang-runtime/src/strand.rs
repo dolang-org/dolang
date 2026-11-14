@@ -28,13 +28,7 @@ use crate::{
     frame::{self, FrameIter, Native},
     gc::arena::Visit,
     method,
-    object::{
-        BuiltinTypes, Singletons, backtrace,
-        protocol::GcObj,
-        range,
-        strand::{Completion, Handle},
-        tuple,
-    },
+    object::{BuiltinTypes, Singletons, protocol::GcObj, range, strand::Handle, tuple},
     sym::{self, Sym},
     value::{Input, Output, Slot, Value, ValueCell},
     vm::{Alloc, Vm},
@@ -1791,39 +1785,32 @@ impl<'v, 's> Strand<'v, 's> {
                         f(strand, &inner.start, Slot::reborrow(&mut out)).await
                     })
                     .await;
-                let result = match result {
-                    Ok(()) => Completion::Ok(out.take()),
-                    Err(e) => Completion::Err(e.into_pair(strand)),
-                };
-                // Rooted in slots across the close calls below
-                let poisoned = match &result {
-                    Completion::Err((value, backtrace_entries)) => {
-                        // SAFETY: the entries move straight into the allocated object
-                        backtrace::create(
-                            strand,
-                            |_| {
-                                backtrace_entries
-                                    .iter()
-                                    .map(|e| unsafe { e.dup() })
-                                    .collect()
-                            },
-                            &mut poison_bt,
+                // The error, if any, is rooted in slots across the close calls below
+                let poisoned = match result {
+                    Ok(()) => false,
+                    Err(mut e) => {
+                        assert!(
+                            e.as_nl_branch().is_none(),
+                            "non-local jumps cannot escape a strand"
                         );
-                        poison_err.store(value.dup());
+                        e.get_value(strand, &mut poison_err);
+                        e.backtrace_object(strand, &mut poison_bt);
                         true
                     }
-                    Completion::Ok(_) => false,
                 };
 
                 // Store result in Handle via weak reference
                 if let Some(handle) = weak_handle.upgrade() {
                     // SAFETY: a transient pin; completing cannot collect
-                    unsafe { handle.pin_unchecked() }
+                    let handle = unsafe { handle.pin_unchecked() };
+                    let mut handle = handle
                         .borrow_mut()
-                        .expect("strand handle had outstanding borrow")
-                        .complete(result);
-                } else {
-                    drop(result)
+                        .expect("strand handle had outstanding borrow");
+                    if poisoned {
+                        handle.complete_err(&poison_err, &poison_bt);
+                    } else {
+                        handle.complete_ok(&out);
+                    }
                 }
 
                 if close_on_exit {

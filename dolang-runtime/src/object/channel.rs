@@ -26,7 +26,7 @@ use super::{
 
 enum RecvResult<'v> {
     Ok(Value<'v>),
-    Poisoned(Value<'v>, Value<'v>),
+    Poisoned,
     Pending,
     Closed,
     Stop,
@@ -78,7 +78,7 @@ impl<'v> Receiver<'v> {
             RecvResult::Ok(value)
         } else if self.send_closed {
             match &self.poison {
-                Some((value, backtrace)) => RecvResult::Poisoned(value.dup(), backtrace.dup()),
+                Some(_) => RecvResult::Poisoned,
                 None => RecvResult::Stop,
             }
         } else {
@@ -120,18 +120,18 @@ impl<'v, 's, 'a> Future for RecvFuture<'v, 's, 'a> {
                     return Poll::Ready(Err(Error::concurrency_raw(strand)));
                 };
                 let res = borrow.recv(Some(cx));
+                if let RecvResult::Poisoned = res {
+                    let (value, backtrace) = borrow.poison.as_ref().unwrap();
+                    let err = Error::from_value_backtrace_raw(strand, value, backtrace);
+                    return Poll::Ready(Err(err.unwrap_or_else(|e| e)));
+                }
                 mem::drop(borrow);
                 match res {
                     RecvResult::Ok(value) => {
                         out.store(value);
                         Poll::Ready(Ok(true))
                     }
-                    RecvResult::Poisoned(value, backtrace) => Poll::Ready(Err(
-                        match Error::from_value_backtrace_raw(strand, value, backtrace) {
-                            Ok(err) => err,
-                            Err(err) => err,
-                        },
-                    )),
+                    RecvResult::Poisoned => unreachable!(),
                     RecvResult::Pending => Poll::Pending,
                     RecvResult::Stop => Poll::Ready(Ok(false)),
                     RecvResult::Closed => {
@@ -232,16 +232,18 @@ impl<'v> Protocol<'v> for Receiver<'v> {
             return RecvFuture::Ready(Err(Error::concurrency(strand)));
         };
         let res = borrow.recv(None);
+        if let RecvResult::Poisoned = res {
+            let (value, backtrace) = borrow.poison.as_ref().unwrap();
+            let err = Error::from_value_backtrace(strand, value, backtrace);
+            return RecvFuture::Ready(Err(err.expect("invalid backtrace")));
+        }
         mem::drop(borrow);
         match res {
             RecvResult::Ok(value) => {
                 out.store(value);
                 RecvFuture::Ready(Ok(true))
             }
-            RecvResult::Poisoned(value, backtrace) => {
-                RecvFuture::Ready(Err(Error::from_value_backtrace(strand, &value, &backtrace)
-                    .expect("invalid backtrace")))
-            }
+            RecvResult::Poisoned => unreachable!(),
             RecvResult::Pending => RecvFuture::Pend {
                 strand: strand.inner,
                 recv: this.receiver,
