@@ -128,7 +128,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
                 }
                 Ok(())
             }
-            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
+            _ => instance_mcall_fallback(strand, &this, method, args, out),
         }
     }
 }

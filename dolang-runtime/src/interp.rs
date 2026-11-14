@@ -339,10 +339,10 @@ impl<'v> Vm<'v> {
         Ok(())
     }
 
-    async fn range<'a, 's>(
+    fn range<'s>(
         &self,
-        strand: &'a mut Strand<'v, 's>,
-        args: Args<'v, 'a>,
+        strand: &mut Strand<'v, 's>,
+        args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let ([mut start, mut end, mut step], []) = unpack!(strand, args, 3, 0)?;
@@ -480,6 +480,29 @@ impl<'v> Vm<'v> {
             Output::set(strand, out, matches);
         }
         Ok(())
+    }
+
+    /// Runs a builtin whose implementation awaits.
+    ///
+    /// `step` pins this out of line in the strand, so these builtins' futures
+    /// don't size every interpreter frame's.
+    #[inline(never)]
+    async unsafe fn builtin_async<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        args: Args<'v, 'a>,
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        match index {
+            builtin::ARRAY => self.array(strand, args, out).await,
+            builtin::DICT => self.dict(strand, args, out).await,
+            builtin::TUPLE => self.tuple(strand, args, out).await,
+            builtin::CLASS_CREATE => class::create(strand, args, out).await,
+            builtin::GUARD => self.guard(strand, args, out).await,
+            // SAFETY: `step` only passes the indices above
+            _ => unsafe { unreachable_unchecked() },
+        }
     }
 
     #[inline(never)]
@@ -708,8 +731,15 @@ impl<'v> Vm<'v> {
                 .get_unchecked(depth - sig.len() - headroom..depth);
             match sig {
                 Pack::Fixed(syms) => Ok(Args::new(slice, syms, headroom)),
+                // Only signatures with a spread are variadic. Pinned out of line
+                // in the strand: inlining the spread's future would grow every
+                // frame's
                 Pack::Var(args) => {
-                    Self::marshal_var_args(strand, frame, slice, args, headroom).await
+                    strand
+                        .pin_future_call(async |strand| {
+                            Self::marshal_var_args(strand, frame, slice, args, headroom).await
+                        })
+                        .await
                 }
             }
         }
@@ -917,12 +947,27 @@ impl<'v> Vm<'v> {
                             importer.store(Value::NIL);
                             result
                         }
-                        builtin::ARRAY => self.array(strand, args, Slot::reborrow(&mut res)).await,
-                        builtin::DICT => self.dict(strand, args, Slot::reborrow(&mut res)).await,
-                        builtin::TUPLE => self.tuple(strand, args, Slot::reborrow(&mut res)).await,
+                        builtin::ARRAY
+                        | builtin::DICT
+                        | builtin::TUPLE
+                        | builtin::CLASS_CREATE
+                        | builtin::GUARD => {
+                            // Pinned out of line in the strand, as for `IMPORT`
+                            strand
+                                .pin_future_call(async |strand| {
+                                    self.builtin_async(
+                                        strand,
+                                        index,
+                                        args,
+                                        Slot::reborrow(&mut res),
+                                    )
+                                    .await
+                                })
+                                .await
+                        }
                         builtin::PACK => self.args(strand, args, Slot::reborrow(&mut res)),
                         builtin::RECORD => self.record(strand, args, Slot::reborrow(&mut res)),
-                        builtin::RANGE => self.range(strand, args, Slot::reborrow(&mut res)).await,
+                        builtin::RANGE => self.range(strand, args, Slot::reborrow(&mut res)),
                         builtin::ITER => self.iter(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::CONCAT_STR => {
                             self.concat_str(strand, args, Slot::reborrow(&mut res))
@@ -931,9 +976,6 @@ impl<'v> Vm<'v> {
                             self.concat_verbatim(strand, args, Slot::reborrow(&mut res))
                         }
                         builtin::ARG_ACC => self.arg_acc(strand, args, Slot::reborrow(&mut res)),
-                        builtin::CLASS_CREATE => {
-                            class::create(strand, args, Slot::reborrow(&mut res)).await
-                        }
                         builtin::VALUE_ASSERT => {
                             let ([value, expected], []) = unpack!(strand, args, 2, 0)?;
                             if !value.op_eq(strand, &expected)?.to_bool(strand)? {
@@ -956,7 +998,6 @@ impl<'v> Vm<'v> {
                             Slot::reborrow(&mut res),
                             index == builtin::TYPE_ASSERT,
                         ),
-                        builtin::GUARD => self.guard(strand, args, Slot::reborrow(&mut res)).await,
                         builtin::THROW => self.throw(strand, args),
                         builtin::CONCAT_BIN => {
                             self.concat_bin(strand, args, Slot::reborrow(&mut res))
@@ -970,7 +1011,6 @@ impl<'v> Vm<'v> {
                                 args,
                                 Slot::reborrow(&mut res),
                             )
-                            .await
                         }
                         builtin::FMT_PARAM => {
                             let global = strand.vm().state::<crate::stdlib::fmt::Tag>();

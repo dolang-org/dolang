@@ -543,7 +543,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
             _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out).await
+                instance_mcall_fallback(strand, &this, method, args, out)
             }
             _ => recv_mcall(strand, &this, method, args, out).await,
         }

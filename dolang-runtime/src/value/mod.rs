@@ -290,7 +290,7 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_mcall(strand, method, args, out).await,
-            Case::Prim(prim) => prim.op_mcall(strand, method, args, out).await,
+            Case::Prim(prim) => prim.op_mcall(strand, method, args, out),
         }
     }
 

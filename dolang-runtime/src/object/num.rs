@@ -98,7 +98,7 @@ pub(crate) fn float_get<'v, 'a, 's>(
     }
 }
 
-async fn extrema<'v, 'a, 's>(
+fn extrema<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, 'a>,
     mut out: Slot<'v, 'a>,
@@ -120,7 +120,7 @@ async fn extrema<'v, 'a, 's>(
     Ok(())
 }
 
-async fn default_mcall<'v, 'a, 's>(
+fn default_mcall<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     rcvr: impl Input<'v>,
     method: Sym<'v, 'a>,
@@ -129,8 +129,8 @@ async fn default_mcall<'v, 'a, 's>(
 ) -> Result<'v, 's, ()> {
     args.prepend_self(Value::from_input(strand, rcvr));
     match method.tag() {
-        sym::MIN => extrema(strand, args, out, true).await,
-        sym::MAX => extrema(strand, args, out, false).await,
+        sym::MIN => extrema(strand, args, out, true),
+        sym::MAX => extrema(strand, args, out, false),
         sym::CLAMP => {
             let ([mut value, mut lower, mut upper], []) = unpack!(strand, args, 3, 0)?;
             if upper.op_lt(strand, &lower)?.to_bool(strand)? {
@@ -160,7 +160,7 @@ async fn fallback_mcall<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     match method.tag() {
-        sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out).await,
+        sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out),
         sym::ABS | sym::SIGNUM | sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
             let msg = format!("abstract method `{}`", method.as_str(strand));
             Err(Error::unsupported(strand, msg))
@@ -173,7 +173,7 @@ async fn fallback_mcall<'v, 'a, 's>(
     }
 }
 
-pub(crate) async fn int_mcall<'v, 'a, 's>(
+pub(crate) fn int_mcall<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     rcvr: impl Input<'v>,
     value: i128,
@@ -199,14 +199,12 @@ pub(crate) async fn int_mcall<'v, 'a, 's>(
             out.store(receiver);
             Ok(())
         }
-        sym::MIN | sym::MAX | sym::CLAMP => {
-            default_mcall(strand, &receiver, method, args, out).await
-        }
-        _ => instance_mcall_fallback(strand, &receiver, method, args, out).await,
+        sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, &receiver, method, args, out),
+        _ => instance_mcall_fallback(strand, &receiver, method, args, out),
     }
 }
 
-pub(crate) async fn float_mcall<'v, 'a, 's>(
+pub(crate) fn float_mcall<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     rcvr: impl Input<'v>,
     value: f64,
@@ -235,9 +233,9 @@ pub(crate) async fn float_mcall<'v, 'a, 's>(
         out.store(result);
         Ok(())
     } else if matches!(method.tag(), sym::MIN | sym::MAX | sym::CLAMP) {
-        default_mcall(strand, &receiver, method, args, out).await
+        default_mcall(strand, &receiver, method, args, out)
     } else {
-        instance_mcall_fallback(strand, &receiver, method, args, out).await
+        instance_mcall_fallback(strand, &receiver, method, args, out)
     }
 }
 

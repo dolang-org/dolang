@@ -505,7 +505,7 @@ impl<'v> Protocol<'v> for StrObj {
                 strand,
                 "Str.len is a field, not a method",
             )),
-            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
+            _ => instance_mcall_fallback(strand, &this, method, args, out),
         }
     }
 

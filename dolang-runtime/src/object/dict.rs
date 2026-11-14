@@ -1859,7 +1859,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 "dict.len is a field, not a method",
             )),
             _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out).await
+                instance_mcall_fallback(strand, &this, method, args, out)
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }

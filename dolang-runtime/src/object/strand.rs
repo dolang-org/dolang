@@ -224,7 +224,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 let cell = this.borrow(strand)?.cell.clone();
                 observe_mcall(strand, &cell, method, args, out)
             }
-            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
+            _ => instance_mcall_fallback(strand, &this, method, args, out),
         }
     }
 
@@ -967,7 +967,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
             tag if is_observe_method(tag) => observe_mcall(strand, &cell, method, args, out),
-            _ => instance_mcall_fallback(strand, &this, method, args, out).await,
+            _ => instance_mcall_fallback(strand, &this, method, args, out),
         }
     }
 

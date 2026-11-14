@@ -280,7 +280,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if is_special_mcall(method.tag()) {
-            return instance_mcall_fallback(strand, &this, method, args, out).await;
+            return instance_mcall_fallback(strand, &this, method, args, out);
         }
         // A plain name calls its item
         let callee = {

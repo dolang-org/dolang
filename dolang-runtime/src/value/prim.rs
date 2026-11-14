@@ -91,7 +91,7 @@ impl Prim {
         }
     }
 
-    pub(crate) async fn op_mcall<'v, 'a, 's>(
+    pub(crate) fn op_mcall<'v, 'a, 's>(
         self,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
@@ -101,15 +101,15 @@ impl Prim {
         match self {
             Prim::Int(value) => {
                 let receiver = Value::from_prim(strand, self);
-                num::int_mcall(strand, &receiver, value, method, args, out).await
+                num::int_mcall(strand, &receiver, value, method, args, out)
             }
             Prim::F64(value) => {
                 let receiver = Value::from_prim(strand, self);
-                num::float_mcall(strand, &receiver, value, method, args, out).await
+                num::float_mcall(strand, &receiver, value, method, args, out)
             }
             Prim::Nil | Prim::Bool(_) if is_special_mcall(method.tag()) => {
                 let receiver = Value::from_prim(strand, self);
-                instance_mcall_fallback(strand, &receiver, method, args, out).await
+                instance_mcall_fallback(strand, &receiver, method, args, out)
             }
             _ => Err(Error::type_error(strand, "method call not supported")),
         }

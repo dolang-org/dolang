@@ -262,7 +262,7 @@ impl<'v> Object<'v> for FmtSpec {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
-        create(strand, annex.global, annex.spec, args, out).await
+        create(strand, annex.global, annex.spec, args, out)
     }
 }
 
@@ -1234,7 +1234,7 @@ pub(crate) fn register<'v>(builder: &mut Builder<'v>) -> State<'v, Global<'v>> {
 
 /// Merges keyword options over `base`, producing a new `FmtSpec` or, when a
 /// positional value is supplied, a `FmtValue` bound to it.
-pub(crate) async fn create<'v, 'a, 's>(
+pub(crate) fn create<'v, 'a, 's>(
     strand: &'a mut Strand<'v, 's>,
     global: State<'v, Global<'v>>,
     base: Spec,

@@ -97,7 +97,7 @@ impl<'v> Protocol<'v> for IntObj {
         _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::num::int_mcall(strand, &this, *this.get(), method, _args, _out).await
+        super::num::int_mcall(strand, &this, *this.get(), method, _args, _out)
     }
 
     fn op_bool<'a, 's>(
@@ -435,7 +435,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
         _args: Args<'v, 'a>,
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::num::int_mcall(strand, &this, this.get().value, method, _args, _out).await
+        super::num::int_mcall(strand, &this, this.get().value, method, _args, _out)
     }
 
     fn op_bool<'a, 's>(
