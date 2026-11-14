@@ -35,6 +35,17 @@ impl Seg {
         }
     }
 
+    /// The first byte of the segment's data.
+    #[inline]
+    unsafe fn start(this: NonNull<Self>) -> NonNull<u8> {
+        unsafe { NonNull::new_unchecked(&raw mut (*this.as_ptr()).data).cast() }
+    }
+
+    #[inline]
+    unsafe fn is_empty(this: NonNull<Self>) -> bool {
+        unsafe { (*this.as_ptr()).cur.get() == Self::start(this) }
+    }
+
     #[inline]
     fn dealloc(this: NonNull<Self>) {
         unsafe {
@@ -111,18 +122,39 @@ impl<'a, R> Drop for Pinned<'a, R> {
     }
 }
 
+/// Report a pinned future that was leaked rather than dropped.  The caller has already kept
+/// its memory, so the arena stays sound if the panic is caught.
+///
+/// A leak skips the future's own cleanup too, so continuing would hide the bug.  Panicking
+/// while already unwinding would abort, so stay quiet then.
+#[cold]
+#[inline(never)]
+fn leaked() {
+    if !std::thread::panicking() {
+        panic!("a pinned future was leaked instead of dropped (e.g. by `mem::forget`)");
+    }
+}
+
 pub struct Arena {
     seg: Cell<NonNull<Seg>>,
 }
 
 impl Drop for Arena {
     fn drop(&mut self) {
-        let mut seg = Some(self.seg.get());
-        while let Some(cur) = seg {
-            unsafe {
-                let prev = (*cur.as_ptr()).prev;
+        unsafe {
+            // A nonempty segment holds a pinned future that was leaked rather than dropped.
+            // Its memory must stay valid, so leak every segment with it.
+            let mut seg = Some(self.seg.get());
+            while let Some(cur) = seg {
+                if !Seg::is_empty(cur) {
+                    return leaked();
+                }
+                seg = (*cur.as_ptr()).prev;
+            }
+            let mut seg = Some(self.seg.get());
+            while let Some(cur) = seg {
+                seg = (*cur.as_ptr()).prev;
                 Seg::dealloc(cur);
-                seg = prev
             }
         }
     }
@@ -160,6 +192,21 @@ impl Arena {
             // Must drop contents *first*, which drops any nested Pinned guard;
             // segment/offset updates will then occur in LIFO order as required
             ptr::drop_in_place(entry.as_ptr());
+            // Free the entry only if it is on top: last in its own segment (`last_seg`),
+            // with every newer segment empty.  An entry above it belongs to a pinned future
+            // that was leaked rather than dropped; its memory must stay valid, so leave
+            // everything in place.
+            let end = entry.cast::<u8>().add(size_of::<Entry<T>>());
+            if (*last_seg.as_ptr()).cur.get() != end {
+                return leaked();
+            }
+            let mut seg = self.seg.get();
+            while seg != last_seg {
+                if !Seg::is_empty(seg) {
+                    return leaked();
+                }
+                seg = (*seg.as_ptr()).prev.unwrap_unchecked();
+            }
             while self.seg.get() != last_seg {
                 self.seg.update(|seg| {
                     let prev = (*seg.as_ptr()).prev.unwrap_unchecked();
@@ -178,7 +225,12 @@ impl Arena {
     }
 
     /// # Safety
-    /// The caller must ensure that pins are strictly nested
+    /// The caller must ensure that pins are strictly nested, except that a pin may be
+    /// leaked: its memory is then never reused or freed.
+    ///
+    /// # Panics
+    ///
+    /// Dropping the returned pin, or the arena, panics if a pin above it was leaked.
     #[inline]
     pub unsafe fn pin_future_unchecked<'a, R, F: Future<Output = R> + 'a>(
         &'a self,
@@ -193,5 +245,69 @@ impl Arena {
             },
             drop: |arena, entry| unsafe { arena.pop(entry.cast::<Entry<F>>()) },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        future::{self, Future, poll_fn},
+        mem,
+        panic::{self, AssertUnwindSafe},
+        pin::pin,
+        task::{Context, Poll, Waker},
+    };
+
+    use super::Arena;
+
+    fn poll_once(fut: impl Future) {
+        let mut cx = Context::from_waker(Waker::noop());
+        let _ = pin!(fut).poll(&mut cx);
+    }
+
+    #[test]
+    fn leaked_pin_is_never_reused() {
+        let arena = Arena::new(64);
+        let leaked = std::cell::Cell::new(std::ptr::null::<u64>());
+        // Safety: pins nest strictly, except for the leaked one
+        let outer = unsafe {
+            arena.pin_future_unchecked(async {
+                let inner = arena.pin_future_unchecked(async {
+                    let marker = 7u64;
+                    leaked.set(&raw const marker);
+                    poll_fn(|_| Poll::<()>::Pending).await;
+                    assert_eq!(marker, 7);
+                });
+                let mut inner = Box::pin(inner);
+                poll_once(inner.as_mut());
+                mem::forget(inner);
+            })
+        };
+        // Popping the outer pin finds the leaked one above it
+        assert!(panic::catch_unwind(AssertUnwindSafe(|| poll_once(outer))).is_err());
+        assert!(!leaked.get().is_null());
+        // A later pin must not overwrite the leaked future's state
+        let reuse = unsafe { arena.pin_future_unchecked(future::ready([0xffu64; 8])) };
+        poll_once(reuse);
+        assert_eq!(unsafe { *leaked.get() }, 7);
+        // Dropping the arena finds it too, and leaks its memory
+        assert!(panic::catch_unwind(AssertUnwindSafe(|| drop(arena))).is_err());
+    }
+
+    #[test]
+    fn nested_pins_reuse_memory() {
+        let arena = Arena::new(64);
+        let first = unsafe { arena.pin_future_unchecked(future::ready([0u64; 4])) };
+        let addr = first.entry;
+        drop(first);
+        let second = unsafe { arena.pin_future_unchecked(future::ready([0u64; 4])) };
+        assert_eq!(second.entry, addr);
+        // Grow past the initial segment, then pop back to it
+        let big = unsafe { arena.pin_future_unchecked(future::ready([0u64; 64])) };
+        drop(big);
+        drop(second);
+        let seg = arena.seg.get();
+        assert!(unsafe { (*seg.as_ptr()).prev }.is_none());
+        assert!(unsafe { super::Seg::is_empty(seg) });
     }
 }
