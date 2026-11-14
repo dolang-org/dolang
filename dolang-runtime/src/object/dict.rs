@@ -373,23 +373,28 @@ impl<'v> Dict<'v> {
     ) -> Result<'v, 's, Self> {
         let mut this = Self::new();
         let mut position = 0i64;
-        for (index, arg) in args.enumerate() {
-            if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_trap_gc()?;
-            }
-            let (key, mut value) = match arg {
-                Arg::Pos(value) => {
-                    let key = Value::from_i64(strand, position);
-                    position += 1;
-                    (key, value)
+        with_slots!(strand, |mut key| {
+            for (index, arg) in args.enumerate() {
+                if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                    strand.check_trap_gc()?;
                 }
-                Arg::Key(key, value) => (Value::from_object(strand.sym_obj(key)), value),
-            };
-            let mut hasher = strand.vm().hasher();
-            key.op_hash(strand, &mut hasher)?;
-            this.insert(strand, key, value.take(), hasher.finish(), false)?;
-        }
-        Ok(this)
+                let mut value = match arg {
+                    Arg::Pos(value) => {
+                        Output::set(strand, Slot::reborrow(&mut key), position);
+                        position += 1;
+                        value
+                    }
+                    Arg::Key(sym, value) => {
+                        Output::set(strand, Slot::reborrow(&mut key), sym);
+                        value
+                    }
+                };
+                let mut hasher = strand.vm().hasher();
+                key.op_hash(strand, &mut hasher)?;
+                this.insert(strand, key.take(), value.take(), hasher.finish(), false)?;
+            }
+            Ok(this)
+        })
     }
 
     pub(crate) async fn from_builtin_args<'s>(
@@ -459,12 +464,14 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         key: Sym<'v, '_>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let key = Value::from_object(strand.sym_obj(key));
-        let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher).unwrap();
-        let hv = hasher.finish();
-        self.dict.insert(strand, key, value.take(), hv, false)?;
-        Ok(())
+        with_slots!(strand, |mut key_slot| {
+            Output::set(strand, Slot::reborrow(&mut key_slot), key);
+            let mut hasher = strand.vm().hasher();
+            key_slot.op_hash(strand, &mut hasher).unwrap();
+            let hv = hasher.finish();
+            self.dict
+                .insert(strand, key_slot.take(), value.take(), hv, false)
+        })
     }
 
     fn keyed(
@@ -819,9 +826,18 @@ impl<'v> Protocol<'v> for Values<'v> {
                         "collection was modified during iteration",
                     ));
                 }
-                super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
-                    Dict::next_value_from_index(&dict, i)
-                })
+                super::iter::unpack_cursor(
+                    strand,
+                    sig,
+                    &mut out,
+                    borrow.index.get(),
+                    |_, i, mut out| {
+                        Dict::next_value_from_index(&dict, i).map(|(next, value)| {
+                            out.store(value);
+                            next
+                        })
+                    },
+                )
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
@@ -923,9 +939,20 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
                         "collection was modified during iteration",
                     ));
                 }
-                super::iter::unpack_cursor(strand, sig, &mut out, borrow.index.get(), |_, i| {
-                    Dict::next_value_from_bucket(borrow.bucket.clone(), i)
-                })
+                super::iter::unpack_cursor(
+                    strand,
+                    sig,
+                    &mut out,
+                    borrow.index.get(),
+                    |_, i, mut out| {
+                        Dict::next_value_from_bucket(borrow.bucket.clone(), i).map(
+                            |(next, value)| {
+                                out.store(value);
+                                next
+                            },
+                        )
+                    },
+                )
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
@@ -1042,7 +1069,14 @@ impl<'v> Protocol<'v> for Keys<'v> {
                     sig,
                     &mut out,
                     borrow.index.get(),
-                    |_, i| Dict::next_key_from_index(&dict, i, &visited, &mut pending),
+                    |_, i, mut out| {
+                        Dict::next_key_from_index(&dict, i, &visited, &mut pending).map(
+                            |(next, key)| {
+                                out.store(key);
+                                next
+                            },
+                        )
+                    },
                 )?;
                 for bucket_index in pending {
                     visited.set(bucket_index, true);
@@ -2062,31 +2096,31 @@ impl<'v> Dict<'v> {
             out.at(i).store(default.dup());
         }
 
-        for (i, key) in sig.keys.iter().enumerate() {
-            let key_value = match &key.kind {
-                UnpackKeyKind::Sym(sym) => Value::from_object(strand.sym_obj(*sym)),
-                UnpackKeyKind::Const(value) => value.dup(),
-            };
+        with_slots!(strand, |mut key_value| {
+            for (i, key) in sig.keys.iter().enumerate() {
+                Output::set(strand, Slot::reborrow(&mut key_value), &key.kind);
 
-            let mut hasher = strand.vm().hasher();
+                let mut hasher = strand.vm().hasher();
 
-            key_value.op_hash(strand, &mut hasher)?;
+                key_value.op_hash(strand, &mut hasher)?;
 
-            let hv = hasher.finish();
-            let seen = skip.add(strand, &key_value, hv)?;
+                let hv = hasher.finish();
+                let seen = skip.add(strand, &key_value, hv)?;
 
-            let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
-            if let Some(value) = self.get(strand, &key_value, Some(instance))? {
-                out.at(pos_count + i).store(value.dup())
-            } else if let Some(default) = &key.default {
-                out.at(pos_count + i).store(default.dup())
-            } else {
-                return Err(match &key.kind {
-                    UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-                });
+                let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
+                if let Some(value) = self.get(strand, &key_value, Some(instance))? {
+                    out.at(pos_count + i).store(value.dup())
+                } else if let Some(default) = &key.default {
+                    out.at(pos_count + i).store(default.dup())
+                } else {
+                    return Err(match &key.kind {
+                        UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
+                        UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
+                    });
+                }
             }
-        }
+            Ok::<_, Error<'v, 's>>(())
+        })?;
 
         if sig.key_rest() == Rest::None
             && let Some(key) = self.leftover_key(strand, skip)?
@@ -2340,7 +2374,7 @@ impl<'v> Dict<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         key: Option<Slot<'v, 'a>>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let dict = this.borrow(strand)?;
         let count = if let Some(key) = key {
@@ -2354,7 +2388,7 @@ impl<'v> Dict<'v> {
             dict.table.len()
         };
         let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
-        out.store(Value::from_i64(strand, value));
+        Output::set(strand, out, value);
         Ok(())
     }
 }

@@ -17,6 +17,7 @@ use crate::{
     unpack,
     value::{BinEmbryo, Output, Slot, TypeObject, Value, with_u8_slice},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -598,8 +599,11 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         this: Recv<'v, 'a, Self>,
         request: &mut Request<'v, 's, '_>,
     ) -> Result<'v, 's, ()> {
-        let stream = Value::from_input(request.parts().0, &this);
-        provide_bridge(request, &stream, IoCaps::WRITE)
+        let (strand, answer) = request.parts();
+        with_slots!(strand, |mut stream| {
+            Output::set(strand, Slot::reborrow(&mut stream), &this);
+            provide_bridge(&mut Request::new(strand, answer), &stream, IoCaps::WRITE)
+        })
     }
 
     async fn op_sink<'a, 's>(

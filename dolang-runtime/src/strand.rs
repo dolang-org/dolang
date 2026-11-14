@@ -300,7 +300,7 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
     ///
     /// A Do frame's entry records its pc as of this call.
     #[inline]
-    pub(crate) fn finish<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+    pub(crate) fn finish<R>(mut self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
         res.map_err(|mut e| {
             let entry = match self.entry {
                 // SAFETY: the entry moves straight into the error's backtrace, which
@@ -316,7 +316,7 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
                     method: frame.method.clone(),
                 },
             };
-            e.push_backtrace(self.strand.inner, entry);
+            e.push_backtrace(&mut self.strand, entry);
             e
         })
     }
@@ -1677,17 +1677,16 @@ impl<'v, 's> Strand<'v, 's> {
         };
         match f(&mut strand).await {
             Ok(r) => Ok(r),
-            Err(e) => {
-                let mut e = e.migrate(self);
+            Err(mut e) => {
                 e.push_backtrace(
-                    self.inner,
+                    &mut strand,
                     UnwindEntry::Native {
                         module: native.module.clone(),
                         receiver: native.receiver,
                         method: None,
                     },
                 );
-                Err(e)
+                Err(e.migrate(self))
             }
         }
     }
@@ -1897,7 +1896,7 @@ impl<'v, 's> Strand<'v, 's> {
             .map(|t| t.nested(InterruptMask::empty()))
             .unwrap_or_else(InterruptToken::new);
         let handle = self.spawn_background_raw(arg, interrupt, None, f)?;
-        Output::set(self, &mut out, &Value::from_object(handle));
+        Output::set(self, &mut out, Value::from_object(handle));
         Ok(())
     }
 
@@ -2230,7 +2229,7 @@ mod scan_tests {
 
     /// Take a fresh one-element tuple out of `slot`, leaving the slot nil.
     fn make_tuple<'v>(strand: &mut Strand<'v, '_>, mut slot: Slot<'v, '_>) -> Value<'v> {
-        let item = Value::from_i64(strand, 1);
+        let item = Value::from_i16(1);
         tuple::create(strand, [item], Slot::reborrow(&mut slot));
         slot.take()
     }
@@ -2263,7 +2262,7 @@ mod scan_tests {
                 let mut body = pin!(async {
                     with_interrupt_mask!(strand, InterruptMask::all(), {
                         with_slots!(strand, |mut inner| {
-                            let item = Value::from_i64(strand, 2);
+                            let item = Value::from_i16(2);
                             tuple::create(strand, [item], Slot::reborrow(&mut inner));
                             rooted = Some(header(&inner));
                             redirect!(strand, output: &sink, {
@@ -2299,7 +2298,7 @@ mod scan_tests {
                 let mut scope = unsafe { strand.enter_scan(&frame) };
                 let strand = &mut *scope;
                 with_slots!(strand, |mut inner| {
-                    let item = Value::from_i64(strand, 2);
+                    let item = Value::from_i16(2);
                     tuple::create(strand, [item], Slot::reborrow(&mut inner));
                     let slot_target = header(&inner);
                     futures::future::ready(()).await;

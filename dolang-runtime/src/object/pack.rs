@@ -219,21 +219,23 @@ pub(crate) fn lt_items<'v, 's>(
     right: &[ArgItem<'v>],
 ) -> Result<'v, 's, bool> {
     let (mut lint, mut rint) = (0, 0);
-    for (index, ((lkey, lvalue), (rkey, rvalue))) in left.iter().zip(right.iter()).enumerate() {
-        if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-            strand.check_trap()?;
-        }
-        let lk = key_value(strand, lkey, lint);
-        let rk = key_value(strand, rkey, rint);
-        lint += i64::from(lkey.is_none());
-        rint += i64::from(rkey.is_none());
-        for (l, r) in [(&lk, &rk), (lvalue, rvalue)] {
-            if !l.op_eq(strand, r)?.to_bool(strand)? {
-                return l.op_lt(strand, r)?.to_bool(strand);
+    with_slots!(strand, |mut lk, mut rk| {
+        for (index, ((lkey, lvalue), (rkey, rvalue))) in left.iter().zip(right.iter()).enumerate() {
+            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                strand.check_trap()?;
+            }
+            set_key(strand, lkey, lint, Slot::reborrow(&mut lk));
+            set_key(strand, rkey, rint, Slot::reborrow(&mut rk));
+            lint += i64::from(lkey.is_none());
+            rint += i64::from(rkey.is_none());
+            for (l, r) in [(&*lk, &*rk), (lvalue, rvalue)] {
+                if !l.op_eq(strand, r)?.to_bool(strand)? {
+                    return l.op_lt(strand, r)?.to_bool(strand);
+                }
             }
         }
-    }
-    Ok(right.len() > left.len())
+        Ok(right.len() > left.len())
+    })
 }
 
 /// Spreads `items` into `sink` as positional and symbol-keyed items.
@@ -256,22 +258,17 @@ pub(crate) fn spread_items<'v, 's>(
     })
 }
 
-/// Creates an empty `Pack`.
-pub(crate) fn empty<'v>(strand: &mut Strand<'v, '_>) -> GcObj<'v, PackObj<'v>> {
-    let vm = strand.vm();
-    GcObj::new_imm(vm.arena(), vm.builtin_types().pack, Pack::new(Vec::new()))
-}
-
-/// The key of an item as a value: the symbol, or the position `int` counts
-fn key_value<'v>(
+/// Places the key of an item into `out`: the symbol, or the position `int` counts
+fn set_key<'v>(
     strand: &mut Strand<'v, '_>,
     key: &Option<GcObj<'v, SymObj>>,
     int: i64,
-) -> Value<'v> {
+    out: Slot<'v, '_>,
+) {
     match key {
-        // SAFETY: TODO(#1707): as loose as the value it becomes
-        Some(key) => Value::from_object(unsafe { key.dup() }),
-        None => Value::from_i64(strand, int),
+        // Safety: the pack holds the symbol for the whole call.
+        Some(key) => Output::set(strand, out, unsafe { Sym::from_obj(key) }),
+        None => Output::set(strand, out, int),
     }
 }
 
@@ -528,28 +525,23 @@ impl<'v> Iter<'v> {
         }
     }
 
-    /// The next item not yet consumed, and its index
-    fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
+    /// Advances past the next item, placing it into `out` as a `(key, value)` pair
+    fn next_pair(&mut self, strand: &mut Strand<'v, '_>, out: impl Output<'v>) -> bool {
         let items = self.args.items();
-        first_visible_index(items, &self.skip, self.pos).map(|index| {
-            let (key, value) = &items[index];
-            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-            (
-                index,
-                key.as_ref().map(|key| unsafe { key.dup() }),
-                value.dup(),
-            )
-        })
-    }
-
-    /// Advances past the next item, returning it as a `(key, value)` pair
-    fn next_pair(&mut self, strand: &mut Strand<'v, '_>) -> Option<Value<'v>> {
-        let (index, key, value) = self.next_item()?;
+        let Some(index) = first_visible_index(items, &self.skip, self.pos) else {
+            return false;
+        };
+        let (key, value) = &items[index];
+        match key {
+            // Safety: the pack holds the symbol for the whole call.
+            Some(key) => tuple::create_pair(strand, unsafe { Sym::from_obj(key) }, value, out),
+            None => {
+                tuple::create_pair(strand, self.int, value, out);
+                self.int += 1;
+            }
+        }
         self.pos = index + 1;
-        let positional = key.is_none();
-        let key = key_value(strand, &key, self.int);
-        self.int += i64::from(positional);
-        Some(Value::from_object(tuple::tuple(strand, [key, value])))
+        true
     }
 }
 
@@ -600,10 +592,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
         // SAFETY: TODO(#1707): the cursor's reference is loose across the unpack
         let args = unsafe { iter.args.dup() };
         let mut cursor = Iter::new(args, iter.skip.clone(), iter.pos, iter.int);
-        super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos| {
+        super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos, out| {
             cursor.pos = pos;
-            let pair = cursor.next_pair(strand)?;
-            Some((cursor.pos, pair))
+            cursor.next_pair(strand, out).then_some(cursor.pos)
         })?;
         if let Some(i) = sig.pos_rest_slot() {
             strand
@@ -618,13 +609,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let Some(pair) = this.borrow_mut(strand)?.next_pair(strand) else {
-            return Ok(false);
-        };
-        out.store(pair);
-        Ok(true)
+        Ok(this.borrow_mut(strand)?.next_pair(strand, out))
     }
 
     async fn op_spread<'a, 's>(

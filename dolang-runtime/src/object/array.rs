@@ -482,11 +482,10 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         let index = borrow.index;
         let found = with_pin!(strand, borrow.array, |array| 'body: {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            let Some(value) = array_borrow.inner.get(index).map(Value::dup) else {
+            let Some(value) = array_borrow.inner.get(index) else {
                 break 'body false;
             };
-            drop(array_borrow);
-            tuple::create(strand, [Value::from_i64(strand, index as i64), value], out);
+            tuple::create_pair(strand, index as i64, value, out);
             true
         });
         borrow.index += usize::from(found);
@@ -1247,9 +1246,8 @@ fn unpack_from<'v, 's>(
     let min = pos_count.min(len);
     for (i, elem) in borrow.inner[start..(start + min)].iter().enumerate() {
         if pair {
-            let value = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
-            let items = [Value::from_i64(strand, value), elem.dup()];
-            tuple::create(strand, items, out.at(i))
+            let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
+            tuple::create_pair(strand, index, elem, out.at(i))
         } else {
             out.at(i).store(elem.dup())
         }

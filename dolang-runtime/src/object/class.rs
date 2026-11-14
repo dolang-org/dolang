@@ -455,10 +455,10 @@ pub(crate) async fn create<'v, 's>(
 
     // Every class ends its MRO with `Value`, which supplies the members every
     // value has, unless it names `Value` itself.
-    let value = Value::from_input(strand, TypeObject::Value);
-    let value = (!supers.iter().any(|sup| sup.repr_eq(&value))).then_some(value);
+    let value = TypeObject::Value.value(strand.vm());
+    let value = (!supers.iter().any(|sup| sup.repr_eq(value))).then_some(value);
 
-    for sup in supers.iter().chain(&value) {
+    for sup in supers.iter().chain(value) {
         if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
             let cls = cls.annex();
             // Inherit parent's native supers (dedup by repr_eq).
@@ -1515,7 +1515,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         return Err(Error::type_error(strand, "invalid class object type"));
                     }
                     if method.tag() == sym::INIT_METHOD {
-                        trailing.prepend_self(instance.dup());
+                        trailing.prepend_self(strand, &instance);
                         return supertype.op_mcall(strand, method, trailing, out).await;
                     }
                     let receiver = if native {
@@ -1549,7 +1549,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             };
                             Output::set(strand, Slot::reborrow(&mut func), value);
                             if *inherited {
-                                args.prepend_self(Value::from_object(this.to_strong()));
+                                args.prepend_self(strand, &this);
                             }
                             func.op_call(strand, args, out).await
                         });
@@ -1601,7 +1601,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 };
                 Output::set(strand, Slot::reborrow(&mut func), value);
                 if *inherited {
-                    args.prepend_self(Value::from_object(this.to_strong()));
+                    args.prepend_self(strand, &this);
                 }
                 func.op_call(strand, args, out).await
             });
@@ -1652,19 +1652,19 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
         let init = Sym::well_known(sym::INIT_METHOD);
         match me.entry(init) {
             Some(ClassEntry::Method(func)) => {
-                args.prepend_self(inst.dup());
+                args.prepend_self(strand, &inst);
                 func.op_call(strand, args, tmp).await?;
             }
             Some(ClassEntry::Delegate(slot, MemberKind::Method)) => {
                 // Call the native type's constructor before its instance slot
                 // exists; `(init)` fills that slot on the derived instance.
-                args.prepend_self(inst.dup());
+                args.prepend_self(strand, &inst);
                 me.native_supers[*slot]
                     .op_mcall(strand, init, args, tmp)
                     .await?;
             }
             Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
-                args.prepend_self(inst.dup());
+                args.prepend_self(strand, &inst);
                 type_obj.op_mcall(strand, init, args, tmp).await?;
             }
             _ => {
@@ -1703,14 +1703,9 @@ impl<'v> ClassTypeProxy<'v> {
         class: &Recv<'v, 'a, ClassObject<'v>>,
         out: Slot<'v, '_>,
     ) {
-        let proxy = ClassTypeProxy {
-            class: Value::from_object(class.to_strong()),
-        };
-        strand
-            .vm()
-            .builtin_types()
-            .class_type_proxy
-            .create_imm(strand, proxy, out);
+        let embryo = strand.vm().builtin_types().class_type_proxy.embryo(strand);
+        let class = Value::from_object(class.to_strong());
+        embryo.finish_imm(strand, ClassTypeProxy { class }, out);
     }
 
     /// The proxied class's immutable half, for member lookup.
@@ -2329,7 +2324,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         out: Slot<'v, 'a>,
     ) {
         // SAFETY: the reference moves straight into `out`
-        let class = Value::from_object(unsafe { this.annex().prefix.class.dup() });
+        let class = unsafe { Value::from_object(this.annex().prefix.class.dup()) };
         Output::set(strand, out, class)
     }
 
@@ -2558,7 +2553,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let class = this.annex().prefix.class.annex();
         match class.entry(method) {
             Some(ClassEntry::Method(v)) => {
-                args.prepend_self(Value::from_object(this.to_strong()));
+                args.prepend_self(strand, &this);
                 return v.op_call(strand, args, out).await;
             }
             Some(ClassEntry::Field(slot_idx)) => {
@@ -2634,7 +2629,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::CALL_METHOD) {
             Some(ClassEntry::Method(v)) => {
-                args.prepend_self(Value::from_object(this.to_strong()));
+                args.prepend_self(strand, &this);
                 v.op_call(strand, args, out).await
             }
             Some(ClassEntry::Delegate(slot, _)) => {

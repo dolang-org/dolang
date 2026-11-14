@@ -721,12 +721,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     None => 1,
                     Some(limit) => limit.to_index(strand)?,
                 };
+                let embryo = tuple::embryo(strand, 2);
                 let (send, recv) = channel::pair(strand, limit);
-                tuple::create(
-                    strand,
-                    [Value::from_object(send), Value::from_object(recv)],
-                    out,
-                );
+                let items = [Value::from_object(send), Value::from_object(recv)];
+                embryo.finish(strand, items, out);
                 Ok(())
             })
             .function_with_slots("pipeline", async move |strand, args, out, [mut tmp]| {

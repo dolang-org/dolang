@@ -13,7 +13,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, TypeObject, Value},
+    value::{Input, Output, Slot, Slots, TypeObject, Value},
     vm::{Alloc, Vm},
     with_slots,
 };
@@ -55,6 +55,21 @@ pub(crate) fn create<'v, I: IntoIterator<Item = Value<'v>>>(
 {
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
     Output::set(alloc, out, Value::from_object(tuple(vm, iter)));
+}
+
+/// Creates a `(key, value)` pair and places it into `out`.
+///
+/// The tuple is allocated first, then the key built, so nothing is held loose across an
+/// allocation; `value` is duplicated straight into the tuple.
+pub(crate) fn create_pair<'v>(
+    alloc: &mut impl Alloc<'v>,
+    key: impl Input<'v>,
+    value: &Value<'v>,
+    out: impl Output<'v>,
+) {
+    let embryo = embryo(alloc, 2);
+    let key = Value::from_input(alloc, key);
+    embryo.finish(alloc, [key, value.dup()], out);
 }
 
 /// Allocates a tuple of `len` elements without initializing it; see
@@ -692,16 +707,19 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        let value = with_pin!(strand, borrow.tuple, |tuple| tuple
-            .items()
-            .get(index)
-            .map(Value::dup));
-        let Some(value) = value else {
-            return Ok(false);
-        };
-        create(strand, [Value::from_i64(strand, index as i64), value], out);
-        borrow.index += 1;
-        Ok(true)
+        let found = with_pin!(
+            strand,
+            borrow.tuple,
+            |tuple| match tuple.items().get(index) {
+                Some(value) => {
+                    create_pair(strand, index as i64, value, out);
+                    true
+                }
+                None => false,
+            }
+        );
+        borrow.index += usize::from(found);
+        Ok(found)
     }
 
     fn op_type<'a, 's>(
@@ -751,9 +769,8 @@ fn unpack_from<'v, 's>(
     let min = pos_count.min(len);
     for (i, elem) in borrow[start..(start + min)].iter().enumerate() {
         if pair {
-            let value = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
-            let items = [Value::from_i64(strand, value), elem.dup()];
-            create(strand, items, out.at(i))
+            let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
+            create_pair(strand, index, elem, out.at(i))
         } else {
             out.at(i).store(elem.dup())
         }

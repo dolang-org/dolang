@@ -390,7 +390,7 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         let receiver = iter.fields.receiver.dup();
         with_slots!(strand, |mut value| {
             resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
-            tuple::create(strand, [Value::from_object(symbol), value.take()], out);
+            tuple::create_pair(strand, unsafe { Sym::from_obj(&symbol) }, &value, out);
             Ok(())
         })?;
         iter.index += 1;

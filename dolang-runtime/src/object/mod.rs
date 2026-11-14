@@ -700,11 +700,12 @@ impl<'v> BoundMethod<'v> {
         out: Slot<'v, '_>,
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        let ty = vm.builtin_types().bound_method;
+        let embryo = vm.builtin_types().bound_method.embryo(alloc);
+        let rcvr = Value::from_input(alloc, rcvr);
         let bound = BoundMethod {
-            rcvr: Value::from_input(alloc, rcvr),
+            rcvr,
             method: vm.sym_obj(method),
         };
-        ty.create_imm(alloc, bound, out);
+        embryo.finish_imm(alloc, bound, out);
     }
 }

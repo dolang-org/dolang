@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, Value, fmt::Format},
+    value::{Input, Output, Slot, Value, fmt::Format, prim::Prim},
     vm::Vm,
 };
 
@@ -127,7 +127,7 @@ fn default_mcall<'v, 'a, 's>(
     mut args: Args<'v, 'a>,
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    args.prepend_self(Value::from_input(strand, rcvr));
+    args.prepend_self(strand, rcvr);
     match method.tag() {
         sym::MIN => extrema(strand, args, out, true),
         sym::MAX => extrema(strand, args, out, false),
@@ -167,7 +167,7 @@ async fn fallback_mcall<'v, 'a, 's>(
         }
         _ => {
             let mut args = args;
-            args.prepend_self(Value::from_input(strand, rcvr));
+            args.prepend_self(strand, rcvr);
             type_mcall_fallback(strand, &strand.singletons().num, method, args, out).await
         }
     }
@@ -179,9 +179,8 @@ pub(crate) fn int_mcall<'v, 'a, 's>(
     value: i128,
     method: Sym<'v, 'a>,
     args: Args<'v, 'a>,
-    mut out: Slot<'v, 'a>,
+    out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let receiver = Value::from_input(strand, rcvr);
     match method.tag() {
         sym::ABS => {
             unpack!(strand, args =>);
@@ -196,11 +195,11 @@ pub(crate) fn int_mcall<'v, 'a, 's>(
         }
         sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
             unpack!(strand, args =>);
-            out.store(receiver);
+            Output::set(strand, out, rcvr);
             Ok(())
         }
-        sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, &receiver, method, args, out),
-        _ => instance_mcall_fallback(strand, &receiver, method, args, out),
+        sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out),
+        _ => instance_mcall_fallback(strand, rcvr, method, args, out),
     }
 }
 
@@ -212,30 +211,28 @@ pub(crate) fn float_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let receiver = Value::from_input(strand, rcvr);
     let result = match method.tag() {
-        sym::ABS => Some(Value::from_f64(strand, value.abs())),
-        sym::SIGNUM => Some(Value::from_f64(strand, value.signum())),
-        sym::ROUND => Some(Value::from_f64(strand, value.round())),
-        sym::FLOOR => Some(Value::from_f64(strand, value.floor())),
-        sym::CEIL => Some(Value::from_f64(strand, value.ceil())),
-        sym::TRUNC => Some(Value::from_f64(strand, value.trunc())),
-        sym::IS_NAN => Some(Value::from_bool(value.is_nan())),
-        sym::IS_FINITE => Some(Value::from_bool(value.is_finite())),
-        sym::IS_INFINITE => Some(Value::from_bool(value.is_infinite())),
-        sym::IS_NORMAL => Some(Value::from_bool(value.is_normal())),
-        sym::IS_SUBNORMAL => Some(Value::from_bool(value.is_subnormal())),
+        sym::ABS => Some(Prim::F64(value.abs())),
+        sym::SIGNUM => Some(Prim::F64(value.signum())),
+        sym::ROUND => Some(Prim::F64(value.round())),
+        sym::FLOOR => Some(Prim::F64(value.floor())),
+        sym::CEIL => Some(Prim::F64(value.ceil())),
+        sym::TRUNC => Some(Prim::F64(value.trunc())),
+        sym::IS_NAN => Some(Prim::Bool(value.is_nan())),
+        sym::IS_FINITE => Some(Prim::Bool(value.is_finite())),
+        sym::IS_INFINITE => Some(Prim::Bool(value.is_infinite())),
+        sym::IS_NORMAL => Some(Prim::Bool(value.is_normal())),
+        sym::IS_SUBNORMAL => Some(Prim::Bool(value.is_subnormal())),
         _ => None,
     };
     if let Some(result) = result {
         unpack!(strand, args =>);
-        let mut out = out;
-        out.store(result);
+        Output::set(strand, out, result);
         Ok(())
     } else if matches!(method.tag(), sym::MIN | sym::MAX | sym::CLAMP) {
-        default_mcall(strand, &receiver, method, args, out)
+        default_mcall(strand, rcvr, method, args, out)
     } else {
-        instance_mcall_fallback(strand, &receiver, method, args, out)
+        instance_mcall_fallback(strand, rcvr, method, args, out)
     }
 }
 

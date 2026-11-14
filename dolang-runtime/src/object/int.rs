@@ -19,7 +19,7 @@ use crate::{
         prim::Prim,
     },
     vm::Vm,
-    with_str,
+    with_slots, with_str,
 };
 
 unsafe impl crate::gc::ImmState for i128 {
@@ -42,7 +42,7 @@ fn binop<'v, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let prim = right.to_prim(strand)?;
     let value = op(&Prim::from(left), strand, &prim)?;
-    Ok(Value::from_prim(strand, value))
+    Ok(Value::from_input(strand, value))
 }
 
 fn rbinop<'v, 's>(
@@ -53,7 +53,7 @@ fn rbinop<'v, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let prim = right.to_prim(strand)?;
     let value = op(&prim, strand, &Prim::from(left))?;
-    Ok(Value::from_prim(strand, value))
+    Ok(Value::from_input(strand, value))
 }
 
 impl<'v> Protocol<'v> for IntObj {
@@ -124,14 +124,14 @@ impl<'v> Protocol<'v> for IntObj {
         this.get()
             .checked_neg()
             .ok_or_else(|| Error::overflow(strand))
-            .map(|v| Value::from_int(strand, v))
+            .map(|v| Value::from_input(strand, Prim::Int(v)))
     }
 
     fn op_bnot<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_int(strand, !*this.get()))
+        Ok(Value::from_input(strand, Prim::Int(!*this.get())))
     }
 
     fn op_band<'a, 's>(
@@ -463,14 +463,14 @@ impl<'v> Protocol<'v> for VerbatimObj {
             .value
             .checked_neg()
             .ok_or_else(|| Error::overflow(strand))
-            .map(|v| Value::from_int(strand, v))
+            .map(|v| Value::from_input(strand, Prim::Int(v)))
     }
 
     fn op_bnot<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_int(strand, !this.get().value))
+        Ok(Value::from_input(strand, Prim::Int(!this.get().value)))
     }
 
     fn op_band<'a, 's>(
@@ -975,9 +975,10 @@ impl<'v> Protocol<'v> for Int {
             sym::INIT_METHOD => {
                 unpack!(strand, args => self_val, value);
                 let coerced = construct(&value, strand)?;
-                let native = Value::from_int(strand, coerced);
-                self_val.op_fill(strand, &strand.singletons().int, native)?;
-                Ok(())
+                with_slots!(strand, |mut native| {
+                    Output::set(strand, Slot::reborrow(&mut native), coerced);
+                    self_val.op_fill(strand, &strand.singletons().int, native.take())
+                })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().int, method, args, out).await,
         }

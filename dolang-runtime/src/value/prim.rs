@@ -99,17 +99,10 @@ impl Prim {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self {
-            Prim::Int(value) => {
-                let receiver = Value::from_prim(strand, self);
-                num::int_mcall(strand, &receiver, value, method, args, out)
-            }
-            Prim::F64(value) => {
-                let receiver = Value::from_prim(strand, self);
-                num::float_mcall(strand, &receiver, value, method, args, out)
-            }
+            Prim::Int(value) => num::int_mcall(strand, self, value, method, args, out),
+            Prim::F64(value) => num::float_mcall(strand, self, value, method, args, out),
             Prim::Nil | Prim::Bool(_) if is_special_mcall(method.tag()) => {
-                let receiver = Value::from_prim(strand, self);
-                instance_mcall_fallback(strand, &receiver, method, args, out)
+                instance_mcall_fallback(strand, self, method, args, out)
             }
             _ => Err(Error::type_error(strand, "method call not supported")),
         }

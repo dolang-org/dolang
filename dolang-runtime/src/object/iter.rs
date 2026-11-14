@@ -198,13 +198,12 @@ pub(crate) fn unpack_cursor<'v, 's>(
     sig: &sig::Unpack<'v, '_>,
     out: &mut Slots<'v, '_>,
     mut index: usize,
-    mut next: impl FnMut(&mut Strand<'v, 's>, usize) -> Option<(usize, Value<'v>)>,
+    mut next: impl FnMut(&mut Strand<'v, 's>, usize, Slot<'v, '_>) -> Option<usize>,
 ) -> Result<'v, 's, usize> {
     let pos_count = sig.required + sig.optional.len();
     for i in 0..(pos_count + sig.keys.len()) {
         if i < pos_count {
-            if let Some((next_index, value)) = next(strand, index) {
-                out.at(i).store(value);
+            if let Some(next_index) = next(strand, index, out.at(i)) {
                 index = next_index;
             } else if i >= sig.required {
                 out.at(i).store(sig.optional[i - sig.required].dup());
@@ -223,8 +222,11 @@ pub(crate) fn unpack_cursor<'v, 's>(
             }
         }
     }
-    if sig.pos_rest() == crate::bytecode::Rest::None && next(strand, index).is_some() {
-        return Err(Error::unexpected_positional(strand, pos_count));
+    if sig.pos_rest() == crate::bytecode::Rest::None {
+        let extra = with_slots!(strand, |extra| next(strand, index, extra).is_some());
+        if extra {
+            return Err(Error::unexpected_positional(strand, pos_count));
+        }
     }
     Ok(index)
 }
@@ -311,7 +313,7 @@ async fn iter_all_any<'v, 'a, 's>(
 async fn iter_count<'v, 'a, 's>(
     strand: &'a mut Strand<'v, 's>,
     obj: &Value<'v>,
-    mut out: Slot<'v, 'a>,
+    out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut item| {
         let mut count = 0usize;
@@ -322,7 +324,7 @@ async fn iter_count<'v, 'a, 's>(
             }
         }
         let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
-        out.store(Value::from_i64(strand, value));
+        Output::set(strand, out, value);
         Ok(())
     })
 }
@@ -575,7 +577,7 @@ impl<'v> Protocol<'v> for Iterable {
         }
 
         if let Some(delegator) = this.delegator() {
-            args.prepend_self(delegator.dup());
+            args.prepend_self(strand, delegator);
         }
         match method.tag() {
             sym::ITER => {
@@ -661,7 +663,7 @@ impl<'v> Protocol<'v> for Sinkable {
         }
 
         if let Some(delegator) = this.delegator() {
-            args.prepend_self(delegator.dup());
+            args.prepend_self(strand, delegator);
         }
         match method.tag() {
             sym::SINK => {
@@ -1342,8 +1344,7 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
             let next_index = index
                 .checked_add(1)
                 .ok_or_else(|| Error::overflow(strand))?;
-            let items = vec![Value::from_i64(strand, index), item.take()];
-            tuple::create(strand, items, out);
+            tuple::create_pair(strand, index, &item, out);
             this.borrow_mut(strand)?.index = next_index;
             Ok(true)
         })
@@ -1523,7 +1524,7 @@ impl<'v> Protocol<'v> for Iter {
         }
 
         if let Some(delegator) = this.delegator() {
-            args.prepend_self(delegator.dup());
+            args.prepend_self(strand, delegator);
         }
         let default = Sym::well_known(sym::DEFAULT);
         let else_key = Sym::well_known(sym::ELSE);
@@ -1714,7 +1715,7 @@ impl<'v> Protocol<'v> for Sink {
         }
 
         if let Some(delegator) = this.delegator() {
-            args.prepend_self(delegator.dup());
+            args.prepend_self(strand, delegator);
         }
         match method.tag() {
             // Reached only when the class doesn't define its own `(sink)`.

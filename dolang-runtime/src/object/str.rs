@@ -598,23 +598,24 @@ impl<'v> UnicodeIter<'v> {
         snapshot
     }
 
-    fn next_value(&mut self, strand: &mut Strand<'v, '_>) -> Option<Value<'v>> {
+    fn next_value(&mut self, strand: &mut Strand<'v, '_>, out: Slot<'v, '_>) -> bool {
         let boundaries = self.boundaries;
         let offset = self.offset;
         if let Some(fragment) = self.next_str() {
             let len = fragment.len();
-            let value = if boundaries {
-                Value::from_int(strand, offset as i128)
+            if boundaries {
+                Output::set(strand, out, offset);
             } else {
-                Value::from_str(strand, fragment)
-            };
+                Output::set(strand, out, fragment);
+            }
             self.offset += len;
-            Some(value)
+            true
         } else if boundaries && !self.terminal_emitted {
             self.terminal_emitted = true;
-            Some(Value::from_int(strand, offset as i128))
+            Output::set(strand, out, offset);
+            true
         } else {
-            None
+            false
         }
     }
 
@@ -648,16 +649,15 @@ fn fill_unpack<'v, 's>(
     strand: &mut Strand<'v, 's>,
     sig: &sig::Unpack<'v, '_>,
     out: &mut Slots<'v, '_>,
-    mut next: impl FnMut(&mut Strand<'v, 's>) -> Option<Value<'v>>,
+    mut next: impl FnMut(&mut Strand<'v, 's>, Slot<'v, '_>) -> bool,
 ) -> Result<'v, 's, ()> {
     for i in 0..sig.required {
-        let value = next(strand).ok_or_else(|| Error::missing_positional(strand, sig.required))?;
-        out.at(i).store(value);
+        if !next(strand, out.at(i)) {
+            return Err(Error::missing_positional(strand, sig.required));
+        }
     }
     for (i, default) in sig.optional.iter().enumerate() {
-        if let Some(value) = next(strand) {
-            out.at(sig.required + i).store(value);
-        } else {
+        if !next(strand, out.at(sig.required + i)) {
             out.at(sig.required + i).store(default.dup());
         }
     }
@@ -672,7 +672,7 @@ fn fill_unpack<'v, 's>(
             });
         }
     }
-    if sig.pos_rest() == Rest::None && next(strand).is_some() {
+    if sig.pos_rest() == Rest::None && with_slots!(strand, |extra| next(strand, extra)) {
         return Err(Error::unexpected_positional(strand, pos_count));
     }
     Ok(())
@@ -716,14 +716,10 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
     async fn op_next<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
-        let Some(value) = iter.next_value(strand) else {
-            return Ok(false);
-        };
-        out.store(value);
-        Ok(true)
+        Ok(iter.next_value(strand, out))
     }
 
     fn op_get<'a, 's>(
@@ -752,7 +748,9 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut iter = this.borrow(strand)?.snapshot();
-        fill_unpack(strand, sig, &mut out, |strand| iter.next_value(strand))?;
+        fill_unpack(strand, sig, &mut out, |strand, out| {
+            iter.next_value(strand, out)
+        })?;
         if let Some(i) = sig.pos_rest_slot() {
             strand
                 .builtin_types()
@@ -946,15 +944,13 @@ impl<'v> Protocol<'v> for Split<'v> {
             let Some((start, end)) = borrow.next_segment() else {
                 return Err(Error::missing_positional(strand, sig.required));
             };
-            out.at(i)
-                .store(Value::from_str(strand, &borrow.str[start..end]));
+            Output::set(strand, out.at(i), &borrow.str[start..end]);
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
-                out.at(sig.required + i)
-                    .store(Value::from_str(strand, &borrow.str[start..end]));
+                Output::set(strand, out.at(sig.required + i), &borrow.str[start..end]);
             } else {
                 out.at(sig.required + i).store(sig.optional[i].dup());
             }

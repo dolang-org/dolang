@@ -1315,17 +1315,6 @@ impl<'v, T: Collect<Annex: Sized> + Boxable<Header>> Gc<'v, T> {
             )
         }
     }
-
-    pub(crate) fn new_with_annex(arena: &Arena<'v>, value: T, annex: T::Annex) -> Self {
-        unsafe {
-            Gc::from_parts_annex(
-                arena,
-                Header::new(arena, NonNull::from_ref(<T as Boxable<Header>>::VTBL)),
-                value,
-                annex,
-            )
-        }
-    }
 }
 
 impl<'v, T, P, E> Gc<'v, T>

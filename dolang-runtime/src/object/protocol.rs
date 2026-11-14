@@ -2442,8 +2442,7 @@ pub(crate) fn abstract_init<'v, 's, T: ?Sized + Protocol<'v>>(
     args: Args<'v, '_>,
 ) -> Result<'v, 's, ()> {
     unpack!(strand, args => instance);
-    let ty = Value::from_object(this.receiver.to_strong());
-    if !instance.is_instance_of(strand, &ty) {
+    if !instance.is_instance_of(strand, this) {
         return Err(Error::type_error(strand, "invalid type for unbound method"));
     }
     Ok(())
@@ -2564,8 +2563,10 @@ pub(crate) fn instance_mcall_fallback<'v, 'a, 's>(
     if !is_special_mcall(method.tag()) {
         return Err(Error::field(strand, method));
     }
-    let receiver = Value::from_input(strand, receiver);
-    special_mcall(strand, &receiver, None, method, args, out)
+    with_slots!(strand, |mut receiver_slot| {
+        Output::set(strand, Slot::reborrow(&mut receiver_slot), receiver);
+        special_mcall(strand, &receiver_slot, None, method, args, out)
+    })
 }
 
 /// Handle a special method called through `this`, which may be delegated to. A
@@ -2579,10 +2580,12 @@ pub(crate) async fn recv_special_mcall<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     if this.delegator().is_none() && is_special_mcall(method.tag()) {
-        let receiver = Value::from_object(this.receiver.to_strong());
-        if receiver.is_instance_of(strand, TypeObject::Type) {
-            return type_mcall_fallback(strand, &receiver, method, args, out).await;
-        }
+        with_slots!(strand, |mut receiver| {
+            Output::set(strand, Slot::reborrow(&mut receiver), this);
+            if receiver.is_instance_of(strand, TypeObject::Type) {
+                return type_mcall_fallback(strand, &receiver, method, args, out).await;
+            }
+        });
     }
     instance_mcall_fallback(strand, this, method, args, out)
 }

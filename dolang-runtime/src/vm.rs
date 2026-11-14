@@ -26,13 +26,18 @@ use crate::{
     bytecode::file,
     error::{Error, Result},
     frame::{self, CallFrame, Native},
-    gc::{Gc, arena::Arena},
+    gc::{
+        self, Boxable, Gc,
+        arena::{Arena, Header},
+    },
     object::{
         BuiltinTypes, Singletons, TypeTable, array,
         array_view::{self, ArrayLike},
         dict,
         dict_view::{self, DictLike},
+        float,
         function::NativeFunction,
+        int,
         module::{Native as NativeModule, NativeField},
         native::{Instance, Object, ObjectVtbl, Type, TypeBuilder},
         protocol::GcObj,
@@ -43,11 +48,11 @@ use crate::{
     stdlib,
     strand::{
         Local, LocalKey, LocalRootKey, LocalVtbl, SlotFrame, Strand, StrandGroup, StrandInner,
-        StrandRing,
+        StrandRing, with_slots_dynamic,
     },
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, Value, ValueCell},
+    value::{Input, Nil, Output, Slot, Value, ValueCell},
 };
 
 /// A spawned background strand future.
@@ -354,7 +359,7 @@ pub struct Vm<'v> {
     hash_state: RandomState,
     pub(crate) import_cache: RefCell<HashMap<String, ImportCacheEntry<'v>>>,
     pub(crate) native_modules: RefCell<HashMap<&'v str, Value<'v>>>,
-    pub(crate) importers: MonoVec<Value<'v>>,
+    pub(crate) importers: MonoVec<ValueCell<'v>>,
     pub(crate) pipe_handler: RefCell<Option<Box<ChannelFactory<'v>>>>,
     pub(crate) trap: RefCell<Option<Box<Trap<'v>>>>,
     pub(crate) io_error_handler: RefCell<Option<Box<IoErrorHandler<'v>>>>,
@@ -372,7 +377,7 @@ pub struct Vm<'v> {
     pub(crate) builtin_types: BuiltinTypes<'v>,
     pub(crate) types: TypeTable<'v>,
     /// Class object singletons for user-registered [`Object`] types.
-    pub(crate) type_singletons: MonoVec<Value<'v>>,
+    pub(crate) type_singletons: MonoVec<ValueCell<'v>>,
     /// Instance vtbls of user-registered [`Object`] types that declared an error
     /// kind via a nominal supertype.
     ///
@@ -562,6 +567,12 @@ impl<'v> Vm<'v> {
         self.symtab.gc();
     }
 
+    /// The type object of a registered native type.
+    pub(crate) fn type_singleton(&self, idx: usize) -> &Value<'v> {
+        // Safety: each singleton is written once, when its type is registered.
+        unsafe { self.type_singletons[idx].as_ref() }
+    }
+
     pub(crate) fn builtin_types(&self) -> &BuiltinTypes<'v> {
         &self.builtin_types
     }
@@ -591,7 +602,11 @@ impl<'v> Vm<'v> {
     /// - `packtab`: Argument patterns → sig::Pack specifications
     /// - `unpacktab`: Function signatures → sig::Unpack with default values
     /// - `sourcemap`: Delta-encoded offsets → (offset, line, file) tuples
-    fn load_bytecode(&self, bytecode: Bytecode, importer: Value<'v>) -> Gc<'v, Program<'v>> {
+    fn load_bytecode(
+        strand: &mut Strand<'v, '_>,
+        bytecode: Bytecode,
+        importer: impl Input<'v>,
+    ) -> Gc<'v, Program<'v>> {
         let Bytecode {
             bytes,
             content: verified,
@@ -619,6 +634,7 @@ impl<'v> Vm<'v> {
             })
             .collect();
 
+        // TODO(#1707): the symbol roots are loose until the program holds them.
         let symroots: Vec<_> = verified
             .symtab
             .content
@@ -626,9 +642,9 @@ impl<'v> Vm<'v> {
             .map(|s| {
                 let name = std::str::from_utf8(&main[s.name.clone()]).expect("verified UTF-8");
                 if s.private {
-                    self.sym_register_unique_obj(name)
+                    strand.sym_register_unique_obj(name)
                 } else {
-                    self.sym_register_obj(name)
+                    strand.sym_register_obj(name)
                 }
             })
             .collect();
@@ -638,139 +654,164 @@ impl<'v> Vm<'v> {
             .map(|s| unsafe { Sym::from_obj(s) })
             .collect();
 
-        let consttab: alias::Box<_> = verified
-            .consttab
-            .content
-            .iter()
-            .map(|c| match c {
-                file::Const::Nil => Value::NIL,
-                file::Const::Int(v) => Value::from_int(self, *v),
-                file::Const::VerbatimInt(v, file::StrId { start, end }) => {
-                    let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
-                    Value::from_int_verbatim(self, *v, s)
+        // Constants build in rooted slots, with the importer in the last one, and move into
+        // the program once its allocation exists.
+        let nconsts = verified.consttab.content.len();
+        with_slots_dynamic!(strand, nconsts + 1, |mut slots| {
+            Output::set(strand, slots.at(nconsts), importer);
+            for (i, c) in verified.consttab.content.iter().enumerate() {
+                let out = slots.at(i);
+                match c {
+                    file::Const::Nil => Output::set(strand, out, Nil),
+                    file::Const::Int(v) => Output::set(strand, out, *v),
+                    file::Const::VerbatimInt(v, file::StrId { start, end }) => {
+                        let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
+                        let verbatim = strand.builtin_types().verbatim_int;
+                        verbatim.create_imm(strand, int::Verbatim::new(*v, s), out);
+                    }
+                    file::Const::F64(v) => Output::set(strand, out, *v),
+                    file::Const::VerbatimF64(v, file::StrId { start, end }) => {
+                        let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
+                        let verbatim = strand.builtin_types().verbatim_f64;
+                        verbatim.create_imm(strand, float::Verbatim::new(*v, s), out);
+                    }
+                    file::Const::Bool(v) => Output::set(strand, out, *v),
+                    file::Const::Str(file::StrId { start, end }) => {
+                        // Safety: the verifier checks that string constants are UTF-8
+                        let s = unsafe { std::str::from_utf8_unchecked(&main[*start..*end]) };
+                        Output::set(strand, out, s);
+                    }
+                    file::Const::Bin(file::BinId { start, end }) => {
+                        Output::set(strand, out, &main[*start..*end]);
+                    }
+                    file::Const::Sym(idx) => {
+                        Output::set(strand, out, unsafe { Sym::from_obj(&symroots[*idx]) })
+                    }
                 }
-                file::Const::F64(v) => Value::from_f64(self, *v),
-                file::Const::VerbatimF64(v, file::StrId { start, end }) => {
-                    let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
-                    Value::from_f64_verbatim(self, *v, s)
-                }
-                file::Const::Bool(v) => Value::from_bool(*v),
-                file::Const::Str(file::StrId { start, end }) => {
-                    // Safety: the verifier checks that string constants are UTF-8
-                    Value::from_str(self, unsafe {
-                        std::str::from_utf8_unchecked(&main[*start..*end])
-                    })
-                }
-                file::Const::Bin(file::BinId { start, end }) => {
-                    Value::from_u8_slice(self, &main[*start..*end])
-                }
-                // SAFETY: TODO(#1707): the program is built from loose references
-                file::Const::Sym(idx) => Value::from_object(unsafe { symroots[*idx].dup() }),
-            })
-            .collect();
+            }
 
-        let packtab: alias::Box<_> = verified
-            .packtab
-            .content
-            .iter()
-            .map(|s| {
-                if s.iter().any(|p| matches!(p, dolang_bytecode::Arg::Pack)) {
-                    sig::Pack::Var(
-                        s.iter()
-                            .map(|p| match p {
-                                dolang_bytecode::Arg::Value => sig::Arg::Pos,
-                                dolang_bytecode::Arg::Pack => sig::Arg::Expand,
-                                dolang_bytecode::Arg::Key(id) => {
-                                    sig::Arg::Key(unsafe { Sym::from_obj(&symroots[*id]) })
-                                }
-                            })
-                            .collect(),
-                    )
-                } else {
-                    sig::Pack::Fixed(
-                        s.iter()
-                            .map(|p| match p {
-                                dolang_bytecode::Arg::Value => None,
-                                dolang_bytecode::Arg::Pack => unreachable!(),
-                                dolang_bytecode::Arg::Key(id) => {
-                                    Some(unsafe { Sym::from_obj(&symroots[*id]) })
-                                }
-                            })
-                            .collect(),
-                    )
-                }
-            })
-            .collect();
+            let embryo = unsafe { gc::Embryo::<Header, Program>::new_sized(strand.arena()) };
+            let importer = slots.at(nconsts).take();
+            let consttab: alias::Box<_> = (0..nconsts).map(|i| slots.at(i).take()).collect();
 
-        let unpacktab: alias::Box<_> = verified
-            .unpacktab
-            .content
-            .iter()
-            .map(|u| {
-                sig::Unpack::new(
-                    u.required,
-                    u.optional.iter().map(|d| consttab[*d].dup()).collect(),
-                    u.keys
-                        .iter()
-                        .map(
-                            |dolang_bytecode::file::UnpackKey { kind, default }| unsafe {
-                                UnpackKey {
-                                    kind: match kind {
-                                        dolang_bytecode::file::UnpackKeyKind::Sym(idx) => {
-                                            UnpackKeyKind::Sym(Sym::from_obj(&symroots[*idx]))
-                                        }
-                                        dolang_bytecode::file::UnpackKeyKind::Const(idx) => {
-                                            UnpackKeyKind::Const(consttab[*idx].dup())
-                                        }
-                                    },
-                                    default: default.map(|d| consttab[d].dup()),
-                                }
-                            },
+            let packtab: alias::Box<_> = verified
+                .packtab
+                .content
+                .iter()
+                .map(|s| {
+                    if s.iter().any(|p| matches!(p, dolang_bytecode::Arg::Pack)) {
+                        sig::Pack::Var(
+                            s.iter()
+                                .map(|p| match p {
+                                    dolang_bytecode::Arg::Value => sig::Arg::Pos,
+                                    dolang_bytecode::Arg::Pack => sig::Arg::Expand,
+                                    dolang_bytecode::Arg::Key(id) => {
+                                        sig::Arg::Key(unsafe { Sym::from_obj(&symroots[*id]) })
+                                    }
+                                })
+                                .collect(),
                         )
-                        .collect(),
-                    u.variadic,
+                    } else {
+                        sig::Pack::Fixed(
+                            s.iter()
+                                .map(|p| match p {
+                                    dolang_bytecode::Arg::Value => None,
+                                    dolang_bytecode::Arg::Pack => unreachable!(),
+                                    dolang_bytecode::Arg::Key(id) => {
+                                        Some(unsafe { Sym::from_obj(&symroots[*id]) })
+                                    }
+                                })
+                                .collect(),
+                        )
+                    }
+                })
+                .collect();
+
+            let unpacktab: alias::Box<_> = verified
+                .unpacktab
+                .content
+                .iter()
+                .map(|u| {
+                    sig::Unpack::new(
+                        u.required,
+                        u.optional.iter().map(|d| consttab[*d].dup()).collect(),
+                        u.keys
+                            .iter()
+                            .map(
+                                |dolang_bytecode::file::UnpackKey { kind, default }| unsafe {
+                                    UnpackKey {
+                                        kind: match kind {
+                                            dolang_bytecode::file::UnpackKeyKind::Sym(idx) => {
+                                                UnpackKeyKind::Sym(Sym::from_obj(&symroots[*idx]))
+                                            }
+                                            dolang_bytecode::file::UnpackKeyKind::Const(idx) => {
+                                                UnpackKeyKind::Const(consttab[*idx].dup())
+                                            }
+                                        },
+                                        default: default.map(|d| consttab[d].dup()),
+                                    }
+                                },
+                            )
+                            .collect(),
+                        u.variadic,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into();
+
+            let module_name = verified.module_name.clone().map(|id| id.start..id.end);
+
+            let funcdebugs = verified
+                .funcdebugtab
+                .content
+                .iter()
+                .map(|debug| {
+                    let sourcemap = debug
+                        .spans()
+                        .map(|entry| entry.expect("verified source map"))
+                        .collect::<Vec<_>>();
+                    FuncDebug {
+                        name: debug.name.clone(),
+                        file: debug.file.clone(),
+                        definition: debug.definition.span().expect("verified definition span"),
+                        sourcemap: sourcemap.into(),
+                    }
+                })
+                .collect();
+
+            // TODO(#1707): the program annex does not visit its tables, so the constants
+            // and symbol roots are reachable only by reference count.
+            // Safety: the header belongs to the embryo's arena and carries `Program`'s
+            // vtable.
+            unsafe {
+                embryo.finish_sized(
+                    Header::new(
+                        strand.arena(),
+                        NonNull::from_ref(<Program as Boxable<Header>>::VTBL),
+                    ),
+                    Program { importer },
+                    ProgramAnnex {
+                        bytecode: bytes,
+                        funcs,
+                        symroots,
+                        symtab,
+                        consttab,
+                        packtab,
+                        unpacktab,
+                        debugbintab,
+                        funcdebugs,
+                        module_name,
+                    },
                 )
-            })
-            .collect::<Vec<_>>()
-            .into();
-
-        let module_name = verified.module_name.clone().map(|id| id.start..id.end);
-
-        let funcdebugs = verified
-            .funcdebugtab
-            .content
-            .iter()
-            .map(|debug| {
-                let sourcemap = debug
-                    .spans()
-                    .map(|entry| entry.expect("verified source map"))
-                    .collect::<Vec<_>>();
-                FuncDebug {
-                    name: debug.name.clone(),
-                    file: debug.file.clone(),
-                    definition: debug.definition.span().expect("verified definition span"),
-                    sourcemap: sourcemap.into(),
-                }
-            })
-            .collect();
-
-        Gc::new_with_annex(
-            self.arena(),
-            Program { importer },
-            ProgramAnnex {
-                bytecode: bytes,
-                funcs,
-                symroots,
-                symtab,
-                consttab,
-                packtab,
-                unpacktab,
-                debugbintab,
-                funcdebugs,
-                module_name,
-            },
-        )
+            }
+        })
     }
+}
+
+/// Appends an empty cell to one of the VM's root lists and yields its slot to fill.
+pub(crate) fn root_slot<'v, 'a>(roots: &'a MonoVec<ValueCell<'v>>) -> Slot<'v, 'a> {
+    // Safety: the cell is new, so nothing else accesses it while the slot lives.
+    unsafe { roots.push_ref(ValueCell::default()).slot() }
 }
 
 /// Builder for configuring native modules.
@@ -1434,22 +1475,17 @@ impl<'v> Builder<'v> {
         + 'v,
     ) -> &mut Self {
         let vtbl = self.reg.inner.builtin_types.native_function;
-        self.reg
-            .inner
-            .importers
-            .push(Value::from_object(GcObj::new_imm(
-                self.reg.inner.arena(),
-                vtbl,
-                NativeFunction::new(
-                    async move |strand, args, out| {
-                        unpack!(strand, args => name);
-                        let name = name.to_string(strand)?;
-                        import(strand, &name, out).await
-                    },
-                    "<host>",
-                    "import",
-                ),
-            )));
+        let func = NativeFunction::new(
+            async move |strand, args, out| {
+                unpack!(strand, args => name);
+                let name = name.to_string(strand)?;
+                import(strand, &name, out).await
+            },
+            "<host>",
+            "import",
+        );
+        let vm: &'v Vm<'v> = self.reg.inner;
+        vtbl.create_imm(self, func, root_slot(&vm.importers));
         self
     }
 
@@ -1612,7 +1648,7 @@ impl Bytecode {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        self.run_inner(strand, Value::NIL, out).await
+        self.run_inner(strand, Nil, out).await
     }
 
     /// Run bytecode with a program-bound import handler.
@@ -1622,17 +1658,16 @@ impl Bytecode {
         importer: impl Input<'v>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let importer = Value::from_input(strand, importer);
         self.run_inner(strand, importer, out).await
     }
 
     async fn run_inner<'v, 's>(
         self,
         strand: &mut Strand<'v, 's>,
-        importer: Value<'v>,
+        importer: impl Input<'v>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let loaded = strand.load_bytecode(self, importer);
+        let loaded = Vm::load_bytecode(strand, self, importer);
         let frame = unsafe { CallFrame::new(loaded, 0, None, Some(strand.fp)) };
         // SAFETY: no arguments to unpack
         unsafe {

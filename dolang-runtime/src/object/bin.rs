@@ -537,7 +537,7 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::UNPACK => {
                 unpack!(strand, args =>);
-                super::array_view::unpack_bin(strand, Value::from_object(this.to_strong()), out);
+                super::array_view::unpack_bin(strand, &this, out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
@@ -756,15 +756,13 @@ impl<'v> Protocol<'v> for Split<'v> {
             let Some((start, end)) = borrow.next_segment() else {
                 return Err(Error::missing_positional(strand, sig.required));
             };
-            out.at(i)
-                .store(Value::from_u8_slice(strand, &borrow.str[start..end]));
+            Output::set(strand, out.at(i), &borrow.str[start..end]);
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
-                out.at(sig.required + i)
-                    .store(Value::from_u8_slice(strand, &borrow.str[start..end]));
+                Output::set(strand, out.at(sig.required + i), &borrow.str[start..end]);
             } else {
                 out.at(sig.required + i).store(sig.optional[i].dup());
             }
@@ -911,11 +909,13 @@ impl<'v> Protocol<'v> for Class {
         match method.tag() {
             sym::INIT_METHOD => {
                 unpack!(strand, args => self_val, value);
-                let native =
-                    with_u8_slice!(strand, value, |slice| Value::from_u8_slice(strand, slice))
-                        .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))?;
-                self_val.op_fill(strand, &strand.singletons().bin, native)?;
-                Ok(())
+                with_slots!(strand, |mut native| {
+                    with_u8_slice!(strand, value, |slice| {
+                        Output::set(strand, Slot::reborrow(&mut native), slice)
+                    })
+                    .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))?;
+                    self_val.op_fill(strand, &strand.singletons().bin, native.take())
+                })
             }
             sym::PACK => {
                 unpack!(strand, args => obj);

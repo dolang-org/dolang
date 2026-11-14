@@ -185,6 +185,8 @@ impl<'v> Vm<'v> {
                     );
                 }
                 for importer in self.importers.iter() {
+                    // Safety: each importer is written once, when it is registered.
+                    let importer = unsafe { importer.as_ref() };
                     if let Err(e) = call!(strand, importer, name, Slot::reborrow(&mut out)) {
                         if e.kind() == ErrorKind::Import {
                             err = e;
@@ -390,7 +392,7 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let mut acc: Vec<u8> = Vec::new();
         for arg in args {
@@ -402,7 +404,7 @@ impl<'v> Vm<'v> {
                 || Error::type_error(strand, "expected binary or string value in binary concat"),
             )?;
         }
-        out.store(Value::from_u8_slice(strand, &acc));
+        Output::set(strand, out, &acc[..]);
         Ok(())
     }
 
@@ -634,8 +636,8 @@ impl<'v> Vm<'v> {
                         key: Sym<'v, '_>,
                         value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
-                        self.items
-                            .push((Some(strand.sym_obj(key)), ValueCell::new(strand, value)));
+                        let value = ValueCell::new(strand, value);
+                        self.items.push((Some(strand.sym_obj(key)), value));
                         Ok(())
                     }
 
@@ -646,8 +648,8 @@ impl<'v> Vm<'v> {
                         value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
                         if let Some(sym) = key.as_sym(strand) {
-                            self.items
-                                .push((Some(strand.sym_obj(sym)), ValueCell::new(strand, value)));
+                            let value = ValueCell::new(strand, value);
+                            self.items.push((Some(strand.sym_obj(sym)), value));
                             Ok(())
                         } else {
                             Err(Error::unexpected_key(strand, key))
@@ -1242,7 +1244,7 @@ impl<'v> Vm<'v> {
                                 && weak.ptr_eq_strong(&guard)
                             {
                                 frame.push(Value::NIL);
-                                frame.push(Value::from_int(strand.vm(), indicator as i128));
+                                frame.push(Value::from_i16(indicator.into()));
                                 Ok(())
                             } else {
                                 Err(err)

@@ -26,7 +26,7 @@ use crate::{
     sym::Sym,
     value::{Input, Output, Slot, Value, fmt::Spec},
     vm::Alloc,
-    with_instance,
+    with_instance, with_slots,
 };
 
 /// Object identifier
@@ -400,17 +400,21 @@ impl<'v, 'a> Array<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            let mut borrow = match pin.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            match borrow.inner.get_mut(index) {
-                Some(v) => {
-                    *v = Value::from_input(strand, value);
-                    Ok(true)
+            with_slots!(strand, |mut value_slot| {
+                // Build the value before taking the exclusive borrow.
+                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                match borrow.inner.get_mut(index) {
+                    Some(v) => {
+                        *v = value_slot.take();
+                        Ok(true)
+                    }
+                    None => Ok(false),
                 }
-                None => Ok(false),
-            }
+            })
         })
     }
 
@@ -421,14 +425,16 @@ impl<'v, 'a> Array<'v, 'a> {
         input: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
         with_pin!(strand, self.0, |pin| {
-            // Build the value before taking the exclusive borrow.
-            let value = Value::from_input(strand, input);
-            let mut borrow = match pin.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            borrow.inner.push(value);
-            Ok(())
+            with_slots!(strand, |mut value| {
+                // Build the value before taking the exclusive borrow.
+                Output::set(strand, Slot::reborrow(&mut value), input);
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.inner.push(value.take());
+                Ok(())
+            })
         })
     }
 
@@ -567,14 +573,11 @@ impl<'v, 'a> Array<'v, 'a> {
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
         with_pin!(strand, self.0, |pin| {
-            let tuple = {
-                let borrow = match pin.borrow() {
-                    Some(b) => b,
-                    None => return Err(Error::concurrency(strand)),
-                };
-                tuple::tuple(strand.vm(), borrow.inner.iter().map(Value::dup))
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
             };
-            Output::set(strand, out, Value::from_object(tuple));
+            tuple::create(strand, borrow.inner.iter().map(Value::dup), out);
             Ok(())
         })
     }
@@ -626,18 +629,20 @@ impl<'v, 'a> Dict<'v, 'a> {
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            let key = Value::from_input(strand, key);
-            let borrow = match pin.borrow() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            match borrow.get(strand, &key, instance)? {
-                Some(value) => {
-                    Output::set(strand, out, value);
-                    Ok(true)
+            with_slots!(strand, |mut key_slot| {
+                Output::set(strand, Slot::reborrow(&mut key_slot), key);
+                let borrow = match pin.borrow() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                match borrow.get(strand, &key_slot, instance)? {
+                    Some(value) => {
+                        Output::set(strand, out, value);
+                        Ok(true)
+                    }
+                    None => Ok(false),
                 }
-                None => Ok(false),
-            }
+            })
         })
     }
 
@@ -653,17 +658,19 @@ impl<'v, 'a> Dict<'v, 'a> {
         unique: bool,
     ) -> Result<'v, 's, ()> {
         with_pin!(strand, self.0, |pin| {
-            let key = Value::from_input(strand, key);
-            let value = Value::from_input(strand, value);
-            let mut hasher = strand.vm().hasher();
-            key.op_hash(strand, &mut hasher)?;
-            let hv = hasher.finish();
-            let mut borrow = match pin.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            borrow.insert(strand, key, value, hv, unique)?;
-            Ok(())
+            with_slots!(strand, |mut key_slot, mut value_slot| {
+                Output::set(strand, Slot::reborrow(&mut key_slot), key);
+                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                let mut hasher = strand.vm().hasher();
+                key_slot.op_hash(strand, &mut hasher)?;
+                let hv = hasher.finish();
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.insert(strand, key_slot.take(), value_slot.take(), hv, unique)?;
+                Ok(())
+            })
         })
     }
 
@@ -674,12 +681,14 @@ impl<'v, 'a> Dict<'v, 'a> {
         key: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            let key = Value::from_input(strand, key);
-            let mut borrow = match pin.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            borrow.delete(strand, &key)
+            with_slots!(strand, |mut key_slot| {
+                Output::set(strand, Slot::reborrow(&mut key_slot), key);
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.delete(strand, &key_slot)
+            })
         })
     }
 }
@@ -723,15 +732,17 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            let value = Value::from_input(strand, value);
-            let mut hasher = strand.vm().hasher();
-            value.op_hash(strand, &mut hasher)?;
-            let hash = hasher.finish();
-            let borrow = match pin.borrow() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            borrow.contains(strand, &value, hash)
+            with_slots!(strand, |mut value_slot| {
+                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                let mut hasher = strand.vm().hasher();
+                value_slot.op_hash(strand, &mut hasher)?;
+                let hash = hasher.finish();
+                let borrow = match pin.borrow() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.contains(strand, &value_slot, hash)
+            })
         })
     }
 
@@ -743,16 +754,18 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            // Build the value and hash it before taking the exclusive borrow.
-            let value = Value::from_input(strand, value);
-            let mut hasher = strand.vm().hasher();
-            value.op_hash(strand, &mut hasher)?;
-            let hash = hasher.finish();
-            let mut borrow = match pin.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            borrow.insert(strand, value, hash)
+            with_slots!(strand, |mut value_slot| {
+                // Build the value and hash it before taking the exclusive borrow.
+                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                let mut hasher = strand.vm().hasher();
+                value_slot.op_hash(strand, &mut hasher)?;
+                let hash = hasher.finish();
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.insert(strand, value_slot.take(), hash)
+            })
         })
     }
 
@@ -763,15 +776,17 @@ impl<'v, 'a> Set<'v, 'a> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            let value = Value::from_input(strand, value);
-            let mut hasher = strand.vm().hasher();
-            value.op_hash(strand, &mut hasher)?;
-            let hash = hasher.finish();
-            let mut borrow = match pin.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
-            };
-            borrow.delete(strand, &value, hash)
+            with_slots!(strand, |mut value_slot| {
+                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                let mut hasher = strand.vm().hasher();
+                value_slot.op_hash(strand, &mut hasher)?;
+                let hash = hasher.finish();
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.delete(strand, &value_slot, hash)
+            })
         })
     }
 

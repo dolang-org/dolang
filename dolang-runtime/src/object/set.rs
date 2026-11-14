@@ -913,13 +913,11 @@ impl<'v> Protocol<'v> for Type {
         match method.tag() {
             sym::INIT_METHOD => {
                 unpack!(strand, args => self_val);
-                let native = Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().set,
-                    Set::new(),
-                ));
-                self_val.op_fill(strand, &strand.singletons().set, native)?;
-                Ok(())
+                with_slots!(strand, |mut native| {
+                    let set = strand.builtin_types().set;
+                    set.create(strand, Set::new(), Slot::reborrow(&mut native));
+                    self_val.op_fill(strand, &strand.singletons().set, native.take())
+                })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().set, method, args, out).await,
         }

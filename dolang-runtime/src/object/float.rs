@@ -19,7 +19,7 @@ use crate::{
         prim::Prim,
     },
     vm::Vm,
-    with_str,
+    with_slots, with_str,
 };
 
 unsafe impl crate::gc::ImmState for f64 {
@@ -42,7 +42,7 @@ fn binop<'v, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let prim = right.to_prim(strand)?;
     let value = op(&Prim::from(left), strand, &prim)?;
-    Ok(Value::from_prim(strand, value))
+    Ok(Value::from_input(strand, value))
 }
 
 fn rbinop<'v, 's>(
@@ -53,7 +53,7 @@ fn rbinop<'v, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let prim = right.to_prim(strand)?;
     let value = op(&prim, strand, &Prim::from(left))?;
-    Ok(Value::from_prim(strand, value))
+    Ok(Value::from_input(strand, value))
 }
 
 impl<'v> Protocol<'v> for FloatObj {
@@ -113,7 +113,7 @@ impl<'v> Protocol<'v> for FloatObj {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_f64(strand, -*this.get()))
+        Ok(Value::from_input(strand, Prim::F64(-*this.get())))
     }
 
     fn op_add<'a, 's>(
@@ -367,7 +367,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_f64(strand, -this.get().value))
+        Ok(Value::from_input(strand, Prim::F64(-this.get().value)))
     }
 
     fn op_add<'a, 's>(
@@ -722,9 +722,10 @@ impl<'v> Protocol<'v> for Float {
             sym::INIT_METHOD => {
                 unpack!(strand, args => self_val, value);
                 let coerced = construct(&value, strand)?;
-                let native = Value::from_f64(strand, coerced);
-                self_val.op_fill(strand, &strand.singletons().float, native)?;
-                Ok(())
+                with_slots!(strand, |mut native| {
+                    Output::set(strand, Slot::reborrow(&mut native), coerced);
+                    self_val.op_fill(strand, &strand.singletons().float, native.take())
+                })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().float, method, args, out).await,
         }
