@@ -2848,7 +2848,7 @@ impl<'v> Object<'v> for Diagnostic {
                     };
 
                     match strand.import("term", &mut term).await {
-                        Ok(()) => method!(strand, &term, preformat, out, rendered.as_str()),
+                        Ok(()) => method!(strand, &term, preformat, rendered.as_str(), out),
                         Err(error) if error.kind() == RuntimeErrorKind::Import => {
                             Output::set(strand, out, rendered.as_str());
                             Ok(())

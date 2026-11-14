@@ -576,27 +576,35 @@ macro_rules! unpack {
 /// ```rust,no_run
 /// # use dolang_runtime::{call, strand::Strand, value::{Value, Slot}};
 /// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, rcvr: &Value<'v>, mut out: Slot<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// call!(strand, rcvr, &mut out, 42i64)?;
+/// call!(strand, rcvr, 42i64, &mut out)?;
 /// # Ok(())
 /// # }
 /// ```
 /// where:
 /// - `strand`: the current [`Strand`]
 /// - `rcvr`: the call receiver, a [`&Value`](Value) (or something that derefs to one)
-/// - `out`: where to place the output value on success, anything that implements
-///   [`Output`](value::Output)
 /// - `pos`: positional argument, anything that implements [`Input`]
 /// - `key`: key for a key argument, which should be an in-scope [`Sym`] (typically obtained from
 ///   [`Builder::sym`](crate::vm::Builder::sym)).
 /// - `val`: value for key argument, the same as positional
+/// - `out`: where to place the output value on success, anything that implements
+///   [`Output`](value::Output)
 ///
 /// The call runs and is awaited inline, so the macro must be used in an async context and
 /// evaluates to the call's [`Result`](crate::error::Result). An argument moved out of a
 /// [`Slot`](value::Slot) is moved back when the call finishes or is dropped.
 #[macro_export]
 macro_rules! call {
-    (impl $strand: expr, $rcvr: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {}) => {
+    (impl $strand: expr, $rcvr: expr,
+     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr, $($rest: tt)+}) => {
+        call!(impl $strand, $rcvr, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, None }, {$($rest)+})
+    };
+    (impl $strand: expr, $rcvr: expr,
+     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$key: ident : $arg: expr, $($rest: tt)+}) => {
+        call!(impl $strand, $rcvr, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, (Some($key)) }, {$($rest)+})
+    };
+    (impl $strand: expr, $rcvr: expr,
+     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$out: expr $(,)?}) => {
         {
             let mut inputs: [&mut dyn $crate::value::Input<'_>; _] = [$($slots),*];
             let sig = [$($sig),*];
@@ -609,27 +617,8 @@ macro_rules! call {
             $crate::value::Value::op_call(&rcvr, strand, args, out).await
         }
     };
-    (impl $strand: expr, $rcvr: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr, $($rest: tt)*}) => {
-        call!(impl $strand, $rcvr, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, None }, {$($rest)*})
-    };
-    (impl $strand: expr, $rcvr: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$key: ident : $arg: expr, $($rest: tt)*}) => {
-        call!(impl $strand, $rcvr, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, (Some($key)) }, {$($rest)*})
-    };
-    (impl $strand: expr, $rcvr: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr}) => {
-        call!(impl $strand, $rcvr, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, None }, {})
-    };
-    (impl $strand: expr, $rcvr: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$key: ident : $arg: expr}) => {
-        call!(impl $strand, $rcvr, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, (Some($key)) }, {})
-    };
-    ($strand: expr, $rcvr: expr, $out: expr, $($rest: tt)*) => {
-        call!(impl $strand, $rcvr, $out, {}, {}, { $($rest)* })
-    };
-    ($strand: expr, $rcvr: expr, $out: expr) => {
-        call!(impl $strand, $rcvr, $out, {}, {}, { })
+    ($strand: expr, $rcvr: expr, $($rest: tt)+) => {
+        call!(impl $strand, $rcvr, {}, {}, { $($rest)+ })
     };
 }
 
@@ -640,7 +629,7 @@ macro_rules! call {
 /// ```rust,no_run
 /// # use dolang_runtime::{method, strand::Strand, sym::Sym, value::{Value, Slot}};
 /// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, rcvr: &Value<'v>, method_sym: Sym<'v, 'a>, mut out: Slot<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// method!(strand, rcvr, method_sym, &mut out, 42i64)?;
+/// method!(strand, rcvr, method_sym, 42i64, &mut out)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -648,20 +637,28 @@ macro_rules! call {
 /// - `strand`: the current [`Strand`]
 /// - `rcvr`: the method call receiver, a [`&Value`](Value) (or something that derefs to one)
 /// - `method`: a [`Sym`] representing the method to invoke
-/// - `out`: where to place the output value on success, anything that implements
-///   [`Output`](value::Output)
 /// - `pos`: positional argument, anything that implements [`Input`]
 /// - `key`: key for a key argument, which should be an in-scope [`Sym`] (typically obtained from
 ///   [`Builder::sym`](crate::vm::Builder::sym)).
 /// - `val`: value for key argument, the same as positional
+/// - `out`: where to place the output value on success, anything that implements
+///   [`Output`](value::Output)
 ///
 /// The call runs and is awaited inline, so the macro must be used in an async context and
 /// evaluates to the call's [`Result`](crate::error::Result). An argument moved out of a
 /// [`Slot`](value::Slot) is moved back when the call finishes or is dropped.
 #[macro_export]
 macro_rules! method {
-    (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {}) => {
+    (impl $strand: expr, $rcvr: expr, $method: expr,
+     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr, $($rest: tt)+}) => {
+        method!(impl $strand, $rcvr, $method, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, None }, {$($rest)+})
+    };
+    (impl $strand: expr, $rcvr: expr, $method: expr,
+     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$key: ident : $arg: expr, $($rest: tt)+}) => {
+        method!(impl $strand, $rcvr, $method, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, (Some($key)) }, {$($rest)+})
+    };
+    (impl $strand: expr, $rcvr: expr, $method: expr,
+     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$out: expr $(,)?}) => {
         {
             let mut inputs: [&mut dyn $crate::value::Input<'_>; _] = [$($slots),*];
             let sig = [$($sig),*];
@@ -675,27 +672,8 @@ macro_rules! method {
             $crate::value::Value::op_mcall(&rcvr, strand, method, args, out).await
         }
     };
-    (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr, $($rest: tt)*}) => {
-        method!(impl $strand, $rcvr, $method, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, None }, {$($rest)*})
-    };
-    (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$key: ident : $arg: expr, $($rest: tt)*}) => {
-        method!(impl $strand, $rcvr, $method, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, (Some($key)) }, {$($rest)*})
-    };
-    (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr}) => {
-        method!(impl $strand, $rcvr, $method, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, None }, {})
-    };
-    (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
-     { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$key: ident : $arg: expr}) => {
-        method!(impl $strand, $rcvr, $method, $out, { $(, $slots)*, (&mut { let it = $arg; it }) }, { $(, $sig)*, (Some($key)) }, {})
-    };
-    ($strand: expr, $rcvr: expr, $method: expr, $out: expr, $($rest: tt)*) => {
-        method!(impl $strand, $rcvr, $method, $out, {}, {}, { $($rest)* })
-    };
-    ($strand: expr, $rcvr: expr, $method: expr, $out: expr) => {
-        method!(impl $strand, $rcvr, $method, $out, {}, {}, { })
+    ($strand: expr, $rcvr: expr, $method: expr, $($rest: tt)+) => {
+        method!(impl $strand, $rcvr, $method, {}, {}, { $($rest)+ })
     };
 }
 

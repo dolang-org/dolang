@@ -375,7 +375,7 @@ impl<'v> Object<'v> for StatusObject {
                 let annex = this.annex();
                 let text = status_text(strand, &annex)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text)
+                method!(strand, json, decode, text, out)
             });
 
         builder
@@ -556,7 +556,7 @@ async fn multipart_part<'v, 's>(
             with_slots!(strand, |mut json_mod, mut json_text| {
                 strand.import("json", &mut json_mod).await?;
                 let encode = global.syms.encode;
-                method!(strand, json_mod, encode, &mut json_text, &mut body)?;
+                method!(strand, json_mod, encode, &mut body, &mut json_text)?;
                 Output::set(strand, &mut body, &json_text);
                 Ok(())
             })?;
@@ -702,7 +702,7 @@ async fn request<'v, 's>(
         if let Some(json) = json {
             st.import("json", &mut key).await?;
             let encode = global.syms.encode;
-            method!(st, key, encode, &mut value, json)?;
+            method!(st, key, encode, json, &mut value)?;
             builder = builder
                 .body(value.to_string(st)?)
                 .header("content-type", "application/json");
@@ -748,7 +748,7 @@ async fn request<'v, 's>(
             .response
             .create_with_annex(st, response, global, &mut value);
         if let Some(thunk) = thunk {
-            let res = call!(st, thunk, out, &value);
+            let res = call!(st, thunk, &value, out);
             let _ = with_interrupt_mask!(st, InterruptMask::all(), {
                 method!(st, value, global.syms.close, &mut tmp)
             });
@@ -923,7 +923,7 @@ impl<'v> Object<'v> for Client {
                     inner: Some(builder.build().into_http(strand)?),
                 };
                 this.create_with_annex(strand, value, ClientAnnex { global }, &mut client);
-                let res = call!(strand, func, out, &client);
+                let res = call!(strand, func, &client, out);
                 let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
                     method!(strand, client, global.syms.close, tmp)
                 });
@@ -1083,7 +1083,7 @@ impl<'v> Object<'v> for Response {
                 let body = take_body(this, strand)?;
                 let text = text(body).await.into_http(strand)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text.as_str())
+                method!(strand, json, decode, text.as_str(), out)
             });
 
         builder
@@ -1189,7 +1189,7 @@ impl<'v> Object<'v> for Response {
                     let global = *this.annex();
                     take_io(this, strand, Slot::reborrow(&mut io))?;
                     strand.import("io", &mut module).await?;
-                    method!(strand, module, global.syms.buffered, &mut buffered, &io)?;
+                    method!(strand, module, global.syms.buffered, &io, &mut buffered)?;
                     method!(strand, buffered, global.syms.chomp, out)
                 },
             )

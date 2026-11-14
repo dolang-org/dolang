@@ -39,7 +39,7 @@ pub(crate) async fn finish_open_service<'v, 's>(
                 .types
                 .service
                 .create(strand, Service(Some(inner)), &mut handle);
-            let result = call!(strand, block, out, &handle);
+            let result = call!(strand, block, &handle, out);
             let _ = method!(strand, &handle, global.syms.close, &mut tmp);
             result
         })

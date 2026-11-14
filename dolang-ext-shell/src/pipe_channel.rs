@@ -648,7 +648,7 @@ async fn open_stream<'v, 's>(
             annex,
             Slot::reborrow(&mut handle),
         );
-        let result = call!(strand, block, out, &handle);
+        let result = call!(strand, block, &handle, out);
         // Always released, even when the block raised.
         let closed = with_instance!(
             strand,

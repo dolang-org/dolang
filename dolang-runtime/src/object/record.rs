@@ -675,7 +675,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver)
+                        call!(strand, &ty, &receiver, out)
                     });
                 }
                 let copy = Record::from_items(this.borrow(strand)?.snapshot());
@@ -1000,7 +1000,7 @@ impl<'v> Protocol<'v> for Class {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().record, &mut native, items)?;
+                    call!(strand, &strand.singletons().record, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().record, native.take())?;
                     Ok(())
                 })

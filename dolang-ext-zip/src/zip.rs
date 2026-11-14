@@ -408,7 +408,7 @@ impl<'v> Object<'v> for Archive {
                     });
 
                     if let Some(block) = block {
-                        let result = call!(strand, block, out, &file);
+                        let result = call!(strand, block, &file, out);
                         let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
                             method!(strand, &file, close, &mut tmp)
                         });
@@ -748,7 +748,7 @@ impl<'v> Object<'v> for Entry {
                             );
 
                             if let Some(block) = block {
-                                let result = call!(strand, block, out, &file);
+                                let result = call!(strand, block, &file, out);
                                 let close_result =
                                     with_interrupt_mask!(strand, InterruptMask::all(), {
                                         method!(strand, &file, close, &mut tmp)
@@ -1092,7 +1092,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         ArchiveAnnex::new(inner, global),
                         &mut wrapper,
                     );
-                    let result = call!(strand, block, out, &wrapper);
+                    let result = call!(strand, block, &wrapper, out);
                     let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
                         method!(strand, &wrapper, close, &mut tmp)
                     });

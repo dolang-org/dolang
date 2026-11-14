@@ -609,7 +609,7 @@ impl<'v> Array<'v> {
                             strand.check_trap_gc()?;
                         }
                         let out = slots.at(i);
-                        call!(strand, &key_fn, out, value)?;
+                        call!(strand, &key_fn, value, out)?;
                     }
                 }
 
@@ -1063,7 +1063,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver)
+                        call!(strand, &ty, &receiver, out)
                     });
                 }
                 let borrow = this.borrow(strand)?;
@@ -1411,7 +1411,7 @@ impl<'v> Protocol<'v> for Type {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().array, &mut native, items)?;
+                    call!(strand, &strand.singletons().array, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().array, native.take())?;
                     Ok(())
                 })

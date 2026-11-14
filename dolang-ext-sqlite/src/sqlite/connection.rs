@@ -257,7 +257,7 @@ impl<'v> Object<'v> for Connection {
 
                     if let Some(block) = block {
                         // Call the block with the statement handle
-                        let result = call!(strand, block, out, &wrapper);
+                        let result = call!(strand, block, &wrapper, out);
 
                         // Always close the statement, even on error
                         with_interrupt_mask!(strand, InterruptMask::all(), {
@@ -467,7 +467,7 @@ async fn transact<'v, 's, 'a>(
         );
 
         // Call the block with the transaction handle
-        call!(strand, &block, out, &wrapper)
+        call!(strand, &block, &wrapper, out)
     })
 }
 

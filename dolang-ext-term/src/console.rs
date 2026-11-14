@@ -250,7 +250,7 @@ impl<'v> Object<'v> for IoConsole {
                     let bytes = write_data(strand, args)?;
                     inner(this, strand, &mut stream)?;
                     let global = strand.state::<Tag>();
-                    method!(strand, &stream, global.syms.write_all, &mut tmp, &bytes[..])?;
+                    method!(strand, &stream, global.syms.write_all, &bytes[..], &mut tmp)?;
                     Output::set(strand, out, bytes.len());
                     Ok(())
                 },
@@ -501,7 +501,7 @@ pub(crate) async fn write<'v, 's>(strand: &mut Strand<'v, 's>, bytes: &[u8]) -> 
     with_slots!(strand, |mut rcvr, mut out| {
         route(strand, &mut rcvr)?;
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, bytes)
+            method!(strand, &rcvr, global.syms.write, bytes, &mut out)
         })
         .await
     })
@@ -516,7 +516,7 @@ pub(crate) async fn write_value<'v, 's>(
     with_slots!(strand, |mut rcvr, mut out| {
         route(strand, &mut rcvr)?;
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, data)
+            method!(strand, &rcvr, global.syms.write, data, &mut out)
         })
         .await
     })
@@ -536,7 +536,7 @@ pub(crate) async fn write_line<'v, 's>(
         route(strand, &mut rcvr)?;
         route_line_ending(strand, &mut ending);
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, line, &ending)
+            method!(strand, &rcvr, global.syms.write, line, &ending, &mut out)
         })
         .await
     })
@@ -553,7 +553,7 @@ pub(crate) async fn writeln<'v, 's>(
         route(strand, &mut rcvr)?;
         route_line_ending(strand, &mut ending);
         guarded(strand, async |strand| {
-            method!(strand, &rcvr, global.syms.write, &mut out, bytes, &ending)
+            method!(strand, &rcvr, global.syms.write, bytes, &ending, &mut out)
         })
         .await
     })
@@ -579,9 +579,9 @@ pub(crate) async fn write_line_to<'v, 's>(
                 strand,
                 &rcvr,
                 global.syms.write,
-                &mut out,
                 bytes,
-                line_ending
+                line_ending,
+                &mut out
             )
         })
         .await

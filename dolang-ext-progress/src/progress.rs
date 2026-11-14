@@ -905,7 +905,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             };
             let active =
                 install_indicator(strand, global, options, Slot::reborrow(&mut slot)).await?;
-            let res = call!(strand, &func, &mut out, &slot);
+            let res = call!(strand, &func, &slot, &mut out);
             res.and(finish_indicator(strand, global, active, &slot).await)
         })
         .function_with_slots(
@@ -970,9 +970,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                             strand,
                             &indicator,
                             update_sym,
-                            &mut tmp,
                             message_kw: message.as_str(),
-                            icon_kw: icon
+                            icon_kw: icon,
+                            &mut tmp
                         )?;
                         call!(strand, &callable, &mut result)?;
                         out.as_array(strand)

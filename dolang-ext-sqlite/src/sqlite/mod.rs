@@ -190,7 +190,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         &mut wrapper,
                     );
 
-                    let result = call!(strand, block, out, &wrapper);
+                    let result = call!(strand, block, &wrapper, out);
 
                     with_interrupt_mask!(strand, InterruptMask::all(), {
                         let _ = method!(strand, &wrapper, close, &mut tmp);

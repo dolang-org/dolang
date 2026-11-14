@@ -288,7 +288,7 @@ async fn iter_all_any<'v, 'a, 's>(
         }
         while obj.next(strand, &mut item).await? {
             let passed = if has_pred {
-                call!(strand, &pred_fn, &mut pred_out, &item)?;
+                call!(strand, &pred_fn, &item, &mut pred_out)?;
                 pred_out.to_bool(strand)?
             } else {
                 item.to_bool(strand)?
@@ -338,7 +338,7 @@ async fn iter_fold<'v, 'a, 's>(
         acc.store(init.take());
         func_slot.store(func.take());
         while obj.next(strand, &mut item).await? {
-            call!(strand, &func_slot, &mut next_acc, &acc, &item)?;
+            call!(strand, &func_slot, &acc, &item, &mut next_acc)?;
             Slot::swap(Slot::reborrow(&mut acc), &mut next_acc);
             strand.check_trap_gc()?;
         }
@@ -374,7 +374,7 @@ async fn iter_find<'v, 'a, 's>(
     with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
         pred_fn.store(pred.take());
         while obj.next(strand, &mut item).await? {
-            call!(strand, &pred_fn, &mut pred_out, &item)?;
+            call!(strand, &pred_fn, &item, &mut pred_out)?;
             if pred_out.to_bool(strand)? {
                 out.store(item.take());
                 return Ok(());
@@ -1830,7 +1830,7 @@ impl<'v> Protocol<'v> for Map<'v> {
             func.store(borrow.func.dup());
             drop(borrow);
             if input.next(strand, &mut item).await? {
-                call!(strand, &func, out, &item)?;
+                call!(strand, &func, &item, out)?;
                 Ok(true)
             } else {
                 Ok(false)
@@ -1937,7 +1937,7 @@ impl<'v> Protocol<'v> for Premap<'v> {
             func.store(borrow.func.dup());
             output.store(borrow.obj.dup());
             drop(borrow);
-            call!(strand, &func, &mut output, value)?;
+            call!(strand, &func, value, &mut output)?;
             this.borrow(strand)?.obj.put(strand, output).await
         })
     }
@@ -2038,7 +2038,7 @@ impl<'v> Protocol<'v> for Filter<'v> {
                 if !input.next(strand, &mut out).await? {
                     return Ok(false);
                 }
-                call!(strand, &pred, &mut res, &out)?;
+                call!(strand, &pred, &out, &mut res)?;
                 if res.to_bool(strand)? {
                     return Ok(true);
                 }
@@ -2145,7 +2145,7 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
             pred.store(borrow.pred.dup());
             output.store(borrow.obj.dup());
             drop(borrow);
-            call!(strand, &pred, &mut output, &value)?;
+            call!(strand, &pred, &value, &mut output)?;
             if output.to_bool(strand)? {
                 this.borrow(strand)?.obj.put(strand, value).await
             } else {

@@ -1243,7 +1243,7 @@ impl<'v> Protocol<'v> for Class {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().pack, &mut native, items)?;
+                    call!(strand, &strand.singletons().pack, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().pack, native.take())?;
                     Ok(())
                 })

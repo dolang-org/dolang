@@ -557,7 +557,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             if let Some(block) = block {
                 with_slots!(strand, |mut wrapper, mut tmp| {
                     ty.create_with_annex(strand, state, annex, &mut wrapper);
-                    let result = call!(strand, block, out, &wrapper);
+                    let result = call!(strand, block, &wrapper, out);
                     let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
                         method!(strand, &wrapper, close, &mut tmp)
                     });
@@ -584,7 +584,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             if let Some(block) = block {
                 with_slots!(strand, |mut wrapper, mut tmp| {
                     ty.create_with_annex(strand, state, annex, &mut wrapper);
-                    let result = call!(strand, block, out, &wrapper);
+                    let result = call!(strand, block, &wrapper, out);
                     let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
                         method!(strand, &wrapper, close, &mut tmp)
                     });

@@ -4856,8 +4856,8 @@ mod tests {
                     strand,
                     &proxy,
                     Sym::well_known(sym::GET_METHOD),
-                    &mut out,
-                    &singleton
+                    &singleton,
+                    &mut out
                 )
                 .unwrap();
                 assert_eq!(out.to_i64(strand).unwrap(), 123);
@@ -4877,7 +4877,7 @@ mod tests {
                 .unwrap();
             proxy.store(Value::NIL);
             strand.vm().collect_full();
-            call!(strand, &saved, &mut out, &ty).unwrap();
+            call!(strand, &saved, &ty, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
 
             // A bound method read through the type namespace keeps that
@@ -4887,9 +4887,9 @@ mod tests {
                 strand,
                 &proxy,
                 Sym::well_known(sym::GET_METHOD),
-                &mut saved,
                 &ty,
-                state.make_sym
+                state.make_sym,
+                &mut saved
             )
             .unwrap();
             proxy.store(Value::NIL);
@@ -5495,7 +5495,7 @@ mod tests {
                             .unwrap();
                         call!(strand, &bound, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
-                        method!(strand, &type_slot, method, &mut out, &object).unwrap();
+                        method!(strand, &type_slot, method, &object, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
                     },
                 )

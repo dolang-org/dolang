@@ -510,7 +510,7 @@ async fn map_workers<'v, 's>(
                         let result = async {
                             with_slots!(strand, |mut item, mut mapped| {
                                 while input.next(strand, &mut item).await? {
-                                    call!(strand, block, &mut mapped, &item)?;
+                                    call!(strand, block, &item, &mut mapped)?;
                                     output.put(strand, &mut mapped).await?;
                                     strand.check_trap_gc()?;
                                 }
@@ -876,7 +876,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             .output(Singleton::Null),
                         {
                             while input.next(strand, &mut value).await? {
-                                call!(strand, &func, &mut tmp, &value)?;
+                                call!(strand, &func, &value, &mut tmp)?;
                                 output.put(strand, &mut tmp).await?;
                                 strand.check_trap_gc()?
                             }
@@ -898,7 +898,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             .output(Singleton::Null),
                         {
                             while input.next(strand, &mut value).await? {
-                                call!(strand, &pred, &mut tmp, &value)?;
+                                call!(strand, &pred, &value, &mut tmp)?;
                                 if tmp.to_bool(strand)? {
                                     output.put(strand, &mut value).await?;
                                 }

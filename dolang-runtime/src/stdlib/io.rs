@@ -1890,7 +1890,7 @@ mod tests {
             let read = Sym::well_known(sym::READ);
             let mut got = Vec::new();
             loop {
-                method!(strand, &stream, read, Slot::reborrow(&mut out), 3_i64).unwrap();
+                method!(strand, &stream, read, 3_i64, Slot::reborrow(&mut out)).unwrap();
                 let chunk = bin(strand, &out);
                 if chunk.is_empty() {
                     break;
@@ -1927,8 +1927,8 @@ mod tests {
                 strand,
                 &stream,
                 Sym::well_known(sym::CHUNKS),
-                Slot::reborrow(&mut iter),
-                2_i64
+                2_i64,
+                Slot::reborrow(&mut iter)
             )
             .unwrap();
             let mut got = Vec::new();
@@ -1950,8 +1950,8 @@ mod tests {
                 strand,
                 &stream,
                 Sym::well_known(sym::WRITE),
-                Slot::reborrow(&mut out),
-                "xyz"
+                "xyz",
+                Slot::reborrow(&mut out)
             )
             .unwrap();
             assert_eq!(out.as_int(strand), Some(3));
@@ -1960,13 +1960,13 @@ mod tests {
                 strand,
                 &stream,
                 Sym::well_known(sym::SEEK),
-                Slot::reborrow(&mut out),
-                start: 0_i64
+                start: 0_i64,
+                Slot::reborrow(&mut out)
             )
             .unwrap();
             assert_eq!(out.as_int(strand), Some(0));
             let read = Sym::well_known(sym::READ);
-            method!(strand, &stream, read, Slot::reborrow(&mut out), 8_i64).unwrap();
+            method!(strand, &stream, read, 8_i64, Slot::reborrow(&mut out)).unwrap();
             assert_eq!(bin(strand, &out), b"xyz");
 
             method!(
@@ -1984,7 +1984,7 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(out.as_bool(strand), Some(false));
-            let res = method!(strand, &stream, read, Slot::reborrow(&mut out), 1_i64);
+            let res = method!(strand, &stream, read, 1_i64, Slot::reborrow(&mut out));
             assert!(res.is_err());
         });
     }
@@ -2004,8 +2004,8 @@ mod tests {
                 strand,
                 &stream,
                 Sym::well_known(sym::READ),
-                Slot::reborrow(&mut out),
-                8_i64
+                8_i64,
+                Slot::reborrow(&mut out)
             )
             .unwrap();
             assert_eq!(bin(strand, &out), b"b");

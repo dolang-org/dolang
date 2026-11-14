@@ -1816,9 +1816,9 @@ impl<'v, 's> Strand<'v, 's> {
                                 strand,
                                 &tmp,
                                 close,
-                                &mut out,
                                 &poison_err,
-                                backtrace_key: &poison_bt
+                                backtrace_key: &poison_bt,
+                                &mut out
                             )
                         } else {
                             method!(strand, &tmp, close, &mut out)
@@ -2353,7 +2353,7 @@ mod constructor_tests {
                 Slot::reborrow(&mut func),
             );
             Output::set(strand, Slot::reborrow(&mut arg), "kept");
-            call!(strand, &func, Slot::reborrow(&mut result), &mut arg).unwrap();
+            call!(strand, &func, &mut arg, Slot::reborrow(&mut result)).unwrap();
             assert_eq!(text(strand, &result), "kept");
             assert_eq!(text(strand, &arg), "kept");
         });

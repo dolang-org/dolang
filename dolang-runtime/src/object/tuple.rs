@@ -461,7 +461,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver)
+                        call!(strand, &ty, &receiver, out)
                     });
                 }
                 Output::set(strand, out, &this);
@@ -904,7 +904,7 @@ impl<'v> Protocol<'v> for Type {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().tuple, &mut native, items)?;
+                    call!(strand, &strand.singletons().tuple, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().tuple, native.take())?;
                     Ok(())
                 })

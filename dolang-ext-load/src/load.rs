@@ -37,7 +37,7 @@ pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
                 let handler = global.types.import_handler.cast(&key).unwrap();
                 let result = with_instance!(strand, handler, |inst| {
                     Output::set(strand, &mut callback, Ref::slot::<0>(&inst.borrow_unwrap()));
-                    let result = call!(strand, &callback, &mut out, name);
+                    let result = call!(strand, &callback, name, &mut out);
                     if inst.annex().unregistered.get() {
                         // Unregistration raced this callback. Decline even
                         // success so the VM cannot cache its result.

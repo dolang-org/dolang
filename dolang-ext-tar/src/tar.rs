@@ -967,7 +967,7 @@ impl<'v> Object<'v> for TarWriter {
                         (native_builder, result)
                     };
                     let invoke = async {
-                        let result = call!(strand, block, out, &handle);
+                        let result = call!(strand, block, &handle, out);
                         let stream = with_instance!(strand, handle_cast, |handle_obj| {
                             Ok(handle_obj.borrow_mut(strand)?.stream.take())
                         })?;
@@ -1211,7 +1211,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     global,
                     &mut reader,
                 );
-                let result = call!(strand, block, out, &reader);
+                let result = call!(strand, block, &reader, out);
                 with_instance!(
                     strand,
                     global.types.reader.cast(&reader).unwrap(),
@@ -1255,7 +1255,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     global,
                     &mut writer,
                 );
-                let result = call!(strand, block, out, &writer);
+                let result = call!(strand, block, &writer, out);
                 let (builder, poisoned, active) = with_instance!(
                     strand,
                     global.types.writer.cast(&writer).unwrap(),

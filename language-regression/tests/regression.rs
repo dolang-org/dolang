@@ -876,7 +876,7 @@ mod detail {
                     })
                     .function("callme", async move |strand, args, out| {
                         let ([func, input], _) = unpack!(strand, args, 1, 0, msg)?;
-                        call!(strand, func, out, msg: input)
+                        call!(strand, func, msg: input, out)
                     })
                     .function("keyword_rest", async move |strand, args, out| {
                         let ([func, _required], [_optional], rest) = args

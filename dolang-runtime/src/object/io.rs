@@ -403,8 +403,8 @@ async fn read_chunk<'v, 's>(
         strand,
         stream,
         Sym::well_known(sym::READ),
-        &mut out,
-        size as i64
+        size as i64,
+        &mut out
     )?;
     match out.as_bin(strand.vm()) {
         Some(bytes) => Ok(!bytes.is_empty()),
@@ -482,13 +482,13 @@ async fn write_all_value<'v, 's>(
         let mut offset = 0;
         while offset < len {
             if offset == 0 {
-                method!(strand, stream, write, &mut written_count, data)?;
+                method!(strand, stream, write, data, &mut written_count)?;
             } else {
                 with_u8_slice!(strand, data, |bytes| {
                     Output::set(strand, &mut rest, &bytes[offset..])
                 })
                 .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
-                method!(strand, stream, write, &mut written_count, &rest)?;
+                method!(strand, stream, write, &rest, &mut written_count)?;
             }
             offset += written(strand, &written_count, len - offset)?;
         }
@@ -776,8 +776,8 @@ async fn serve_fork<'v, 's>(
             strand,
             stream,
             Sym::well_known(sym::FORK),
-            &mut fork,
-            offset
+            offset,
+            &mut fork
         )?;
         crate::io::get(strand, &fork, |strand, caps| {
             if caps.intersects(IoCaps::READ | IoCaps::WRITE) {
@@ -807,8 +807,8 @@ async fn serve_write<'v, 's>(
             strand,
             stream,
             Sym::well_known(sym::WRITE),
-            &mut count,
-            &bin
+            &bin,
+            &mut count
         )?;
         written(strand, &count, data.len())
     })
@@ -825,12 +825,12 @@ async fn serve_seek<'v, 's>(
             SeekFrom::Start(n) => {
                 let n = i64::try_from(n).map_err(|_| Error::overflow(strand))?;
                 let start = Sym::well_known(sym::START);
-                method!(strand, stream, method, &mut out, start: n)?;
+                method!(strand, stream, method, start: n, &mut out)?;
             }
-            SeekFrom::Current(n) => method!(strand, stream, method, &mut out, n)?,
+            SeekFrom::Current(n) => method!(strand, stream, method, n, &mut out)?,
             SeekFrom::End(n) => {
                 let end = Sym::well_known(sym::END);
-                method!(strand, stream, method, &mut out, end: n)?;
+                method!(strand, stream, method, end: n, &mut out)?;
             }
         }
         out.to_i64(strand)

@@ -186,7 +186,7 @@ impl<'v> Vm<'v> {
                     );
                 }
                 for importer in self.importers.iter() {
-                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name) {
+                    if let Err(e) = call!(strand, importer, name, Slot::reborrow(&mut out)) {
                         if e.kind() == ErrorKind::Import {
                             err = e;
                             continue;
@@ -243,7 +243,7 @@ impl<'v> Vm<'v> {
                             self.import_raw(strand, name, Slot::reborrow(&mut raw))
                                 .await?
                         } else {
-                            call!(strand, importer, Slot::reborrow(&mut raw), name)?
+                            call!(strand, importer, name, Slot::reborrow(&mut raw))?
                         }
                         match mode {
                             Mode::Get => Slot::set(strand, out, raw),
@@ -543,7 +543,7 @@ impl<'v> Vm<'v> {
                             (None, None) => {
                                 break if !catch_all.is_nil() {
                                     let _focus = strand.inner.focus_error(slot);
-                                    call!(strand, &catch_all, &mut out, &tmp)
+                                    call!(strand, &catch_all, &tmp, &mut out)
                                 } else {
                                     Err(cause.take().unwrap())
                                 };
@@ -558,7 +558,7 @@ impl<'v> Vm<'v> {
                         };
                         if tmp.is_instance_of(strand, &ty) {
                             let _focus = strand.inner.focus_error(slot);
-                            break call!(strand, &handler, &mut out, &tmp);
+                            break call!(strand, &handler, &tmp, &mut out);
                         }
                     };
 
