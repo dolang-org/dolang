@@ -84,8 +84,11 @@ impl<'v> Pack<'v> {
 
     /// Builds a `Pack` of symbol-keyed entries, such as the leftovers for a `**name` rest.
     ///
-    /// This never checks for a GC trap, so the caller may hold `entries` unrooted.
-    pub(crate) fn from_sym_entries(entries: Vec<(GcObj<'v, SymObj>, Value<'v>)>) -> Self {
+    /// Build it between allocating the pack's embryo and finishing it, moving or
+    /// duplicating the entries out of rooted storage.
+    pub(crate) fn from_sym_entries(
+        entries: impl IntoIterator<Item = (GcObj<'v, SymObj>, Value<'v>)>,
+    ) -> Self {
         Self::new(
             entries
                 .into_iter()
@@ -266,8 +269,7 @@ fn set_key<'v>(
     out: Slot<'v, '_>,
 ) {
     match key {
-        // Safety: the pack holds the symbol for the whole call.
-        Some(key) => Output::set(strand, out, unsafe { Sym::from_obj(key) }),
+        Some(key) => Output::set(strand, out, key),
         None => Output::set(strand, out, int),
     }
 }
@@ -413,27 +415,20 @@ fn store_split_rests<'v, 'a>(
         return;
     }
     if let Some(i) = sig.pos_rest_slot() {
-        let values: Vec<_> = plan
-            .pos_rest
-            .iter()
-            .map(|&index| items[index].1.dup())
-            .collect();
-        tuple::create(strand, values, out.at(i));
+        let embryo = tuple::embryo(strand, plan.pos_rest.len());
+        let values = plan.pos_rest.iter().map(|&index| items[index].1.dup());
+        embryo.finish(strand, values, out.at(i));
     }
     if let Some(i) = sig.key_rest_slot() {
         let embryo = strand.builtin_types().pack.embryo(strand);
         // SAFETY: the entries move straight into the allocated pack
-        let entries = plan
-            .key_rest
-            .iter()
-            .map(|&index| {
-                let (key, value) = &items[index];
-                (
-                    unsafe { key.as_ref().unwrap_unchecked().dup() },
-                    value.dup(),
-                )
-            })
-            .collect();
+        let entries = plan.key_rest.iter().map(|&index| {
+            let (key, value) = &items[index];
+            (
+                unsafe { key.as_ref().unwrap_unchecked().dup() },
+                value.dup(),
+            )
+        });
         embryo.finish_imm(strand, Pack::from_sym_entries(entries), out.at(i));
     }
 }
@@ -533,8 +528,7 @@ impl<'v> Iter<'v> {
         };
         let (key, value) = &items[index];
         match key {
-            // Safety: the pack holds the symbol for the whole call.
-            Some(key) => tuple::create_pair(strand, unsafe { Sym::from_obj(key) }, value, out),
+            Some(key) => tuple::create_pair(strand, key, value, out),
             None => {
                 tuple::create_pair(strand, self.int, value, out);
                 self.int += 1;

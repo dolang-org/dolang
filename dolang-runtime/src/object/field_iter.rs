@@ -66,7 +66,7 @@ fn resolve<'v, 's>(
     receiver.op_get(strand, unsafe { Sym::from_obj(symbol) }, out)
 }
 
-fn find_symbol<'v>(symbols: &[GcObj<'v, SymObj>], wanted: Sym<'v, '_>) -> Option<usize> {
+fn find_symbol<'v>(symbols: &VecDeque<GcObj<'v, SymObj>>, wanted: Sym<'v, '_>) -> Option<usize> {
     symbols
         .binary_search_by_key(&wanted.tag(), |symbol| symbol.tag())
         .ok()
@@ -173,20 +173,19 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
             }
 
             let iter = this.borrow(strand)?;
-            let receiver = iter.receiver.dup();
-            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-            let symbols: Vec<_> = iter.symbols.iter().map(|s| unsafe { s.dup() }).collect();
+            let receiver = &iter.receiver;
+            let symbols = &iter.symbols;
             let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
             let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
 
             for (key_index, key) in sig.keys.iter().enumerate() {
                 let dest = pos_count + key_index;
                 let found = match &key.kind {
-                    UnpackKeyKind::Sym(wanted) => find_symbol(&symbols, *wanted),
+                    UnpackKeyKind::Sym(wanted) => find_symbol(symbols, *wanted),
                     UnpackKeyKind::Const(_) => None,
                 };
                 if let Some(index) = found {
-                    resolve(strand, &receiver, &symbols[index], staged.at(dest))?;
+                    resolve(strand, receiver, &symbols[index], staged.at(dest))?;
                 } else if let Some(default) = &key.default {
                     staged.at(dest).store(default.dup());
                 } else {
@@ -212,29 +211,28 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 }
             }
 
-            let symbols = symbols
-                .into_iter()
-                .enumerate()
-                .filter_map(|(index, symbol)| {
-                    (!consumed.as_ref().is_some_and(|bits| bits[index])).then_some(symbol)
-                })
-                .collect();
-            let child = FieldIter::new(receiver, symbols);
-            if sig.variadic == Variadic::Capture {
-                strand
-                    .builtin_types()
-                    .field_iter
-                    .create(strand, child, staged.at(sig.len() - 1));
+            let child = if sig.variadic == Variadic::Capture {
+                Some(sig.len() - 1)
             } else {
                 if let Some(i) = sig.pos_rest_slot() {
                     tuple::create(strand, [], staged.at(i));
                 }
-                if let Some(i) = sig.key_rest_slot() {
-                    strand
-                        .builtin_types()
-                        .field_iter
-                        .create(strand, child, staged.at(i));
-                }
+                sig.key_rest_slot()
+            };
+            if let Some(i) = child {
+                let embryo = strand.builtin_types().field_iter.embryo(strand);
+                // SAFETY: the symbols move straight into the allocated proxy
+                let symbols = symbols
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !consumed.as_ref().is_some_and(|bits| bits[*index]))
+                    .map(|(_, symbol)| unsafe { symbol.dup() })
+                    .collect();
+                embryo.finish(
+                    strand,
+                    FieldIter::new(receiver.dup(), symbols),
+                    staged.at(i),
+                );
             }
             for index in 0..sig.len() {
                 out.at(index).store(staged.at(index).take());
@@ -276,26 +274,27 @@ pub(crate) fn create<'v, 's>(
         let inspect = ty
             .op_inspect(strand)
             .ok_or_else(|| Error::unsupported(strand, "field iteration"))?;
-        let mut fields = FieldIter::new(receiver.dup(), VecDeque::new());
+        let embryo = strand.builtin_types().field_iter.embryo(strand);
+        let mut symbols = VecDeque::new();
+        let mut writable = Vec::new();
         for member in inspect.members {
             if strand.sym_obj(member.sym).private() {
                 continue;
             }
             if matches!(member.kind, MemberKind::Getter | MemberKind::Property) {
-                fields.symbols.push_back(strand.sym_obj(member.sym));
+                symbols.push_back(strand.sym_obj(member.sym));
             }
             if matches!(member.kind, MemberKind::Setter | MemberKind::Property) {
-                fields.writable.push(strand.sym_obj(member.sym));
+                writable.push(strand.sym_obj(member.sym));
             }
         }
-        fields
-            .symbols
-            .make_contiguous()
-            .sort_by_key(|key| key.tag());
-        strand
-            .builtin_types()
-            .field_iter
-            .create(strand, fields, out);
+        symbols.make_contiguous().sort_by_key(|key| key.tag());
+        let fields = FieldIter {
+            receiver: receiver.dup(),
+            symbols,
+            writable,
+        };
+        embryo.finish(strand, fields, out);
         Ok(())
     })
 }
@@ -378,19 +377,13 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
-        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-        let Some(symbol) = iter
-            .fields
-            .symbols
-            .get(iter.index)
-            .map(|s| unsafe { s.dup() })
-        else {
+        let Some(symbol) = iter.fields.symbols.get(iter.index) else {
             return Ok(false);
         };
-        let receiver = iter.fields.receiver.dup();
+        let receiver = &iter.fields.receiver;
         with_slots!(strand, |mut value| {
-            resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
-            tuple::create_pair(strand, unsafe { Sym::from_obj(&symbol) }, &value, out);
+            resolve(strand, receiver, symbol, Slot::reborrow(&mut value))?;
+            tuple::create_pair(strand, symbol, &value, out);
             Ok(())
         })?;
         iter.index += 1;

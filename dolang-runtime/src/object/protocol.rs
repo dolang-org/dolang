@@ -1288,6 +1288,20 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for &Recv<'v, 'a, T> {
     }
 }
 
+impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
+    #[inline]
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        // SAFETY: the duplicate moves straight into the output slot
+        out.store(Value::from_object(unsafe { self.dup() }));
+        None
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ErasedRecv<'v, 'a> {
     header: NonNull<Header>,

@@ -1583,23 +1583,23 @@ impl<'v> Protocol<'v> for Iter {
             sym::TAKE => {
                 unpack!(strand, args => obj, count);
                 let count = nonnegative_count(strand, &count)?;
-                create_take(strand, obj.dup(), count, out);
+                create_take(strand, &obj, count, out);
                 Ok(())
             }
             sym::SKIP => {
                 unpack!(strand, args => obj, count);
                 let count = nonnegative_count(strand, &count)?;
-                create_skip(strand, obj.dup(), count, out);
+                create_skip(strand, &obj, count, out);
                 Ok(())
             }
             sym::ENUMERATE => {
                 unpack!(strand, args => obj);
-                create_enumerate(strand, obj.dup(), out);
+                create_enumerate(strand, &obj, out);
                 Ok(())
             }
             sym::KV => {
                 unpack!(strand, args => obj);
-                create_kv(strand, obj.dup(), out);
+                create_kv(strand, &obj, out);
                 Ok(())
             }
             sym::FIND => {
@@ -2925,66 +2925,80 @@ pub(crate) fn create_precrimp<'v, 's>(
 
 pub(crate) fn create_chain<'v>(
     strand: &mut Strand<'v, '_>,
-    sources: Vec<Value<'v>>,
+    sources: impl IntoIterator<Item = Value<'v>>,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .chain_iter
-        .create(strand, Chain { sources, index: 0 }, out);
+    let embryo = strand.builtin_types().chain_iter.embryo(strand);
+    let sources = sources.into_iter().collect();
+    embryo.finish(strand, Chain { sources, index: 0 }, out);
 }
 
 pub(crate) fn create_zip<'v>(
     strand: &mut Strand<'v, '_>,
-    sources: Vec<Value<'v>>,
+    sources: impl IntoIterator<Item = Value<'v>>,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .zip_iter
-        .create(strand, Zip { sources }, out);
+    let embryo = strand.builtin_types().zip_iter.embryo(strand);
+    let sources = sources.into_iter().collect();
+    embryo.finish(strand, Zip { sources }, out);
 }
 
 pub(crate) fn create_take<'v>(
     strand: &mut Strand<'v, '_>,
-    source: Value<'v>,
+    source: &Value<'v>,
     remaining: usize,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .take_iter
-        .create(strand, Take { source, remaining }, out);
+    let embryo = strand.builtin_types().take_iter.embryo(strand);
+    embryo.finish(
+        strand,
+        Take {
+            source: source.dup(),
+            remaining,
+        },
+        out,
+    );
 }
 
 pub(crate) fn create_skip<'v>(
     strand: &mut Strand<'v, '_>,
-    source: Value<'v>,
+    source: &Value<'v>,
     remaining: usize,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .skip_iter
-        .create(strand, Skip { source, remaining }, out);
+    let embryo = strand.builtin_types().skip_iter.embryo(strand);
+    embryo.finish(
+        strand,
+        Skip {
+            source: source.dup(),
+            remaining,
+        },
+        out,
+    );
 }
 
 pub(crate) fn create_enumerate<'v>(
     strand: &mut Strand<'v, '_>,
-    source: Value<'v>,
+    source: &Value<'v>,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .enumerate_iter
-        .create(strand, Enumerate { source, index: 0 }, out);
+    let embryo = strand.builtin_types().enumerate_iter.embryo(strand);
+    let enumerate = Enumerate {
+        source: source.dup(),
+        index: 0,
+    };
+    embryo.finish(strand, enumerate, out);
 }
 
-pub(crate) fn create_kv<'v>(strand: &mut Strand<'v, '_>, source: Value<'v>, out: impl Output<'v>) {
-    strand
-        .builtin_types()
-        .kv_iter
-        .create(strand, Kv { source }, out);
+pub(crate) fn create_kv<'v>(strand: &mut Strand<'v, '_>, source: &Value<'v>, out: impl Output<'v>) {
+    let embryo = strand.builtin_types().kv_iter.embryo(strand);
+    embryo.finish(
+        strand,
+        Kv {
+            source: source.dup(),
+        },
+        out,
+    );
 }
 
 pub(crate) async fn create_chain_from_args<'v, 'a, 's>(

@@ -1703,14 +1703,17 @@ impl<'v, 's> Strand<'v, 's> {
     /// iterators are set to those values before `f` runs, and both are closed when
     /// `f` returns (regardless of success or failure).
     ///
+    /// The strand's `Task` handle is written to `out`.
+    ///
     /// Returns an error if the spawn channel is not available (e.g. the VM is shutting down).
     pub(crate) fn spawn_background_raw<F>(
         &mut self,
-        arg: Value<'v>,
+        arg: impl Input<'v>,
         interrupt: InterruptToken<'v>,
-        stream: Option<(Value<'v>, Value<'v>)>,
+        stream: Option<(&Value<'v>, &Value<'v>)>,
+        mut out: impl Output<'v>,
         f: F,
-    ) -> Result<'v, 's, GcObj<'v, Handle<'v>>>
+    ) -> Result<'v, 's, ()>
     where
         F: for<'ss> AsyncFnOnce(
                 &mut Strand<'v, 'ss>,
@@ -1720,35 +1723,46 @@ impl<'v, 's> Strand<'v, 's> {
             + 'v,
     {
         let close_on_exit = stream.is_some();
+        let vm = self.vm();
+        if vm.spawn_tx.borrow().is_none() {
+            return Err(Error::runtime(self, "cannot spawn: VM is shutting down"));
+        }
 
         // Create StrandInner
         let mut inner =
             StrandInner::derived(self, Some(interrupt.clone()), InheritKind::Background);
         inner.call_depth.set(0);
-        // Keeps `arg` rooted (via `scan_stack`) for as long as the strand exists,
-        // including before `f` first runs.
-        inner.start = arg;
 
-        // Set strand-side I/O if this is a stream strand
-        if let Some((recv, send)) = stream {
-            *inner.input.get_mut() = recv;
-            *inner.output.get_mut() = send;
-        }
-
-        let vm = self.vm();
         // The cell stays unattached until first poll, when `inner` reaches its
         // final address inside the pinned future.
         let cell = StrandCell::new(vm);
 
-        // Create JoinHandle GcObj
-        let handle = GcObj::new(
-            vm.arena(),
-            vm.builtin_types().strand_handle,
+        // Create the `Task` handle, and a weak ref to it for the future (doesn't
+        // participate in cycles)
+        let mut out = Slot::from_output(&mut out);
+        let ty = vm.builtin_types().strand_handle;
+        ty.create(
+            self,
             Handle::new(cell.clone(), interrupt),
+            Slot::reborrow(&mut out),
         );
+        let weak_handle = GcObj::downgrade(out.downcast_ref(ty).expect("strand handle"));
 
-        // Create weak ref for the future (doesn't participate in cycles)
-        let weak_handle = GcObj::downgrade(&handle);
+        // Keeps `arg` rooted (via `scan_stack`) for as long as the strand exists,
+        // including before `f` first runs.
+        //
+        // FIXME: until first poll nothing scans `inner`, so `start` and the stream
+        // endpoints below are loose (sound only under refcounting). Root them
+        // elsewhere until then, e.g. in an actual root or the global root
+        // registration (#1728), and drop that root on first poll once the strand is
+        // linked into the VM ring, or make some other special arrangement.
+        inner.start = Value::from_input(self, arg);
+
+        // Set strand-side I/O if this is a stream strand
+        if let Some((recv, send)) = stream {
+            *inner.input.get_mut() = recv.dup();
+            *inner.output.get_mut() = send.dup();
+        }
 
         // Create the background strand future
         //
@@ -1839,14 +1853,14 @@ impl<'v, 's> Strand<'v, 's> {
             })
         });
 
-        // Send future through spawn channel
-        if let Some(tx) = vm.spawn_tx.borrow().as_ref() {
-            tx.unbounded_send(future).expect("spawn channel closed");
-        } else {
-            return Err(Error::runtime(self, "cannot spawn: VM is shutting down"));
-        }
-
-        Ok(handle)
+        // Send future through spawn channel, checked above
+        vm.spawn_tx
+            .borrow()
+            .as_ref()
+            .expect("spawn channel checked")
+            .unbounded_send(future)
+            .expect("spawn channel closed");
+        Ok(())
     }
 
     /// Spawn a background strand that runs `f`, independent of this strand and managed
@@ -1878,13 +1892,10 @@ impl<'v, 's> Strand<'v, 's> {
             ) -> Result<'v, 'ss, ()>
             + 'v,
     {
-        let arg = Value::from_input(self, arg);
         let interrupt = interrupt
             .map(|t| t.nested(InterruptMask::empty()))
             .unwrap_or_else(InterruptToken::new);
-        let handle = self.spawn_background_raw(arg, interrupt, None, f)?;
-        Output::set(self, &mut out, Value::from_object(handle));
-        Ok(())
+        self.spawn_background_raw(arg, interrupt, None, &mut out, f)
     }
 
     /// Get the interrupt token for this strand
