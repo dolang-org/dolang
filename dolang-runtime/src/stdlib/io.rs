@@ -669,7 +669,7 @@ impl<'v> Object<'v> for Buffered {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([source], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => source);
         let handle = crate::io::get(strand, &source, |_, _| Ok(())).map_err(|err| {
             if err.kind() == ErrorKind::Unsupported {
                 Error::type_error(strand, "expected an `io.Io` value for `source`")
@@ -754,7 +754,7 @@ impl<'v> Object<'v> for Buffered {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let size = size_arg(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
@@ -768,18 +768,18 @@ impl<'v> Object<'v> for Buffered {
                 Ok(())
             })
             .method("read_str", async move |this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let size = size_arg(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.read_str(strand, size, out).await
             })
             .method("read_line", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.read_line(strand, out).await
             })
             .method("lines", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Output::set(strand, out, this);
                 Ok(())
             })
@@ -795,20 +795,20 @@ impl<'v> Object<'v> for Buffered {
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::empty())?;
                 let res = borrow.lock(strand).await?.flush().await;
                 res.into_do_io(strand)
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 let res = borrow.close().await;
                 res.into_do_io(strand)
             })
             .method("tell", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.stream_position().await;
@@ -817,8 +817,7 @@ impl<'v> Object<'v> for Buffered {
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
-                let ([], [offset, start, end]) =
-                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
@@ -941,7 +940,7 @@ impl<'v> Object<'v> for Stream {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
@@ -966,8 +965,7 @@ impl<'v> Object<'v> for Stream {
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
-                let ([], [offset, start, end]) =
-                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
@@ -977,7 +975,7 @@ impl<'v> Object<'v> for Stream {
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 let res = close_shared(&mut borrow.io).await;
                 res.into_do_io(strand)
@@ -1076,8 +1074,8 @@ impl<'v> Object<'v> for Concat {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let end_sym = Sym::well_known(sym::END);
-        let ([items], [end]) = unpack!(strand, args, 1, 0, end_sym = None)?;
+        let end = Sym::well_known(sym::END);
+        unpack!(strand, args => items, ?:end);
         let end = match end {
             None => Vec::new(),
             Some(end) => {
@@ -1107,7 +1105,7 @@ impl<'v> Object<'v> for Concat {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 let open = borrow.state != ConcatState::Closed;
@@ -1119,7 +1117,7 @@ impl<'v> Object<'v> for Concat {
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.state = ConcatState::Closed;
                 borrow.pending = Vec::new();
@@ -1408,7 +1406,7 @@ impl<'v> Object<'v> for Cursor {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([target], [range]) = unpack!(strand, args, 1, 1)?;
+        unpack!(strand, args => target, ?range);
         let (start, end) = range_arg(strand, range)?;
         let vm = strand.vm();
         let kind = if target.as_str(vm).is_some() {
@@ -1468,7 +1466,7 @@ impl<'v> Object<'v> for Cursor {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
@@ -1494,8 +1492,7 @@ impl<'v> Object<'v> for Cursor {
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
-                let ([], [offset, start, end]) =
-                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
@@ -1507,11 +1504,11 @@ impl<'v> Object<'v> for Cursor {
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.borrow(strand)?.check(strand, IoCaps::empty())
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 Mut::slot_mut::<0>(&mut borrow).store(Value::NIL);
                 let unfinished = !borrow.held.is_empty();
@@ -1749,7 +1746,7 @@ impl<'v> Object<'v> for Window {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([target], [range]) = unpack!(strand, args, 1, 1)?;
+        unpack!(strand, args => target, ?range);
         let (start, end) = range_arg(strand, range)?;
         let handle = crate::io::get(strand, &target, |strand, caps| {
             if caps.contains(IoCaps::SEEK) {
@@ -1808,7 +1805,7 @@ impl<'v> Object<'v> for Window {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
@@ -1832,8 +1829,7 @@ impl<'v> Object<'v> for Window {
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
-                let ([], [offset, start, end]) =
-                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
@@ -1843,14 +1839,14 @@ impl<'v> Object<'v> for Window {
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::empty())?;
                 let mut io = borrow.lock(strand).await?;
                 io.flush().await.into_do_io(strand)
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 close_shared(&mut borrow.io).await.into_do_io(strand)
             })

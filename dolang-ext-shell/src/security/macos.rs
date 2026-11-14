@@ -111,7 +111,7 @@ impl<'v> Object<'v> for MacosAclObject {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => mut iterable);
         let global = strand.state::<MacosSecurityTag>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
@@ -204,8 +204,7 @@ impl<'v> Object<'v> for MacosAceObject {
         macro_rules! constructor {
             ($builder:expr, $name:literal, $ace_type:expr) => {
                 $builder.type_method($name, async move |this, strand, args, out| {
-                    let ([principal], [mask, flags]) =
-                        unpack!(strand, args, 1, 0, mask_sym = None, flags_sym = None)?;
+                    unpack!(strand, args => principal, ?mask_sym: mask, ?flags_sym: flags);
                     let global = strand.state::<MacosSecurityTag>();
                     let qualifier =
                         dolang_ext_uuid::cast_uuid(strand, &principal).ok_or_else(|| {
@@ -403,20 +402,12 @@ async fn ace_from_args<'v, 's>(
     global: State<'v, MacosSecurityGlobal<'v>>,
     args: Args<'v, '_>,
 ) -> Result<'v, 's, VfsMacosAce> {
-    let mask_sym = global.syms.mask;
-    let allow_sym = global.syms.allow;
-    let deny_sym = global.syms.deny;
-    let flags_sym = global.syms.flags;
-    let ([mask], [allow, deny, flags]) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        mask_sym,
-        allow_sym = None,
-        deny_sym = None,
-        flags_sym = None
-    )?;
+    unpack!(strand, args =>
+        (global.syms.mask): mask,
+        ?(global.syms.allow): allow,
+        ?(global.syms.deny): deny,
+        ?(global.syms.flags): flags
+    );
     let (ace_type, principal) = match (allow, deny) {
         (Some(value), None) => (VfsMacosAceType::Allow, value),
         (None, Some(value)) => (VfsMacosAceType::Deny, value),
@@ -499,7 +490,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("acl", async move |strand, args, out| {
-            let ([], [], entries) = unpack!(strand, args, 0, 0, *)?;
+            unpack!(strand, args => *entries);
             let mut aces = Vec::new();
             for (index, value) in entries.enumerate() {
                 aces.push(
@@ -515,7 +506,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("uuid_for_uid", async move |strand, args, out| {
-            let ([uid], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => uid);
             if global.local.get(strand).target().os() != OperatingSystem::Macos {
                 return Err(Error::unsupported(
                     strand,
@@ -536,7 +527,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("uuid_for_gid", async move |strand, args, out| {
-            let ([gid], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => gid);
             if global.local.get(strand).target().os() != OperatingSystem::Macos {
                 return Err(Error::unsupported(
                     strand,
@@ -557,7 +548,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("id_for_uuid", async move |strand, args, out| {
-            let ([uuid], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => uuid);
             if global.local.get(strand).target().os() != OperatingSystem::Macos {
                 return Err(Error::unsupported(
                     strand,

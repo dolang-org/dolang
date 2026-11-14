@@ -115,7 +115,7 @@ impl<'v> Object<'v> for Nfs4AclObject {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => mut iterable);
         let global = strand.state::<Nfs4SecurityTag>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
@@ -335,15 +335,11 @@ impl<'v> Object<'v> for Nfs4AceObject {
         macro_rules! constructor {
             ($builder:expr, $name:literal, $qualifier:expr) => {
                 $builder.type_method($name, async move |this, strand, args, out| {
-                    let ([], [ace_type, mask, flags]) = unpack!(
-                        strand,
-                        args,
-                        0,
-                        0,
-                        type_sym = None,
-                        mask_sym = None,
-                        flags_sym = None
-                    )?;
+                    unpack!(strand, args =>
+                        ?type_sym: ace_type,
+                        ?mask_sym: mask,
+                        ?flags_sym: flags
+                    );
                     let global = strand.state::<Nfs4SecurityTag>();
                     let ace_type =
                         nfs4_ace_type(strand, ace_type.as_deref(), allow, deny, audit, alarm)?;
@@ -366,15 +362,12 @@ impl<'v> Object<'v> for Nfs4AceObject {
 
         builder
             .type_method("user", async move |this, strand, args, out| {
-                let ([id], [ace_type, mask, flags]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    0,
-                    type_sym = None,
-                    mask_sym = None,
-                    flags_sym = None
-                )?;
+                unpack!(strand, args =>
+                    id,
+                    ?type_sym: ace_type,
+                    ?mask_sym: mask,
+                    ?flags_sym: flags
+                );
                 let global = strand.state::<Nfs4SecurityTag>();
                 let ace_type =
                     nfs4_ace_type(strand, ace_type.as_deref(), allow, deny, audit, alarm)?;
@@ -390,15 +383,12 @@ impl<'v> Object<'v> for Nfs4AceObject {
                 Ok(())
             })
             .type_method("group", async move |this, strand, args, out| {
-                let ([id], [ace_type, mask, flags]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    0,
-                    type_sym = None,
-                    mask_sym = None,
-                    flags_sym = None
-                )?;
+                unpack!(strand, args =>
+                    id,
+                    ?type_sym: ace_type,
+                    ?mask_sym: mask,
+                    ?flags_sym: flags
+                );
                 let global = strand.state::<Nfs4SecurityTag>();
                 let ace_type =
                     nfs4_ace_type(strand, ace_type.as_deref(), allow, deny, audit, alarm)?;
@@ -572,24 +562,14 @@ async fn ace_from_args<'v, 's>(
     global: State<'v, Nfs4SecurityGlobal<'v>>,
     args: Args<'v, '_>,
 ) -> Result<'v, 's, VfsNfs4Ace> {
-    let mask_sym = global.syms.mask;
-    let allow_sym = global.syms.allow;
-    let deny_sym = global.syms.deny;
-    let audit_sym = global.syms.audit;
-    let alarm_sym = global.syms.alarm;
-    let flags_sym = global.syms.flags;
-    let ([mask], [allow, deny, audit, alarm, flags]) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        mask_sym,
-        allow_sym = None,
-        deny_sym = None,
-        audit_sym = None,
-        alarm_sym = None,
-        flags_sym = None
-    )?;
+    unpack!(strand, args =>
+        (global.syms.mask): mask,
+        ?(global.syms.allow): allow,
+        ?(global.syms.deny): deny,
+        ?(global.syms.audit): audit,
+        ?(global.syms.alarm): alarm,
+        ?(global.syms.flags): flags
+    );
     let mut found = Vec::new();
     for (ty, value) in [
         (VfsNfs4AceType::Allow, allow),
@@ -643,7 +623,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("acl", async move |strand, args, out| {
-            let ([], [], entries) = unpack!(strand, args, 0, 0, *)?;
+            unpack!(strand, args => *entries);
             let mut aces = Vec::new();
             for (index, value) in entries.enumerate() {
                 aces.push(

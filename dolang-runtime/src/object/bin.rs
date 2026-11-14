@@ -265,7 +265,7 @@ impl<'v> Protocol<'v> for BinObj {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::STARTS_WITH => {
-                let ([prefix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => prefix);
                 let input =
                     with_u8_slice!(strand, prefix, |prefix| this.bytes().starts_with(prefix))
                         .ok_or_else(|| {
@@ -276,7 +276,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
-                let ([prefix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => prefix);
                 let borrow = this.bytes();
                 with_u8_slice!(strand, prefix, |prefix| {
                     Output::set(strand, out, borrow.strip_prefix(prefix).unwrap_or(borrow))
@@ -288,7 +288,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::ENDS_WITH => {
-                let ([suffix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => suffix);
                 let input = with_u8_slice!(strand, suffix, |suffix| this.bytes().ends_with(suffix))
                     .ok_or_else(|| {
                         let msg = "not binary data: unknown".to_string();
@@ -298,7 +298,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
-                let ([suffix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => suffix);
                 let borrow = this.bytes();
                 with_u8_slice!(strand, suffix, |suffix| {
                     Output::set(strand, out, borrow.strip_suffix(suffix).unwrap_or(borrow))
@@ -312,7 +312,7 @@ impl<'v> Protocol<'v> for BinObj {
             sym::SPLIT | sym::RSPLIT => {
                 let method_sym = method.tag();
                 let limit = Sym::well_known(sym::LIMIT);
-                let ([delim], [limit]) = unpack!(strand, args, 1, 0, limit = None)?;
+                unpack!(strand, args => delim, ?:limit);
                 let limit_i64 = limit
                     .map(|l| {
                         l.to_i64(strand)
@@ -388,7 +388,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::JOIN => {
-                let ([], [arg]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?arg);
                 with_slots!(strand, |mut input, mut value| {
                     if let Some(arg) = arg {
                         arg.iter(strand, &mut input).await?
@@ -415,14 +415,14 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::CHOMP => {
                 let me = this.bytes();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let end = me.len() - iter::line_terminator_len(me);
                 Output::set(strand, out, &me[..end]);
                 Ok(())
             }
             sym::TRIM => {
                 let me = this.bytes();
-                let ([], [chars]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?chars);
                 let trimmed = match chars {
                     None => me.trim(),
                     Some(chars) => {
@@ -435,7 +435,7 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::TRIM_START => {
                 let me = this.bytes();
-                let ([], [chars]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?chars);
                 let trimmed = match chars {
                     None => me.trim_start(),
                     Some(chars) => {
@@ -448,7 +448,7 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::TRIM_END => {
                 let me = this.bytes();
-                let ([], [chars]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?chars);
                 let trimmed = match chars {
                     None => me.trim_end(),
                     Some(chars) => {
@@ -460,7 +460,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([needle], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => needle);
                 let input =
                     with_u8_slice!(strand, needle, |needle| this.bytes().contains_str(needle))
                         .ok_or_else(|| {
@@ -472,7 +472,7 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::FIND | sym::RFIND => {
                 let range = Sym::well_known(sym::RANGE);
-                let ([needle], [range]) = unpack!(strand, args, 1, 0, range = None)?;
+                unpack!(strand, args => needle, ?:range);
                 let me = this.bytes();
                 let (start, end) = range::window(strand, range.as_deref(), me.len())?;
                 let window = &me[start..end];
@@ -495,7 +495,7 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::REPLACE => {
                 let range = Sym::well_known(sym::RANGE);
-                let ([from, to], [range]) = unpack!(strand, args, 2, 0, range = None)?;
+                unpack!(strand, args => from, to, ?:range);
                 let me = this.bytes();
                 let (start, end) = range::window(strand, range.as_deref(), me.len())?;
                 let window = &me[start..end];
@@ -519,7 +519,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::REPEAT => {
-                let ([count], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => count);
                 let count = count.to_index(strand)?;
                 let me = this.bytes();
                 let len = me
@@ -537,7 +537,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::UNPACK => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 super::array_view::unpack_bin(strand, Value::from_object(this.to_strong()), out);
                 Ok(())
             }
@@ -855,7 +855,7 @@ impl<'v> Protocol<'v> for Class {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         with_u8_slice!(strand, value, |slice| Output::set(strand, out, slice))
             .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))
     }
@@ -911,7 +911,7 @@ impl<'v> Protocol<'v> for Class {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, value);
                 let native =
                     with_u8_slice!(strand, value, |slice| Value::from_u8_slice(strand, slice))
                         .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))?;
@@ -919,7 +919,7 @@ impl<'v> Protocol<'v> for Class {
                 Ok(())
             }
             sym::PACK => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 with_slots!(strand, |mut iter, mut value| {
                     let mut acc = Vec::new();
                     obj.iter(strand, &mut iter).await?;

@@ -408,8 +408,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([index], [default, or_else]) =
-                    unpack!(strand, args, 1, 0, default = None, else_key = None)?;
+                unpack!(strand, args => index, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -428,7 +427,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 Ok(())
             }
             sym::PAIRS => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 strand.builtin_types().tuple_pairs.create(
                     strand,
                     Pairs {
@@ -440,7 +439,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([needle], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => needle);
                 let inner = this.items();
                 let mut found = false;
                 for (i, elem) in inner.iter().enumerate() {
@@ -456,7 +455,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 Ok(())
             }
             sym::COPY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
@@ -795,7 +794,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([items], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => items);
         let mut values = Vec::new();
         let mut sink = TupleSpread(&mut values);
         items
@@ -902,7 +901,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
                     call!(strand, &strand.singletons().tuple, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().tuple, native.take())?;

@@ -48,7 +48,7 @@ impl<'v> Object<'v> for Console {
         args: dolang::runtime::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], []) = unpack!(strand, args, 0, 0)?;
+        unpack!(strand, args =>);
         this.create(strand, Console, out);
         Ok(())
     }
@@ -60,7 +60,7 @@ impl<'v> Object<'v> for Console {
                 Err(Error::unsupported(strand, "`write` on the console"))
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Err(Error::unsupported(strand, "`flush` on the console"))
             })
             // Unlike the write methods, the capability members have a safe
@@ -83,7 +83,7 @@ impl<'v> Object<'v> for Console {
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 create_geometry(strand, None, None, out);
                 Ok(())
             })
@@ -128,7 +128,7 @@ impl<'v> Object<'v> for DefaultOutput {
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 flush(strand).await
             })
             .get("writable", |_this, strand, out| {
@@ -151,7 +151,7 @@ impl<'v> Object<'v> for DefaultOutput {
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 geometry(strand, out).await
             })
     }
@@ -206,8 +206,7 @@ impl<'v> Object<'v> for IoConsole {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
-        let can_style_sym = global.syms.can_style;
-        let ([target], [can_style]) = unpack!(strand, args, 1, 0, can_style_sym = None)?;
+        unpack!(strand, args => target, ?(global.syms.can_style): can_style);
         let can_style = can_style
             .map(|value| value.to_bool(strand))
             .transpose()?
@@ -236,7 +235,7 @@ impl<'v> Object<'v> for IoConsole {
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 create_geometry(strand, None, None, out);
                 Ok(())
             })
@@ -258,7 +257,7 @@ impl<'v> Object<'v> for IoConsole {
             .method_with_slots(
                 "flush",
                 async move |this, strand, args, out, [mut stream, mut flush]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     inner(this, strand, &mut stream)?;
                     // An `Io` need not flush; one without the member has
                     // nothing held back.
@@ -271,7 +270,7 @@ impl<'v> Object<'v> for IoConsole {
                 },
             )
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut me = this.borrow_mut(strand)?;
                 me.closed = true;
                 Output::set(strand, Mut::slot_mut::<0>(&mut me), Nil);
@@ -393,7 +392,7 @@ impl<'v> Object<'v> for SubConsole {
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Ok(())
             })
             .get("writable", |_this, strand, out| {
@@ -415,7 +414,7 @@ impl<'v> Object<'v> for SubConsole {
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 create_geometry(strand, None, None, out);
                 Ok(())
             })

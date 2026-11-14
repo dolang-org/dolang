@@ -579,7 +579,7 @@ impl<'v> Protocol<'v> for Float {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], _) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let coerced = construct(&value, strand)?;
         Output::set(strand, out, coerced);
         Ok(())
@@ -720,7 +720,7 @@ impl<'v> Protocol<'v> for Float {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, value);
                 let coerced = construct(&value, strand)?;
                 let native = Value::from_f64(strand, coerced);
                 self_val.op_fill(strand, &strand.singletons().float, native)?;

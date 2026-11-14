@@ -104,7 +104,7 @@ fn extrema<'v, 'a, 's>(
     mut out: Slot<'v, 'a>,
     is_min: bool,
 ) -> Result<'v, 's, ()> {
-    let ([mut first], [], rest) = unpack!(strand, args, 1, 0, *)?;
+    unpack!(strand, args => mut first, *rest);
     out.store(first.take());
     for mut value in rest {
         let replace = if is_min {
@@ -132,7 +132,7 @@ fn default_mcall<'v, 'a, 's>(
         sym::MIN => extrema(strand, args, out, true),
         sym::MAX => extrema(strand, args, out, false),
         sym::CLAMP => {
-            let ([mut value, mut lower, mut upper], []) = unpack!(strand, args, 3, 0)?;
+            unpack!(strand, args => mut value, mut lower, mut upper);
             if upper.op_lt(strand, &lower)?.to_bool(strand)? {
                 return Err(Error::value(
                     strand,
@@ -184,18 +184,18 @@ pub(crate) fn int_mcall<'v, 'a, 's>(
     let receiver = Value::from_input(strand, rcvr);
     match method.tag() {
         sym::ABS => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let value = value.checked_abs().ok_or_else(|| Error::overflow(strand))?;
             Output::set(strand, out, value);
             Ok(())
         }
         sym::SIGNUM => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Output::set(strand, out, value.signum());
             Ok(())
         }
         sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             out.store(receiver);
             Ok(())
         }
@@ -228,7 +228,7 @@ pub(crate) fn float_mcall<'v, 'a, 's>(
         _ => None,
     };
     if let Some(result) = result {
-        let ([], []) = unpack!(strand, args, 0, 0)?;
+        unpack!(strand, args =>);
         let mut out = out;
         out.store(result);
         Ok(())

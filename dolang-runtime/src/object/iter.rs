@@ -579,7 +579,7 @@ impl<'v> Protocol<'v> for Iterable {
         }
         match method.tag() {
             sym::ITER => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 obj.iter(strand, out).await
             }
             // `x.foo(..)` on an `Iterable` means `x.iter().foo(..)`: take the
@@ -665,7 +665,7 @@ impl<'v> Protocol<'v> for Sinkable {
         }
         match method.tag() {
             sym::SINK => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 obj.sink(strand, out).await
             }
             // `x.foo(..)` on a `Sinkable` means `x.sink().foo(..)`.
@@ -1530,89 +1530,87 @@ impl<'v> Protocol<'v> for Iter {
         match method.tag() {
             // Reached only when the class doesn't define its own `(iter)`.
             sym::SPREAD_METHOD | sym::ITER_METHOD => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 Output::set(strand, out, obj);
                 Ok(())
             }
             sym::ITER => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 obj.iter(strand, out).await
             }
             sym::NEXT => {
-                let ([obj], [default, or_else]) =
-                    unpack!(strand, args, 1, 0, default = None, else_key = None)?;
+                unpack!(strand, args => obj, ?:default, ?else_key: or_else);
                 iter_next(strand, &obj, default, or_else, out).await
             }
             sym::ALL => {
-                let ([obj], [pred]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => obj, ?pred);
                 iter_all_any(strand, &obj, pred, out, true).await
             }
             sym::ANY => {
-                let ([obj], [pred]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => obj, ?pred);
                 iter_all_any(strand, &obj, pred, out, false).await
             }
             sym::COUNT => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 iter_count(strand, &obj, out).await
             }
             sym::FOLD => {
-                let ([obj, init, func], []) = unpack!(strand, args, 3, 0)?;
+                unpack!(strand, args => obj, init, func);
                 iter_fold(strand, &obj, init, func, out).await
             }
             sym::MAP => {
-                let ([obj, func], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, func);
                 create_map(strand, &obj, func, out);
                 Ok(())
             }
             sym::FILTER => {
-                let ([obj, pred], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, pred);
                 create_filter(strand, &obj, pred, out);
                 Ok(())
             }
             sym::CHOMP => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 create_chomp(strand, &obj, out);
                 Ok(())
             }
             sym::CRIMP => {
-                let ([obj], [terminator]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => obj, ?terminator);
                 create_crimp(strand, &obj, terminator.as_deref(), out)
             }
             sym::CHAIN => create_chain_from_args(strand, args, out).await,
             sym::ZIP => create_zip_from_args(strand, args, out).await,
             sym::TAKE => {
-                let ([obj, count], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, count);
                 let count = nonnegative_count(strand, &count)?;
                 create_take(strand, obj.dup(), count, out);
                 Ok(())
             }
             sym::SKIP => {
-                let ([obj, count], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, count);
                 let count = nonnegative_count(strand, &count)?;
                 create_skip(strand, obj.dup(), count, out);
                 Ok(())
             }
             sym::ENUMERATE => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 create_enumerate(strand, obj.dup(), out);
                 Ok(())
             }
             sym::KV => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 create_kv(strand, obj.dup(), out);
                 Ok(())
             }
             sym::FIND => {
-                let ([obj, pred], [default, or_else]) =
-                    unpack!(strand, args, 2, 0, default = None, else_key = None)?;
+                unpack!(strand, args => obj, pred, ?:default, ?else_key: or_else);
                 iter_find(strand, &obj, pred, default, or_else, out).await
             }
             sym::MIN => {
-                let ([obj], [default]) = unpack!(strand, args, 1, 0, default = None)?;
+                unpack!(strand, args => obj, ?:default);
                 iter_extrema(strand, &obj, default, out, true).await
             }
             sym::MAX => {
-                let ([obj], [default]) = unpack!(strand, args, 1, 0, default = None)?;
+                unpack!(strand, args => obj, ?:default);
                 iter_extrema(strand, &obj, default, out, false).await
             }
             _ => Err(Error::field(strand, method)),
@@ -1721,35 +1719,35 @@ impl<'v> Protocol<'v> for Sink {
         match method.tag() {
             // Reached only when the class doesn't define its own `(sink)`.
             sym::SINK_METHOD => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 Output::set(strand, out, obj);
                 Ok(())
             }
             sym::SINK => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 obj.sink(strand, out).await
             }
             sym::PUT => {
-                let ([obj, value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, value);
                 obj.put(strand, value).await
             }
             sym::PREMAP => {
-                let ([obj, func], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, func);
                 create_premap(strand, &obj, func, out);
                 Ok(())
             }
             sym::PREFILTER => {
-                let ([obj, pred], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, pred);
                 create_prefilter(strand, &obj, pred, out);
                 Ok(())
             }
             sym::PRECHOMP => {
-                let ([obj], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => obj);
                 create_prechomp(strand, &obj, out);
                 Ok(())
             }
             sym::PRECRIMP => {
-                let ([obj], [terminator]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => obj, ?terminator);
                 create_precrimp(strand, &obj, terminator.as_deref(), out)
             }
             _ => Err(Error::field(strand, method)),
@@ -1861,7 +1859,7 @@ impl<'v> Protocol<'v> for Map<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => iter_mcall(strand, &this, method, args, out).await,
@@ -1965,7 +1963,7 @@ impl<'v> Protocol<'v> for Premap<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => sink_mcall(strand, &this, method, args, out).await,
@@ -2069,7 +2067,7 @@ impl<'v> Protocol<'v> for Filter<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => iter_mcall(strand, &this, method, args, out).await,
@@ -2177,7 +2175,7 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => sink_mcall(strand, &this, method, args, out).await,
@@ -2368,7 +2366,7 @@ impl<'v> Protocol<'v> for Chomp<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => iter_mcall(strand, &this, method, args, out).await,
@@ -2468,7 +2466,7 @@ impl<'v> Protocol<'v> for Prechomp<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => sink_mcall(strand, &this, method, args, out).await,
@@ -2580,7 +2578,7 @@ impl<'v> Protocol<'v> for Crimp<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => iter_mcall(strand, &this, method, args, out).await,
@@ -2695,7 +2693,7 @@ impl<'v> Protocol<'v> for Precrimp<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             _ => sink_mcall(strand, &this, method, args, out).await,
@@ -2739,7 +2737,7 @@ impl<'v> Protocol<'v> for MapType {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([func, obj], []) = unpack!(strand, args, 2, 0)?;
+        unpack!(strand, args => func, obj);
         create_map(strand, &obj, func, out);
         Ok(())
     }
@@ -2781,7 +2779,7 @@ impl<'v> Protocol<'v> for FilterType {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([pred, obj], []) = unpack!(strand, args, 2, 0)?;
+        unpack!(strand, args => pred, obj);
         create_filter(strand, &obj, pred, out);
         Ok(())
     }
@@ -3181,7 +3179,7 @@ impl<'v> Protocol<'v> for Null {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Ok(())
             }
             tag if classify(tag) == Some(Surface::Sinkable) => {

@@ -113,7 +113,7 @@ impl<'v> Object<'v> for Group {
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let info = this
                     .borrow_mut(strand)?
@@ -128,10 +128,7 @@ impl<'v> Object<'v> for Group {
             })
             .method("update", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let name_sym = global.syms.name;
-                let comment_sym = global.syms.comment;
-                let ([], [name, comment]) =
-                    unpack!(strand, args, 0, 0, name_sym = None, comment_sym = None)?;
+                unpack!(strand, args => ?(global.syms.name): name, ?(global.syms.comment): comment);
                 let mut update = group::Update::default();
                 if let Some(v) = name {
                     update = update.name(
@@ -165,7 +162,7 @@ impl<'v> Object<'v> for Group {
                 Ok(())
             })
             .method("members", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let members = this
                     .borrow(strand)?
@@ -182,7 +179,7 @@ impl<'v> Object<'v> for Group {
                 Ok(())
             })
             .method("add_member", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let sid = member_sid(strand, &value).await?;
                 this.borrow_mut(strand)?
                     .0
@@ -195,7 +192,7 @@ impl<'v> Object<'v> for Group {
                 Ok(())
             })
             .method("remove_member", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let sid = member_sid(strand, &value).await?;
                 this.borrow_mut(strand)?
                     .0
@@ -208,7 +205,7 @@ impl<'v> Object<'v> for Group {
                 Ok(())
             })
             .method("delete", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let group = this
                     .borrow_mut(strand)?
                     .0
@@ -328,7 +325,7 @@ pub(crate) fn configure_module<'v, 'a>(
         .value("Group", global.types.group)
         .value("GroupInfo", global.types.group_info)
         .function("group", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let vfs = dolang_ext_shell::vfs(strand);
             let group = match principal(strand, global, &value)? {
                 ResultPrincipal::Name(v) => group::by_name(&vfs, &v).await,
@@ -340,7 +337,7 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("groups", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             global.types.groups.create_with_annex(
                 strand,
                 Groups(group::enumerate(&dolang_ext_shell::vfs(strand))),
@@ -350,8 +347,7 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("create_group", async move |strand, args, out| {
-            let comment_sym = global.syms.comment;
-            let ([name], [comment]) = unpack!(strand, args, 1, 0, comment_sym = None)?;
+            unpack!(strand, args => name, ?(global.syms.comment): comment);
             let name = name
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "name must be a Str"))?

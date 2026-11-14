@@ -281,9 +281,9 @@ impl<'v> Object<'v> for Archive {
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let close = builder.sym("close");
-        let mode_sym = builder.sym("mode");
-        let size_sym = builder.sym("size");
-        let compression_sym = builder.sym("compression");
+        let mode = builder.sym("mode");
+        let size = builder.sym("size");
+        let compression = builder.sym("compression");
         let stored = builder.sym("STORED");
         let deflate = builder.sym("DEFLATE");
         let zstd = builder.sym("ZSTD");
@@ -308,15 +308,7 @@ impl<'v> Object<'v> for Archive {
                 async move |this, strand, args, out, [mut file, mut tmp]| {
                     let annex = this.annex();
                     let global = annex.global;
-                    let ([name], [block, mode, size, compression]) = unpack!(
-                        strand,
-                        args,
-                        1,
-                        1,
-                        mode_sym = None,
-                        size_sym = None,
-                        compression_sym = None
-                    )?;
+                    unpack!(strand, args => name, ?block, ?:mode, ?:size, ?:compression);
                     let name = name.to_string(strand)?;
 
                     if annex.is_file_open() {
@@ -421,7 +413,7 @@ impl<'v> Object<'v> for Archive {
             )
             .method("create_dir", async move |this, strand, args, _out| {
                 let annex = this.annex();
-                let ([name], [mode]) = unpack!(strand, args, 1, 0, mode_sym = None)?;
+                unpack!(strand, args => name, ?:mode);
                 let mut name = name.to_string(strand)?;
                 if !name.ends_with('/') {
                     name.push('/');
@@ -457,7 +449,7 @@ impl<'v> Object<'v> for Archive {
             })
             .method("symlink", async move |this, strand, args, _out| {
                 let annex = this.annex();
-                let ([target, name], [mode]) = unpack!(strand, args, 2, 0, mode_sym = None)?;
+                unpack!(strand, args => target, name, ?:mode);
                 let target = target.to_string(strand)?;
                 let name = name.to_string(strand)?;
 
@@ -495,7 +487,7 @@ impl<'v> Object<'v> for Archive {
             })
             .method("close", async move |this, strand, args, _out| {
                 let annex = this.annex();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
 
                 if annex.is_file_open() {
                     return Err(Error::concurrency(strand));
@@ -696,7 +688,7 @@ impl<'v> Object<'v> for Entry {
             .method_with_slots(
                 "open",
                 async move |this, strand, args, out, [mut file, mut tmp]| {
-                    let ([], [block]) = unpack!(strand, args, 0, 1)?;
+                    unpack!(strand, args => ?block);
                     let annex = this.annex();
                     let global = annex.global;
                     let index = annex.index;
@@ -883,7 +875,7 @@ impl<'v> Object<'v> for File {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let size: Option<usize> = size
                     .map(|size| {
                         size.to_i64(strand)
@@ -971,7 +963,7 @@ impl<'v> Object<'v> for File {
             })
             .method("close", async move |this, strand, args, _out| {
                 let global = *this.annex();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let Some(inner) = this.borrow_mut(strand)?.inner.take() else {
                     return Ok(());
                 };
@@ -1007,7 +999,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("Entry", global.types.entry)
         .value("File", global.types.file)
         .function("open", async move |strand, args, out| {
-            let ([source], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
+            unpack!(strand, args => source, ?opt1, ?opt2);
 
             let (mode, block) = match (&opt1, &opt2) {
                 (None, None) => (None, None),

@@ -125,7 +125,7 @@ pub(crate) fn configure_module<'v, 'a>(
     module
         .value("AccountPolicy", global.types.account_policy)
         .function("account_policy", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let policy = policy::get(&dolang_ext_shell::vfs(strand))
                 .await
                 .into_sys(strand)?;
@@ -133,40 +133,16 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("update_account_policy", async move |strand, args, out| {
-            let min_password_length_sym = global.syms.min_password_length;
-            let max_password_age_sym = global.syms.max_password_age;
-            let min_password_age_sym = global.syms.min_password_age;
-            let force_logoff_sym = global.syms.force_logoff;
-            let password_history_length_sym = global.syms.password_history_length;
-            let lockout_duration_sym = global.syms.lockout_duration;
-            let lockout_observation_window_sym = global.syms.lockout_observation_window;
-            let lockout_threshold_sym = global.syms.lockout_threshold;
-            let (
-                [],
-                [
-                    min_length,
-                    max_age,
-                    min_age,
-                    force_logoff,
-                    history,
-                    lockout_duration,
-                    observation,
-                    threshold,
-                ],
-            ) = unpack!(
-                strand,
-                args,
-                0,
-                0,
-                min_password_length_sym = None,
-                max_password_age_sym = None,
-                min_password_age_sym = None,
-                force_logoff_sym = None,
-                password_history_length_sym = None,
-                lockout_duration_sym = None,
-                lockout_observation_window_sym = None,
-                lockout_threshold_sym = None
-            )?;
+            unpack!(strand, args =>
+                ?(global.syms.min_password_length): min_length,
+                ?(global.syms.max_password_age): max_age,
+                ?(global.syms.min_password_age): min_age,
+                ?(global.syms.force_logoff): force_logoff,
+                ?(global.syms.password_history_length): history,
+                ?(global.syms.lockout_duration): lockout_duration,
+                ?(global.syms.lockout_observation_window): observation,
+                ?(global.syms.lockout_threshold): threshold
+            );
             let mut update = policy::Update::default();
             if let Some(value) = min_length {
                 update =

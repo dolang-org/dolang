@@ -242,7 +242,7 @@ impl<'v> Object<'v> for Document {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], [], items) = unpack!(strand, args, 0, 0, *)?;
+        unpack!(strand, args => *items);
         with_slots!(strand, |mut children| {
             strand.new_array(&mut children);
             let array = children.as_array(strand).unwrap();

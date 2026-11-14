@@ -477,50 +477,40 @@ impl<'v, 'a> ExactSizeIterator for KeyArgs<'v, 'a> {}
 
 /// Unpacks [`Args`] into required and optional positional and key arguments
 ///
-/// Invoke as:
+/// Invoke as a statement, with a parameter list after `=>`:
 ///
 /// ```rust,no_run
 /// # use dolang_runtime::{arg::Args, strand::Strand, sym::Sym, value::Slot, unpack};
-/// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, args: Args<'v, 'a>, key1: Sym<'v, 'a>, key2: Sym<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// let ([req1, req2], [opt1]) = unpack!(strand, args, 1, 0, key1, key2 = None)?;
+/// # struct Syms<'v, 'a> { mode: Sym<'v, 'a> }
+/// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, args: Args<'v, 'a>, retries: Sym<'v, 'a>, syms: Syms<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// unpack!(strand, args => path, ?block, :retries, ?(syms.mode): mode, *rest);
 /// # Ok(())
 /// # }
 /// ```
-/// where:
-/// - `args`: the [`Args`] pack
-/// - `n`: the number of required positional parameters
-/// - `no`: the number of optional positional parameters
-/// - `key1`: a required key argument, which should be an in-scope [`Sym`] (typically obtained from
-///   [`Builder::sym`](crate::vm::Builder::sym)).
-/// - `key2`: like the above, but optional
-/// - `req1`, ...: required arguments; positional first, then key arguments in provided order
-/// - `opt1`, ...: optional arguments; positional first, then key arguments in provided order
+///
+/// This binds each parameter as a local, raising the unpacking error with `?`. Parameters are:
+/// - `x`: a required positional argument, bound to the pattern `x` as a [`Slot`]
+/// - `key: x`: a required key argument, where `key` is a [`Sym`] (typically obtained from
+///   [`Builder::sym`](crate::vm::Builder::sym)), either an identifier or any expression in
+///   parentheses
+/// - `:key`: shorthand for `key: key`, binding the argument over the [`Sym`]
+/// - `?x`, `?key: x`, `?:key`: optional counterparts, bound as [`Option<Slot>`]
+/// - `...rest`, `*rest`, `**rest`: the remaining arguments, last
+///
+/// Required positional parameters come before optional ones. Key parameters can appear anywhere.
 ///
 /// The first occurrence of a named keyword binds its parameter. Further occurrences
 /// go to the keyed rest (`**` or `...`), or raise `UnexpectedKeyError` without one.
 /// Keywords captured by a rest retain their order.
 ///
-/// Required arguments are of type [`Slot`] and optional are of type [`Option<Slot>`].
-///
-/// To capture remaining arguments, add `...` to the end of the invocation:
-///
-/// ```rust,no_run
-/// # use dolang_runtime::{arg::Args, strand::Strand, sym::Sym, value::Slot, unpack};
-/// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, args: Args<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// let ([req], [opt], rest) = unpack!(strand, args, 1, 1, ...)?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// `rest` is then an [`Args`] with the unmatched arguments in call order.  End the invocation
-/// with `*` instead to capture only positional arguments as a [`PosArgs`], or with `**` to capture
-/// only key arguments as a [`KeyArgs`]; an unmatched argument of the other kind is an error, as
-/// without a rest:
+/// A `...` rest is an [`Args`] with the unmatched arguments in call order. A `*` rest captures
+/// only positional arguments as a [`PosArgs`], and a `**` rest only key arguments as a
+/// [`KeyArgs`]; an unmatched argument of the other kind is an error, as without a rest:
 ///
 /// ```rust,no_run
 /// # use dolang_runtime::{arg::Args, strand::Strand, sym::Sym, value::Slot, unpack};
 /// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, args: Args<'v, 'a>, key: Sym<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// let ([first], [opt], values) = unpack!(strand, args, 1, 0, key = None, *)?;
+/// unpack!(strand, args => first, ?:key, *values);
 /// for value in values {
 ///     // ...
 /// }
@@ -529,44 +519,81 @@ impl<'v, 'a> ExactSizeIterator for KeyArgs<'v, 'a> {}
 /// ```
 #[macro_export]
 macro_rules! unpack {
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {}) => {
-        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, false, false>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, _)| (req, opt))
+    // `@item` sorts each parameter into one of six lists, each a brace
+    // group: required positional patterns, optional positional patterns, required key syms and
+    // patterns, optional key syms and patterns. `$st` is `opt` once an optional positional has
+    // been seen. Rules that start with a fragment come after every rule that starts with a
+    // token, since a fragment that fails to parse is a hard error.
+    (@item $s: tt $st: tt $pr: tt $po: tt $ks: tt $kp: tt $kos: tt $kop: tt { $(,)? }) => {
+        $crate::unpack!(@emit $s $pr $po $ks $kp $kos $kop ());
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {...}) => {
-        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, true, true>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap()))
+    (@item $s: tt $st: tt $pr: tt $po: tt $ks: tt $kp: tt $kos: tt $kop: tt { ** $r: pat_param $(,)* }) => {
+        $crate::unpack!(@emit $s $pr $po $ks $kp $kos $kop (** $r));
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {*}) => {
-        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, true, false>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap().into_pos()))
+    (@item $s: tt $st: tt $pr: tt $po: tt $ks: tt $kp: tt $kos: tt $kop: tt { * $r: pat_param $(,)* }) => {
+        $crate::unpack!(@emit $s $pr $po $ks $kp $kos $kop (* $r));
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $(, $kargs: tt)* }, { $(, $koargs: tt)* }, {**}) => {
-        $args.unpack::<{$n}, {$k}, {$no}, {$ko}, {$n + $k}, {$no + $ko}, false, true>($strand, [$($kargs),*], [$($koargs),*]).map(|(req, opt, var)| (req, opt, var.unwrap().into_keys()))
+    (@item $s: tt $st: tt $pr: tt $po: tt $ks: tt $kp: tt $kos: tt $kop: tt { ... $r: pat_param $(,)* }) => {
+        $crate::unpack!(@emit $s $pr $po $ks $kp $kos $kop (... $r));
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $($kargs: tt)* }, { $($koargs: tt)* }, { $key: ident } ) => {
-        unpack!(impl $strand, $args, $n, $k + 1, $no, $ko, { $($kargs)*, $key }, { $($koargs)* }, {})
+    (@item $s: tt $st: tt $pr: tt $po: tt $ks: tt $kp: tt { $($kos: tt)* } { $($kop: tt)* }
+     { ? : $k: ident , $($rest: tt)* }) => {
+        $crate::unpack!(@item $s $st $pr $po $ks $kp { $($kos)* $k } { $($kop)* $k } { $($rest)* });
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $($kargs: tt)* }, { $($koargs: tt)* }, { $key: ident, $($rest: tt)* } ) => {
-        unpack!(impl $strand, $args, $n, $k + 1, $no, $ko, { $($kargs)*, $key }, { $($koargs)* }, { $($rest)* })
+    (@item $s: tt $st: tt $pr: tt $po: tt $ks: tt $kp: tt { $($kos: tt)* } { $($kop: tt)* }
+     { ? $k: tt : $b: pat_param , $($rest: tt)* }) => {
+        $crate::unpack!(@item $s $st $pr $po $ks $kp { $($kos)* $k } { $($kop)* $b } { $($rest)* });
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $($kargs: tt)* }, { $($koargs: tt)* }, { $key: ident = None } ) => {
-        unpack!(impl $strand, $args, $n, $k, $no, $ko + 1, { $($kargs)* }, { $($koargs)*, $key }, {})
+    (@item $s: tt $st: tt $pr: tt { $($po: tt)* } $ks: tt $kp: tt $kos: tt $kop: tt
+     { ? $b: pat_param , $($rest: tt)* }) => {
+        $crate::unpack!(@item $s opt $pr { $($po)* $b } $ks $kp $kos $kop { $($rest)* });
     };
-    (impl $strand: expr, $args: expr, $n: expr, $k: expr, $no: expr, $ko: expr,
-     { $($kargs: tt)* }, { $($koargs: tt)* }, { $key: ident = None, $($rest: tt)* } ) => {
-        unpack!(impl $strand, $args, $n, $k, $no, $ko + 1, { $($kargs)* }, { $($koargs)*, $key }, { $($rest)* })
+    (@item $s: tt $st: tt $pr: tt $po: tt { $($ks: tt)* } { $($kp: tt)* } $kos: tt $kop: tt
+     { : $k: ident , $($rest: tt)* }) => {
+        $crate::unpack!(@item $s $st $pr $po { $($ks)* $k } { $($kp)* $k } $kos $kop { $($rest)* });
     };
-    ($strand: expr, $args: expr, $n: expr, $no: expr, $($rest: tt)*) => {
-        unpack!(impl $strand, $args, $n, 0, $no, 0, {}, {}, { $($rest)* })
+    (@item $s: tt $st: tt $pr: tt $po: tt { $($ks: tt)* } { $($kp: tt)* } $kos: tt $kop: tt
+     { $k: tt : $b: pat_param , $($rest: tt)* }) => {
+        $crate::unpack!(@item $s $st $pr $po { $($ks)* $k } { $($kp)* $b } $kos $kop { $($rest)* });
     };
-    ($strand: expr, $args: expr, $n: expr, $no: expr) => {
-        unpack!(impl $strand, $args, $n, 0, $no, 0, {}, {}, {})
-    }
+    (@item $s: tt opt $($t: tt)*) => {
+        ::core::compile_error!("`unpack!`: a required positional parameter follows an optional one");
+    };
+    (@item $s: tt $st: tt { $($pr: tt)* } $po: tt $ks: tt $kp: tt $kos: tt $kop: tt
+     { $b: pat_param , $($rest: tt)* }) => {
+        $crate::unpack!(@item $s $st { $($pr)* $b } $po $ks $kp $kos $kop { $($rest)* });
+    };
+    (@emit ($strand: expr, $args: expr) { $($pr: tt)* } { $($po: tt)* } { $($ks: tt)* } { $($kp: tt)* }
+     { $($kos: tt)* } { $($kop: tt)* } ($($rest: tt)*)) => {
+        let (req, opt, rest) = $args.unpack::<
+            { 0 $(+ $crate::unpack!(@one $pr))* },
+            { 0 $(+ $crate::unpack!(@one $ks))* },
+            { 0 $(+ $crate::unpack!(@one $po))* },
+            { 0 $(+ $crate::unpack!(@one $kos))* },
+            { 0 $(+ $crate::unpack!(@one $pr))* $(+ $crate::unpack!(@one $ks))* },
+            { 0 $(+ $crate::unpack!(@one $po))* $(+ $crate::unpack!(@one $kos))* },
+            { $crate::unpack!(@pos $($rest)*) },
+            { $crate::unpack!(@key $($rest)*) },
+        >($strand, [$($ks),*], [$($kos),*])?;
+        let [$($pr,)* $($kp,)*] = req;
+        let [$($po,)* $($kop,)*] = opt;
+        $crate::unpack!(@rest rest $($rest)*);
+    };
+    (@one $($t: tt)*) => { 1 };
+    (@pos) => { false };
+    (@pos ** $($t: tt)*) => { false };
+    (@pos $($t: tt)*) => { true };
+    (@key) => { false };
+    (@key ** $($t: tt)*) => { true };
+    (@key * $($t: tt)*) => { false };
+    (@key $($t: tt)*) => { true };
+    (@rest $v: ident) => { let _ = $v; };
+    (@rest $v: ident ** $r: pat_param) => { let $r = $v.unwrap().into_keys(); };
+    (@rest $v: ident * $r: pat_param) => { let $r = $v.unwrap().into_pos(); };
+    (@rest $v: ident ... $r: pat_param) => { let $r = $v.unwrap(); };
+    ($strand: expr, $args: expr => $($items: tt)*) => {
+        $crate::unpack!(@item ($strand, $args) req {} {} {} {} {} {} { $($items)* , });
+    };
 }
 
 /// Call callable Do value.

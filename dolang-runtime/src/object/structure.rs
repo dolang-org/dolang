@@ -406,7 +406,7 @@ impl<'v> Protocol<'v> for Class {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
                     call!(strand, &strand.singletons().structure, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().structure, native.take())?;
@@ -416,8 +416,7 @@ impl<'v> Protocol<'v> for Class {
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([target, key], [default, or_else]) =
-                    unpack!(strand, args, 2, 0, default = None, else_key = None)?;
+                unpack!(strand, args => target, key, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -441,7 +440,7 @@ impl<'v> Protocol<'v> for Class {
                 }
             }
             sym::CONTAINS => {
-                let ([target, key], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => target, key);
                 let found = {
                     with_pin!(strand, expect_struct(strand, &target)?, |target| {
                         let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
@@ -492,7 +491,7 @@ impl<'v> Protocol<'v> for Class {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([source], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => source);
         let items = pack::source_items(strand, &source).await?;
         let structure = Struct::new(strand, items)?;
         strand

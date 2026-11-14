@@ -146,7 +146,7 @@ mod browser {
                     Ok(())
                 })
                 .method("read", async move |this, strand, args, out| {
-                    let ([size], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => size);
                     let size = size
                         .to_i64(strand)
                         .ok()
@@ -171,7 +171,7 @@ mod browser {
                     Ok(())
                 })
                 .method("close", async move |this, strand, args, _out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let mut borrow = this.borrow_mut(strand)?;
                     borrow.stream = None;
                     borrow.chunk = Bytes::new();

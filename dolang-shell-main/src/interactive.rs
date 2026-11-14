@@ -157,8 +157,8 @@ impl<'v> Object<'v> for LineEditor {
         args: dolang::runtime::Args<'v, 'a>,
         mut out: dolang::runtime::Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let prelude_sym = *this.annex(strand.vm());
-        let ([path], [prelude]) = unpack!(strand, args, 1, 0, prelude_sym = None)?;
+        let prelude = *this.annex(strand.vm());
+        unpack!(strand, args => path, ?:prelude);
         let history_path = if path.is_nil() {
             None
         } else {
@@ -198,7 +198,7 @@ impl<'v> Object<'v> for LineEditor {
         let interrupted = builder.sym("INTERRUPTED");
         builder
             .method("readline", async move |this, strand, args, out| {
-                let ([prompt, names], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => prompt, names);
                 let prompt = prompt
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "prompt must be Str"))?
@@ -278,7 +278,7 @@ impl<'v> Object<'v> for LineEditor {
                 Ok(())
             })
             .method("save_history", async |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 let path = borrow.history_path.clone();
                 let editor = borrow

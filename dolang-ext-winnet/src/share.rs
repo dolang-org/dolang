@@ -131,7 +131,7 @@ impl<'v> Object<'v> for Share {
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let borrow = this.borrow(strand)?;
                 let info = capability(&borrow, strand)?.info().await.into_sys(strand)?;
@@ -140,18 +140,11 @@ impl<'v> Object<'v> for Share {
             })
             .method("update", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let comment_sym = global.syms.comment;
-                let max_uses_sym = global.syms.max_uses;
-                let sec_desc_sym = global.syms.sec_desc;
-                let ([], [comment, maximum, descriptor]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    comment_sym = None,
-                    max_uses_sym = None,
-                    sec_desc_sym = None
-                )?;
+                unpack!(strand, args =>
+                    ?(global.syms.comment): comment,
+                    ?(global.syms.max_uses): maximum,
+                    ?(global.syms.sec_desc): descriptor
+                );
                 let mut update = share::Update::default();
                 if let Some(v) = comment {
                     update = update.comment(optional_str(strand, &v, "comment")?);
@@ -171,7 +164,7 @@ impl<'v> Object<'v> for Share {
                 Ok(())
             })
             .method("delete", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 capability(&borrow, strand)?
                     .delete()
@@ -295,10 +288,13 @@ pub(crate) fn configure_module<'v, 'a>(
         .value("Share", global.types.share)
         .value("ShareInfo", global.types.share_info)
         .function("share", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let vfs = dolang_ext_shell::vfs(strand);
             let share = if let Some(info) = global.types.share_info.cast(&value) {
-                Ok(with_instance!(strand, info, |v| share::from_info(&vfs, &v.annex().info)))
+                Ok(with_instance!(strand, info, |v| share::from_info(
+                    &vfs,
+                    &v.annex().info
+                )))
             } else if let Some(name) = value.as_str(strand) {
                 let name = name.to_string();
                 share::by_name(&vfs, &name).await
@@ -313,34 +309,25 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("shares", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let shares = share::enumerate(&dolang_ext_shell::vfs(strand));
             global
-                .types.shares
+                .types
+                .shares
                 .create_with_annex(strand, Shares(shares), global, out);
             Ok(())
         })
         .function("create_share", async move |strand, args, out| {
-            let path_sym = global.syms.path;
-            let kind_sym = global.syms.kind;
-            let comment_sym = global.syms.comment;
-            let max_uses_sym = global.syms.max_uses;
-            let special_sym = global.syms.special;
-            let temporary_sym = global.syms.temporary;
-            let sec_desc_sym = global.syms.sec_desc;
-            let ([name, path], [kind_arg, comment, maximum, special, temporary, descriptor]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                path_sym,
-                kind_sym = None,
-                comment_sym = None,
-                max_uses_sym = None,
-                special_sym = None,
-                temporary_sym = None,
-                sec_desc_sym = None
-            )?;
+            unpack!(strand, args =>
+                name,
+                (global.syms.path): path,
+                ?(global.syms.kind): kind_arg,
+                ?(global.syms.comment): comment,
+                ?(global.syms.max_uses): maximum,
+                ?(global.syms.special): special,
+                ?(global.syms.temporary): temporary,
+                ?(global.syms.sec_desc): descriptor
+            );
             let name = name
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "name must be a Str"))?

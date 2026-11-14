@@ -143,8 +143,8 @@ impl<'v, T: SysErrorType<'v>> Object<'v> for SysErrorObject<T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let code_sym = strand.force_state::<ErrorTag>().syms.code;
-        let ([message], [code]) = unpack!(strand, args, 1, 0, code_sym = None)?;
+        let code = strand.force_state::<ErrorTag>().syms.code;
+        unpack!(strand, args => message, ?:code);
         let message = message
             .as_str(strand)
             .ok_or_else(|| Error::type_error(strand, "message: expected Str"))?

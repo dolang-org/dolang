@@ -11,7 +11,7 @@ use crate::{interactive::LineEditor, load};
 pub(crate) fn register<'v>(builder: &mut Register<'v>) {
     let prelude_sym = builder.sym("prelude");
     let editor = builder.build_type::<LineEditor>((), prelude_sym).build();
-    let mode_sym = builder.sym("mode");
+    let mode = builder.sym("mode");
     let strict_sym = builder.sym("strict");
     let script_sym = builder.sym("SCRIPT");
     let repl_sym = builder.sym("REPL");
@@ -19,15 +19,13 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
         .module("_shell")
         .value("Editor", editor)
         .function("compile", async move |strand, args, out| {
-            let ([path], [source, mode, prelude, strict_arg]) = unpack!(
-                strand,
-                args,
-                1,
-                1,
-                mode_sym = None,
-                prelude_sym = None,
-                strict_sym = None
-            )?;
+            unpack!(strand, args =>
+                path,
+                ?source,
+                ?:mode,
+                ?prelude_sym: prelude,
+                ?strict_sym: strict_arg
+            );
             let path = dolang_ext_shell::as_path(strand, &path)
                 .ok_or_else(|| Error::type_error(strand, "path must be Str or fs.Path"))?;
             let mode = match mode {
@@ -75,7 +73,7 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
             Ok(())
         })
         .function("resource", async move |strand, args, out| {
-            let ([namespace, name], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => namespace, name);
             let namespace = namespace
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "namespace must be Str"))?;

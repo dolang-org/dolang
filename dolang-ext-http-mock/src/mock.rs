@@ -920,7 +920,7 @@ impl<'v> Object<'v> for Server {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
-        let ([], [func]) = unpack!(strand, args, 0, 1)?;
+        unpack!(strand, args => ?func);
 
         if let Some(func) = func {
             with_slots!(strand, |mut handle, tmp| {
@@ -940,7 +940,7 @@ impl<'v> Object<'v> for Server {
         builder
             .supertype(TypeObject::Func)
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = this.annex().global;
                 let stopped = {
                     let mut borrow = this.borrow_mut(strand)?;
@@ -968,7 +968,7 @@ impl<'v> Object<'v> for Server {
                 Ok(())
             })
             .method("reset", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = this.annex().global;
                 this.borrow(strand)?.check_open(strand)?;
                 with_slots!(strand, |mut mounted, mut item| {
@@ -994,7 +994,7 @@ impl<'v> Object<'v> for Server {
                 })
             })
             .method("received_requests", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 borrow.check_open(strand)?;
                 copy_array(strand, Ref::slot::<2>(&borrow), out)
@@ -1162,18 +1162,18 @@ impl<'v> Object<'v> for MockObject {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .method("received", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 copy_array(strand, Ref::slot::<2>(&borrow), out)
             })
             .method("verify", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = *this.annex();
                 let failure = verify_mock(strand, this);
                 raise_verify_failure(strand, global, failure).await
             })
             .method("unmount", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = *this.annex();
                 unmount_mock(strand, this, global)
             })

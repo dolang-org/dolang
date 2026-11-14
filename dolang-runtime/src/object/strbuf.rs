@@ -318,17 +318,17 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::APPEND => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.append(strand, &value)
             }
             sym::EXTEND => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.extend_method(strand, &value)
             }
             sym::INSERT => {
-                let ([idx, s], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => idx, s);
                 let idx_i64 = idx.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let Some(s) = s.as_str(strand.vm()) else {
                     return Err(Error::type_error(strand, "StrBuf.insert: expected Str"));
@@ -347,7 +347,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 Ok(())
             }
             sym::REMOVE => {
-                let ([r], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => r);
                 let len = this.borrow(strand)?.len();
                 let Some((start, end)) = range::slice_bounds(&r, strand, len)? else {
                     return Err(Error::type_error(strand, "StrBuf.remove: expected a range"));
@@ -365,7 +365,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 Ok(())
             }
             sym::TRUNCATE => {
-                let ([len], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => len);
                 let len = len.to_index(strand)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.settle(strand);
@@ -374,18 +374,18 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 Ok(())
             }
             sym::CLEAR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.borrow_mut(strand)?.clear();
                 Ok(())
             }
             sym::FREEZE => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.freeze(strand, out);
                 Ok(())
             }
             sym::STARTS_WITH => {
-                let ([prefix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => prefix);
                 let borrow = this.borrow(strand)?;
                 let prefix = prefix
                     .as_str(strand)
@@ -395,7 +395,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 Ok(())
             }
             sym::ENDS_WITH => {
-                let ([suffix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => suffix);
                 let borrow = this.borrow(strand)?;
                 let suffix = suffix
                     .as_str(strand)
@@ -405,7 +405,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([needle], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => needle);
                 let borrow = this.borrow(strand)?;
                 let needle = needle
                     .as_str(strand)
@@ -415,7 +415,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 Ok(())
             }
             sym::DRAIN => {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let chunk_size = match size {
                     Some(size) => size.to_index(strand)?,
                     None => crate::BYTE_STREAM_CHUNK_SIZE,
@@ -546,7 +546,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], [initial]) = unpack!(strand, args, 0, 1)?;
+        unpack!(strand, args => ?initial);
         let mut buf = StrBuf::new();
         if let Some(initial) = &initial
             && !buf.copy_from_value(strand, initial)
@@ -601,7 +601,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val], [initial]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => self_val, ?initial);
                 let mut buf = StrBuf::new();
                 if let Some(initial) = &initial
                     && !buf.copy_from_value(strand, initial)

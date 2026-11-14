@@ -21,7 +21,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .module("glob")
         .value("Glob", global.types.glob)
         .function("matches", async move |strand, args, mut out| {
-            let ([pattern, value], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => pattern, value);
             let pattern = PatternArg::new(strand, global, &pattern)?;
             let value = value
                 .as_str(strand)
@@ -93,7 +93,7 @@ impl<'v> Object<'v> for Glob {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([pattern], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => pattern);
         let pattern: String = match pattern.view(strand.vm()) {
             View::Str(pattern) => pattern.into(),
             _ => return Err(Error::type_error(strand, "pattern: expected `Str`")),
@@ -105,7 +105,7 @@ impl<'v> Object<'v> for Glob {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.method("matches", async move |this, strand, args, mut out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let matched = match value.view(strand.vm()) {
                 View::Str(value) => {
                     strand.access(|access| this.annex().glob.is_match(value.as_str(access)))

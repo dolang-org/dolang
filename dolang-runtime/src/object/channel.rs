@@ -272,7 +272,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CLOSE => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.recv_closed = true;
                 borrow.queue.clear();
@@ -387,8 +387,8 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CLOSE => {
-                let backtrace_key = Sym::well_known(sym::BACKTRACE);
-                let ([], [err, backtrace]) = unpack!(strand, args, 0, 1, backtrace_key = None)?;
+                let backtrace = Sym::well_known(sym::BACKTRACE);
+                unpack!(strand, args => ?err, ?:backtrace);
                 let poison_backtrace = match backtrace {
                     Some(backtrace) => {
                         let Some(_) = backtrace.downcast_ref(strand.builtin_types().backtrace)

@@ -2346,7 +2346,7 @@ mod constructor_tests {
         with_vm(async |strand, [mut func, mut arg, mut result]| {
             strand.native_function(
                 async |strand: &mut Strand<'_, '_>, args, out| -> Result<'_, '_, ()> {
-                    let ([value], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => value);
                     Output::set(strand, out, &value);
                     Ok(())
                 },

@@ -124,7 +124,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
     builder
         .module("xml")
         .function("decode", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             let src = arg
                 .as_str(strand.vm())
                 .ok_or_else(|| Error::type_error(strand, "expected Str"))?
@@ -132,7 +132,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
             decode(strand, &src, state, out)
         })
         .function("encode", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             let document = state
                 .document_type
                 .cast(&arg)

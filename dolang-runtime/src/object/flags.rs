@@ -722,7 +722,7 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
         F::build(builder.supertype(TypeObject::Iterable).method(
             "contains",
             async move |this, strand, args, mut out| {
-                let ([sym], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => sym);
                 let sym = sym
                     .as_sym(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected symbol"))?;

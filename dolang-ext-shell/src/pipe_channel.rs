@@ -1004,12 +1004,12 @@ impl<'v> Object<'v> for PipeReceiver {
         builder
             .supertype(TypeObject::Iter)
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.annex().shared.borrow_mut().close_recv();
                 Ok(())
             })
             .method("io", async move |this, strand, args, out| {
-                let ([], [block]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?block);
                 let guard = lease_recv(this, strand, true).await?;
                 let reader = guard.into_stream_end().into_sys(strand)?;
                 let annex = this.annex();
@@ -1158,11 +1158,11 @@ impl<'v> Object<'v> for PipeSender {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let backtrace_sym = builder.sym("backtrace");
+        let backtrace = builder.sym("backtrace");
         builder
             .supertype(TypeObject::Sink)
             .method("io", async move |this, strand, args, out| {
-                let ([], [block]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?block);
                 let guard = lease_send(this, strand).await?;
                 let writer = guard.into_stream_end().into_sys(strand)?;
                 let annex = this.annex();
@@ -1177,7 +1177,7 @@ impl<'v> Object<'v> for PipeSender {
                 .await
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], [err, backtrace]) = unpack!(strand, args, 0, 1, backtrace_sym = None)?;
+                unpack!(strand, args => ?err, ?:backtrace);
                 let shared = &this.annex().shared;
                 let send_borrow = this.borrow(strand)?;
                 with_instance!(
@@ -1401,7 +1401,7 @@ impl<'v> Object<'v> for PipeStream {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = size
                     .to_i64(strand)
                     .ok()
@@ -1422,7 +1422,7 @@ impl<'v> Object<'v> for PipeStream {
                 write_pieces(&writer, args, strand, out).await
             })
             .method("flush", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let Some(mut writer) = this.borrow(strand)?.writer() else {
                     return Err(missing_end(this, strand, "`flush`"));
                 };
@@ -1430,7 +1430,7 @@ impl<'v> Object<'v> for PipeStream {
                 writer.flush().await.into_sys(strand)
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 close_stream(this, strand).await
             })
     }

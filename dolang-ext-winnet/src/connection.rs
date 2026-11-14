@@ -156,7 +156,7 @@ impl<'v> Object<'v> for Connection {
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let borrow = this.borrow(strand)?;
                 let info = capability(&borrow, strand)?.info().await.into_sys(strand)?;
@@ -164,7 +164,7 @@ impl<'v> Object<'v> for Connection {
                 Ok(())
             })
             .method("path", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let info = capability(&borrow, strand)?.info().await.into_sys(strand)?;
                 // A redirected device is reachable as a drive root; a deviceless
@@ -177,10 +177,10 @@ impl<'v> Object<'v> for Connection {
             })
             .method("disconnect", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let force_sym = global.syms.force;
-                let forget_sym = global.syms.forget_credentials;
-                let ([], [force, forget]) =
-                    unpack!(strand, args, 0, 0, force_sym = None, forget_sym = None)?;
+                unpack!(strand, args =>
+                    ?(global.syms.force): force,
+                    ?(global.syms.forget_credentials): forget
+                );
                 let force = match force {
                     Some(v) => expect_bool(strand, &v, "force")?,
                     None => false,
@@ -336,7 +336,7 @@ pub(crate) fn configure_module<'v, 'a>(
         .value("Connection", global.types.connection)
         .value("ConnectionInfo", global.types.connection_info)
         .function("connection", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let vfs = dolang_ext_shell::vfs(strand);
             let connection = if let Some(info) = global.types.connection_info.cast(&value) {
                 Ok(with_instance!(strand, info, |v| connection::from_info(
@@ -357,7 +357,7 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("connections", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let connections = connection::enumerate(&dolang_ext_shell::vfs(strand));
             global.types.connections.create_with_annex(
                 strand,
@@ -368,7 +368,7 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("universal_name", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let path = as_windows_path(strand, &value)
                 .ok_or_else(|| Error::type_error(strand, "path must be an fs.windows.Path"))?;
             let name = connection::universal_name(&dolang_ext_shell::vfs(strand), path.to_path())
@@ -378,24 +378,16 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("connect", async move |strand, args, out| {
-            let local_sym = global.syms.local;
-            let user_sym = global.syms.user;
-            let password_sym = global.syms.password;
-            let kind_sym = global.syms.kind;
-            let persistent_sym = global.syms.persistent;
-            let save_sym = global.syms.save_credentials;
-            let ([remote], [block, local, user, password, kind_arg, persistent, save]) = unpack!(
-                strand,
-                args,
-                1,
-                1,
-                local_sym = None,
-                user_sym = None,
-                password_sym = None,
-                kind_sym = None,
-                persistent_sym = None,
-                save_sym = None
-            )?;
+            unpack!(strand, args =>
+                remote,
+                ?block,
+                ?(global.syms.local): local,
+                ?(global.syms.user): user,
+                ?(global.syms.password): password,
+                ?(global.syms.kind): kind_arg,
+                ?(global.syms.persistent): persistent,
+                ?(global.syms.save_credentials): save
+            );
             let remote = remote
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "remote must be a Str"))?

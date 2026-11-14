@@ -82,14 +82,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
     builder
         .module("shlex")
         .function("quote", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             let s = arg.to_verbatim(strand)?;
             let quoted = shlex::try_quote(&s).into_do_value(strand)?;
             Output::set(strand, out, quoted.as_ref());
             Ok(())
         })
         .function("split", async move |strand, args, mut out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
 
             // Input must be a string
             let s = arg
@@ -113,7 +113,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
         .function_with_slots(
             "join",
             async move |strand, args, out, [mut iter, mut item]| {
-                let ([iterable], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => iterable);
 
                 // Collect all items from iterable
                 let mut items = Vec::new();

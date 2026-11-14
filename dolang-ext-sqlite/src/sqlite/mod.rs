@@ -58,15 +58,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
     builder
         .module("sqlite")
         .function("open", async move |strand, args, out| {
-            let ([path], [block, retries, min_wait, max_wait]) = unpack!(
-                strand,
-                args,
-                1,
-                1,
-                retries = None,
-                min_wait = None,
-                max_wait = None
-            )?;
+            unpack!(strand, args => path, ?block, ?:retries, ?:min_wait, ?:max_wait);
             let path = dolang_ext_shell::as_path(strand, &path)
                 .ok_or_else(|| Error::type_error(strand, "path: expected Str"))?;
             let path = if path == Path::new(":memory:") {

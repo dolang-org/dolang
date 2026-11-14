@@ -33,7 +33,7 @@ impl<'v> Object<'v> for Comment {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([text], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => text);
         let text = required_string(strand, &text, "comment text")?;
         validate_comment(&text).or_value(strand)?;
         this.create(strand, Self { text }, out);

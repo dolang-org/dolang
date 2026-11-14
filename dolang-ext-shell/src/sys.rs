@@ -87,7 +87,7 @@ pub(crate) fn configure_vm<'v>(
     builder
         .module("sys")
         .function("os_info", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let target = global.local.get(strand).target();
             let os = match target.os() {
                 OperatingSystem::FreeBsd => freebsd,
@@ -118,7 +118,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("cpu_info", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let target = global.local.get(strand).target();
             let arch = match target.arch() {
                 Architecture::X86_64 => x86_64,

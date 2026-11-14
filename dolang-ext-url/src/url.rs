@@ -213,7 +213,7 @@ impl<'v> Object<'v> for Url {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let url = value_to_url(strand, &value)?;
         let global = strand.state::<Tag>();
         this.create_with_annex(strand, Url, UrlAnnex { inner: url, global }, out);
@@ -313,7 +313,7 @@ impl<'v> Object<'v> for Url {
                 Ok(())
             })
             .method("with_query_raw", async move |this, strand, args, out| {
-                let ([query], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => query);
                 let mut url = this.annex().inner.clone();
                 if query.is_nil() {
                     url.set_query(None);
@@ -327,7 +327,7 @@ impl<'v> Object<'v> for Url {
                 Ok(())
             })
             .method("with_fragment", async move |this, strand, args, out| {
-                let ([fragment], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => fragment);
                 let mut url = this.annex().inner.clone();
                 if fragment.is_nil() {
                     url.set_fragment(None);
@@ -343,7 +343,7 @@ impl<'v> Object<'v> for Url {
             .method_with_slots(
                 "with_query",
                 async move |this, strand, args, out, [mut iter, mut item, mut key, mut value]| {
-                    let ([], [pairs], mut keys) = unpack!(strand, args, 0, 1, **)?;
+                    unpack!(strand, args => ?pairs, **mut keys);
                     let mut url = this.annex().inner.clone();
                     {
                         let mut query = url.query_pairs_mut();

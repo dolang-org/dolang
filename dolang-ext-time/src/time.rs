@@ -484,7 +484,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .type_method("today", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let now = DateTimeAnnex::now().into_do_io(strand)?;
                 let date = OffsetDateTime::from_unix_timestamp_nanos(now.total_nanos())
                     .map_err(|_| Error::overflow(strand))?
@@ -493,7 +493,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .type_method("from_ymd", async move |this, strand, args, out| {
-                let ([year, month, day], []) = unpack!(strand, args, 3, 0)?;
+                unpack!(strand, args => year, month, day);
                 let year = year
                     .as_int(strand)
                     .and_then(|year| i32::try_from(year).ok())
@@ -521,7 +521,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .type_method("parse_rfc", async move |this, strand, args, out| {
-                let ([text], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => text);
                 let text = text
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "parse_rfc: expected string"))?
@@ -531,13 +531,13 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .method("rfc", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let text = format_date_rfc(*this.annex());
                 Output::set(strand, out, text.as_str());
                 Ok(())
             })
             .method("datetime", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 create_datetime(
                     strand,
@@ -550,7 +550,7 @@ impl<'v> Object<'v> for Date {
                 )
             })
             .method("add_days", async move |this, strand, args, out| {
-                let ([days], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => days);
                 let days = days
                     .as_int(strand)
                     .and_then(|days| i64::try_from(days).ok())
@@ -564,7 +564,7 @@ impl<'v> Object<'v> for Date {
                 Ok(())
             })
             .method("sub_days", async move |this, strand, args, out| {
-                let ([days], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => days);
                 let days = days
                     .as_int(strand)
                     .and_then(|days| i64::try_from(days).ok())
@@ -663,7 +663,7 @@ macro_rules! calendar_enum {
             fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
                 builder
                     .method("next", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let global = strand.state::<Tag>();
                         Output::set(
                             strand,
@@ -674,7 +674,7 @@ macro_rules! calendar_enum {
                         Ok(())
                     })
                     .method("previous", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let global = strand.state::<Tag>();
                         let len = global.calendar.$roots.len();
                         Output::set(
@@ -768,7 +768,7 @@ impl<'v> Object<'v> for Month {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .method("next", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 Output::set(
                     strand,
@@ -778,7 +778,7 @@ impl<'v> Object<'v> for Month {
                 Ok(())
             })
             .method("previous", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 Output::set(
                     strand,
@@ -881,7 +881,7 @@ impl<'v> Object<'v> for DateTime {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let nanos_sym = builder.sym("nanos");
+        let nanos = builder.sym("nanos");
         builder
             .get("unix_secs", |this, strand, out| {
                 Output::set(
@@ -896,7 +896,7 @@ impl<'v> Object<'v> for DateTime {
                 Ok(())
             })
             .method("date", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let datetime =
                     OffsetDateTime::from_unix_timestamp_nanos(this.annex().total_nanos())
                         .map_err(|_| Error::overflow(strand))?;
@@ -905,13 +905,13 @@ impl<'v> Object<'v> for DateTime {
                 Ok(())
             })
             .type_method("now", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let annex = DateTimeAnnex::now().into_do_io(strand)?;
                 this.create_with_annex(strand, DateTime, annex, out);
                 Ok(())
             })
             .type_method("from_unix", async move |this, strand, args, out| {
-                let ([], [secs, nanos]) = unpack!(strand, args, 0, 1, nanos_sym = None)?;
+                unpack!(strand, args => ?secs, ?:nanos);
                 let nanos = nanos.map_or(Ok(None), |value| {
                     value
                         .as_int(strand)
@@ -940,7 +940,7 @@ impl<'v> Object<'v> for DateTime {
                 Ok(())
             })
             .type_method("parse_rfc", async move |this, strand, args, out| {
-                let ([text], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => text);
                 let text = text
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "parse_rfc: expected string"))?
@@ -952,7 +952,7 @@ impl<'v> Object<'v> for DateTime {
                 Ok(())
             })
             .method("rfc", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let formatted = format_datetime_rfc3339(strand, &this.annex())?;
                 Output::set(strand, out, formatted.as_str());
                 Ok(())
@@ -1123,13 +1123,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
     builder
         .module("time")
         .function("sleep", async move |strand, args, _out| {
-            let ([duration], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => duration);
             let duration = coerce_duration(strand, Some(global), &duration, "sleep duration")?;
             sleep(duration).await;
             Ok(())
         })
         .function("timeout", async move |strand, args, out| {
-            let ([duration, block], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => duration, block);
             let duration = coerce_duration(strand, Some(global), &duration, "timeout duration")?;
             let mask = strand.interrupt_mask();
             let timeout_mask = InterruptMask::TIMED_OUT;

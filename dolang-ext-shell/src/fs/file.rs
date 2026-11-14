@@ -707,21 +707,21 @@ impl<'v> FileKind<'v> for File {
     ) -> TypeBuilder<'v, 'a, FileObject<Self>> {
         builder
             .method("read_str", async move |this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let size = size_arg(strand, size)?;
                 this.borrow_mut(strand)?.read_str(strand, size, out).await
             })
             .method("read_line", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.borrow_mut(strand)?.read_line(strand, out).await
             })
             .method("lines", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Output::set(strand, out, this);
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check_open(strand)?;
                 borrow
@@ -1442,10 +1442,10 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
         let kind_acl = builder.sym("kind");
         let shared = builder.sym("shared");
         let offset_sym = builder.sym("offset");
-        let data_sym = builder.sym("data");
+        let data = builder.sym("data");
         let range_sym = builder.sym("range");
         let size_sym = builder.sym("size");
-        let clone_sym = builder.sym("clone");
+        let clone = builder.sym("clone");
         let builder = builder
             .supertype(TypeObject::Io)
             .supertype(TypeObject::Iter);
@@ -1474,7 +1474,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 this.borrow_mut(strand)?.close(strand).await
             })
             .method("lock", async move |this, strand, args, out| {
-                let ([range], [block, shared]) = unpack!(strand, args, 1, 1, shared = None)?;
+                unpack!(strand, args => range, ?block, ?:shared);
                 Self::lock(
                     this,
                     strand,
@@ -1487,7 +1487,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 .await
             })
             .method("try_lock", async move |this, strand, args, out| {
-                let ([range], [block, shared]) = unpack!(strand, args, 1, 1, shared = None)?;
+                unpack!(strand, args => range, ?block, ?:shared);
                 Self::lock(
                     this,
                     strand,
@@ -1500,7 +1500,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 .await
             })
             .method("read", async move |this, strand, args, out| {
-                let ([], [size, offset]) = unpack!(strand, args, 0, 1, offset_sym = None)?;
+                unpack!(strand, args => ?size, ?offset_sym: offset);
                 let size = size_arg(strand, size)?;
                 let offset = read_offset(strand, offset)?;
 
@@ -1542,23 +1542,20 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 }
             })
             .method("copy_data", async move |this, strand, args, out| {
-                let ([dst], [range, size, offset, clone]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    0,
-                    range_sym = None,
-                    size_sym = None,
-                    offset_sym = None,
-                    clone_sym = None
-                )?;
+                unpack!(strand, args =>
+                    dst,
+                    ?range_sym: range,
+                    ?size_sym: size,
+                    ?offset_sym: offset,
+                    ?:clone
+                );
                 let global = this.annex().global;
                 let dst = cast_file(global, &dst)
                     .ok_or_else(|| Error::type_error(strand, "expected fs.BaseFile"))?;
                 copy_to(strand, global, this, dst, range, size, offset, clone, out).await
             })
             .method("set_size", async move |this, strand, args, _out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = size.to_i64(strand).map_err(|_| {
                     Error::type_error(strand, "size must be a non-negative integer")
                 })?;
@@ -1573,7 +1570,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 borrow.vfs().set_size(size).await.into_sys(strand)
             })
             .method("sync", async move |this, strand, args, _out| {
-                let ([], [data]) = unpack!(strand, args, 0, 0, data_sym = None)?;
+                unpack!(strand, args => ?:data);
                 let data = data
                     .map(|data| crate::util::bool(strand, data, "data"))
                     .transpose()?
@@ -1597,16 +1594,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     .await
             })
             .method("sec_desc", async move |this, strand, args, mut out| {
-                let ([], [owner, group, dacl, sacl]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    owner = None,
-                    group = None,
-                    dacl = None,
-                    sacl = None
-                )?;
+                unpack!(strand, args => ?:owner, ?:group, ?:dacl, ?:sacl);
                 let mask = super::sec_desc_mask(strand, owner, group, dacl, sacl)?;
                 let descriptor = {
                     let borrow = this.borrow(strand)?;
@@ -1618,8 +1606,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Ok(())
             })
             .method("acl", async move |this, strand, args, mut out| {
-                let ([], [kind, default]) =
-                    unpack!(strand, args, 0, 0, kind_acl = None, default_acl = None)?;
+                unpack!(strand, args => ?kind_acl: kind, ?default_acl: default);
                 let kind = crate::security::acl_kind_sym(strand, kind)?;
                 let default = super::acl_default(strand, default.as_deref())?;
                 super::check_acl_default(strand, kind, default)?;
@@ -1632,8 +1619,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Ok(())
             })
             .method("set_acl", async move |this, strand, args, _out| {
-                let ([acl_value], [kind, default]) =
-                    unpack!(strand, args, 1, 0, kind_acl = None, default_acl = None)?;
+                unpack!(strand, args => acl_value, ?kind_acl: kind, ?default_acl: default);
                 let (kind, acl) = crate::security::resolve_acl_input(
                     strand,
                     &acl_value,
@@ -1663,7 +1649,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 file.update_sec_desc(&descriptor).await.into_sys(strand)
             })
             .method("xattrs", async move |this, strand, args, out| {
-                let ([], [namespace]) = unpack!(strand, args, 0, 0, namespace = None)?;
+                unpack!(strand, args => ?:namespace);
                 let global = this.annex().global;
                 let (namespace, any) = match namespace {
                     None => (None, false),
@@ -1707,7 +1693,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 xattr::create_xattr_iter(strand, global, entries, out)
             })
             .method("xattr", async move |this, strand, args, out| {
-                let ([name], [namespace]) = unpack!(strand, args, 1, 0, namespace = None)?;
+                unpack!(strand, args => name, ?:namespace);
                 let global = this.annex().global;
                 let (name, namespace) = xattr::parse_name(strand, global, &name, namespace)?;
                 let value = {
@@ -1721,7 +1707,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Ok(())
             })
             .method("streams", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = this.annex().global;
                 let entries = {
                     let borrow = this.borrow(strand)?;
@@ -1731,7 +1717,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 stream::create_stream_iter(strand, global, entries, out)
             })
             .method("read_junction", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = this.annex().global;
                 let target = {
                     let borrow = this.borrow(strand)?;
@@ -1741,7 +1727,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 super::path::create_path(strand, global, target, out)
             })
             .method("set_junction", async move |this, strand, args, _out| {
-                let ([target], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => target);
                 let global = this.annex().global;
                 let target = super::junction_target(strand, global, &target)?;
                 let borrow = this.borrow(strand)?;
@@ -1751,7 +1737,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     .into_sys(strand)
             })
             .method("set_xattr", async move |this, strand, args, _out| {
-                let ([name, value], [namespace]) = unpack!(strand, args, 2, 0, namespace = None)?;
+                unpack!(strand, args => name, value, ?:namespace);
                 let global = this.annex().global;
                 let (name, namespace) = xattr::parse_name(strand, global, &name, namespace)?;
                 let value = util::bytes(strand, &value, "value")?;
@@ -1762,7 +1748,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     .into_sys(strand)
             })
             .method("remove_xattr", async move |this, strand, args, _out| {
-                let ([name], [namespace]) = unpack!(strand, args, 1, 0, namespace = None)?;
+                unpack!(strand, args => name, ?:namespace);
                 let global = this.annex().global;
                 let (name, namespace) = xattr::parse_name(strand, global, &name, namespace)?;
                 let borrow = this.borrow(strand)?;
@@ -1784,7 +1770,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Ok(())
             })
             .method("fork", async move |this, strand, args, out| {
-                let ([], [offset]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?offset);
                 let offset = offset
                     .map(|offset| {
                         let offset = offset.to_i64(strand).map_err(|_| {
@@ -1812,8 +1798,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
-                let ([], [offset, start, end]) =
-                    unpack!(strand, args, 0, 1, start_sym = None, end_sym = None)?;
+                unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let mut borrow = this.borrow_mut(strand)?;
                 let seek_from = match (offset, start, end) {
                     (Some(offset), None, None) => {

@@ -19,7 +19,7 @@ mod math;
 mod strand;
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
-    let base_key = builder.sym("base");
+    let base = builder.sym("base");
     let fmt = fmt::register(builder);
     let member_scopes = class::register_member_scopes(builder);
     let member_scopes = builder.register_state::<class::MemberScopeTag>(member_scopes);
@@ -117,17 +117,17 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("class", member_scopes.class)
         .value("static", member_scopes.statik)
         .function("fields", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             crate::object::field_iter::create(strand, &value, out)
         })
         .function("final", async move |strand, args, out| {
-            let ([class], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => class);
             class::make_final(strand, &class)?;
             Output::set(strand, out, class);
             Ok(())
         })
         .function("mixable", async move |strand, args, out| {
-            let ([class], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => class);
             class::make_mixable(strand, &class)?;
             Output::set(strand, out, class);
             Ok(())
@@ -221,7 +221,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("type", async move |strand, args, out| {
-            let ([obj], [ty]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => obj, ?ty);
             if let Some(ty) = ty {
                 let result = obj.is_instance_of(strand, &ty);
                 Output::set(strand, out, result);
@@ -231,7 +231,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("int", async move |strand, args, out| {
-            let ([value], [base]) = unpack!(strand, args, 1, 0, base_key = None)?;
+            unpack!(strand, args => value, ?:base);
             let base = base
                 .map(|base| {
                     let base = base.to_int(strand)?;
@@ -246,26 +246,26 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Ok(())
         })
         .function("float", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let value = float::coerce(&value, strand)?;
             Output::set(strand, out, value);
             Ok(())
         })
         .function("bool", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let value = value.op_bool(strand)?;
             Output::set(strand, out, value);
             Ok(())
         })
         .function("str", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let mut format = StrEmbryo::new();
             value.display(strand, &mut format)?;
             format.finish(strand, out);
             Ok(())
         })
         .function("sym", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             if value.as_sym(strand).is_some() {
                 Output::set(strand, out, value);
                 Ok(())
@@ -279,21 +279,21 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         // Core functions
         .function("verbatim", async move |strand, args, out| {
-            let ([value], _) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let mut format = StrEmbryo::new();
             value.verbatim(strand, &mut format)?;
             format.finish(strand, out);
             Ok(())
         })
         .function("dbg", async move |strand, args, out| {
-            let ([value], _) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let mut format = StrEmbryo::new();
             value.debug(strand, &mut format)?;
             format.finish(strand, out);
             Ok(())
         })
         .function("hash", async move |strand, args, out| {
-            let ([], [], values) = unpack!(strand, args, 0, 0, *)?;
+            unpack!(strand, args => *values);
             let mut hasher = strand.vm().hasher();
             for (i, slot) in values.enumerate() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {

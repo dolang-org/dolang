@@ -306,7 +306,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, local: LocalKey<'v, L
     builder
         .module("security")
         .function("user_name", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let family = local.get(strand).target().os().family();
             let vfs = local.get(strand).vfs();
             let name = match family {

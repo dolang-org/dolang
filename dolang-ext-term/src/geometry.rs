@@ -35,7 +35,7 @@ impl<'v> Object<'v> for Geometry {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         let (rows_sym, cols_sym) = (global.syms.rows, global.syms.cols);
-        let ([], [rows, cols]) = unpack!(strand, args, 0, 0, rows_sym = None, cols_sym = None)?;
+        unpack!(strand, args => ?rows_sym: rows, ?cols_sym: cols);
         let rows = dimension(strand, rows.as_deref())?;
         let cols = dimension(strand, cols.as_deref())?;
         this.create_with_annex(strand, Geometry, GeometryAnnex { rows, cols }, out);

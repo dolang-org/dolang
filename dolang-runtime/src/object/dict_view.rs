@@ -834,24 +834,23 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             ));
         }
         if method.tag() == sym::DELETE {
-            let ([key], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => key);
             let view = this.get();
             let removed = view.glue.delete(&view.owner, strand, &key)?;
             Output::set(strand, out, removed);
             return Ok(());
         }
         if method.tag() == sym::CLEAR {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let view = this.get();
             return view.glue.clear(&view.owner, strand);
         }
         if matches!(method.tag(), sym::GET | sym::POP) {
             // Lookups stay lazy, and pops must change the owner rather than
             // the temporary snapshot used by read-only methods below.
-            let default_key = Sym::well_known(sym::DEFAULT);
+            let default = Sym::well_known(sym::DEFAULT);
             let else_key = Sym::well_known(sym::ELSE);
-            let ([key], [instance, default, or_else]) =
-                unpack!(strand, args, 1, 1, default_key = None, else_key = None)?;
+            unpack!(strand, args => key, ?instance, ?:default, ?else_key: or_else);
             if default.is_some() && or_else.is_some() {
                 return Err(Error::unexpected_key(strand, else_key));
             }
@@ -895,7 +894,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             };
         }
         if method.tag() == sym::KEYS {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let view = this.get();
             return view.glue.keys(&view.owner, strand, out);
         }

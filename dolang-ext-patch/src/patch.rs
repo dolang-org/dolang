@@ -124,8 +124,8 @@ pub(crate) struct PatchIter<'v> {
 }
 
 pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
-    let source_sym = builder.sym("source");
-    let target_sym = builder.sym("target");
+    let source = builder.sym("source");
+    let target = builder.sym("target");
 
     builder
         .module("patch")
@@ -134,7 +134,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("Patch", global.types.patch)
         .value("PatchIter", global.types.patch_iter)
         .function("decode", async move |strand, args, mut out| {
-            let ([input], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => input);
             let backing = Backing::from_value(strand, &input)?;
             let bytes = unsafe { backing.as_static_bytes() };
             let is_git = is_git_diff(bytes);
@@ -167,8 +167,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             Ok(())
         })
         .function("diff", async move |strand, args, mut out| {
-            let ([before, after], [source, target]) =
-                unpack!(strand, args, 2, 0, source_sym = None, target_sym = None)?;
+            unpack!(strand, args => before, after, ?:source, ?:target);
             let before_backing = Backing::from_value(strand, &before)?;
             let after_backing = Backing::from_value(strand, &after)?;
             if before_backing.is_str() != after_backing.is_str() {
@@ -224,7 +223,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .function_with_slots(
             "encode",
             async move |strand, args, out, [mut input, mut item]| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
 
                 let bytes = if let Some(patch) = global.types.patch.cast(&value) {
                     with_instance!(strand, patch, |patch| {
@@ -299,7 +298,7 @@ impl<'v> Object<'v> for Patch<'v> {
                 dolang_ext_shell::path(strand, path, out)
             })
             .method("apply", async move |this, strand, args, out| {
-                let ([base], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => base);
                 let borrow = this.borrow(strand)?;
                 let (is_str, bytes) = match &borrow.payload.kind {
                     PatchKind::Text(patch) => {

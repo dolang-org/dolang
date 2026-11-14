@@ -186,7 +186,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             .value("Frame", &frame)
             .value("Location", state.location)
             .function("definition", async move |strand, args, mut out| {
-                let ([func], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => func);
                 match definition(strand.vm(), &func) {
                     Some((source, span)) => location(strand, source, span, out),
                     None => out.store(Value::NIL),

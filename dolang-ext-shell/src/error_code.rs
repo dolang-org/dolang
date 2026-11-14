@@ -100,7 +100,7 @@ impl<'v, T: CodeType<'v>> Object<'v> for CodeObject<T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let value = value
             .as_int(strand)
             .and_then(T::raw)

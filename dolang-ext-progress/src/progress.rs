@@ -767,8 +767,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .module("progress")
         .value("Indicator", global.types.indicator)
         .function("with", async move |strand, args, mut out| {
-            let ([func], [style_val, interval_val]) =
-                unpack!(strand, args, 1, 0, style_kw = None, interval_kw = None)?;
+            unpack!(strand, args => func, ?style_kw: style_val, ?interval_kw: interval_val);
 
             let style = style_val
                 .map(|sv| style::parse_style(strand, &sv, &style_keys))
@@ -876,17 +875,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             result
         })
         .function_with_slots("show", async move |strand, args, mut out, [mut slot]| {
-            let ([func], [total_val, msg_val, icon_val, units_val, tick_ms]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                total_kw = None,
-                message_kw = None,
-                icon_kw = None,
-                units_kw = None,
-                tick_kw = None
-            )?;
+            unpack!(strand, args =>
+                func,
+                ?total_kw: total_val,
+                ?message_kw: msg_val,
+                ?icon_kw: icon_val,
+                ?units_kw: units_val,
+                ?tick_kw: tick_ms
+            );
 
             let options = ShowOptions {
                 total: total_val
@@ -921,15 +917,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 mut result,
                 mut tmp,
             ]| {
-                let ([], [message_val, icon_val], mut steps) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    message_kw = None,
-                    icon_kw = None,
-                    *
-                )?;
+                unpack!(strand, args => ?message_kw: message_val, ?icon_kw: icon_val, *mut steps);
 
                 let overall_message = parse_message(strand, message_val.as_deref())?;
                 let default_icon = parse_icon(strand, icon_val.as_deref())?;
@@ -1107,12 +1095,12 @@ impl<'v> Object<'v> for Indicator {
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let icon_kw = builder.sym("icon");
-        let message_kw = builder.sym("message");
-        let total_kw = builder.sym("total");
-        let position_kw = builder.sym("position");
-        let delta_kw = builder.sym("delta");
-        let units_kw = builder.sym("units");
+        let icon = builder.sym("icon");
+        let message = builder.sym("message");
+        let total = builder.sym("total");
+        let position = builder.sym("position");
+        let delta = builder.sym("delta");
+        let units = builder.sym("units");
         builder
             // --- Getters (read-only; see `update` for writes) ---
             .get("message", |this, strand, out| {
@@ -1140,7 +1128,7 @@ impl<'v> Object<'v> for Indicator {
             // --- Methods ---
             .method("delta", async move |this, strand, args, _out| {
                 check_closed(strand, &this.annex().closed)?;
-                let ([], [amount]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?amount);
                 let n = match amount {
                     Some(v) => v
                         .to_i64(strand)
@@ -1153,18 +1141,7 @@ impl<'v> Object<'v> for Indicator {
             })
             .method("update", async move |this, strand, args, _out| {
                 check_closed(strand, &this.annex().closed)?;
-                let ([], [icon, message, total, position, delta, units]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    icon_kw = None,
-                    message_kw = None,
-                    total_kw = None,
-                    position_kw = None,
-                    delta_kw = None,
-                    units_kw = None
-                )?;
+                unpack!(strand, args => ?:icon, ?:message, ?:total, ?:position, ?:delta, ?:units);
 
                 if position.is_some() && delta.is_some() {
                     return Err(Error::value(

@@ -319,7 +319,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CONTAINS => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let borrow = this.get();
                 let start = if borrow.start.is_nil() {
                     Value::from_i64(strand, 0)
@@ -609,8 +609,14 @@ impl<'v> Protocol<'v> for Type {
         let start = Sym::well_known(sym::START);
         let end = Sym::well_known(sym::END);
         let step = Sym::well_known(sym::STEP);
-        let ([], [mut pos1, mut pos2, mut pos3, mut start, mut end, mut step]) =
-            unpack!(strand, args, 0, 3, start = None, end = None, step = None)?;
+        unpack!(strand, args =>
+            ?mut pos1,
+            ?mut pos2,
+            ?mut pos3,
+            ?start: mut start,
+            ?end: mut end,
+            ?step: mut step
+        );
         let pos_count = pos1.is_some() as usize + pos2.is_some() as usize + pos3.is_some() as usize;
         end = end.or_else(|| {
             if pos_count > 1 {

@@ -229,7 +229,7 @@ impl<'v> Object<'v> for Env<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut vars = HashMap::new();
-        let ([first], [second], mut args) = unpack!(strand, args, 1, 1, ...)?;
+        unpack!(strand, args => first, ?second, ...mut args);
         let func = if let Some(func) = second {
             let Some(dict) = first.as_dict(strand) else {
                 return Err(Error::type_error(strand, "expected `Dict`"));

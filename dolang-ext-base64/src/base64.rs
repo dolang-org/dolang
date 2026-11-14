@@ -215,8 +215,8 @@ fn decode_error<'v, 's>(
 }
 
 pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
-    let alphabet_sym = builder.sym("alphabet");
-    let pad_sym = builder.sym("pad");
+    let alphabet = builder.sym("alphabet");
+    let pad = builder.sym("pad");
     let syms = AlphaSyms {
         standard: builder.sym("STANDARD"),
         url: builder.sym("URL"),
@@ -227,8 +227,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .module("base64")
         .value("DecodeError", global.types.decode_error)
         .function("encode", async move |strand, args, out| {
-            let ([arg], [alphabet, pad]) =
-                unpack!(strand, args, 1, 0, alphabet_sym = None, pad_sym = None)?;
+            unpack!(strand, args => arg, ?:alphabet, ?:pad);
             let alpha = alphabet_arg(strand, alphabet.as_deref(), syms, false)?.expect("alphabet");
             // URL-safe base64 is conventionally unpadded (e.g. RFC 7515)
             let pad = pad_arg(strand, pad.as_deref())?.unwrap_or(alpha == Alpha::Standard);
@@ -242,8 +241,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             Ok(())
         })
         .function("decode", async move |strand, args, out| {
-            let ([arg], [alphabet, pad]) =
-                unpack!(strand, args, 1, 0, alphabet_sym = None, pad_sym = None)?;
+            unpack!(strand, args => arg, ?:alphabet, ?:pad);
             let alpha = alphabet_arg(strand, alphabet.as_deref(), syms, true)?;
             let pad = pad_arg(strand, pad.as_deref())?;
             let decoded = match arg.view(strand.vm()) {

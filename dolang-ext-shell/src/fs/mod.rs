@@ -1277,10 +1277,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
     let opaque = builder.sym("opaque");
     let app = builder.sym("app");
     let replace = builder.sym("replace");
-    let range_kw = builder.sym("range");
+    let range = builder.sym("range");
     let size_kw = builder.sym("size");
-    let offset_kw = builder.sym("offset");
-    let clone_kw = builder.sym("clone");
+    let offset = builder.sym("offset");
+    let clone = builder.sym("clone");
     let module = builder
         .module("fs")
         .function("open", async move |strand, args, out| {
@@ -1308,8 +1308,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("remove", async move |strand, args, _out| {
-            let ([], [all, ignore, stop], paths) =
-                unpack!(strand, args, 0, 0, all = None, ignore = None, stop = None, *)?;
+            unpack!(strand, args => ?:all, ?:ignore, ?:stop, *paths);
             let stop = stop_sym(strand, global, stop)?;
             let all = match all {
                 Some(v) => v
@@ -1330,27 +1329,19 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             Ok(())
         })
         .function("metadata", async move |strand, args, out| {
-            let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
+            unpack!(strand, args => path, ?:resolve);
             let path = path_from_value(strand, &path)?;
             let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
             metadata(strand, global, path.to_path(), resolve, out).await
         })
         .function("fs_metadata", async move |strand, args, out| {
-            let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
+            unpack!(strand, args => path, ?:resolve);
             let path = path_from_value(strand, &path)?;
             let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
             fs_metadata(strand, global, path.to_path(), resolve, out).await
         })
         .function("acl", async move |strand, args, out| {
-            let ([path], [kind, default, resolve]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                kind_acl = None,
-                default_acl = None,
-                resolve = None
-            )?;
+            unpack!(strand, args => path, ?kind_acl: kind, ?default_acl: default, ?:resolve);
             let path = path_from_value(strand, &path)?;
             let kind = security::acl_kind_sym(strand, kind)?;
             let default = acl_default(strand, default.as_deref())?;
@@ -1358,15 +1349,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             acl(strand, global, path.to_path(), kind, default, resolve, out).await
         })
         .function("set_acl", async move |strand, args, _out| {
-            let ([path, acl_value], [kind, default, resolve]) = unpack!(
-                strand,
-                args,
-                2,
-                0,
-                kind_acl = None,
-                default_acl = None,
-                resolve = None
-            )?;
+            unpack!(strand, args =>
+                path,
+                acl_value,
+                ?kind_acl: kind,
+                ?default_acl: default,
+                ?:resolve
+            );
             let path = path_from_value(strand, &path)?;
             let (kind, acl) = security::resolve_acl_input(
                 strand,
@@ -1389,19 +1378,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("xattrs", async move |strand, args, out| {
-            let ([path], [namespace, resolve]) =
-                unpack!(strand, args, 1, 0, namespace = None, resolve = None)?;
+            unpack!(strand, args => path, ?:namespace, ?:resolve);
             let path = path_from_value(strand, &path)?;
             xattr::path_list(strand, global, path.to_path(), namespace, resolve, out).await
         })
         .function("streams", async move |strand, args, out| {
-            let ([path], [resolve]) = unpack!(strand, args, 1, 0, resolve = None)?;
+            unpack!(strand, args => path, ?:resolve);
             let path = path_from_value(strand, &path)?;
             stream::path_list(strand, global, path.to_path(), resolve, out).await
         })
         .function("xattr", async move |strand, args, out| {
-            let ([path, name], [namespace, resolve]) =
-                unpack!(strand, args, 2, 0, namespace = None, resolve = None)?;
+            unpack!(strand, args => path, name, ?:namespace, ?:resolve);
             let path = path_from_value(strand, &path)?;
             xattr::path_get(
                 strand,
@@ -1415,8 +1402,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("set_xattr", async move |strand, args, _out| {
-            let ([path, name, value], [namespace, resolve]) =
-                unpack!(strand, args, 3, 0, namespace = None, resolve = None)?;
+            unpack!(strand, args => path, name, value, ?:namespace, ?:resolve);
             let path = path_from_value(strand, &path)?;
             xattr::path_set(
                 strand,
@@ -1430,38 +1416,37 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("remove_xattr", async move |strand, args, _out| {
-            let ([path, name], [namespace, resolve]) =
-                unpack!(strand, args, 2, 0, namespace = None, resolve = None)?;
+            unpack!(strand, args => path, name, ?:namespace, ?:resolve);
             let path = path_from_value(strand, &path)?;
             xattr::path_remove(strand, global, path.to_path(), &name, namespace, resolve).await
         })
         .function("exists", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             exists(strand, global, path.to_path(), out).await
         })
         .function("read", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             read(strand, global, path.to_path(), false, out).await
         })
         .function("read_str", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             read(strand, global, path.to_path(), true, out).await
         })
         .function("write", async move |strand, args, out| {
-            let ([path, data], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => path, data);
             let path = path_from_value(strand, &path)?;
             write(strand, global, path.to_path(), data, out).await
         })
         .function("append", async move |strand, args, out| {
-            let ([path, data], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => path, data);
             let path = path_from_value(strand, &path)?;
             append(strand, global, path.to_path(), data, out).await
         })
         .function("set_size", async move |strand, args, _out| {
-            let ([path, size], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => path, size);
             let path = path_from_value(strand, &path)?;
             let size = size
                 .to_i64(strand)
@@ -1471,7 +1456,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             set_size(strand, global, path.to_path(), size).await
         })
         .function("sync", async move |strand, args, _out| {
-            let ([path], [data]) = unpack!(strand, args, 1, 0, data_kw = None)?;
+            unpack!(strand, args => path, ?data_kw: data);
             let path = path_from_value(strand, &path)?;
             let data = data
                 .map(|data| util::bool(strand, data, "data"))
@@ -1480,86 +1465,43 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             sync_file(strand, global, path.to_path(), data).await
         })
         .function("update_metadata", async move |strand, args, _out| {
-            let (
-                [],
-                [
-                    mode,
-                    owner,
-                    group,
-                    modified,
-                    accessed,
-                    created,
-                    resolve,
-                    readonly,
-                    hidden,
-                    system,
-                    archive,
-                    compressed,
-                    sparse,
-                    temporary,
-                    offline,
-                    not_content_indexed,
-                    immutable,
-                    append_only,
-                    no_dump,
-                    no_atime,
-                    no_copy_on_write,
-                    dir_sync,
-                    casefold,
-                    data_journaling,
-                    no_compress,
-                    project_inherit,
-                    secure_delete,
-                    sync,
-                    no_tail_merge,
-                    top_dir,
-                    undelete,
-                    direct_access,
-                    extent_format,
-                    opaque,
-                ],
-                paths,
-            ) = unpack!(
-                strand,
-                args,
-                0,
-                0,
-                mode = None,
-                owner = None,
-                group = None,
-                modified = None,
-                accessed = None,
-                created = None,
-                resolve = None,
-                readonly = None,
-                hidden = None,
-                system = None,
-                archive = None,
-                compressed = None,
-                sparse = None,
-                temporary = None,
-                offline = None,
-                not_content_indexed = None,
-                immutable = None,
-                append_only = None,
-                no_dump = None,
-                no_atime = None,
-                no_copy_on_write = None,
-                dir_sync = None,
-                casefold = None,
-                data_journaling = None,
-                no_compress = None,
-                project_inherit = None,
-                secure_delete = None,
-                sync = None,
-                no_tail_merge = None,
-                top_dir = None,
-                undelete = None,
-                direct_access = None,
-                extent_format = None,
-                opaque = None,
-                *
-            )?;
+            unpack!(strand, args =>
+                ?:mode,
+                ?:owner,
+                ?:group,
+                ?:modified,
+                ?:accessed,
+                ?:created,
+                ?:resolve,
+                ?:readonly,
+                ?:hidden,
+                ?:system,
+                ?:archive,
+                ?:compressed,
+                ?:sparse,
+                ?:temporary,
+                ?:offline,
+                ?:not_content_indexed,
+                ?:immutable,
+                ?:append_only,
+                ?:no_dump,
+                ?:no_atime,
+                ?:no_copy_on_write,
+                ?:dir_sync,
+                ?:casefold,
+                ?:data_journaling,
+                ?:no_compress,
+                ?:project_inherit,
+                ?:secure_delete,
+                ?:sync,
+                ?:no_tail_merge,
+                ?:top_dir,
+                ?:undelete,
+                ?:direct_access,
+                ?:extent_format,
+                ?:opaque,
+                *paths
+            );
             let attrs = attrs_patch(
                 strand,
                 [
@@ -1611,27 +1553,27 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             Ok(())
         })
         .function("is_absolute", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             Output::set(strand, out, path.is_absolute());
             Ok(())
         })
         .function("home_dir", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             well_known_path(strand, global, WellKnownPath::HomeDir, None, out).await
         })
         .function("cache_dir", async move |strand, args, out| {
-            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            unpack!(strand, args => ?:app);
             let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
             well_known_path(strand, global, WellKnownPath::CacheDir, app.as_deref(), out).await
         })
         .function("data_dir", async move |strand, args, out| {
-            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            unpack!(strand, args => ?:app);
             let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
             well_known_path(strand, global, WellKnownPath::DataDir, app.as_deref(), out).await
         })
         .function("data_local_dir", async move |strand, args, out| {
-            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            unpack!(strand, args => ?:app);
             let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
             well_known_path(
                 strand,
@@ -1643,17 +1585,16 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("state_dir", async move |strand, args, out| {
-            let ([], [app]) = unpack!(strand, args, 0, 0, app = None)?;
+            unpack!(strand, args => ?:app);
             let app = app.and_then(|s| s.as_str(strand).map(|s| s.to_string()));
             well_known_path(strand, global, WellKnownPath::StateDir, app.as_deref(), out).await
         })
         .function("temp_dir", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             well_known_path(strand, global, WellKnownPath::TempDir, None, out).await
         })
         .function("copy", async move |strand, args, out| {
-            let ([from, to], [all, stop, follow]) =
-                unpack!(strand, args, 2, 0, all = None, stop = None, follow = None)?;
+            unpack!(strand, args => from, to, ?:all, ?:stop, ?:follow);
             let from = path_from_value(strand, &from)?;
             let to = path_from_value(strand, &to)?;
             let all = match all {
@@ -1677,16 +1618,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             .await
         })
         .function("copy_data", async move |strand, args, out| {
-            let ([src, dst], [range, size, offset, clone]) = unpack!(
-                strand,
-                args,
-                2,
-                0,
-                range_kw = None,
-                size_kw = None,
-                offset_kw = None,
-                clone_kw = None
-            )?;
+            unpack!(strand, args => src, dst, ?:range, ?size_kw: size, ?:offset, ?:clone);
             let src = file::cast_file(global, &src)
                 .ok_or_else(|| Error::type_error(strand, "src must be an fs.BaseFile"))?;
             let dst = file::cast_file(global, &dst)
@@ -1694,7 +1626,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             file::copy_files(strand, global, src, dst, range, size, offset, clone, out).await
         })
         .function("rename", async move |strand, args, _out| {
-            let ([from, to], [replace]) = unpack!(strand, args, 2, 0, replace = None)?;
+            unpack!(strand, args => from, to, ?:replace);
             let from = path_from_value(strand, &from)?;
             let to = path_from_value(strand, &to)?;
             let replace = replace
@@ -1704,7 +1636,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             rename(strand, global, from.to_path(), to.to_path(), replace).await
         })
         .function("move", async move |strand, args, _out| {
-            let ([from, to], [all, stop]) = unpack!(strand, args, 2, 0, all = None, stop = None)?;
+            unpack!(strand, args => from, to, ?:all, ?:stop);
             let from = path_from_value(strand, &from)?;
             let to = path_from_value(strand, &to)?;
             let all = match all {
@@ -1717,48 +1649,40 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             move_(strand, global, from.to_path(), to.to_path(), all, stop).await
         })
         .function("symlink", async move |strand, args, _out| {
-            let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => src, dst);
             let src = path_from_value(strand, &src)?;
             let dst = path_from_value(strand, &dst)?;
             symlink(strand, global, src.to_path(), dst.to_path()).await
         })
         .function("hard_link", async move |strand, args, _out| {
-            let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => src, dst);
             let src = path_from_value(strand, &src)?;
             let dst = path_from_value(strand, &dst)?;
             hard_link(strand, global, src.to_path(), dst.to_path()).await
         })
         .function("symlink_dir", async move |strand, args, _out| {
-            let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => src, dst);
             let src = path_from_value(strand, &src)?;
             let dst = path_from_value(strand, &dst)?;
             symlink_dir(strand, global, src.to_path(), dst.to_path()).await
         })
         .function("symlink_file", async move |strand, args, _out| {
-            let ([src, dst], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => src, dst);
             let src = path_from_value(strand, &src)?;
             let dst = path_from_value(strand, &dst)?;
             symlink_file(strand, global, src.to_path(), dst.to_path()).await
         })
         .function("entries", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             entries(strand, global, path, out).await
         })
         .function("glob", async move |strand, args, out| {
-            let ([pattern], [max_depth, stop, follow]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                max_depth = None,
-                stop = None,
-                follow = None
-            )?;
+            unpack!(strand, args => pattern, ?:max_depth, ?:stop, ?:follow);
             glob(strand, global, None, pattern, max_depth, stop, follow, out).await
         })
         .function("create_dir", async move |strand, args, _out| {
-            let ([path], [all]) = unpack!(strand, args, 1, 0, all = None)?;
+            unpack!(strand, args => path, ?:all);
             let path = path_from_value(strand, &path)?;
             let all = match all {
                 Some(v) => v
@@ -1769,8 +1693,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             create_dir(strand, global, path.to_path(), all).await
         })
         .function("remove_dir", async move |strand, args, _out| {
-            let ([], [all, ignore], paths) =
-                unpack!(strand, args, 0, 0, all = None, ignore = None, *)?;
+            unpack!(strand, args => ?:all, ?:ignore, *paths);
             let all = match all {
                 Some(v) => v
                     .as_bool(strand)
@@ -1791,34 +1714,34 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         });
     module
         .function("normalize", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             let normalized = path.normalize();
             create_path(strand, global, normalized, out)?;
             Ok(())
         })
         .function("absolute", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             path_absolute(strand, global, path.to_path(), out)
         })
         .function("relative", async move |strand, args, out| {
-            let ([path], [base]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => path, ?base);
             let path = path_from_value(strand, &path)?;
             path_relative(strand, global, path.to_path(), base, out)
         })
         .function("shorten", async move |strand, args, out| {
-            let ([path], [base]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => path, ?base);
             let path = path_from_value(strand, &path)?;
             path_shorten(strand, global, path.to_path(), base, out)
         })
         .function("canonical", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             path_canonical(strand, global, path.to_path(), out).await
         })
         .function("read_link", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             let path = prepend_cwd(strand, global, path.to_path())?;
             let local = global.local.get(strand);
@@ -1830,7 +1753,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .function_with_slots(
             "with_temp_dir",
             async move |strand, args, out, [mut path]| {
-                let ([callable], [parent]) = unpack!(strand, args, 1, 0, parent = None)?;
+                unpack!(strand, args => callable, ?:parent);
                 let parent = resolve_temp_parent(strand, global, parent).await?;
                 let temp_path = create_temp_dir(strand, global, parent.to_path())
                     .await
@@ -1847,7 +1770,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             },
         )
         .function("create_temp_dir", async move |strand, args, out| {
-            let ([], [parent]) = unpack!(strand, args, 0, 0, parent = None)?;
+            unpack!(strand, args => ?:parent);
             let parent = resolve_temp_parent(strand, global, parent).await?;
             let temp_path = create_temp_dir(strand, global, parent.to_path())
                 .await
@@ -1884,24 +1807,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .value("StreamEntry", global.types.stream_entry)
         .value("AccessMask", global.types.file_access_mask)
         .function("sec_desc", async move |strand, args, out| {
-            let ([path], [owner, group, dacl, sacl, resolve]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                owner = None,
-                group = None,
-                dacl = None,
-                sacl = None,
-                resolve = None
-            )?;
+            unpack!(strand, args => path, ?:owner, ?:group, ?:dacl, ?:sacl, ?:resolve);
             let path = path_from_value(strand, &path)?;
             let mask = sec_desc_mask(strand, owner, group, dacl, sacl)?;
             let resolve = resolve_sym(strand, global, resolve, Resolve::Target)?;
             sec_desc(strand, global, path.to_path(), mask, resolve, out).await
         })
         .function("update_sec_desc", async move |strand, args, _out| {
-            let ([path], [resolve], rest) = unpack!(strand, args, 1, 0, resolve = None, ...)?;
+            unpack!(strand, args => path, ?:resolve, ...rest);
             let path = path_from_value(strand, &path)?;
             let windows = strand.force_state::<WindowsSecurityTag>();
             let descriptor = security::sec_desc_from_args(
@@ -1915,7 +1828,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
             update_sec_desc(strand, global, path.to_path(), &descriptor, resolve).await
         })
         .function("create_junction", async move |strand, args, _out| {
-            let ([target, path], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => target, path);
             let Some(target) = junction_target(strand, global, &target)? else {
                 return Err(Error::type_error(strand, "expected Path or Str"));
             };
@@ -1929,7 +1842,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                 .into_sys(strand)
         })
         .function("read_junction", async move |strand, args, out| {
-            let ([path], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
             read_junction(strand, global, path.to_path(), out).await
         })

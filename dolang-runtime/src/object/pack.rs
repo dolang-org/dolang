@@ -953,8 +953,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([key], [default, or_else]) =
-                    unpack!(strand, args, 1, 0, default = None, else_key = None)?;
+                unpack!(strand, args => key, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -974,7 +973,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                 }
             }
             sym::WITH => {
-                let ([], [], updates) = unpack!(strand, args, 0, 0, **)?;
+                unpack!(strand, args => **updates);
                 // Keep argument slots intact so updates remain rooted. This path
                 // checks interrupts but never collects while building the result.
                 let mut replacements = Vec::new();
@@ -1018,7 +1017,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                 Ok(())
             }
             sym::WITHOUT => {
-                let ([], [], keys) = unpack!(strand, args, 0, 0, *)?;
+                unpack!(strand, args => *keys);
                 let mut removed = HashSet::new();
                 for (i, key) in keys.enumerate() {
                     if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
@@ -1241,7 +1240,7 @@ impl<'v> Protocol<'v> for Class {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
                     call!(strand, &strand.singletons().pack, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().pack, native.take())?;
@@ -1290,7 +1289,7 @@ impl<'v> Protocol<'v> for Class {
         args: arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([source], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => source);
         let items = source_items(strand, &source).await?;
         strand
             .builtin_types()

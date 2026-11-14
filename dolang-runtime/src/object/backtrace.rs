@@ -147,7 +147,7 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
                 "backtrace.len is a field, not a method",
             )),
             sym::ITER_METHOD => {
-                let ([_self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => _self_val);
                 Self::op_iter(this, strand, out).await
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,

@@ -237,18 +237,12 @@ pub(crate) fn configure_vm<'v>(
     builder
         .module("proc")
         .function("with_policy", async move |strand, args, out| {
-            let signal_sym = global.syms.signal;
-            let grace_sym = global.syms.grace;
-            let force_sym = global.syms.force;
-            let ([func], [signal, grace, force]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                signal_sym = None,
-                grace_sym = None,
-                force_sym = None
-            )?;
+            unpack!(strand, args =>
+                func,
+                ?(global.syms.signal): signal,
+                ?(global.syms.grace): grace,
+                ?(global.syms.force): force
+            );
             let old_policy = global.local.get(strand).termination_policy();
             let policy = apply_policy_values(
                 strand,
@@ -266,7 +260,7 @@ pub(crate) fn configure_vm<'v>(
             result
         })
         .function("enumerate", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let vfs = global.local.get(strand).vfs();
             let processes = vfs.processes().await.into_sys(strand)?;
             global.types.procs.create_with_annex(
@@ -278,11 +272,11 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("info", async move |strand, args, out| {
-            let ([], [pid]) = unpack!(strand, args, 0, 1)?;
+            unpack!(strand, args => ?pid);
             foreign::describe(strand, global, pid.as_deref(), out).await
         })
         .function("open", async move |strand, args, out| {
-            let ([target], [block]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => target, ?block);
             foreign::open(strand, global, &target, block.as_ref(), out).await
         })
         .value("Error", errors.types.proc_error)
@@ -298,7 +292,7 @@ pub(crate) fn configure_vm<'v>(
     builder
         .module("proc.windows")
         .function("quote", async move |strand, args, out| {
-            let ([argument], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => argument);
             let argument = argument.to_verbatim(strand)?;
             if argument.contains('\0') {
                 return Err(Error::value(
@@ -314,7 +308,7 @@ pub(crate) fn configure_vm<'v>(
         .function_with_slots(
             "join",
             async move |strand, args, out, [mut iter, mut item]| {
-                let ([iterable], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => iterable);
                 let mut arguments = Vec::new();
                 iterable.iter(strand, &mut iter).await?;
                 while iter.next(strand, &mut item).await? {
@@ -327,7 +321,7 @@ pub(crate) fn configure_vm<'v>(
             },
         )
         .function("split", async move |strand, args, mut out| {
-            let ([command_line], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => command_line);
             let command_line = command_line
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?;

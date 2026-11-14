@@ -654,8 +654,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             sym::POP => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([], [index, default, or_else]) =
-                    unpack!(strand, args, 0, 1, default = None, else_key = None)?;
+                unpack!(strand, args => ?index, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -683,7 +682,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 Ok(())
             }
             sym::DELETE => {
-                let ([index], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => index);
                 let _guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 let len = view.glue.len(&view.owner, strand);
@@ -697,7 +696,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 Ok(())
             }
             sym::CLEAR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let _guard = mutation_guard(&this.get().busy, strand)?;
                 let view = this.get();
                 view.glue.clear(&view.owner, strand)

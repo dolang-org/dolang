@@ -240,10 +240,7 @@ async fn open<'v, 's>(
     args: Args<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let view_sym = global.syms.view;
-    let access_sym = global.syms.access;
-    let ([root], [block, view, access]) =
-        unpack!(strand, args, 1, 1, view_sym = None, access_sym = None)?;
+    unpack!(strand, args => root, ?block, ?(global.syms.view): view, ?(global.syms.access): access);
     let root = root_from_sym(strand, global, root)?;
     let view = view_from_sym(strand, global, view)?;
     let access = access_from_value(strand, global, access).await?;
@@ -271,18 +268,13 @@ impl<'v> Object<'v> for Key {
         builder
             .method("open", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let view_sym = global.syms.view;
-                let access_sym = global.syms.access;
-                let resolve_sym = global.syms.resolve;
-                let ([subpath], [block, view, access, resolve]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    1,
-                    view_sym = None,
-                    access_sym = None,
-                    resolve_sym = None
-                )?;
+                unpack!(strand, args =>
+                    subpath,
+                    ?block,
+                    ?(global.syms.view): view,
+                    ?(global.syms.access): access,
+                    ?(global.syms.resolve): resolve
+                );
                 let subpath = expect_str(strand, subpath, "subpath")?;
                 let view = view_from_sym(strand, global, view)?;
                 let access = access_from_value(strand, global, access).await?;
@@ -301,9 +293,12 @@ impl<'v> Object<'v> for Key {
             })
             .method("link", async move |this, strand, args, _out| {
                 let global = strand.state::<Tag>();
-                let view_sym = global.syms.view;
-                let ([target_root, target_subpath, link_subpath], [view]) =
-                    unpack!(strand, args, 3, 0, view_sym = None)?;
+                unpack!(strand, args =>
+                    target_root,
+                    target_subpath,
+                    link_subpath,
+                    ?(global.syms.view): view
+                );
                 let target_root = root_from_sym(strand, global, target_root)?;
                 let target_subpath = expect_str(strand, target_subpath, "target_subpath")?;
                 let link_subpath = expect_str(strand, link_subpath, "link_subpath")?;
@@ -319,8 +314,7 @@ impl<'v> Object<'v> for Key {
             })
             .method("read_link", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let view_sym = global.syms.view;
-                let ([subpath], [view]) = unpack!(strand, args, 1, 0, view_sym = None)?;
+                unpack!(strand, args => subpath, ?(global.syms.view): view);
                 let subpath = expect_str(strand, subpath, "subpath")?;
                 let view = view_from_sym(strand, global, view)?;
                 let target = {
@@ -339,10 +333,12 @@ impl<'v> Object<'v> for Key {
             })
             .method("create", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let view_sym = global.syms.view;
-                let access_sym = global.syms.access;
-                let ([subpath], [block, view, access]) =
-                    unpack!(strand, args, 1, 1, view_sym = None, access_sym = None)?;
+                unpack!(strand, args =>
+                    subpath,
+                    ?block,
+                    ?(global.syms.view): view,
+                    ?(global.syms.access): access
+                );
                 let subpath = expect_str(strand, subpath, "subpath")?;
                 let view = view_from_sym(strand, global, view)?;
                 let access = access_from_value(strand, global, access).await?;
@@ -360,16 +356,7 @@ impl<'v> Object<'v> for Key {
             })
             .method("delete", async move |this, strand, args, _out| {
                 let global = strand.state::<Tag>();
-                let view_sym = global.syms.view;
-                let ([subpath], [view, all, ignore]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    0,
-                    view_sym = None,
-                    all = None,
-                    ignore = None
-                )?;
+                unpack!(strand, args => subpath, ?(global.syms.view): view, ?:all, ?:ignore);
                 let subpath = expect_str(strand, subpath, "subpath")?;
                 let view = view_from_sym(strand, global, view)?;
                 let all = all
@@ -398,7 +385,7 @@ impl<'v> Object<'v> for Key {
                     .into_sys(strand)
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let inner = this.borrow_mut(strand)?.0.take();
                 match inner {
                     Some(inner) => inner.close().await.into_sys(strand),
@@ -407,7 +394,7 @@ impl<'v> Object<'v> for Key {
             })
             .method("subkeys", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let subkeys = {
                     let borrow = this.borrow(strand)?;
                     let key = borrow
@@ -424,7 +411,7 @@ impl<'v> Object<'v> for Key {
             })
             .method("values", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let values = {
                     let borrow = this.borrow(strand)?;
                     let key = borrow
@@ -442,7 +429,7 @@ impl<'v> Object<'v> for Key {
                 Ok(())
             })
             .method("get", async move |this, strand, args, out| {
-                let ([name], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => name);
                 let name = expect_str(strand, name, "name")?;
                 let value = {
                     let borrow = this.borrow(strand)?;
@@ -463,7 +450,7 @@ impl<'v> Object<'v> for Key {
             })
             .method("get_value", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let ([name], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => name);
                 let name = expect_str(strand, name, "name")?;
                 let value = {
                     let borrow = this.borrow(strand)?;
@@ -489,8 +476,7 @@ impl<'v> Object<'v> for Key {
             })
             .method("set", async move |this, strand, args, _out| {
                 let global = strand.state::<Tag>();
-                let kind_sym = global.syms.kind;
-                let ([name, value], [kind]) = unpack!(strand, args, 2, 0, kind_sym = None)?;
+                unpack!(strand, args => name, value, ?(global.syms.kind): kind);
                 let name = expect_str(strand, name, "name")?;
                 let kind = kind_from_sym(strand, global, kind)?;
                 let borrow = this.borrow(strand)?;
@@ -506,7 +492,7 @@ impl<'v> Object<'v> for Key {
                     .into_sys(strand)
             })
             .method("delete_value", async move |this, strand, args, _out| {
-                let ([name], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => name);
                 let name = expect_str(strand, name, "name")?;
                 let borrow = this.borrow(strand)?;
                 let key = borrow
@@ -516,16 +502,7 @@ impl<'v> Object<'v> for Key {
                 key.delete_value(Some(&name)).await.into_sys(strand)
             })
             .method("sec_desc", async move |this, strand, args, out| {
-                let ([], [owner, group, dacl, sacl]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    owner = None,
-                    group = None,
-                    dacl = None,
-                    sacl = None
-                )?;
+                unpack!(strand, args => ?:owner, ?:group, ?:dacl, ?:sacl);
                 let mask = sec_desc_mask(strand, owner, group, dacl, sacl)?;
                 let descriptor = {
                     let borrow = this.borrow(strand)?;

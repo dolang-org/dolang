@@ -126,7 +126,7 @@ pub(crate) fn configure_module<'v, 'a>(
         .value("MachineInfo", global.types.machine_info)
         .value("ServerType", global.types.server_type)
         .function("machine_info", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let info = machine::info(&dolang_ext_shell::vfs(strand))
                 .await
                 .into_sys(strand)?;

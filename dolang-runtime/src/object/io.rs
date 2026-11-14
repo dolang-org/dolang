@@ -260,14 +260,14 @@ async fn helper_mcall<'v, 'a, 's>(
 ) -> Result<'v, 's, ()> {
     match method.tag() {
         sym::READ_ALL => {
-            let ([stream], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => stream);
             let mut buf = BinEmbryo::new();
             read_to_end(strand, &stream, &mut buf).await?;
             buf.finish(strand, out);
             Ok(())
         }
         sym::READ_ALL_STR => {
-            let ([stream], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => stream);
             let mut buf = BinEmbryo::new();
             read_to_end(strand, &stream, &mut buf).await?;
             if str::from_utf8(buf.as_slice()).is_err() {
@@ -286,11 +286,11 @@ async fn helper_mcall<'v, 'a, 's>(
             write_all(strand, &stream, args).await
         }
         sym::COPY_TO => {
-            let ([stream, dest], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => stream, dest);
             copy_to(strand, &stream, &dest, out).await
         }
         sym::CHUNKS => {
-            let ([stream], [size]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => stream, ?size);
             let size = match size {
                 Some(size) => size
                     .to_i64(strand)
@@ -313,12 +313,12 @@ async fn helper_mcall<'v, 'a, 's>(
             Ok(())
         }
         sym::SINK_METHOD => {
-            let ([stream], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => stream);
             Output::set(strand, out, &stream);
             Ok(())
         }
         sym::PUT_METHOD => {
-            let ([stream, value], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => stream, value);
             put(strand, &stream, &value).await
         }
         // The stream methods are the subclass's to define.

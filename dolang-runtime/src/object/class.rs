@@ -799,7 +799,7 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let kind = this.get().0;
-        let ([mut func], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => mut func);
         let accessor = Accessor {
             kind,
             func: func.take(),
@@ -850,7 +850,7 @@ macro_rules! member_marker {
                 args: Args<'v, 'a>,
                 mut out: Slot<'v, 'a>,
             ) -> Result<'v, 's, ()> {
-                let ([member], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => member);
                 this.create(strand, $ty, &mut out);
                 with_instance!(strand, this.cast(&out).unwrap(), |inst| {
                     let mut borrow = inst.borrow_mut_unwrap();
@@ -1356,7 +1356,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         let me = this.annex();
         match method.tag() {
             sym::GET_METHOD => {
-                let ([obj, field], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, field);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
@@ -1428,7 +1428,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 }
             }
             sym::SET_METHOD => {
-                let ([obj, field, mut value], []) = unpack!(strand, args, 3, 0)?;
+                unpack!(strand, args => obj, field, mut value);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
@@ -1511,7 +1511,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     _ => None,
                 };
                 if let Some((supertype, native)) = inherited {
-                    let ([instance], [], mut trailing) = unpack!(strand, args, 1, 0, ...)?;
+                    unpack!(strand, args => instance, ...mut trailing);
                     if !instance.is_instance_of(strand, &this) {
                         return Err(Error::type_error(strand, "invalid class object type"));
                     }
@@ -1669,7 +1669,7 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                 type_obj.op_mcall(strand, init, args, tmp).await?;
             }
             _ => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
             }
         }
 
@@ -1832,7 +1832,7 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method))
                     if supertype.repr_eq(TypeObject::Type.value(strand.vm())))
         {
-            let ([receiver, field], [], trailing) = unpack!(strand, args, 2, 0, ...)?;
+            unpack!(strand, args => receiver, field, ...trailing);
             let class = receiver
                 .downcast_ref(strand.builtin_types().class_object)
                 .ok_or_else(|| Error::type_error(strand, "invalid class object type"))?;
@@ -1843,12 +1843,12 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 .as_sym(strand)
                 .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
             if method.tag() == sym::GET_METHOD {
-                let ([], []) = unpack!(strand, trailing, 0, 0)?;
+                unpack!(strand, trailing =>);
                 return with_pin!(strand, class, |class| {
                     ClassObject::type_get(Recv::new(class), strand, field, out)
                 });
             }
-            let ([value], []) = unpack!(strand, trailing, 1, 0)?;
+            unpack!(strand, trailing => value);
             return with_slots!(strand, |mut slot| {
                 Output::set(strand, Slot::reborrow(&mut slot), value);
                 with_pin!(strand, class, |class| {
@@ -1859,7 +1859,7 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         match class.type_entry(method) {
             Some(ClassTypeEntry::Method { value, .. }) => value.op_call(strand, args, out).await,
             Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method)) => {
-                let ([receiver], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                unpack!(strand, args => receiver, ...trailing);
                 if receiver
                     .downcast_ref(strand.builtin_types().class_object)
                     .is_none()
