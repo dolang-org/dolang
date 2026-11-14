@@ -6,7 +6,10 @@ use dolang_vfs::{
 };
 use futures::{
     future::MaybeDone,
-    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader},
+    io::{
+        AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _,
+        BufReader,
+    },
 };
 
 use dolang::runtime::object::fmt;
@@ -604,17 +607,20 @@ enum PumpTarget<'v, 'a> {
 /// rather than held for the child's entire lifetime. Terminal owners already
 /// cope with arbitrary chunk boundaries — the progress writer buffers a partial
 /// line and coalesces it with the next newline.
-async fn console_pump<'v, 's, R>(strand: &mut Strand<'v, 's>, mut reader: R) -> Result<'v, 's, ()>
+async fn console_pump<'v, 's, R>(strand: &mut Strand<'v, 's>, reader: R) -> Result<'v, 's, ()>
 where
     R: AsyncRead + Unpin,
 {
-    let mut buf = [0u8; 8192];
+    // Read through a heap buffer, keeping none in the future
+    let mut reader = BufReader::new(reader);
     loop {
-        let read = reader.read(&mut buf).await.into_sys(strand)?;
-        if read == 0 {
+        let buf = reader.fill_buf().await.into_sys(strand)?;
+        if buf.is_empty() {
             break;
         }
-        dolang_ext_term::write(strand, &buf[..read]).await?;
+        let read = buf.len();
+        dolang_ext_term::write(strand, buf).await?;
+        reader.consume_unpin(read);
     }
     Ok(())
 }

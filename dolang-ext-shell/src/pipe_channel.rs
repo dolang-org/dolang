@@ -10,7 +10,7 @@ use std::{
 };
 
 use dolang_vfs::process::{PipeRecv, PipeSend};
-use futures::io::{AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use futures::io::{AsyncWriteExt as _, BufReader};
 
 use dolang::runtime::{
     AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
@@ -294,15 +294,9 @@ impl PipeChannelShared {
     }
 }
 
-async fn drain_pipe(mut reader: BufReader<PipeRecv>, send_end: &mut PipeSend) -> io::Result<()> {
-    let mut buf = [0u8; 8192];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            return Ok(());
-        }
-        send_end.write_all(&buf[..n]).await?;
-    }
+async fn drain_pipe(reader: BufReader<PipeRecv>, send_end: &mut PipeSend) -> io::Result<()> {
+    // Copy through the reader's heap buffer, keeping none in the future
+    futures::io::copy_buf(reader, send_end).await.map(drop)
 }
 
 fn take_buffered_bytes<'v, 's>(
