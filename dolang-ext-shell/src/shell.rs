@@ -19,7 +19,6 @@ use dolang::{
         io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
         method,
         object::{Mut, Ref, Request, TypeBuilder},
-        strand::Redirect,
         unpack,
         value::{Nil, TypeObject},
         vm::Register,
@@ -624,7 +623,8 @@ impl<'v> Object<'v> for Vfs {
                         tuple.get(strand, 2, &mut output)?;
                         let res = redirect!(
                             strand,
-                            Redirect::new(strand).input(&input).output(&output),
+                            input: &input,
+                            output: &output,
                             call!(strand, &callable, out)
                         );
                         // Plain close, no poisoning: these pipe
@@ -1157,7 +1157,7 @@ pub(crate) fn configure_vm<'v>(
             capture_ty.create(strand, Capture::new(), &mut cap);
             redirect!(
                 strand,
-                Redirect::new(strand).output(&cap),
+                output: &cap,
                 call!(strand, func, tmp)
             )?;
             with_instance!(strand, capture_ty.cast(&cap).unwrap(), |inst| {

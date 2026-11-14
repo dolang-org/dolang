@@ -323,7 +323,7 @@ enclosing future is dropped:
 with_slots!(strand, |mut key, mut value| { ... })
 with_instance!(strand, cast, |this| { ... })
 with_interrupt_mask!(strand, InterruptMask::all(), { ... })
-redirect!(strand, Redirect::new(strand).output(&sink), { ... })
+redirect!(strand, output: &sink, { ... })
 with_str!(strand, text, |s| { ... })  // also with_slice!
 ```
 

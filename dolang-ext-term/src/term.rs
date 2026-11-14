@@ -11,7 +11,6 @@ use dolang::{
         error::ErrorKind,
         method,
         object::{Mut, Ref, TypeBuilder},
-        strand::Redirect,
         unpack,
         value::{Singleton, StrEmbryo, TypeObject, View},
         vm::Builder,
@@ -1542,7 +1541,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .create(strand, DefaultOutput, &mut output);
                 redirect!(
                     strand,
-                    Redirect::new(strand).input(&input).output(&output),
+                    input: &input,
+                    output: &output,
                     call!(strand, func, out)
                 )
             },
@@ -1650,7 +1650,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 } else {
                     &scratch
                 };
-                redirect!(strand, Redirect::new(strand).output(target), {
+                redirect!(strand, output: target, {
                     with_capture(
                         strand,
                         global,

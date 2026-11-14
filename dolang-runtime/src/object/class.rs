@@ -29,7 +29,7 @@ use crate::{
     },
     redirect,
     sig::Unpack,
-    strand::{Redirect, Strand},
+    strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
@@ -45,9 +45,8 @@ macro_rules! isolated {
     ($strand:ident, $body:expr) => {
         redirect!(
             $strand,
-            Redirect::new($strand)
-                .input(Singleton::Null)
-                .output(Singleton::Null),
+            input: Singleton::Null,
+            output: Singleton::Null,
             $body
         )
     };

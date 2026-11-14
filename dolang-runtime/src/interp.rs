@@ -22,7 +22,7 @@ use crate::{
     },
     redirect,
     sig::{self, Pack},
-    strand::{InterruptMask, Redirect, Strand},
+    strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell, with_u8_slice},
@@ -130,9 +130,8 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         redirect!(
             strand,
-            Redirect::new(strand)
-                .input(Singleton::Null)
-                .output(Singleton::Null),
+            input: Singleton::Null,
+            output: Singleton::Null,
             {
                 let mut module = self.native_modules.borrow().get(name).map(Value::dup);
                 if module.is_none() {
@@ -215,9 +214,8 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         redirect!(
             strand,
-            Redirect::new(strand)
-                .input(Singleton::Null)
-                .output(Singleton::Null),
+            input: Singleton::Null,
+            output: Singleton::Null,
             {
                 enum Mode {
                     Get,

@@ -1955,112 +1955,109 @@ impl<'v, 'a> Alloc<'v> for Strand<'v, 'a> {
     }
 }
 
-/// Run a block with the strand-local iterator and sink redirected by a [`Redirect`].
+/// Run a block with the strand-local iterator and sink redirected.
 ///
 /// Invoke as:
 ///
 /// ```rust,no_run
-/// # use dolang_runtime::{redirect, strand::{Redirect, Strand}, value::Singleton};
-/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// redirect!(strand, Redirect::new(strand).input(Singleton::Null), {
+/// # use dolang_runtime::{redirect, strand::Strand, value::{Singleton, Value}};
+/// # async fn example<'v, 's>(
+/// #     strand: &mut Strand<'v, 's>,
+/// #     sink: &Value<'v>,
+/// #     input: Option<&Value<'v>>,
+/// # ) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// redirect!(strand, input: Singleton::Null, output: sink, {
+///     Ok(())
+/// })?;
+/// redirect!(strand, ?input: input, {
 ///     Ok(())
 /// })
 /// # }
 /// ```
 ///
-/// `strand` names both the strand the
-/// [`Redirect`] was built from and, inside the body, the redirected one, as for
-/// [`with_slots!`](crate::with_slots). The body runs inline, as for `with_slots!`. The
-/// iterator and sink are restored when the body finishes, including when it leaves by `?`
-/// or `return`, or the enclosing future is dropped.
+/// - `input: x` and `output: x` replace the iterator and the sink with `x`, which can be
+///   anything that implements [`Input`](crate::value::Input).
+/// - `?input: x` and `?output: x` take an [`Option`] of one, and leave the channel alone
+///   when it is `None`.
+/// - Either channel can be left out, but `input` comes before `output`.
+///
+/// `strand` names both the strand being redirected and, inside the body, the redirected
+/// one, as for [`with_slots!`](crate::with_slots). The body runs inline, as for
+/// `with_slots!`. The iterator and sink are restored when the body finishes, including
+/// when it leaves by `?` or `return`, or the enclosing future is dropped.
 #[macro_export]
 macro_rules! redirect {
-    ($strand:ident, $redirect:expr, $body:expr) => {{
-        let mut guard = $crate::strand::Redirect::guard($redirect);
+    (@out $strand:ident, $input:expr, output: $output:expr, $body:expr $(,)?) => {
+        $crate::redirect!(@emit $strand, $input, ::core::option::Option::Some($output), $body)
+    };
+    (@out $strand:ident, $input:expr, ?output: $output:expr, $body:expr $(,)?) => {
+        $crate::redirect!(@emit $strand, $input, $output, $body)
+    };
+    (@out $strand:ident, $input:expr, $body:expr $(,)?) => {
+        $crate::redirect!(
+            @emit $strand,
+            $input,
+            ::core::option::Option::<$crate::value::Singleton>::None,
+            $body
+        )
+    };
+    (@emit $strand:ident, $input:expr, $output:expr, $body:expr) => {{
+        let input = $input;
+        let output = $output;
+        let mut guard = $crate::strand::RedirectGuard::new(&mut *$strand, input, output);
         let $strand = &mut *guard;
         $body
     }};
-}
-
-/// Input/output redirect configuration
-pub struct Redirect<'v, 'a, 's> {
-    strand: &'a mut Strand<'v, 's>,
-    input: Option<Value<'v>>,
-    output: Option<Value<'v>>,
-}
-
-impl<'v, 'a, 's> Deref for Redirect<'v, 'a, 's> {
-    type Target = Strand<'v, 's>;
-
-    fn deref(&self) -> &Self::Target {
-        self.strand
-    }
-}
-
-impl<'v, 'a, 's> DerefMut for Redirect<'v, 'a, 's> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.strand
-    }
-}
-
-impl<'v, 'a, 's> AsRef<Strand<'v, 's>> for Redirect<'v, 'a, 's> {
-    fn as_ref(&self) -> &Strand<'v, 's> {
-        self
-    }
-}
-
-impl<'v, 'a, 's> AsMut<Strand<'v, 's>> for Redirect<'v, 'a, 's> {
-    fn as_mut(&mut self) -> &mut Strand<'v, 's> {
-        self
-    }
-}
-
-impl<'v, 'a, 's> Redirect<'v, 'a, 's> {
-    pub fn new(strand: &'a mut Strand<'v, 's>) -> Self {
-        Self {
-            strand,
-            input: None,
-            output: None,
-        }
-    }
-
-    /// Set iterator
-    pub fn input(mut self, input: impl Input<'v>) -> Self {
-        self.input = Some(Value::from_input(self.strand, input));
-        self
-    }
-
-    /// Set sink
-    pub fn output(mut self, output: impl Input<'v>) -> Self {
-        self.output = Some(Value::from_input(self.strand, output));
-        self
-    }
-
-    /// Apply the redirection until the returned guard is dropped.
-    ///
-    /// This backs [`redirect!`](crate::redirect).
-    #[doc(hidden)]
-    #[inline]
-    pub fn guard(self) -> RedirectGuard<'v, 'a, 's> {
-        let strand = self.strand;
-        let input = self.input.map(|input| strand.inner.replace_input(input));
-        let output = self
-            .output
-            .map(|output| strand.inner.replace_output(output));
-        RedirectGuard {
-            strand,
-            input,
-            output,
-        }
-    }
+    ($strand:ident, input: $input:expr, $($rest:tt)+) => {
+        $crate::redirect!(@out $strand, ::core::option::Option::Some($input), $($rest)+)
+    };
+    ($strand:ident, ?input: $input:expr, $($rest:tt)+) => {
+        $crate::redirect!(@out $strand, $input, $($rest)+)
+    };
+    ($strand:ident, $($rest:tt)+) => {
+        $crate::redirect!(
+            @out $strand,
+            ::core::option::Option::<$crate::value::Singleton>::None,
+            $($rest)+
+        )
+    };
 }
 
 /// A strand with its iterator and sink redirected, which restores them when dropped.
+///
+/// This backs [`redirect!`](crate::redirect).
 #[doc(hidden)]
 pub struct RedirectGuard<'v, 'a, 's> {
     strand: &'a mut Strand<'v, 's>,
     input: Option<Value<'v>>,
     output: Option<Value<'v>>,
+}
+
+impl<'v, 'a, 's> RedirectGuard<'v, 'a, 's> {
+    /// Replace the channels that are given, keeping the old values to restore.
+    ///
+    /// Each new value goes straight from its input into the strand, so no new value is
+    /// held unrooted across an allocation.
+    #[inline]
+    pub fn new(
+        strand: &'a mut Strand<'v, 's>,
+        input: Option<impl Input<'v>>,
+        output: Option<impl Input<'v>>,
+    ) -> Self {
+        let input = input.map(|input| {
+            let value = Value::from_input(strand, input);
+            strand.inner.replace_input(value)
+        });
+        let output = output.map(|output| {
+            let value = Value::from_input(strand, output);
+            strand.inner.replace_output(value)
+        });
+        Self {
+            strand,
+            input,
+            output,
+        }
+    }
 }
 
 impl<'v, 's> Deref for RedirectGuard<'v, '_, 's> {
@@ -2171,7 +2168,7 @@ mod interrupt_tests {
 mod scan_tests {
     use std::{future, ops::ControlFlow, pin::pin, ptr::NonNull};
 
-    use super::{Error, InterruptMask, Redirect, Strand, frame};
+    use super::{Error, InterruptMask, Strand, frame};
     use crate::{
         gc::arena::{Header, Visit},
         object::tuple,
@@ -2244,7 +2241,7 @@ mod scan_tests {
                             let item = Value::from_i64(strand, 2);
                             tuple::create(strand, [item], Slot::reborrow(&mut inner));
                             rooted = Some(header(&inner));
-                            redirect!(strand, Redirect::new(strand).output(&sink), {
+                            redirect!(strand, output: &sink, {
                                 assert_eq!(strand.interrupt_mask(), InterruptMask::all());
                                 assert_eq!(
                                     heap_header(&strand.inner.output()),

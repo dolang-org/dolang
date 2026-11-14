@@ -25,8 +25,8 @@ use crate::{
     },
     redirect,
     strand::{
-        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect,
-        Strand, with_slots_dynamic,
+        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Strand,
+        with_slots_dynamic,
     },
     unpack,
     value::{Output, Singleton, Slot, Value},
@@ -494,54 +494,52 @@ async fn map_workers<'v, 's>(
     disconnect_output: bool,
 ) -> Result<'v, 's, ()> {
     with_interrupt_mask!(strand, InterruptMask::all(), {
-        let mut redirect = Redirect::new(strand);
-        if disconnect_input {
-            redirect = redirect.input(Singleton::Null);
-        }
-        if disconnect_output {
-            redirect = redirect.output(Singleton::Null);
-        }
-        redirect!(strand, redirect, {
-            let mut strands = Vec::with_capacity(count);
-            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-            for _ in 0..count {
-                strands.push(
-                    strand.spawn_scoped(Some(interrupt.clone()), async move |strand| {
-                        let result = async {
-                            with_slots!(strand, |mut item, mut mapped| {
-                                while input.next(strand, &mut item).await? {
-                                    call!(strand, block, &item, &mut mapped)?;
-                                    output.put(strand, &mut mapped).await?;
-                                    strand.check_trap_gc()?;
-                                }
-                                Ok(())
-                            })
-                        }
-                        .await;
-                        if result.is_err() {
-                            strand.interrupt_token().cancel();
-                        }
-                        result
-                    }),
-                );
-            }
-            let mut first_err: Option<Error<'v, '_>> = None;
-            for result in join_all(strands).await {
-                if let Err(error) = result
-                    && first_err.as_ref().is_none_or(|previous| {
-                        previous.kind() == ErrorKind::Canceled
-                            && error.kind() != ErrorKind::Canceled
-                    })
-                {
-                    first_err = Some(error);
+        redirect!(
+            strand,
+            ?input: disconnect_input.then_some(Singleton::Null),
+            ?output: disconnect_output.then_some(Singleton::Null),
+            {
+                let mut strands = Vec::with_capacity(count);
+                let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                for _ in 0..count {
+                    strands.push(
+                        strand.spawn_scoped(Some(interrupt.clone()), async move |strand| {
+                            let result = async {
+                                with_slots!(strand, |mut item, mut mapped| {
+                                    while input.next(strand, &mut item).await? {
+                                        call!(strand, block, &item, &mut mapped)?;
+                                        output.put(strand, &mut mapped).await?;
+                                        strand.check_trap_gc()?;
+                                    }
+                                    Ok(())
+                                })
+                            }
+                            .await;
+                            if result.is_err() {
+                                strand.interrupt_token().cancel();
+                            }
+                            result
+                        }),
+                    );
+                }
+                let mut first_err: Option<Error<'v, '_>> = None;
+                for result in join_all(strands).await {
+                    if let Err(error) = result
+                        && first_err.as_ref().is_none_or(|previous| {
+                            previous.kind() == ErrorKind::Canceled
+                                && error.kind() != ErrorKind::Canceled
+                        })
+                    {
+                        first_err = Some(error);
+                    }
+                }
+                if let Some(error) = first_err {
+                    Err(error)
+                } else {
+                    Ok(())
                 }
             }
-            if let Some(error) = first_err {
-                Err(error)
-            } else {
-                Ok(())
-            }
-        })
+        )
     })
 }
 
@@ -686,29 +684,27 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 };
                 Err(err)
             })
-            .function_with_slots("redirect", async move |strand, args, out, [mut tmp]| {
-                unpack!(strand, args => block, ?input_key: arg_input, ?output_key: arg_output);
-                let mut redir = Redirect::new(strand);
-                if let Some(input) = arg_input {
-                    input.iter(&mut redir, &mut tmp).await?;
-                    redir = redir.input(&mut tmp);
-                }
-                if let Some(output) = arg_output {
-                    output.sink(&mut redir, &mut tmp).await?;
-                    redir = redir.output(&mut tmp);
-                }
-                redirect!(strand, redir, call!(strand, block, out))
-            })
+            .function_with_slots(
+                "redirect",
+                async move |strand, args, out, [mut input, mut output]| {
+                    unpack!(strand, args => block, ?input_key: arg_input, ?output_key: arg_output);
+                    if let Some(arg) = &arg_input {
+                        arg.iter(strand, &mut input).await?;
+                    }
+                    if let Some(arg) = &arg_output {
+                        arg.sink(strand, &mut output).await?;
+                    }
+                    redirect!(
+                        strand,
+                        ?input: arg_input.map(|_| &input),
+                        ?output: arg_output.map(|_| &output),
+                        call!(strand, block, out)
+                    )
+                },
+            )
             .function("with_io", async move |strand, args, out| {
                 unpack!(strand, args => block, ?input_key: arg_input, ?output_key: arg_output);
-                let mut redir = Redirect::new(strand);
-                if let Some(input) = arg_input {
-                    redir = redir.input(input);
-                }
-                if let Some(output) = arg_output {
-                    redir = redir.output(output);
-                }
-                redirect!(strand, redir, call!(strand, block, out))
+                redirect!(strand, ?input: arg_input, ?output: arg_output, call!(strand, block, out))
             })
             .function("channel", async move |strand, args, out| {
                 unpack!(strand, args => ?limit);
@@ -783,20 +779,22 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                 async move |strand| {
                                     if let Err(e) = async {
                                         with_slots!(strand, |mut s, mut r, mut tmp, mut tmp2| {
-                                            let mut redir = Redirect::new(strand);
-                                            if !last_recv.is_nil() {
+                                            let input = if !last_recv.is_nil() {
                                                 r.store(last_recv);
-                                                redir = redir.input(&*r);
-                                            } else if let Some(redir_input) = redir_input {
-                                                redir = redir.input(&*redir_input);
-                                            }
-                                            if let Some(send) = send {
+                                                Some(&*r)
+                                            } else {
+                                                redir_input.as_deref()
+                                            };
+                                            let output = if let Some(send) = send {
                                                 s.store(send);
-                                                redir = redir.output(&*s);
-                                            } else if let Some(redir_output) = redir_output {
-                                                redir = redir.output(&*redir_output);
-                                            }
-                                            let res = redirect!(strand, redir, {
+                                                Some(&*s)
+                                            } else {
+                                                redir_output.as_deref()
+                                            };
+                                            let res = redirect!(
+                                                strand,
+                                                ?input: input,
+                                                ?output: output,
                                                 call!(
                                                     strand,
                                                     thunk,
@@ -805,7 +803,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                                         Slot::reborrow
                                                     )
                                                 )
-                                            });
+                                            );
                                             // Close both ends even if the
                                             // first close fails, so a
                                             // failure cannot strand the
@@ -868,9 +866,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     strand.output(&mut output);
                     redirect!(
                         strand,
-                        Redirect::new(strand)
-                            .input(Singleton::Null)
-                            .output(Singleton::Null),
+                        input: Singleton::Null,
+                        output: Singleton::Null,
                         {
                             while input.next(strand, &mut value).await? {
                                 call!(strand, &func, &value, &mut tmp)?;
@@ -890,9 +887,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     strand.output(&mut output);
                     redirect!(
                         strand,
-                        Redirect::new(strand)
-                            .input(Singleton::Null)
-                            .output(Singleton::Null),
+                        input: Singleton::Null,
+                        output: Singleton::Null,
                         {
                             while input.next(strand, &mut value).await? {
                                 call!(strand, &pred, &value, &mut tmp)?;

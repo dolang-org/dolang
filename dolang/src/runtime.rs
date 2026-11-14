@@ -73,7 +73,7 @@ pub use vm::{Alloc, AllocExt, Bytecode, BytecodeError, Frame, State, Vm};
 /// Strands
 pub mod strand {
     pub use dolang_runtime::strand::{
-        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
+        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Strand,
     };
 }
 
