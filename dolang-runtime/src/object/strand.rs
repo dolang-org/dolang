@@ -14,7 +14,7 @@ use crate::value::fmt::Format;
 
 use crate::{
     arg::Args,
-    error::{Error, ErrorPair, Result, UnwindEntry},
+    error::{Error, Result, UnwindEntry},
     gc::{Collect, arena::Visit, with_pin},
     method,
     strand::{CellState, InterruptToken, RawInfo, Strand, StrandCell, StrandInner},
@@ -34,7 +34,11 @@ use super::{
 /// Result stored in a JoinHandle after a background strand completes.
 pub(crate) enum Completion<'v> {
     Ok(Value<'v>),
-    Err(ErrorPair<'v>),
+    /// The error value and its `inspect.Backtrace` object.
+    Err {
+        value: Value<'v>,
+        backtrace: Value<'v>,
+    },
 }
 
 /// GC-managed handle for a background strand (`strand.Task`).
@@ -58,8 +62,23 @@ impl<'v> Handle<'v> {
         }
     }
 
-    /// Store the result of the background strand and wake any joiner.
-    pub(crate) fn complete(&mut self, result: Completion<'v>) {
+    /// Store the value of a background strand that succeeded and wake any joiner.
+    pub(crate) fn complete_ok(&mut self, value: &Value<'v>) {
+        // The value is duplicated straight into this scanned handle
+        self.complete(Completion::Ok(value.dup()));
+    }
+
+    /// Store the error value and backtrace object of a background strand that failed
+    /// and wake any joiner.
+    pub(crate) fn complete_err(&mut self, value: &Value<'v>, backtrace: &Value<'v>) {
+        // The values are duplicated straight into this scanned handle
+        self.complete(Completion::Err {
+            value: value.dup(),
+            backtrace: backtrace.dup(),
+        });
+    }
+
+    fn complete(&mut self, result: Completion<'v>) {
         self.result = Some(result);
         for waker in self.wakers.drain(..) {
             waker.wake();
@@ -76,11 +95,9 @@ unsafe impl<'v> Collect for Handle<'v> {
         if let Some(Completion::Ok(v)) = &self.result {
             v.accept(visit)?;
         }
-        if let Some(Completion::Err((v, backtrace))) = &self.result {
-            v.accept(visit)?;
-            for entry in backtrace {
-                entry.accept(visit)?;
-            }
+        if let Some(Completion::Err { value, backtrace }) = &self.result {
+            value.accept(visit)?;
+            backtrace.accept(visit)?;
         }
 
         // Scan the strand's stack (start value, frame chain, input/output).
@@ -138,7 +155,9 @@ async fn join_handle<'v, 's>(
                 Output::set(strand, out, v);
                 Ok(())
             }
-            Completion::Err(pair) => Err(Error::from_pair_ref(strand, pair)),
+            Completion::Err { value, backtrace } => {
+                Err(Error::from_value_backtrace(strand, value, backtrace).unwrap_or_else(|e| e))
+            }
         }
     })
 }

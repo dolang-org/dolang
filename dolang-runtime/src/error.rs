@@ -5,7 +5,7 @@ use std::{
     fmt::{self, Debug, Formatter},
     marker::PhantomData,
     mem,
-    ops::ControlFlow,
+    ops::{ControlFlow, Deref},
     ptr::NonNull,
     result, slice,
 };
@@ -24,8 +24,8 @@ use crate::{
     },
     strand::{Strand, StrandInner},
     sym::Sym,
-    value::{Case, Input, Output, Slot, Value, view::View},
-    vm::Vm,
+    value::{Case, Input, Output, Slot, Value, private::Sealed, view::View},
+    vm::{Alloc, Vm},
     with_slots,
 };
 
@@ -172,8 +172,6 @@ impl<'v> UnwindEntry<'v> {
     }
 }
 
-pub(crate) type ErrorPair<'v> = (Value<'v>, Vec<UnwindEntry<'v>>);
-
 impl<'v> UnwindEntry<'v> {
     pub(crate) fn source(&self) -> Option<(Cow<'_, str>, Span)> {
         match self {
@@ -314,22 +312,16 @@ struct ErrorRoot<'v, 's> {
 }
 
 impl<'v, 's> ErrorRoot<'v, 's> {
-    fn new(inner: &'s StrandInner<'v>, value: Value<'v>, backtrace: Vec<UnwindEntry<'v>>) -> Self {
+    /// Register an empty root (`nil`, no backtrace), to fill in place.
+    fn new(inner: &'s StrandInner<'v>) -> Self {
         ErrorRoot {
             slot: inner.errors().alloc(SlotData {
                 vm: inner.vm(),
-                value,
-                backtrace,
+                value: Value::NIL,
+                backtrace: Vec::new(),
             }),
             phantom: PhantomData,
         }
-    }
-
-    /// A slot over the error's value, to fill once the root is registered.
-    fn slot(&mut self) -> Slot<'v, '_> {
-        // Safety: the value lives in the strand's error table, which the collector scans
-        // and which never moves its entries; `&mut self` excludes other accesses.
-        unsafe { Slot::new(NonNull::from(&mut self.data_mut().value)) }
     }
 
     fn data(&self) -> &SlotData<'v> {
@@ -346,20 +338,98 @@ impl<'v, 's> ErrorRoot<'v, 's> {
             .expect("error slot not set")
     }
 
-    fn get(&self) -> Value<'v> {
-        self.data().value.dup()
-    }
-
     fn vm(&self) -> &'v Vm<'v> {
         self.data().vm
     }
 
-    /// Consume the root and retrieve its contents, freeing the slot.
-    fn take(self) -> (Value<'v>, Vec<UnwindEntry<'v>>) {
-        // Safety: as for `data_mut`
-        let data = unsafe { (*self.slot.as_ref().0.get()).take() }.expect("error slot not set");
-        mem::forget(self);
-        (data.value, data.backtrace)
+    /// The backtrace attached to the error's value.
+    fn backtrace(&self) -> &[UnwindEntry<'v>] {
+        &self.data().backtrace
+    }
+
+    fn backtrace_mut(&mut self) -> &mut Vec<UnwindEntry<'v>> {
+        &mut self.data_mut().backtrace
+    }
+
+    /// Append the entries of the backtrace object `value`, or return `false` if it is
+    /// not one.
+    fn fill_backtrace(&mut self, vm: &Vm<'v>, value: &Value<'v>) -> bool {
+        let Some(entries) = backtrace::iter_from_value(vm, value) else {
+            return false;
+        };
+        // SAFETY: the entries move straight into this root, which the collector scans
+        self.backtrace_mut()
+            .extend(entries.0.map(|entry| unsafe { entry.dup() }));
+        true
+    }
+
+    /// Move the contents into a new root registered with `inner`.
+    fn rehome<'ps>(mut self, inner: &'ps StrandInner<'v>) -> ErrorRoot<'v, 'ps> {
+        let mut root = ErrorRoot::new(inner);
+        Output::swap(&mut root, &mut self);
+        mem::swap(root.backtrace_mut(), self.backtrace_mut());
+        root
+    }
+}
+
+impl<'v> Deref for ErrorRoot<'v, '_> {
+    type Target = Value<'v>;
+
+    fn deref(&self) -> &Value<'v> {
+        &self.data().value
+    }
+}
+
+impl<'v> AsRef<Value<'v>> for ErrorRoot<'v, '_> {
+    fn as_ref(&self) -> &Value<'v> {
+        self
+    }
+}
+
+impl<'v> Output<'v> for ErrorRoot<'v, '_> {
+    fn as_slot(this: &mut Self, _: Sealed) -> Slot<'v, '_> {
+        // Safety: the value lives in the strand's error table, which the collector scans
+        // and which never moves its entries; `&mut` excludes other accesses.
+        unsafe { Slot::new(NonNull::from(&mut this.data_mut().value)) }
+    }
+}
+
+/// The value moves in, and the root frees its slot when dropped.
+impl<'v> Input<'v> for ErrorRoot<'v, '_> {
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(Output::as_slot(self, Sealed).take());
+        None
+    }
+}
+
+impl<'v> Input<'v> for &ErrorRoot<'v, '_> {
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        out.store(self.dup());
+        None
+    }
+}
+
+/// The value moves in; the root's slot is returned so it can be restored.
+impl<'v> Input<'v> for &mut ErrorRoot<'v, '_> {
+    fn input_take<'b>(
+        &'b mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        mut out: Slot<'v, '_>,
+        _: Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        let mut slot = Output::as_slot(*self, Sealed);
+        out.store(slot.take());
+        Some(slot)
     }
 }
 
@@ -513,7 +583,7 @@ impl<'v, 's> fmt::Display for Error<'v, 's> {
             Variant::Type(msg) => write!(f, "type error: {msg}"),
             Variant::NonLocalJump(..) => write!(f, "non-local jump"),
             Variant::Boxed(root) => {
-                let val = root.get();
+                let val: &Value<'v> = root;
                 match val.downcast_ref(root.vm().builtin_types().error) {
                     Some(boxed) => write!(f, "{}", boxed.get()),
                     None => write!(f, "<value>"),
@@ -527,7 +597,7 @@ impl<'v, 's> error::Error for Error<'v, 's> {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match &self.inner {
             Variant::Boxed(root) => {
-                let val = root.get();
+                let val: &Value<'v> = root;
                 match val.downcast_ref(root.vm().builtin_types().error) {
                     Some(boxed) => match boxed.get() {
                         Boxed::Compile(error) | Boxed::Runtime(error) | Boxed::Abort(error) => {
@@ -556,7 +626,7 @@ pub struct Display<'v, 's, 'a> {
 impl<'v, 's, 'a> fmt::Display for Display<'v, 's, 'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if let Variant::Boxed(root) = &self.error.inner {
-            let val = root.get();
+            let val: &Value<'v> = root;
             val.op_display(*self.strand.borrow_mut(), f)
                 .map_err(|_| fmt::Error)
         } else {
@@ -585,9 +655,9 @@ fn key_text<'v>(strand: &mut Strand<'v, '_>, key: impl Input<'v>) -> String {
 
 impl<'v, 's> Error<'v, 's> {
     fn new_info(strand: &mut Strand<'v, 's>, kind: Boxed<'v>) -> Self {
-        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
+        let mut root = ErrorRoot::new(strand.inner);
         let error = strand.builtin_types().error;
-        error.create_imm(strand, alias::Box::new(kind), root.slot());
+        error.create_imm(strand, alias::Box::new(kind), &mut root);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,
@@ -626,9 +696,7 @@ impl<'v, 's> Error<'v, 's> {
         loop {
             match self.inner {
                 Variant::Boxed(ref root) => {
-                    let val = root.get();
-                    let mut output = output;
-                    Output::as_slot(&mut output, crate::value::private::Sealed).store(val.dup());
+                    Output::set(strand, output, root);
                     break;
                 }
                 _ => self.expand(strand),
@@ -788,8 +856,8 @@ impl<'v, 's> Error<'v, 's> {
 
     /// Create error: generic value
     pub fn from_value(strand: &mut Strand<'v, 's>, err: impl Input<'v>) -> Self {
-        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        Output::set(strand, root.slot(), err);
+        let mut root = ErrorRoot::new(strand.inner);
+        Output::set(strand, &mut root, err);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,
@@ -799,14 +867,12 @@ impl<'v, 's> Error<'v, 's> {
     /// Constuct error from `self` which indicates it was caused by `cause`.
     pub fn caused_by(self, _strand: &mut Strand<'v, 's>, cause: Error<'v, 's>) -> Self {
         match (self.inner, cause.inner) {
-            (Variant::Boxed(mut left), Variant::Boxed(right))
-                if left.get().repr_eq(&right.get()) =>
-            {
+            (Variant::Boxed(mut left), Variant::Boxed(mut right)) if left.repr_eq(&right) => {
                 // Rethrow of the same error value: the original trace comes
                 // first, with the frames unwound from the rethrow site spliced
                 // in after it.
-                let (_, original) = right.take();
-                left.data_mut().backtrace.splice(0..0, original);
+                left.backtrace_mut()
+                    .splice(0..0, right.backtrace_mut().drain(..));
                 Self {
                     inner: Variant::Boxed(left),
                     phantom: PhantomData,
@@ -824,9 +890,8 @@ impl<'v, 's> Error<'v, 's> {
     where
         T::Annex: Default,
     {
-        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        let slot = root.slot();
-        ty.create(strand, value, slot);
+        let mut root = ErrorRoot::new(strand.inner);
+        ty.create(strand, value, &mut root);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,
@@ -840,9 +905,8 @@ impl<'v, 's> Error<'v, 's> {
         value: T,
         annex: T::Annex,
     ) -> Self {
-        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        let slot = root.slot();
-        ty.create_with_annex(strand, value, annex, slot);
+        let mut root = ErrorRoot::new(strand.inner);
+        ty.create_with_annex(strand, value, annex, &mut root);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,
@@ -911,7 +975,7 @@ impl<'v, 's> Error<'v, 's> {
             Variant::Type(_) => ErrorKind::Type,
             Variant::NonLocalJump(..) => ErrorKind::Runtime,
             Variant::Boxed(root) => {
-                let val = root.get();
+                let val: &Value<'v> = root;
                 let vm = root.vm();
                 // `downcast_native` walks class-instance native slots, so this
                 // covers a Do subclass of an error variant as well as a plain
@@ -925,15 +989,19 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     /// The exception value, or `None` for a non-local jump.
-    pub(crate) fn exception(&mut self, strand: &mut Strand<'v, 's>) -> Option<Value<'v>> {
+    pub(crate) fn exception<'a>(
+        &'a mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Option<&'a Value<'v>> {
         if self.as_nl_branch().is_some() {
             return None;
         }
-        loop {
-            match &self.inner {
-                Variant::Boxed(root) => return Some(root.get()),
-                _ => self.expand(strand),
-            }
+        while !matches!(self.inner, Variant::Boxed(..)) {
+            self.expand(strand);
+        }
+        match &self.inner {
+            Variant::Boxed(root) => Some(root),
+            _ => unreachable!(),
         }
     }
 
@@ -942,9 +1010,8 @@ impl<'v, 's> Error<'v, 's> {
         let Variant::Boxed(root) = &self.inner else {
             return None;
         };
-        let val = root.get();
         let vm = root.vm();
-        let boxed = val.downcast_native(vm, vm.builtin_types().error)?;
+        let boxed = root.downcast_native(vm, vm.builtin_types().error)?;
         match boxed.get() {
             Boxed::Value(msg) | Boxed::Data(msg) => Some(msg.to_string()),
             _ => None,
@@ -1002,7 +1069,7 @@ impl<'v, 's> Error<'v, 's> {
         #[allow(unused_variables)] strand: &mut Strand<'v, 's>,
     ) -> impl ExactSizeIterator<Item = impl Frame + use<'v, 'a>> + use<'v, 's, 'a> {
         match &self.inner {
-            Variant::Boxed(root) => BacktraceIter::new(root.data().backtrace.iter()),
+            Variant::Boxed(root) => BacktraceIter::new(root.backtrace().iter()),
             _ => BacktraceIter::empty(),
         }
     }
@@ -1028,35 +1095,18 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    pub(crate) fn into_pair(mut self, strand: &mut Strand<'v, 's>) -> ErrorPair<'v> {
-        assert!(
-            self.as_nl_branch().is_none(),
-            "non-local jumps cannot be paired"
+    /// Write this error's backtrace to `out` as a backtrace object.
+    pub(crate) fn backtrace_object(&self, strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+        let entries = match &self.inner {
+            Variant::Boxed(root) => root.backtrace(),
+            _ => &[],
+        };
+        // SAFETY: the entries move straight into the allocated object
+        backtrace::create(
+            strand,
+            |_| entries.iter().map(|e| unsafe { e.dup() }).collect(),
+            out,
         );
-        while !matches!(self.inner, Variant::Boxed(..)) {
-            self.expand(strand);
-        }
-        match self.inner {
-            Variant::Boxed(root) => root.take(),
-            _ => unreachable!(),
-        }
-    }
-
-    pub(crate) fn from_pair(
-        strand: &mut Strand<'v, 's>,
-        value: Value<'v>,
-        backtrace: Vec<UnwindEntry<'v>>,
-    ) -> Self {
-        Self {
-            inner: Variant::Boxed(ErrorRoot::new(strand.inner, value, backtrace)),
-            phantom: PhantomData,
-        }
-    }
-
-    pub(crate) fn from_pair_ref(strand: &mut Strand<'v, 's>, pair: &ErrorPair<'v>) -> Self {
-        // SAFETY: the entries move straight into the new error's root
-        let backtrace = pair.1.iter().map(|entry| unsafe { entry.dup() }).collect();
-        Self::from_pair(strand, pair.0.dup(), backtrace)
     }
 
     pub fn from_value_backtrace(
@@ -1064,33 +1114,32 @@ impl<'v, 's> Error<'v, 's> {
         err: impl Input<'v>,
         backtrace: impl Input<'v>,
     ) -> Result<'v, 's, Self> {
-        with_slots!(strand, |mut err_slot, mut backtrace_slot| {
+        let mut root = ErrorRoot::new(strand.inner);
+        Output::set(strand, &mut root, err);
+        with_slots!(strand, |mut backtrace_slot| {
             Output::set(strand, Slot::reborrow(&mut backtrace_slot), backtrace);
-            Output::set(strand, Slot::reborrow(&mut err_slot), err);
-            // SAFETY: the entries move straight into the new error's root
-            let Some(backtrace) =
-                (unsafe { backtrace::entries_from_value(strand, &backtrace_slot) })
-            else {
+            if !root.fill_backtrace(strand.vm(), &backtrace_slot) {
                 return Err(Error::type_error(strand, "expected inspect.Backtrace"));
-            };
-            Ok(Self::from_pair(strand, err_slot.take(), backtrace))
+            }
+            Ok(Self {
+                inner: Variant::Boxed(root),
+                phantom: PhantomData,
+            })
         })
     }
 
     pub(crate) fn from_value_backtrace_raw(
         strand: &'s StrandInner<'v>,
-        err: Value<'v>,
-        backtrace: Value<'v>,
+        err: &Value<'v>,
+        backtrace: &Value<'v>,
     ) -> Result<'v, 's, Self> {
-        let backtrace = if !backtrace.is_nil() {
-            // SAFETY: the entries move straight into the new error's root
-            unsafe { backtrace::entries_from_value(strand.vm(), &backtrace) }
-                .ok_or_else(|| Error::type_error_raw(strand, "expected inspect.Backtrace"))?
-        } else {
-            Vec::new()
-        };
+        let mut root = ErrorRoot::new(strand);
+        Output::as_slot(&mut root, Sealed).store(err.dup());
+        if !backtrace.is_nil() && !root.fill_backtrace(strand.vm(), backtrace) {
+            return Err(Error::type_error_raw(strand, "expected inspect.Backtrace"));
+        }
         Ok(Self {
-            inner: Variant::Boxed(ErrorRoot::new(strand, err, backtrace)),
+            inner: Variant::Boxed(root),
             phantom: PhantomData,
         })
     }
@@ -1102,7 +1151,7 @@ impl<'v, 's> Error<'v, 's> {
         loop {
             match &mut self.inner {
                 Variant::Boxed(root) => {
-                    root.data_mut().backtrace.push(entry);
+                    root.backtrace_mut().push(entry);
                     break;
                 }
                 _ => self.expand(strand),
@@ -1113,10 +1162,7 @@ impl<'v, 's> Error<'v, 's> {
     pub(crate) fn migrate<'ps>(self, strand: &Strand<'v, 'ps>) -> Error<'v, 'ps> {
         Error {
             inner: match self.inner {
-                Variant::Boxed(root) => {
-                    let (value, backtrace) = root.take();
-                    Variant::Boxed(ErrorRoot::new(strand.inner, value, backtrace))
-                }
+                Variant::Boxed(root) => Variant::Boxed(root.rehome(strand.inner)),
                 Variant::Unsupported(msg) => Variant::Unsupported(msg),
                 Variant::Immutable => Variant::Immutable,
                 Variant::Overflow => Variant::Overflow,
