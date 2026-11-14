@@ -103,7 +103,7 @@ impl<'v> Drop for TypeTable<'v> {
 
 pub(crate) struct BuiltinTypes<'v> {
     pub(crate) adapter_type: TypeHandle<'v, types::AdapterTypeObj>,
-    pub(crate) dict_view_rest: TypeHandle<'v, dict_view::Rest<'v>>,
+    pub(crate) dict_view_rest: TypeHandle<'v, dict_view::RestObj<'v>>,
     pub(crate) pack_rest: TypeHandle<'v, pack::Rest<'v>>,
     pub(crate) arg_acc: TypeHandle<'v, arg::ArgAcc<'v>>,
     pub(crate) array_iter: TypeHandle<'v, array::Iter<'v>>,

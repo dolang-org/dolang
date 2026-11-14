@@ -108,18 +108,16 @@ assert_eq $s.len 1
 key.bad_hash = false
 assert_eq (d.get key) old
 
-# Skip comparisons in keyed unpacking must propagate too.
+# Keyed unpacking tracks consumed instances by entry, so a rest never compares keys.
 for mode = [1, 2]
   let key = Key 1
   let d = {}
   d.insert $key first
   d.insert $key second
   key.mode = mode
-  raises do
-    let ...rest = d
-    [...rest.iter()]
+  let ...rest = d
+  assert_eq [...rest.iter().map(do |pair| pair[1])] ["first", "second"]
   key.mode = 0
-  assert_eq [...d.values()] ["first", "second"]
 
 # Rebuild existing entries without hashing or comparing them again.
 let keys = [Key(0), Key(1), Key(2)]

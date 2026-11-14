@@ -1,6 +1,8 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     hash::{Hash, Hasher},
+    mem,
     ops::ControlFlow,
 };
 
@@ -153,20 +155,16 @@ impl<'v> Dict<'v> {
     /// left behind: one with more instances than `skip` covers. `skip` is
     /// copied rather than advanced, since the caller still needs it as it
     /// stands (to commit, or to hand to a capture).
-    fn leftover_key<'s>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        skip: &Skip<'v>,
-    ) -> Result<'v, 's, Option<&Value<'v>>> {
+    fn leftover_key(&self, skip: &Skip) -> Option<&Value<'v>> {
         let mut skip = skip.clone();
         for (bucket, _) in self.index.iter().flatten() {
-            let bucket = unsafe { bucket.as_ref() };
-            if skip.add(strand, &bucket.key, bucket.hash)? >= bucket.value.len() {
-                continue;
+            let instance = skip.add(bucket);
+            let entry = unsafe { bucket.as_ref() };
+            if instance < entry.value.len() {
+                return Some(&entry.key);
             }
-            return Ok(Some(&bucket.key));
         }
-        Ok(None)
+        None
     }
 
     fn next_index<'a>(
@@ -232,6 +230,62 @@ impl<'v> Dict<'v> {
         capacity
     }
 
+    /// A copy with the same pairs in the same order, made without running any code, as
+    /// [`Self::rehash`] moves them.
+    fn cloned(&self) -> Self {
+        let mut table = RawTable::with_capacity(self.table.len());
+        let mut remap: Vec<Option<Bucket<Entry<'v>>>> = vec![None; self.table.buckets()];
+        let mut index = Vec::with_capacity(self.total_pairs);
+        for (old_bucket, subindex) in self.index.iter().flatten() {
+            let old_index = unsafe { self.table.bucket_index(old_bucket) };
+            let old = unsafe { old_bucket.as_ref() };
+            let value = old.value.at(*subindex).dup();
+            let i = index.len();
+            let (bucket, subindex) = match &remap[old_index] {
+                // A later instance of a key already copied
+                Some(bucket) => {
+                    let bucket: Bucket<Entry<'v>> = Bucket::clone(bucket);
+                    let entry = unsafe { bucket.as_mut() };
+                    let subindex = match &mut entry.value {
+                        EntryValue::Multi(items) => {
+                            items.push((value, i));
+                            items.len() - 1
+                        }
+                        single => {
+                            let EntryValue::Single {
+                                value: first,
+                                index: first_index,
+                            } = mem::replace(single, EntryValue::Multi(Vec::new()))
+                            else {
+                                unreachable!()
+                            };
+                            *single = EntryValue::Multi(vec![(first, first_index), (value, i)]);
+                            1
+                        }
+                    };
+                    (bucket, subindex)
+                }
+                None => {
+                    let entry = Entry {
+                        key: old.key.dup(),
+                        value: EntryValue::Single { value, index: i },
+                        hash: old.hash,
+                    };
+                    let bucket = unsafe { table.insert_no_grow(old.hash, entry) };
+                    remap[old_index] = Some(bucket.clone());
+                    (bucket, 0)
+                }
+            };
+            index.push(Some((bucket, subindex)));
+        }
+        Self {
+            table,
+            index,
+            epoch: 0,
+            total_pairs: self.total_pairs,
+        }
+    }
+
     fn find<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
@@ -241,16 +295,20 @@ impl<'v> Dict<'v> {
         super::table::find(&self.table, hash, |entry| key.eq(strand, &entry.key))
     }
 
+    /// Inserts `value` under `key`, whose hash is `hv`, replacing every value already
+    /// there if `unique`. The key and value stay in their slots, which root them, until the
+    /// lookup, which can run code, is over.
     pub(crate) fn insert<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        key: Value<'v>,
-        value: Value<'v>,
+        mut key: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
         hv: u64,
         unique: bool,
     ) -> Result<'v, 's, ()> {
         unsafe {
             let found = self.find(strand, hv, &key)?;
+            let (key, value) = (key.take(), value.take());
             let mut cap = self.table.capacity();
             let probe = match found {
                 Some(bucket) => Ok(bucket),
@@ -455,11 +513,16 @@ fn hasher<'v>() -> impl Fn(&Entry<'v>) -> u64 {
 /// Collects spread pairs into a dict, which holds only keyed entries. The dict object is
 /// already allocated, so each pair is rooted as soon as it arrives, and is borrowed only
 /// for each insert.
-struct DictPairs<'b, 'v> {
+pub(crate) struct DictPairs<'b, 'v> {
     dict: &'b Value<'v>,
 }
 
-impl<'v> DictPairs<'_, 'v> {
+impl<'b, 'v> DictPairs<'b, 'v> {
+    /// A sink into the dict in `dict`.
+    pub(crate) fn new(dict: &'b Value<'v>) -> Self {
+        Self { dict }
+    }
+
     fn insert<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
@@ -476,7 +539,13 @@ impl<'v> DictPairs<'_, 'v> {
         with_pin!(strand, dict, |dict| {
             dict.borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?
-                .insert(strand, key.take(), value.take(), hv, false)
+                .insert(
+                    strand,
+                    Slot::reborrow(&mut key),
+                    Slot::reborrow(&mut value),
+                    hv,
+                    false,
+                )
         })
     }
 }
@@ -1184,82 +1253,27 @@ impl<'v> Protocol<'v> for Keys<'v> {
 
 // ── Unpack bookkeeping ──────────────────────────────────────────────
 
-struct Seen<'v> {
-    value: Value<'v>,
-    hash: u64,
-    count: usize,
+/// Counts, per key, the instances an unpack has consumed.
+///
+/// A key is identified by its entry, which stays put while the dict is unchanged, and every
+/// use is guarded by the dict's epoch, so the counts hold no values and compare none.
+#[derive(Clone, Default)]
+struct Skip {
+    // Entry address → instances consumed
+    counts: HashMap<usize, usize>,
 }
 
-impl<'v> Clone for Seen<'v> {
-    fn clone(&self) -> Self {
-        Seen {
-            value: self.value.dup(),
-            hash: self.hash,
-            count: self.count,
-        }
-    }
-}
-
-struct Skip<'v> {
-    table: RawTable<Seen<'v>>,
-    count: usize,
-}
-
-impl<'v> Clone for Skip<'v> {
-    fn clone(&self) -> Self {
-        let mut new_table = RawTable::with_capacity(self.table.len());
-        unsafe {
-            for bucket in self.table.iter() {
-                let seen = bucket.as_ref();
-                new_table.insert_no_grow(seen.hash, seen.clone());
-            }
-        }
-        Skip {
-            table: new_table,
-            count: self.count,
-        }
-    }
-}
-
-impl<'v> Skip<'v> {
+impl Skip {
     fn new() -> Self {
-        Skip {
-            table: RawTable::new(),
-            count: 0,
-        }
+        Self::default()
     }
 
-    fn add<'s>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        value: &Value<'v>,
-        hv: u64,
-    ) -> Result<'v, 's, usize> {
-        let found = super::table::find(&self.table, hv, |s| value.eq(strand, &s.value))?;
-        let count = unsafe {
-            match found {
-                Some(bucket) => {
-                    let bucket = bucket.as_mut();
-                    let count = bucket.count;
-                    bucket.count += 1;
-                    count
-                }
-                None => {
-                    self.table.insert(
-                        hv,
-                        Seen {
-                            value: value.dup(),
-                            hash: hv,
-                            count: 1,
-                        },
-                        |s| s.hash,
-                    );
-                    0
-                }
-            }
-        };
-        self.count += 1;
-        Ok(count)
+    /// Counts one more instance of `bucket`'s key, returning how many were counted before.
+    fn add(&mut self, bucket: &Bucket<Entry<'_>>) -> usize {
+        let count = self.counts.entry(bucket.as_ptr() as usize).or_insert(0);
+        let prior = *count;
+        *count += 1;
+        prior
     }
 }
 
@@ -1267,30 +1281,26 @@ impl<'v> Skip<'v> {
 /// insertion order from `index`, skipping the instances of each key that
 /// `skip` counts as consumed.
 #[derive(Clone)]
-struct UnpackState<'v> {
+struct UnpackState {
     index: usize,
-    skip: Skip<'v>,
+    skip: Skip,
 }
 
-impl<'v> UnpackState<'v> {
+impl UnpackState {
     /// Returns the next leftover pair, advancing past it.
-    fn next_pair<'d, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        dict: &'d Dict<'v>,
-    ) -> Result<'v, 's, Option<(&'d Value<'v>, &'d Value<'v>)>> {
+    fn next_pair<'v, 'd>(&mut self, dict: &'d Dict<'v>) -> Option<(&'d Value<'v>, &'d Value<'v>)> {
         while let Some(slot) = dict.index.get(self.index) {
             self.index += 1;
             let Some((bucket, _)) = slot else {
                 continue;
             };
+            let instance = self.skip.add(bucket);
             let entry = unsafe { bucket.as_ref() };
-            let instance = self.skip.add(strand, &entry.key, entry.hash)?;
             if instance < entry.value.len() {
-                return Ok(Some((&entry.key, entry.value.at(instance))));
+                return Some((&entry.key, entry.value.at(instance)));
             }
         }
-        Ok(None)
+        None
     }
 }
 
@@ -1298,7 +1308,7 @@ impl<'v> UnpackState<'v> {
 
 /// Lazy rest over a dict's leftover pairs.
 pub(crate) struct Unpack<'v> {
-    state: UnpackState<'v>,
+    state: UnpackState,
     epoch: u64,
     dict: GcObj<'v, Dict<'v>>,
 }
@@ -1310,7 +1320,7 @@ fn make_unpack<'v>(
     strand: &mut Strand<'v, '_>,
     dict: impl FnOnce() -> GcObj<'v, Dict<'v>>,
     epoch: u64,
-    state: UnpackState<'v>,
+    state: UnpackState,
     out: impl Output<'v>,
 ) {
     let embryo = strand.builtin_types().dict_unpack.embryo(strand);
@@ -1388,19 +1398,17 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         borrow.check_epoch(strand)?;
-        // SAFETY: TODO(#1707): as loose as the `Value::dup`s in the cloned `Skip`
-        let container = unsafe { borrow.dict.dup() };
-        let (epoch, resume, skip) = with_pin!(strand, container, |pinned| {
+        let skip = with_pin!(strand, borrow.dict, |pinned| {
             let dict = pinned.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            let resume = borrow.state.index;
-
             // Match against a copy, so a failure leaves the rest as it was
             let mut skip = borrow.state.skip.clone();
             dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
-            Ok((borrow.epoch, resume, skip))
+            Ok(skip)
         })?;
-        drop(borrow);
-        dict_rests(strand, sig, &mut out, || container, epoch, resume, skip);
+        let (epoch, resume) = (borrow.epoch, borrow.state.index);
+        // SAFETY: the handle moves straight into the allocated rest
+        let container = || unsafe { borrow.dict.dup() };
+        dict_rests(strand, sig, &mut out, container, epoch, resume, skip);
         Ok(())
     }
 
@@ -1436,7 +1444,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                     if dict.epoch != borrow.epoch {
                         return Err(Error::concurrency(strand));
                     }
-                    let pair = state.next_pair(strand, &dict)?;
+                    let pair = state.next_pair(&dict);
                     Ok(pair.map(|(k, v)| {
                         key.store(k.dup());
                         value.store(v.dup());
@@ -1473,7 +1481,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
 
 /// Iterator over a dict rest's `(key, value)` pairs.
 pub(crate) struct UnpackIter<'v> {
-    state: UnpackState<'v>,
+    state: UnpackState,
     epoch: u64,
     dict: GcObj<'v, Dict<'v>>,
 }
@@ -1541,7 +1549,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
                     "collection was modified during iteration",
                 ));
             }
-            let Some((key, value)) = state.next_pair(strand, &dict)? else {
+            let Some((key, value)) = state.next_pair(&dict) else {
                 return Ok(false);
             };
             tuple::create_pair(strand, key, value, out);
@@ -1812,7 +1820,13 @@ impl<'v> Protocol<'v> for Dict<'v> {
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut borrow = this.borrow_mut(strand)?;
-        borrow.insert(strand, key.take(), value.take(), hv, true)?;
+        borrow.insert(
+            strand,
+            Slot::reborrow(&mut key),
+            Slot::reborrow(&mut value),
+            hv,
+            true,
+        )?;
         borrow.epoch += 1;
         Ok(())
     }
@@ -1916,19 +1930,9 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     });
                 }
                 let borrow = this.borrow(strand)?;
-                let mut dict = Dict::new();
-                for entry in borrow.index.iter().flatten() {
-                    let (bucket, subindex) = entry;
-                    let bucket = unsafe { bucket.as_ref() };
-                    dict.insert(
-                        strand,
-                        bucket.key.dup(),
-                        bucket.value.at(*subindex).dup(),
-                        bucket.hash,
-                        false,
-                    )?;
-                }
-                strand.builtin_types().dict.create(strand, dict, out);
+                // The copies move straight into the allocated dict
+                let embryo = strand.builtin_types().dict.embryo(strand);
+                embryo.finish(strand, borrow.cloned(), out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -2045,7 +2049,7 @@ fn dict_rests<'v>(
     dict: impl FnOnce() -> GcObj<'v, Dict<'v>>,
     epoch: u64,
     index: usize,
-    skip: Skip<'v>,
+    skip: Skip,
 ) {
     let state = UnpackState { index, skip };
     match sig.variadic {
@@ -2129,7 +2133,7 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         sig: &sig::Unpack<'v, '_>,
         out: &mut Slots<'v, '_>,
-        skip: &mut Skip<'v>,
+        skip: &mut Skip,
     ) -> Result<'v, 's, ()> {
         if sig.required > 0 {
             return Err(Error::missing_positional(strand, 0));
@@ -2148,10 +2152,11 @@ impl<'v> Dict<'v> {
                 key_value.op_hash(strand, &mut hasher)?;
 
                 let hv = hasher.finish();
-                let seen = skip.add(strand, &key_value, hv)?;
-
-                let instance = i64::try_from(seen).map_err(|_| Error::overflow(strand))?;
-                if let Some(value) = self.get(strand, &key_value, Some(instance))? {
+                let found = self.find(strand, hv, &key_value)?.and_then(|bucket| {
+                    let instance = skip.add(&bucket);
+                    unsafe { bucket.as_ref() }.value.get(Some(instance))
+                });
+                if let Some(value) = found {
                     out.at(pos_count + i).store(value.dup())
                 } else if let Some(default) = &key.default {
                     out.at(pos_count + i).store(default.dup())
@@ -2166,7 +2171,7 @@ impl<'v> Dict<'v> {
         })?;
 
         if sig.key_rest() == Rest::None
-            && let Some(key) = self.leftover_key(strand, skip)?
+            && let Some(key) = self.leftover_key(skip)
         {
             return Err(Error::unexpected_key(strand, key));
         }
@@ -2230,7 +2235,13 @@ impl<'v> Dict<'v> {
         key.op_hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
-        dict.insert(strand, key.take(), value.take(), hv, false)?;
+        dict.insert(
+            strand,
+            Slot::reborrow(&mut key),
+            Slot::reborrow(&mut value),
+            hv,
+            false,
+        )?;
         dict.epoch += 1;
         Ok(())
     }

@@ -1510,7 +1510,7 @@ impl<'v, 's> Strand<'v, 's> {
         &'f mut self,
         frame: &'f DynSlotFrame<'v>,
     ) -> (SlotScope<'v, 's, 'f>, crate::value::Slots<'v, 'f>) {
-        let scan = frame::Scan::cell_vec(Some(self.fp), &frame.values);
+        let scan = frame::Scan::cells(Some(self.fp), &frame.values);
         assert!(frame.scan.set(scan).is_ok(), "slot frame entered twice");
         // Safety: the caller's contract; the scan reads `frame.values`, which `'f` keeps live
         let scope = unsafe { self.enter_scan(frame.scan.get().unwrap()) };

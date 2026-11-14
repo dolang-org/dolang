@@ -114,9 +114,23 @@ impl<'v> CallFrame<'v> {
         unsafe { self.scratch3.slot() }
     }
 
+    /// The owned argument buffer, which [`CallFrame::scan`] roots.
+    ///
+    /// # Safety
+    ///
+    /// No other reference to the buffer may be live while the result is.
     #[expect(clippy::mut_from_ref)]
     unsafe fn items(&self) -> &mut Vec<OwnedItem<'v>> {
         unsafe { &mut *self.items.get() }
+    }
+
+    /// The owned argument buffer, shared.
+    ///
+    /// # Safety
+    ///
+    /// The buffer must not change while the result is live.
+    unsafe fn owned_items(&self) -> &[OwnedItem<'v>] {
+        unsafe { &*self.items.get() }
     }
 }
 
@@ -601,55 +615,54 @@ impl<'v> Vm<'v> {
         frame: &CallFrame<'v>,
         slot: &Value<'v>,
     ) -> Result<'v, 's, ()> {
-        unsafe {
-            {
-                struct ArgSpread<'b, 'v> {
-                    items: &'b mut Vec<OwnedItem<'v>>,
+        // Each item goes straight into the frame's item buffer, which the frame's
+        // scan roots.  The buffer is borrowed only for each push, since the spread
+        // can collect, and a collection reads it.
+        struct ArgSpread<'b, 'v> {
+            frame: &'b CallFrame<'v>,
+        }
+
+        impl<'b, 'v, 's> Spread<'v, 's> for ArgSpread<'b, 'v> {
+            fn positional(
+                &mut self,
+                strand: &mut Strand<'v, 's>,
+                value: Slot<'v, '_>,
+            ) -> Result<'v, 's, ()> {
+                let value = ValueCell::new(strand, value);
+                // SAFETY: nothing else borrows the buffer during the push
+                unsafe { self.frame.items() }.push((None, value));
+                Ok(())
+            }
+
+            fn symbol(
+                &mut self,
+                strand: &mut Strand<'v, 's>,
+                key: Sym<'v, '_>,
+                value: Slot<'v, '_>,
+            ) -> Result<'v, 's, ()> {
+                let key = strand.sym_obj(key);
+                let value = ValueCell::new(strand, value);
+                // SAFETY: nothing else borrows the buffer during the push
+                unsafe { self.frame.items() }.push((Some(key), value));
+                Ok(())
+            }
+
+            fn keyed(
+                &mut self,
+                strand: &mut Strand<'v, 's>,
+                key: Slot<'v, '_>,
+                value: Slot<'v, '_>,
+            ) -> Result<'v, 's, ()> {
+                if let Some(sym) = key.as_sym(strand) {
+                    self.symbol(strand, sym, value)
+                } else {
+                    Err(Error::unexpected_key(strand, key))
                 }
-
-                impl<'b, 'v, 's> Spread<'v, 's> for ArgSpread<'b, 'v> {
-                    fn positional(
-                        &mut self,
-                        strand: &mut Strand<'v, 's>,
-                        value: Slot<'v, '_>,
-                    ) -> Result<'v, 's, ()> {
-                        self.items.push((None, ValueCell::new(strand, value)));
-                        Ok(())
-                    }
-
-                    fn symbol(
-                        &mut self,
-                        strand: &mut Strand<'v, 's>,
-                        key: Sym<'v, '_>,
-                        value: Slot<'v, '_>,
-                    ) -> Result<'v, 's, ()> {
-                        let value = ValueCell::new(strand, value);
-                        self.items.push((Some(strand.sym_obj(key)), value));
-                        Ok(())
-                    }
-
-                    fn keyed(
-                        &mut self,
-                        strand: &mut Strand<'v, 's>,
-                        key: Slot<'v, '_>,
-                        value: Slot<'v, '_>,
-                    ) -> Result<'v, 's, ()> {
-                        if let Some(sym) = key.as_sym(strand) {
-                            let value = ValueCell::new(strand, value);
-                            self.items.push((Some(strand.sym_obj(sym)), value));
-                            Ok(())
-                        } else {
-                            Err(Error::unexpected_key(strand, key))
-                        }
-                    }
-                }
-
-                let mut sink = ArgSpread {
-                    items: frame.items(),
-                };
-                slot.op_spread(strand, SpreadContext::Args, &mut sink).await
             }
         }
+
+        let mut sink = ArgSpread { frame };
+        slot.op_spread(strand, SpreadContext::Args, &mut sink).await
     }
 
     fn throw<'a, 's>(
@@ -689,13 +702,14 @@ impl<'v> Vm<'v> {
                         frame.items().push((None, value))
                     }
                     sig::Arg::Key(sym) => {
+                        let key = strand.sym_obj(*sym);
                         let value = ValueCell::new(strand, slot.slot());
-                        frame.items().push((Some(strand.sym_obj(*sym)), value))
+                        frame.items().push((Some(key), value))
                     }
                     sig::Arg::Expand => Self::expand_args(strand, frame, slot.as_ref()).await?,
                 }
             }
-            Ok(Args::new_owned(frame.items(), headroom))
+            Ok(Args::new_owned(frame.owned_items(), headroom))
         }
     }
 

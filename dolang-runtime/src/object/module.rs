@@ -445,7 +445,13 @@ impl<'v> Namespace<'v> {
                 with_pin!(strand, self.dict, |dict| {
                     dict.borrow_mut()
                         .ok_or_else(|| Error::concurrency(strand))?
-                        .insert(strand, sym.take(), ns_slot.take(), hv, true)
+                        .insert(
+                            strand,
+                            Slot::reborrow(&mut sym),
+                            Slot::reborrow(&mut ns_slot),
+                            hv,
+                            true,
+                        )
                 })?;
                 Ok(())
             }),
@@ -591,7 +597,13 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             with_pin!(strand, re.dict, |dict| {
                 dict.borrow_mut()
                     .ok_or_else(|| Error::concurrency(strand))?
-                    .insert(strand, key.take(), value.take(), hv, true)
+                    .insert(
+                        strand,
+                        Slot::reborrow(&mut key),
+                        Slot::reborrow(&mut value),
+                        hv,
+                        true,
+                    )
             })
         })?;
         Ok(())
