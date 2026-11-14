@@ -6,7 +6,7 @@ use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    object::TypeBuilder, unpack, value::View,
+    object::TypeBuilder, unpack, value::View, with_instance,
 };
 
 use crate::global::Global;
@@ -51,7 +51,7 @@ pub fn downcast_guid<'v>(
         .types
         .guid
         .cast(value)
-        .map(|inst| inst.enter_sync(strand, |_strand, inst| inst.annex().inner))
+        .map(|inst| with_instance!(strand, inst, |inst| inst.annex().inner))
 }
 
 /// Converts a Do `uuid.Guid`, `Str`, or `Bin` value into an owned
@@ -169,7 +169,7 @@ impl<'v> Object<'v> for Guid {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.guid.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().inner == other.annex().inner
             }))
         } else {
@@ -192,7 +192,7 @@ impl<'v> Object<'v> for Guid {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.guid.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().inner.to_bytes() < other.annex().inner.to_bytes()
             }))
         } else {

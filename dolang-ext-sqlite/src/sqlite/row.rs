@@ -73,7 +73,7 @@ impl<'v> Object<'v> for Rows {
             .statement
             .cast(Ref::slot::<0>(&borrow))
             .unwrap();
-        stmt.enter_sync(strand, |strand, stmt| {
+        with_instance!(strand, stmt, |stmt| {
             if let Ok(mut stmt_borrow) = stmt.borrow_mut(strand)
                 && let QueryState::Active { ref mut owned, .. } = stmt_borrow.query
             {
@@ -105,7 +105,7 @@ impl<'v> Object<'v> for Rows {
             .unwrap();
 
         // Validate epoch
-        if stmt.enter_sync(strand, |_strand, stmt| {
+        if with_instance!(strand, stmt, |stmt| {
             stmt.annex().epoch.get() != annex.epoch
         }) {
             return Err(Error::concurrency_msg(
@@ -172,12 +172,13 @@ impl<'v> Object<'v> for Rows {
                             &mut wrapper,
                         );
 
-                        annex.global.types.row.cast(&wrapper).unwrap().enter_sync(
+                        with_instance!(
                             strand,
-                            |strand, row| {
+                            annex.global.types.row.cast(&wrapper).unwrap(),
+                            |row| {
                                 let mut row = row.borrow_mut_unwrap();
                                 Output::set(strand, Mut::slot_mut::<0>(&mut row), stmt);
-                            },
+                            }
                         );
 
                         Output::set(strand, out, wrapper);
@@ -373,7 +374,7 @@ fn with_stmt<'v, 's, R>(
         .statement
         .cast(Ref::slot::<0>(&borrow))
         .unwrap();
-    stmt.enter_sync(strand, move |strand, stmt| {
+    with_instance!(strand, stmt, |stmt| {
         let stmt_annex = stmt.annex();
         if stmt_annex.epoch.get() != annex.epoch {
             return Err(Error::concurrency_msg(
@@ -433,7 +434,7 @@ fn unpack_columns<'v, 's>(
             Slot::reborrow(&mut slot),
         );
         let rest = global.types.row_rest.cast(&slot).unwrap();
-        rest.enter_sync(strand, |strand, rest| {
+        with_instance!(strand, rest, |rest| {
             let mut rest = rest.borrow_mut_unwrap();
             Output::set(strand, Mut::slot_mut::<0>(&mut rest), row);
         });
@@ -451,7 +452,7 @@ fn spread_columns<'v, 's>(
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
     with_stmt(strand, row, |strand, annex, stmt_annex, raw| {
-        strand.with_slots_sync(|strand, [mut key, mut value]| {
+        with_slots!(strand, |mut key, mut value| {
             let count = unsafe { sqlite3_column_count(raw) } as usize;
             for index in 0..count {
                 if consumed.is_some_and(|consumed| consumed[index]) {
@@ -717,7 +718,7 @@ impl<'v> Object<'v> for RowRest {
             .row
             .cast(Ref::slot::<0>(&borrow))
             .unwrap();
-        row.enter_sync(strand, |strand, row| {
+        with_instance!(strand, row, |row| {
             unpack_columns(strand, row, Some(&annex.consumed), annex.keyed, unpack)
         })
     }
@@ -736,7 +737,7 @@ impl<'v> Object<'v> for RowRest {
             .row
             .cast(Ref::slot::<0>(&borrow))
             .unwrap();
-        row.enter_sync(strand, |strand, row| {
+        with_instance!(strand, row, |row| {
             spread_columns(strand, row, Some(&annex.consumed), annex.keyed, sink)
         })
     }
@@ -761,7 +762,7 @@ impl<'v> Object<'v> for RowRest {
         );
         let borrow = this.borrow(strand)?;
         let iter = global.types.row_rest_iter.cast(&out).unwrap();
-        iter.enter_sync(strand, |strand, iter| {
+        with_instance!(strand, iter, |iter| {
             let mut iter = iter.borrow_mut_unwrap();
             Output::set(
                 strand,
@@ -842,7 +843,7 @@ impl<'v> Object<'v> for RowRestIter {
             .row
             .cast(Ref::slot::<0>(&borrow))
             .unwrap();
-        row.enter_sync(strand, |strand, row| {
+        with_instance!(strand, row, |row| {
             with_stmt(strand, row, |strand, row_annex, stmt_annex, raw| {
                 let count = unsafe { sqlite3_column_count(raw) } as usize;
                 let mut index = annex.index.get();
@@ -853,7 +854,7 @@ impl<'v> Object<'v> for RowRestIter {
                     annex.index.set(index);
                     return Ok(false);
                 }
-                strand.with_slots_sync(|strand, [mut key, mut value]| {
+                with_slots!(strand, |mut key, mut value| {
                     let found = unsafe {
                         get(
                             strand,

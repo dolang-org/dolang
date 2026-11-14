@@ -13,7 +13,8 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::strand::InterruptMask;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, io::IoResultExt as _,
-    object::TypeBuilder, unpack, value::Root, vm::Register, with_interrupt_mask,
+    object::TypeBuilder, unpack, value::Root, vm::Register, with_instance, with_interrupt_mask,
+    with_interrupt_token,
 };
 use futures::future::{AbortHandle, Abortable};
 use time::{
@@ -350,7 +351,7 @@ pub(crate) fn coerce_duration<'v, 's>(
     context: &str,
 ) -> Result<'v, 's, std::time::Duration> {
     if let Some(duration) = global.and_then(|global| global.types.duration.cast(value)) {
-        return duration.enter_sync(strand, |strand, duration| {
+        return with_instance!(strand, duration, |duration| {
             duration.annex().to_std_duration(strand)
         });
     }
@@ -390,7 +391,9 @@ pub(crate) fn datetime_to_unix_nanos<'v, 's>(
     let datetime = date_time
         .cast(value)
         .ok_or_else(|| Error::type_error(strand, "expected DateTime"))?;
-    Ok(datetime.enter_sync(strand, |_strand, datetime| datetime.annex().total_nanos()))
+    Ok(with_instance!(strand, datetime, |datetime| datetime
+        .annex()
+        .total_nanos()))
 }
 
 pub(crate) fn create_datetime<'v, 's>(
@@ -497,7 +500,7 @@ impl<'v> Object<'v> for Date {
                     .ok_or_else(|| Error::type_error(strand, "from_ymd: expected Int year"))?;
                 let global = strand.state::<Tag>();
                 let month = if let Some(month) = global.types.month.cast(&month) {
-                    month.enter_sync(strand, |_strand, month| *month.annex())
+                    with_instance!(strand, month, |month| *month.annex())
                 } else {
                     let month = month
                         .as_int(strand)
@@ -605,7 +608,7 @@ impl<'v> Object<'v> for Date {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.date.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
+            Ok(with_instance!(strand, other, |other| *this.annex() == *other.annex()))
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -618,7 +621,7 @@ impl<'v> Object<'v> for Date {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.date.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| *this.annex() < *other.annex()))
+            Ok(with_instance!(strand, other, |other| *this.annex() < *other.annex()))
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }
@@ -631,7 +634,7 @@ impl<'v> Object<'v> for Date {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.date.cast(other) {
-            other.enter_sync(strand, |strand, other| {
+            with_instance!(strand, other, |other| {
                 global.types.duration.create_with_annex(
                     strand,
                     Duration,
@@ -692,7 +695,7 @@ macro_rules! calendar_enum {
                 let global = strand.state::<Tag>();
                 let index = global.calendar.$roots.iter().position(|value| {
                     let value = global.types.$field.cast(value).unwrap();
-                    value.enter_sync(strand, |_strand, value| {
+                    with_instance!(strand, value, |value| {
                         $name_fn(*value.annex()) == field_name
                     })
                 });
@@ -738,7 +741,7 @@ macro_rules! calendar_enum {
             ) -> Result<'v, 's, bool> {
                 let global = strand.state::<Tag>();
                 if let Some(other) = global.types.$field.cast(other) {
-                    Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
+                    Ok(with_instance!(strand, other, |other| *this.annex() == *other.annex()))
                 } else {
                     Err(Error::unsupported(strand, "`==`"))
                 }
@@ -795,7 +798,7 @@ impl<'v> Object<'v> for Month {
         let global = strand.state::<Tag>();
         let index = global.calendar.months.iter().position(|value| {
             let value = global.types.month.cast(value).unwrap();
-            value.enter_sync(strand, |_strand, value| {
+            with_instance!(strand, value, |value| {
                 month_name(*value.annex()) == field_name
             })
         });
@@ -850,7 +853,7 @@ impl<'v> Object<'v> for Month {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.month.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
+            Ok(with_instance!(strand, other, |other| *this.annex() == *other.annex()))
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -863,7 +866,7 @@ impl<'v> Object<'v> for Month {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.month.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| *this.annex() < *other.annex()))
+            Ok(with_instance!(strand, other, |other| *this.annex() < *other.annex()))
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }
@@ -991,7 +994,7 @@ impl<'v> Object<'v> for DateTime {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.date_time.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().total_nanos == other.annex().total_nanos
             }))
         } else {
@@ -1006,7 +1009,7 @@ impl<'v> Object<'v> for DateTime {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.date_time.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().total_nanos < other.annex().total_nanos
             }))
         } else {
@@ -1022,7 +1025,7 @@ impl<'v> Object<'v> for DateTime {
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.date_time.cast(other) {
-            other.enter_sync(strand, |strand, other| {
+            with_instance!(strand, other, |other| {
                 let left = this.annex().total_nanos;
                 let right = other.annex().total_nanos;
                 global.types.duration.create_with_annex(
@@ -1092,7 +1095,7 @@ impl<'v> Object<'v> for Duration {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.duration.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().total_nanos == other.annex().total_nanos
             }))
         } else {
@@ -1107,7 +1110,7 @@ impl<'v> Object<'v> for Duration {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.duration.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().total_nanos < other.annex().total_nanos
             }))
         } else {
@@ -1144,9 +1147,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 .await;
             });
             let res = with_interrupt_mask!(strand, mask - timeout_mask, {
-                strand
-                    .with_interrupt_token(interrupt, async move |strand| call!(strand, block, out))
-                    .await
+                with_interrupt_token!(strand, interrupt, call!(strand, block, out))
             });
             abort.abort();
             res

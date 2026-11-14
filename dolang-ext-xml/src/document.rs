@@ -6,7 +6,7 @@ use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
     object::{ArrayLike, Mut, Ref, TypeBuilder},
-    unpack,
+    unpack, with_instance, with_slots,
 };
 pub(crate) const CHILDREN: usize = 0;
 pub(crate) struct Document;
@@ -46,7 +46,7 @@ fn check_replacement<'v, 's>(
     let borrow = this.borrow(strand)?;
     let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
     let mut roots = 0;
-    strand.with_slots_sync(|strand, [mut child]| {
+    with_slots!(strand, |mut child| {
         for i in 0..children.len(strand)? {
             if Some(i) != replaced {
                 children.get(strand, i, &mut child)?;
@@ -72,7 +72,7 @@ fn check_removal<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let borrow = this.borrow(strand)?;
     let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
-    strand.with_slots_sync(|strand, [mut child]| {
+    with_slots!(strand, |mut child| {
         children.get(strand, index, &mut child)?;
         if child_root(strand, &child)? == 1 {
             return Err(Error::state_error(
@@ -92,7 +92,7 @@ pub(crate) fn create_document<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let array = children.as_array(strand).unwrap();
     let mut roots = 0;
-    strand.with_slots_sync(|strand, [mut child]| {
+    with_slots!(strand, |mut child| {
         for i in 0..array.len(strand)? {
             array.get(strand, i, &mut child)?;
             roots += child_root(strand, &child)?;
@@ -106,7 +106,7 @@ pub(crate) fn create_document<'v, 's>(
         ));
     }
     ty.create(strand, Document, &mut out);
-    ty.cast(&out).unwrap().enter_sync(strand, |strand, this| {
+    with_instance!(strand, ty.cast(&out).unwrap(), |this| {
         Output::set(
             strand,
             Mut::slot_mut::<CHILDREN>(&mut this.borrow_mut_unwrap()),
@@ -243,7 +243,7 @@ impl<'v> Object<'v> for Document {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([], [], items) = unpack!(strand, args, 0, 0, *)?;
-        strand.with_slots_sync(|strand, [mut children]| {
+        with_slots!(strand, |mut children| {
             strand.new_array(&mut children);
             let array = children.as_array(strand).unwrap();
             for item in items {
@@ -261,7 +261,7 @@ impl<'v> Object<'v> for Document {
             .get("root", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 let array = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
-                strand.with_slots_sync(|strand, [mut child]| {
+                with_slots!(strand, |mut child| {
                     for i in 0..array.len(strand)? {
                         array.get(strand, i, &mut child)?;
                         if strand.state::<Tag>().element_type.cast(&child).is_some() {
@@ -278,7 +278,7 @@ impl<'v> Object<'v> for Document {
                 }
                 let borrow = this.borrow(strand)?;
                 let array = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
-                strand.with_slots_sync(|strand, [mut child]| {
+                with_slots!(strand, |mut child| {
                     for i in 0..array.len(strand)? {
                         array.get(strand, i, &mut child)?;
                         if strand.state::<Tag>().element_type.cast(&child).is_some() {

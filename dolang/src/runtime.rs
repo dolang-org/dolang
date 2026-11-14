@@ -3,7 +3,8 @@ pub use dolang_runtime::{
     arg::{Arg, Args},
     call, method, redirect,
     sym::Sym,
-    unpack, with_instance, with_interrupt_mask, with_slice, with_slots, with_str,
+    unpack, with_instance, with_interrupt_mask, with_interrupt_token, with_slice, with_slots,
+    with_str,
 };
 
 /// Value manipulation

@@ -11,7 +11,7 @@ use crate::{
     bytecode::{Rest as RestKind, Variadic},
     call,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     sig,
     strand::Strand,
@@ -242,7 +242,7 @@ pub(crate) fn spread_items<'v, 's>(
     items: &[ArgItem<'v>],
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut slot]| {
+    with_slots!(strand, |mut slot| {
         for (key, value) in items {
             Output::set(strand, &mut slot, value);
             if let Some(key) = key {
@@ -811,7 +811,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
             borrow.pos,
             borrow.int,
         );
-        strand.with_slots_sync(|strand, [mut slot]| {
+        with_slots!(strand, |mut slot| {
             while let Some((index, key, value)) = iter.next_item() {
                 Output::set(strand, &mut slot, value);
                 if let Some(key) = key {
@@ -1117,7 +1117,7 @@ impl<'v> PackPairs<'_, 'v> {
             .pack
             .downcast_ref(strand.builtin_types().arg_acc)
             .expect("source accumulator");
-        pack.pin_sync(strand, |strand, pack| {
+        with_pin!(strand, pack, |pack| {
             pack.borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?
                 .push((key, value));
@@ -1320,13 +1320,16 @@ pub(crate) async fn source_items<'v, 's>(
         source
             .op_spread(strand, SpreadContext::Pairs, &mut sink)
             .await?;
-        pack.downcast_ref(strand.builtin_types().arg_acc)
-            .expect("source accumulator")
-            .pin_sync(strand, |strand, pack| {
+        with_pin!(
+            strand,
+            pack.downcast_ref(strand.builtin_types().arg_acc)
+                .expect("source accumulator"),
+            |pack| {
                 Ok(pack
                     .borrow_mut()
                     .ok_or_else(|| Error::concurrency(strand))?
                     .take())
-            })
+            }
+        )
     })
 }

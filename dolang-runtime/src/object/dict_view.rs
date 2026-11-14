@@ -169,7 +169,7 @@ pub trait DictLike<'v>: 'v {
     ) -> Result<'v, 's, ()> {
         strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut tmp]| {
+        with_slots!(strand, |mut tmp| {
             let mut instance = 0i64;
             while self.get(this, strand, key, instance, Slot::reborrow(&mut tmp))? {
                 array.push(strand, &tmp)?;
@@ -533,7 +533,7 @@ fn spread_pairs<'v, 's>(
     // The pairs stay borrowed from wherever they're rooted, so each one is
     // copied into scratch slots (never bare stack `Value`s) for the duration
     // of the sink call.
-    strand.with_slots_sync(|strand, [mut first, mut second]| {
+    with_slots!(strand, |mut first, mut second| {
         for (key, value) in pairs {
             Output::set(strand, &mut first, key);
             Output::set(strand, &mut second, value);

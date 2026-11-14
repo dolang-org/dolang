@@ -1,3 +1,4 @@
+use dolang::runtime::{with_instance, with_slots};
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -714,12 +715,10 @@ fn create_diagnostic<'v, 's>(
         &mut *out,
     );
 
-    global
-        .types
-        .diagnostic
-        .cast(&*out)
-        .unwrap()
-        .enter_sync(strand, |strand, inst| {
+    with_instance!(
+        strand,
+        global.types.diagnostic.cast(&*out).unwrap(),
+        |inst| {
             {
                 let mut borrow = inst.borrow_mut_unwrap();
                 strand.new_array(Mut::slot_mut::<DIAG_ANNOTATIONS>(&mut borrow));
@@ -746,7 +745,7 @@ fn create_diagnostic<'v, 's>(
                 let source_array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
                 source_array.push(strand, source)?;
             }
-            strand.with_slots_sync(|strand, [mut item]| {
+            with_slots!(strand, |mut item| {
                 for annotation in inst.annex().diag.annotations() {
                     create_annotation(global, strand, annotation, Slot::reborrow(&mut item));
                     annotations.push(strand, &mut item)?;
@@ -761,7 +760,8 @@ fn create_diagnostic<'v, 's>(
                 }
                 Ok(())
             })
-        })
+        }
+    )
 }
 
 fn with_unit<'v, 's, R>(
@@ -775,7 +775,7 @@ fn with_unit<'v, 's, R>(
         .unit
         .cast(value)
         .ok_or_else(|| Error::state_error(strand, "invalid unit reference"))?;
-    cast.enter_sync(strand, f)
+    with_instance!(strand, cast, |unit| f(strand, unit))
 }
 
 /// What `check` takes out of one of its inputs
@@ -793,7 +793,7 @@ fn take_input<'v, 's>(
     source: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, Taken> {
     match global.types.typelib.cast(input) {
-        Some(typelib) => typelib.enter_sync(strand, |strand, typelib| {
+        Some(typelib) => with_instance!(strand, typelib, |typelib| {
             let Some(inner) = typelib.borrow_mut(strand)?.typelib.take() else {
                 return Err(Error::state_error(strand, "typelib is being checked"));
             };
@@ -825,7 +825,7 @@ fn put_input<'v, 's>(
         }),
         Taken::Typelib(inner) => {
             let typelib = global.types.typelib.cast(input).unwrap();
-            typelib.enter_sync(strand, |strand, typelib| {
+            with_instance!(strand, typelib, |typelib| {
                 typelib.borrow_mut(strand)?.typelib = Some(*inner);
                 Ok(())
             })
@@ -840,7 +840,7 @@ fn input_module<'v, 's>(
     input: &Value<'v>,
 ) -> Result<'v, 's, Option<String>> {
     match global.types.typelib.cast(input) {
-        Some(typelib) => typelib.enter_sync(strand, |strand, typelib| {
+        Some(typelib) => with_instance!(strand, typelib, |typelib| {
             with_typelib(strand, &typelib, |typelib| {
                 Some(typelib.module().to_owned())
             })
@@ -882,134 +882,124 @@ fn check_units<'v, 's>(
     let units = units
         .as_array(strand)
         .expect("units are collected into an array");
-    strand.with_slots_sync(
-        |strand,
-         [
-            mut item,
-            mut source,
-            mut taken_sources,
-            mut sources,
-            mut diagnostics,
-            mut inputs,
-        ]| {
-            strand.new_array(&mut taken_sources);
-            strand.new_array(&mut sources);
-            strand.new_array(&mut diagnostics);
-            strand.new_array(&mut inputs);
-            let taken_array = taken_sources.as_array(strand).unwrap();
-            let sources_array = sources.as_array(strand).unwrap();
-            let inputs_array = inputs.as_array(strand).unwrap();
+    with_slots!(strand, |mut item,
+                         mut source,
+                         mut taken_sources,
+                         mut sources,
+                         mut diagnostics,
+                         mut inputs| {
+        strand.new_array(&mut taken_sources);
+        strand.new_array(&mut sources);
+        strand.new_array(&mut diagnostics);
+        strand.new_array(&mut inputs);
+        let taken_array = taken_sources.as_array(strand).unwrap();
+        let sources_array = sources.as_array(strand).unwrap();
+        let inputs_array = inputs.as_array(strand).unwrap();
 
-            // What is taken from each input, by its position in `units`. Its source
-            // is at the same position in `taken_sources`, or nil for a typelib.
-            let mut taken = Vec::new();
-            let mut outcome = Ok(());
-            for index in 0..units.len(strand)? {
-                units.get(strand, index, &mut item)?;
-                let input = take_input(global, strand, &item, &mut source);
-                match input {
-                    Ok(input) => {
-                        taken_array.push(strand, &*source)?;
-                        taken.push((index, input));
-                    }
-                    Err(error) => {
-                        outcome = Err(error);
-                        break;
-                    }
+        // What is taken from each input, by its position in `units`. Its source
+        // is at the same position in `taken_sources`, or nil for a typelib.
+        let mut taken = Vec::new();
+        let mut outcome = Ok(());
+        for index in 0..units.len(strand)? {
+            units.get(strand, index, &mut item)?;
+            let input = take_input(global, strand, &item, &mut source);
+            match input {
+                Ok(input) => {
+                    taken_array.push(strand, &*source)?;
+                    taken.push((index, input));
+                }
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
                 }
             }
+        }
 
-            let checked = outcome.and_then(|()| {
-                let mut builder = compile::typeck::Check::new();
-                builder.pipes(PIPES[0], PIPES[1]);
-                builder.typelibs(typelibs);
-                // The units the checker accepted, by unit ID, and the position in
-                // `taken` of each
-                let mut ids = Vec::new();
-                let mut accepted = Vec::new();
-                for (position, (index, input)) in taken.iter().enumerate() {
-                    let added = match input {
-                        Taken::Unit(unit) => builder.unit(unit),
-                        Taken::Typelib(typelib) => builder.typelib(typelib),
-                    };
-                    match added {
-                        Ok(id) => {
-                            taken_array.get(strand, position, &mut item)?;
-                            sources_array.push(strand, &*item)?;
-                            units.get(strand, *index, &mut item)?;
-                            inputs_array.push(strand, &*item)?;
-                            ids.push(id);
-                            accepted.push(position);
-                        }
-                        // Its own diagnostics report it
-                        Err(error) if matches!(error.kind(), compile::ErrorKind::Fail) => {}
-                        Err(error) => return Err(Error::value(strand, error.to_string())),
-                    }
-                }
-                let check = builder.run();
-                let paths: Vec<String> = ids
-                    .iter()
-                    .map(|&id| check.path(id).to_string_lossy().into_owned())
-                    .collect();
-                let unit = |id: Option<compile::UnitId>| {
-                    let index = ids.iter().position(|&checked| Some(checked) == id)?;
-                    match &taken[accepted[index]].1 {
-                        Taken::Unit(unit) => Some(&**unit),
-                        Taken::Typelib(_) => None,
-                    }
+        let checked = outcome.and_then(|()| {
+            let mut builder = compile::typeck::Check::new();
+            builder.pipes(PIPES[0], PIPES[1]);
+            builder.typelibs(typelibs);
+            // The units the checker accepted, by unit ID, and the position in
+            // `taken` of each
+            let mut ids = Vec::new();
+            let mut accepted = Vec::new();
+            for (position, (index, input)) in taken.iter().enumerate() {
+                let added = match input {
+                    Taken::Unit(unit) => builder.unit(unit),
+                    Taken::Typelib(typelib) => builder.typelib(typelib),
                 };
-                let diags: Vec<(Ranges, Diag)> = check
-                    .diagnostics()
-                    .map(|diag| (ranges(diag, unit), diag.clone()))
-                    .collect();
-                let undecided = render_undecided(&paths, check.undecided());
-                Ok((paths, diags, undecided, typelibs.then_some((check, ids))))
-            });
-
-            for (index, input) in taken {
-                units.get(strand, index, &mut item)?;
-                put_input(global, strand, &item, input)?;
+                match added {
+                    Ok(id) => {
+                        taken_array.get(strand, position, &mut item)?;
+                        sources_array.push(strand, &*item)?;
+                        units.get(strand, *index, &mut item)?;
+                        inputs_array.push(strand, &*item)?;
+                        ids.push(id);
+                        accepted.push(position);
+                    }
+                    // Its own diagnostics report it
+                    Err(error) if matches!(error.kind(), compile::ErrorKind::Fail) => {}
+                    Err(error) => return Err(Error::value(strand, error.to_string())),
+                }
             }
-            let (paths, diags, undecided, check) = checked?;
+            let check = builder.run();
+            let paths: Vec<String> = ids
+                .iter()
+                .map(|&id| check.path(id).to_string_lossy().into_owned())
+                .collect();
+            let unit = |id: Option<compile::UnitId>| {
+                let index = ids.iter().position(|&checked| Some(checked) == id)?;
+                match &taken[accepted[index]].1 {
+                    Taken::Unit(unit) => Some(&**unit),
+                    Taken::Typelib(_) => None,
+                }
+            };
+            let diags: Vec<(Ranges, Diag)> = check
+                .diagnostics()
+                .map(|diag| (ranges(diag, unit), diag.clone()))
+                .collect();
+            let undecided = render_undecided(&paths, check.undecided());
+            Ok((paths, diags, undecided, typelibs.then_some((check, ids))))
+        });
 
-            let diagnostics_array = diagnostics.as_array(strand).unwrap();
-            for diag in diags {
-                create_diagnostic(
-                    global,
-                    strand,
-                    DiagSources::Checked(&paths, &sources),
-                    diag,
-                    &mut item,
-                )?;
-                diagnostics_array.push(strand, &*item)?;
-            }
-            global.types.checked.create_with_annex(
+        for (index, input) in taken {
+            units.get(strand, index, &mut item)?;
+            put_input(global, strand, &item, input)?;
+        }
+        let (paths, diags, undecided, check) = checked?;
+
+        let diagnostics_array = diagnostics.as_array(strand).unwrap();
+        for diag in diags {
+            create_diagnostic(
+                global,
                 strand,
-                CheckedObject,
-                CheckedAnnex { undecided, check },
-                &mut *out,
+                DiagSources::Checked(&paths, &sources),
+                diag,
+                &mut item,
+            )?;
+            diagnostics_array.push(strand, &*item)?;
+        }
+        global.types.checked.create_with_annex(
+            strand,
+            CheckedObject,
+            CheckedAnnex { undecided, check },
+            &mut *out,
+        );
+        with_instance!(strand, global.types.checked.cast(&*out).unwrap(), |check| {
+            let mut borrow = check.borrow_mut_unwrap();
+            Output::set(
+                strand,
+                Mut::slot_mut::<CHECKED_DIAGNOSTICS>(&mut borrow),
+                &*diagnostics,
             );
-            global
-                .types
-                .checked
-                .cast(&*out)
-                .unwrap()
-                .enter_sync(strand, |strand, check| {
-                    let mut borrow = check.borrow_mut_unwrap();
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<CHECKED_DIAGNOSTICS>(&mut borrow),
-                        &*diagnostics,
-                    );
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<CHECKED_INPUTS>(&mut borrow),
-                        &*inputs,
-                    );
-                });
-            Ok(())
-        },
-    )
+            Output::set(
+                strand,
+                Mut::slot_mut::<CHECKED_INPUTS>(&mut borrow),
+                &*inputs,
+            );
+        });
+        Ok(())
+    })
 }
 
 /// The undecided checks grouped by the kind of reason, each group's locations
@@ -1062,16 +1052,14 @@ fn apply_prelude_module_items<'v, 's>(
     let len = arr.len(strand)?;
 
     for i in 0..len {
-        let item_name = strand.with_slots_sync(
-            |strand, [mut elem]| -> std::result::Result<_, Error<'v, 's>> {
-                arr.get(strand, i, &mut elem)?;
-                match elem.view(vm) {
-                    View::Str(s) => Ok(s.into()),
-                    View::Sym(sym) => Ok(sym.as_str(vm).to_owned()),
-                    _ => Err(Error::type_error(strand, "prelude item must be Str or Sym")),
-                }
-            },
-        )?;
+        let item_name: String = with_slots!(strand, |mut elem| {
+            arr.get(strand, i, &mut elem)?;
+            match elem.view(vm) {
+                View::Str(s) => s.into(),
+                View::Sym(sym) => sym.as_str(vm).to_owned(),
+                _ => return Err(Error::type_error(strand, "prelude item must be Str or Sym")),
+            }
+        });
         let (item_name, type_only) = prelude_item_name(strand, &item_name)?;
         let builder = config.prelude().import_items(module_name);
         let builder = if type_only {
@@ -1094,45 +1082,42 @@ fn apply_prelude_dict_items<'v, 's>(
     let mut pairs = dict.pairs();
     let mut items_builder = Some(config.prelude().import_items(module_name));
 
-    strand.with_slots_sync(
-        |strand, [mut k, mut v]| -> std::result::Result<_, Error<'v, 's>> {
-            loop {
-                let has_next = pairs.next(strand, &mut k, &mut v)?;
-                if !has_next {
-                    break;
-                }
-
-                let item_name = match k.view(vm) {
-                    View::Str(s) => s.into(),
-                    View::Sym(sym) => sym.as_str(vm).to_owned(),
-                    _ => {
-                        return Err(Error::type_error(
-                            strand,
-                            "prelude item key must be Str or Sym",
-                        ));
-                    }
-                };
-                let bind_name = match v.view(vm) {
-                    View::Str(s) => s.into(),
-                    View::Sym(sym) => sym.as_str(vm).to_owned(),
-                    _ => {
-                        return Err(Error::type_error(
-                            strand,
-                            "prelude item binding must be Str or Sym",
-                        ));
-                    }
-                };
-                let (item_name, type_only) = prelude_item_name(strand, &item_name)?;
-                let builder = items_builder.take().unwrap();
-                items_builder = Some(if type_only {
-                    builder.type_item_with_name(item_name, &bind_name)
-                } else {
-                    builder.item_with_name(item_name, &bind_name)
-                });
+    with_slots!(strand, |mut k, mut v| {
+        loop {
+            let has_next = pairs.next(strand, &mut k, &mut v)?;
+            if !has_next {
+                break;
             }
-            Ok(())
-        },
-    )?;
+
+            let item_name = match k.view(vm) {
+                View::Str(s) => s.into(),
+                View::Sym(sym) => sym.as_str(vm).to_owned(),
+                _ => {
+                    return Err(Error::type_error(
+                        strand,
+                        "prelude item key must be Str or Sym",
+                    ));
+                }
+            };
+            let bind_name = match v.view(vm) {
+                View::Str(s) => s.into(),
+                View::Sym(sym) => sym.as_str(vm).to_owned(),
+                _ => {
+                    return Err(Error::type_error(
+                        strand,
+                        "prelude item binding must be Str or Sym",
+                    ));
+                }
+            };
+            let (item_name, type_only) = prelude_item_name(strand, &item_name)?;
+            let builder = items_builder.take().unwrap();
+            items_builder = Some(if type_only {
+                builder.type_item_with_name(item_name, &bind_name)
+            } else {
+                builder.item_with_name(item_name, &bind_name)
+            });
+        }
+    });
 
     if let Some(builder) = items_builder {
         let _prelude = builder.commit();
@@ -1214,7 +1199,7 @@ pub fn apply_prelude_value<'v, 's>(
     config: &mut Config,
     value: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut elem, mut k, mut v]| {
+    with_slots!(strand, |mut elem, mut k, mut v| {
         match value.view(strand.vm()) {
             View::Str(module) => {
                 strand.access(|access| config.prelude().import_module(module.as_str(access)));
@@ -1280,7 +1265,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 }
                 let ty = strand.state::<Tag>().types.diagnostic_iter;
                 ty.create(strand, DiagnosticIter { index: 0 }, &mut out);
-                ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
+                with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
                     Output::set(
                         strand,
                         Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
@@ -1296,7 +1281,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 }
                 let ty = strand.state::<Tag>().types.node_iter;
                 ty.create(strand, NodeIter { cursor: None }, &mut out);
-                ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
+                with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
                     Output::set(
                         strand,
                         Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
@@ -1324,7 +1309,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let Some(id_obj) = strand.state::<Tag>().types.node_id.cast(&id) else {
                     return Err(Error::type_error(strand, "expected `compile.NodeId`"));
                 };
-                let id_data = id_obj.enter_sync(strand, |_strand, id| *id.annex());
+                let id_data = with_instance!(strand, id_obj, |id| *id.annex());
                 let borrow = this.borrow(strand)?;
                 let Some(unit) = borrow.unit.as_ref() else {
                     return Err(Error::state_error(strand, "unit was emitted"));
@@ -1359,7 +1344,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 tokens.reverse();
                 let ty = global.types.token_iter;
                 ty.create(strand, TokenIter { tokens }, &mut out);
-                ty.cast(&out).unwrap().enter_sync(strand, |strand, iter| {
+                with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
                     Output::set(
                         strand,
                         Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
@@ -1422,7 +1407,7 @@ fn span_arg<'v, 's>(
     let Some(span) = strand.state::<Tag>().types.span.cast(value) else {
         return Err(Error::type_error(strand, "expected `compile.Span`"));
     };
-    Ok(span.enter_sync(strand, |_strand, span| span.annex().span))
+    Ok(with_instance!(strand, span, |span| span.annex().span))
 }
 
 /// Where a `compile.Span` argument lies in the source of a unit, in bytes
@@ -1468,13 +1453,11 @@ impl<'v> Object<'v> for CheckObject {
             },
             &mut out,
         );
-        this.cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, check| {
-                strand.new_array(Mut::slot_mut::<CHECK_INPUTS>(
-                    &mut check.borrow_mut_unwrap(),
-                ))
-            });
+        with_instance!(strand, this.cast(&out).unwrap(), |check| {
+            strand.new_array(Mut::slot_mut::<CHECK_INPUTS>(
+                &mut check.borrow_mut_unwrap(),
+            ))
+        });
         Ok(())
     }
 
@@ -1641,15 +1624,13 @@ impl<'v> Object<'v> for TypelibObject<'v> {
             },
             &mut out,
         );
-        this.cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, typelib| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<TYPELIB_BYTES>(&mut typelib.borrow_mut_unwrap()),
-                    bytes,
-                )
-            });
+        with_instance!(strand, this.cast(&out).unwrap(), |typelib| {
+            Output::set(
+                strand,
+                Mut::slot_mut::<TYPELIB_BYTES>(&mut typelib.borrow_mut_unwrap()),
+                bytes,
+            )
+        });
         Ok(())
     }
 
@@ -1754,7 +1735,7 @@ impl<'v> Object<'v> for NodeIter {
             let Some(id) = unit.next_id(cursor) else {
                 return Ok(None);
             };
-            strand.with_slots_sync(|strand, [mut id_out, mut node_out]| {
+            with_slots!(strand, |mut id_out, mut node_out| {
                 create_node_id(strand, owner_borrow.identity, id, &mut id_out);
                 create_node(strand, owner, id, &mut node_out)?;
                 strand.tuple([&id_out, &node_out], &mut out);
@@ -1799,7 +1780,7 @@ impl<'v> Object<'v> for TokenIter<'v> {
         let ty = annex.global.types.token;
         with_unit(strand, Mut::slot::<OWNER>(&iter), |strand, owner| {
             ty.create_with_annex(strand, TokenObject, annex, &mut out);
-            ty.cast(&out).unwrap().enter_sync(strand, |strand, tok| {
+            with_instance!(strand, ty.cast(&out).unwrap(), |tok| {
                 Output::set(
                     strand,
                     Mut::slot_mut::<OWNER>(&mut tok.borrow_mut_unwrap()),
@@ -1871,7 +1852,7 @@ impl<'v> Object<'v> for NodeIdObject {
         let Some(other) = strand.state::<Tag>().types.node_id.cast(other) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        Ok(other.enter_sync(strand, |_strand, other| *this.annex() == *other.annex()))
+        Ok(with_instance!(strand, other, |other| *this.annex() == *other.annex()))
     }
 
     fn hash<'a, 's>(
@@ -1915,7 +1896,7 @@ fn create_typed_node<'v, T: NodeMarker + 'static>(
         },
         &mut *out,
     );
-    ty.cast(out).unwrap().enter_sync(strand, |strand, node| {
+    with_instance!(strand, ty.cast(out).unwrap(), |node| {
         Output::set(
             strand,
             Mut::slot_mut::<OWNER>(&mut node.borrow_mut_unwrap()),
@@ -2188,7 +2169,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
         };
         let this = this.borrow(strand)?;
         let key = (this.unit, this.id);
-        let other_key = other.enter_sync(strand, |strand, other| {
+        let other_key = with_instance!(strand, other, |other| {
             other.borrow(strand).map(|other| (other.unit, other.id))
         })?;
         Ok(key == other_key)
@@ -2621,7 +2602,7 @@ impl ProjectNodes for Vec<compile::NodeId> {
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         strand.new_array(&mut *out);
-        strand.with_slots_sync(|strand, [mut item]| {
+        with_slots!(strand, |mut item| {
             let array = out.as_array(strand).unwrap();
             for id in self {
                 create_node(strand, owner, id, &mut item)?;
@@ -2832,7 +2813,7 @@ impl<'v> Object<'v> for Diagnostic {
                         let borrow = this.borrow(strand)?;
                         let array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
                         let annex = this.annex();
-                        let backings = strand.with_slots_sync(|strand, [mut item]| {
+                        let backings = with_slots!(strand, |mut item| {
                             let mut backings = Vec::with_capacity(annex.paths.len());
                             for index in 0..annex.paths.len() {
                                 array.get(strand, index, &mut item)?;
@@ -2944,7 +2925,7 @@ impl<'v> Object<'v> for Span {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.span.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().span == other.annex().span
             }))
         } else {
@@ -2967,7 +2948,7 @@ impl<'v> Object<'v> for Span {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.span.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().span < other.annex().span
             }))
         } else {
@@ -3005,7 +2986,7 @@ impl<'v> Object<'v> for SourceSpan {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.source_span.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().location == other.annex().location
             }))
         } else {
@@ -3028,7 +3009,7 @@ impl<'v> Object<'v> for SourceSpan {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.source_span.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().location < other.annex().location
             }))
         } else {
@@ -3062,7 +3043,7 @@ impl<'v> Object<'v> for Pos {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = strand.state::<Tag>().types.pos.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().pos == other.annex().pos
             }))
         } else {
@@ -3085,7 +3066,7 @@ impl<'v> Object<'v> for Pos {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = strand.state::<Tag>().types.pos.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().pos < other.annex().pos
             }))
         } else {
@@ -3384,18 +3365,13 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 },
                 &mut out,
             );
-            global
-                .types
-                .unit
-                .cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, unit| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<UNIT_SOURCE>(&mut unit.borrow_mut_unwrap()),
-                        source,
-                    )
-                });
+            with_instance!(strand, global.types.unit.cast(&out).unwrap(), |unit| {
+                Output::set(
+                    strand,
+                    Mut::slot_mut::<UNIT_SOURCE>(&mut unit.borrow_mut_unwrap()),
+                    source,
+                )
+            });
             Ok(())
         })
         .commit();

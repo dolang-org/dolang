@@ -7,6 +7,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
     vm::ModuleBuilder,
+    with_instance,
 };
 use dolang_ext_shell::{ResultExt, as_windows_path, sec_desc_from_value};
 use dolang_vfs_winnet::share;
@@ -297,7 +298,7 @@ pub(crate) fn configure_module<'v, 'a>(
             let ([value], []) = unpack!(strand, args, 1, 0)?;
             let vfs = dolang_ext_shell::vfs(strand);
             let share = if let Some(info) = global.types.share_info.cast(&value) {
-                Ok(info.enter_sync(strand, |_, v| share::from_info(&vfs, &v.annex().info)))
+                Ok(with_instance!(strand, info, |v| share::from_info(&vfs, &v.annex().info)))
             } else if let Some(name) = value.as_str(strand) {
                 let name = name.to_string();
                 share::by_name(&vfs, &name).await

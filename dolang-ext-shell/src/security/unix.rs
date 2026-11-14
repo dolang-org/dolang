@@ -1,5 +1,5 @@
 use crate::global::UnixSecurityTag;
-use dolang::runtime::with_slots;
+use dolang::runtime::{with_instance, with_slots};
 
 use super::macos::resolve_uid_or_gid_arg;
 use super::*;
@@ -73,24 +73,23 @@ pub(crate) fn create_identity<'v>(
     info: &UnixSecurityInfo,
     out: &mut Slot<'v, '_>,
 ) {
-    strand.with_slots_sync(|strand, [mut groups]| {
+    with_slots!(strand, |mut groups| {
         strand.tuple(info.groups().iter().copied(), &mut groups);
         global
             .types
             .unix_identity
             .create_with_annex(strand, Identity, info.clone(), &mut *out);
-        global
-            .types
-            .unix_identity
-            .cast(out)
-            .unwrap()
-            .enter_sync(strand, |strand, this| {
+        with_instance!(
+            strand,
+            global.types.unix_identity.cast(out).unwrap(),
+            |this| {
                 Output::set(
                     strand,
                     Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
                     &groups,
                 );
-            });
+            }
+        );
     });
 }
 
@@ -146,7 +145,7 @@ impl<'v> Object<'v> for PosixAclObject {
             let ace = global.types.posix_ace.cast(&iterable).ok_or_else(|| {
                 Error::type_error(strand, "Acl: iterable must contain security.unix.Ace")
             })?;
-            entries.push(ace.enter_sync(strand, |_strand, ace| *ace.annex()));
+            entries.push(with_instance!(strand, ace, |ace| *ace.annex()));
         }
         let acl =
             VfsPosixAcl::new(entries).map_err(|error| Error::value(strand, error.to_string()))?;
@@ -339,7 +338,7 @@ async fn coerce_ace<'v, 's>(
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsPosixAce> {
     if let Some(ace) = global.types.posix_ace.cast(value) {
-        return Ok(ace.enter_sync(strand, |_strand, ace| *ace.annex()));
+        return Ok(with_instance!(strand, ace, |ace| *ace.annex()));
     }
     let dict = value.as_dict(strand.vm()).ok_or_else(|| {
         Error::type_error(
@@ -439,7 +438,7 @@ pub(super) async fn coerce_acl<'v, 's>(
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsPosixAcl> {
     if let Some(acl) = global.types.posix_acl.cast(value) {
-        return Ok(acl.enter_sync(strand, |_strand, acl| acl.annex().clone()));
+        return Ok(with_instance!(strand, acl, |acl| acl.annex().clone()));
     }
     let mut entries = Vec::new();
     with_slots!(strand, |mut iter, mut item| {

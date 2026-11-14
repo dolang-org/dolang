@@ -10,6 +10,7 @@ use dolang::runtime::{
     unpack,
     value::{Str, View},
     vm::Register,
+    with_instance,
 };
 use wax::{Glob as WaxGlob, Program as _};
 
@@ -62,7 +63,7 @@ impl<'v, 'a> PatternArg<'v, 'a> {
         value: Str<'v, '_>,
     ) -> Result<'v, 's, bool> {
         Ok(match self {
-            Self::Glob(glob) => glob.enter_sync(strand, |strand, inst| {
+            Self::Glob(glob) => with_instance!(strand, glob, |inst| {
                 strand.access(|x| inst.annex().glob.is_match(value.as_str(x)))
             }),
             Self::Str(pattern) => {

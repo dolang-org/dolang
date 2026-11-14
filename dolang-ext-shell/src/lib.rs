@@ -21,6 +21,7 @@ mod shlex;
 mod sys;
 mod util;
 
+use dolang::runtime::with_instance;
 use std::{
     io,
     path::{self, PathBuf},
@@ -194,7 +195,7 @@ pub fn as_unix_path<'v, 's>(
 ) -> Option<vfs_path::PathBuf> {
     let global = strand.try_state::<FsTag>()?;
     let path = global.types.unix_path.cast(value)?;
-    path.enter_sync(strand, |_strand, inst| {
+    with_instance!(strand, path, |inst| {
         let path = &inst.annex().path;
         (path.kind() == vfs_path::Kind::Unix).then(|| path.clone())
     })
@@ -207,7 +208,7 @@ pub fn as_windows_path<'v, 's>(
 ) -> Option<vfs_path::PathBuf> {
     let global = strand.try_state::<FsTag>()?;
     let path = global.types.windows_path.cast(value)?;
-    path.enter_sync(strand, |_strand, inst| {
+    with_instance!(strand, path, |inst| {
         let path = &inst.annex().path;
         (path.kind() == vfs_path::Kind::Windows).then(|| path.clone())
     })

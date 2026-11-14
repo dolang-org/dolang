@@ -9,7 +9,7 @@ use crate::{
     bytecode::Rest as RestKind,
     call,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     sig::{Unpack, UnpackKeyKind},
     strand::{Strand, with_slots_dynamic},
@@ -112,7 +112,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        borrow.array.pin_sync(strand, |strand, array| {
+        with_pin!(strand, borrow.array, |array| {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, false)?;
             if let Some(i) = sig.pos_rest_slot() {
@@ -137,17 +137,16 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        borrow
-            .array
-            .pin_sync(strand, |strand, array| {
-                let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                let value = array_borrow.inner.get(index);
-                if let Some(value) = value {
-                    Output::set(strand, out, value);
-                }
-                Ok(value.is_some())
-            })
-            .inspect(|&found| borrow.index += usize::from(found))
+        let found = with_pin!(strand, borrow.array, |array| {
+            let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let value = array_borrow.inner.get(index);
+            if let Some(value) = value {
+                Output::set(strand, out, value);
+            }
+            value.is_some()
+        });
+        borrow.index += usize::from(found);
+        Ok(found)
     }
 
     fn op_type<'a, 's>(
@@ -254,10 +253,10 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        rest.array.pin_sync(strand, |strand, array| {
+        with_pin!(strand, rest.array, |array| {
             let borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let start = rest.start.min(borrow.inner.len());
-            strand.with_slots_sync(|strand, [mut tmp]| {
+            with_slots!(strand, |mut tmp| {
                 for item in &borrow.inner[start..] {
                     Output::set(strand, &mut tmp, item);
                     sink.positional(strand, Slot::reborrow(&mut tmp))?;
@@ -274,7 +273,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        rest.array.pin_sync(strand, |strand, array| {
+        with_pin!(strand, rest.array, |array| {
             let borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let count = unpack_from(strand, sig, &mut out, &borrow, rest.start, false)?;
             if let Some(i) = sig.pos_rest_slot() {
@@ -346,7 +345,7 @@ impl<'v> Protocol<'v> for SinkObj<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        borrow.array.pin_sync(strand, |strand, array| {
+        with_pin!(strand, borrow.array, |array| {
             let mut array_borrow = array
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?;
@@ -443,7 +442,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        borrow.array.pin_sync(strand, |strand, array| {
+        with_pin!(strand, borrow.array, |array| {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, true)?;
             if let Some(i) = sig.pos_rest_slot() {
@@ -468,18 +467,17 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        borrow
-            .array
-            .pin_sync(strand, |strand, array| {
-                let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                let Some(value) = array_borrow.inner.get(index).map(Value::dup) else {
-                    return Ok(false);
-                };
-                drop(array_borrow);
-                tuple::create(strand, [Value::from_i64(strand, index as i64), value], out);
-                Ok(true)
-            })
-            .inspect(|&found| borrow.index += usize::from(found))
+        let found = with_pin!(strand, borrow.array, |array| 'body: {
+            let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let Some(value) = array_borrow.inner.get(index).map(Value::dup) else {
+                break 'body false;
+            };
+            drop(array_borrow);
+            tuple::create(strand, [Value::from_i64(strand, index as i64), value], out);
+            true
+        });
+        borrow.index += usize::from(found);
+        Ok(found)
     }
 
     fn op_type<'a, 's>(
@@ -772,7 +770,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let left = &this_borrow.inner;
             let right = &other_borrow.inner;
@@ -802,7 +800,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let left = &this_borrow.inner;
             let right = &other_borrow.inner;
@@ -870,7 +868,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 return Err(Error::index(strand));
             };
             if let Some(source) = value.downcast_native(strand, strand.builtin_types().array) {
-                return source.pin_sync(strand, |strand, source| {
+                return with_pin!(strand, source, |source| {
                     let source_borrow =
                         source.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     if let Some(mut target_borrow) = this.receiver.borrow_mut() {
@@ -883,7 +881,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     let snapshot =
                         tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup));
                     drop(source_borrow);
-                    snapshot.pin_sync(strand, |strand, snapshot| {
+                    with_pin!(strand, snapshot, |snapshot| {
                         this.borrow_mut(strand)?
                             .inner
                             .splice(start..end, snapshot.items().iter().map(Value::dup));
@@ -892,7 +890,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 });
             }
             if let Some(source) = value.downcast_ref(strand.builtin_types().tuple) {
-                return source.pin_sync(strand, |strand, source| {
+                return with_pin!(strand, source, |source| {
                     this.borrow_mut(strand)?
                         .inner
                         .splice(start..end, source.items().iter().map(Value::dup));
@@ -1171,7 +1169,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        strand.with_slots_sync(|strand, [mut tmp]| {
+        with_slots!(strand, |mut tmp| {
             for item in borrow.inner.iter() {
                 Output::set(strand, &mut tmp, item);
                 sink.positional(strand, Slot::reborrow(&mut tmp))?;

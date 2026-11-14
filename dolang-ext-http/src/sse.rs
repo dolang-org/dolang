@@ -198,7 +198,7 @@ impl<'v> Object<'v> for Event {
     ) -> Result<'v, 's, bool> {
         let global = strand.state::<Tag>();
         if let Some(other) = global.types.event.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 let this = this.annex();
                 let other = other.annex();
                 this.event_type == other.event_type

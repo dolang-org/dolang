@@ -6,7 +6,7 @@ use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
-    object::TypeBuilder, unpack, value::View, vm::Register,
+    object::TypeBuilder, unpack, value::View, vm::Register, with_instance,
 };
 
 use crate::global::Global;
@@ -43,7 +43,7 @@ pub fn cast_uuid<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> Option<u
     // No `Uuid` can exist before the extension is initialized
     let global = strand.try_state::<Tag>()?;
     let inst = global.types.uuid.cast(value)?;
-    Some(inst.enter_sync(strand, |_strand, inst| inst.annex().inner))
+    Some(with_instance!(strand, inst, |inst| inst.annex().inner))
 }
 
 /// Converts a Do `uuid.Uuid`, `Str`, or `Bin` value into an owned `uuid::Uuid`.
@@ -56,7 +56,7 @@ pub fn value_to_uuid<'v, 's>(
 ) -> Result<'v, 's, uuid::Uuid> {
     let global = strand.try_state::<Tag>();
     if let Some(inst) = global.and_then(|global| global.types.uuid.cast(value)) {
-        return Ok(inst.enter_sync(strand, |_strand, inst| inst.annex().inner));
+        return Ok(with_instance!(strand, inst, |inst| inst.annex().inner));
     }
     if let Some(str) = value.as_str(strand) {
         return strand
@@ -187,7 +187,7 @@ impl<'v> Object<'v> for Uuid {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.uuid.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().inner == other.annex().inner
             }))
         } else {
@@ -210,7 +210,7 @@ impl<'v> Object<'v> for Uuid {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.uuid.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().inner < other.annex().inner
             }))
         } else {

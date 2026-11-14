@@ -9,13 +9,14 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -357,7 +358,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
-        borrow.set.pin_sync(strand, |strand, set| {
+        with_pin!(strand, borrow.set, |set| {
             let set = set.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if set.epoch != borrow.epoch {
                 return Err(Error::concurrency_msg(
@@ -482,7 +483,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
                 return Ok(Value::FALSE);
@@ -601,7 +602,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     sym::UNION => {
                         let this = this.borrow(strand)?;
                         let mut result = this.cloned();
-                        other.pin_sync(strand, |strand, other| {
+                        with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                             result.extend_from(strand, &other)?;
                             strand.builtin_types().set.create(strand, result, out);
@@ -610,7 +611,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     }
                     sym::INTERSECT => {
                         let left = this.borrow(strand)?;
-                        other.pin_sync(strand, |strand, other| {
+                        with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                             let mut result = Self::new();
                             unsafe {
@@ -630,7 +631,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     }
                     sym::DIFF => {
                         let left = this.borrow(strand)?;
-                        other.pin_sync(strand, |strand, other| {
+                        with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                             let mut result = Self::new();
                             unsafe {
@@ -650,7 +651,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     }
                     sym::SYM_DIFF => {
                         let left = this.borrow(strand)?;
-                        other.pin_sync(strand, |strand, other| {
+                        with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                             let mut result = Self::new();
                             unsafe {
@@ -679,7 +680,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     }
                     sym::IS_SUBSET => {
                         let left = this.borrow(strand)?;
-                        other.pin_sync(strand, |strand, other| {
+                        with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                             let mut subset = true;
                             unsafe {
@@ -697,7 +698,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     }
                     sym::IS_SUPERSET => {
                         let left = this.borrow(strand)?;
-                        other.pin_sync(strand, |strand, other| {
+                        with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
                             let mut superset = true;
                             unsafe {
@@ -753,7 +754,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        strand.with_slots_sync(|strand, [mut slot]| {
+        with_slots!(strand, |mut slot| {
             for (i, entry) in borrow.order.iter().enumerate() {
                 let Some(bucket) = entry else {
                     continue;

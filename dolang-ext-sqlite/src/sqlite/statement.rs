@@ -13,7 +13,7 @@ use dolang::runtime::{
     object::TypeBuilder,
     unpack,
     value::{View, fmt::Spec},
-    with_instance,
+    with_instance, with_slots,
 };
 use libsqlite3_sys::{
     SQLITE_DONE, SQLITE_OK, SQLITE_ROW, SQLITE_TRANSIENT, sqlite3_bind_blob, sqlite3_bind_double,
@@ -177,18 +177,13 @@ impl<'v> Object<'v> for Statement {
                         &mut wrapper,
                     );
 
-                    global
-                        .types
-                        .rows
-                        .cast(&wrapper)
-                        .unwrap()
-                        .enter_sync(strand, |strand, inst| {
-                            Output::set(
-                                strand,
-                                Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
-                                this,
-                            );
-                        });
+                    with_instance!(strand, global.types.rows.cast(&wrapper).unwrap(), |inst| {
+                        Output::set(
+                            strand,
+                            Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
+                            this,
+                        );
+                    });
 
                     Output::set(strand, out, wrapper);
                     Ok(())
@@ -384,7 +379,7 @@ pub(super) fn compile_template<'v, 's>(
     };
     let mut params: Vec<Param> = Vec::new();
 
-    strand.with_slots_sync(|strand, [mut segment, mut inner]| {
+    with_slots!(strand, |mut segment, mut inner| {
         for index in 0..len {
             seq.get(strand, index, &mut segment)?;
             match segment.view(strand.vm()) {

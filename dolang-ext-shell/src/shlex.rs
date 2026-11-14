@@ -3,6 +3,7 @@
 //! This module provides functions for quoting strings for shell safety,
 //! joining arguments with proper quoting, and splitting shell command lines.
 
+use dolang::runtime::with_instance;
 use std::mem;
 
 use dolang::{
@@ -100,7 +101,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
             let pin = s.pin();
             let shlex = Shlex::new(unsafe { mem::transmute::<&str, &'static str>(&*pin) });
             iter.create(strand, Iter { shlex, _pin: pin }, &mut out);
-            iter.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+            with_instance!(strand, iter.cast(&out).unwrap(), |inst| {
                 Output::set(
                     strand,
                     Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),

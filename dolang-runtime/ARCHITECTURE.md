@@ -56,8 +56,8 @@ collector counts objects in its initialization pass and subtracts objects it
 clears. Miri uses a fixed threshold of 10 to exercise collection frequently.
 
 Native code may hold a GC reference across an await only where the collector
-visits it: a `with_slots!` slot, data visited by a `Strand::enter_scan` or
-`Strand::with_scan_sync` closure, an error (whose value and backtrace live in a
+visits it: a `with_slots!` slot, data visited by a `frame::Scan` entered with
+`Strand::enter_scan`, an error (whose value and backtrace live in a
 slot of the strand's `ErrorTable`), or a GC-visited object. Both push a
 `frame::Scan` rooting frame, which `scan_stack` visits. `with_slots!` declares a
 `SlotFrame` of value cells in the enclosing future and pushes it, so the body
@@ -109,10 +109,10 @@ moving collector:
 
 - `Base::pin_access` pins for the lifetime of a `Strand::access` token, inside
   which nothing can await or collect.
-- `Base::pin_sync` and `Base::pin` scope a pin to a closure that receives the
-  strand back and may allocate or await. A moving collector would push and pop
-  an entry on a strand-local pin list, which a stop-the-world collection
-  promotes to live pins.
+- `with_pin!` (and the public `with_instance!`, `with_str!` and `with_slice!`)
+  scope a pin to a block that may allocate or await. A moving collector would
+  push and pop an entry on a strand-local pin list, which a stop-the-world
+  collection promotes to live pins.
 - `PinStr` and `PinBin` own a reference to their object, so each is both a root
   and a dynamic pin. A native object can hold one beside a structure that
   borrows the text, provided the borrower is dropped first.

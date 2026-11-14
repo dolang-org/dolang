@@ -38,6 +38,7 @@ use crate::{
     strand::Strand,
     value::{Output, Value},
     vm::AllocExt,
+    with_instance, with_slots,
 };
 
 bitflags::bitflags! {
@@ -139,14 +140,12 @@ pub fn concat<'v, 's>(
     end: &[u8],
 ) -> crate::error::Result<'v, 's, ByteHandle> {
     let ty = *strand.force_state::<ConcatType>();
-    strand.with_slots_sync(|strand, [mut concat]| {
+    with_slots!(strand, |mut concat| {
         ty.create(strand, Concat::new(end.to_vec()), &mut concat);
-        ty.cast(&concat)
-            .unwrap()
-            .enter_sync(strand, |strand, inst| {
-                let mut borrow = inst.borrow_mut_unwrap();
-                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), iterable);
-            });
+        with_instance!(strand, ty.cast(&concat).unwrap(), |inst| {
+            let mut borrow = inst.borrow_mut_unwrap();
+            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), iterable);
+        });
         get(strand, &concat, |_, _| Ok(()))
     })
 }

@@ -5,7 +5,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::{
         iter,
         protocol::{Protocol, Recv},
@@ -14,6 +14,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
+    with_slots,
 };
 
 pub(crate) struct Range<'v> {
@@ -179,7 +180,7 @@ pub(crate) fn slice_bounds<'v, 's>(
     let Some(range) = index.downcast_ref(strand.builtin_types().range) else {
         return Ok(None);
     };
-    range.pin_sync(strand, |strand, range| {
+    with_pin!(strand, range, |range| {
         range.get().slice_bounds(strand, len).map(Some)
     })
 }
@@ -208,7 +209,7 @@ pub(crate) fn slice<'v, 's>(
     let Some(range) = index.downcast_ref(strand.builtin_types().range) else {
         return Ok(None);
     };
-    range.pin_sync(strand, |strand, range| {
+    with_pin!(strand, range, |range| {
         range.get().slice(strand, len).map(Some)
     })
 }
@@ -258,7 +259,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.get();
-        other.pin_sync(strand, |strand, right| {
+        with_pin!(strand, other, |right| {
             let right = right.get();
             Ok(Value::from_bool(
                 left.start.op_eq(strand, &right.start)?.to_bool(strand)?
@@ -285,7 +286,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        strand.with_slots_sync(|strand, [mut start, mut step]| {
+        with_slots!(strand, |mut start, mut step| {
             Output::set(strand, &mut start, &borrow.start);
             if start.is_nil() {
                 Output::set(strand, &mut start, 0);

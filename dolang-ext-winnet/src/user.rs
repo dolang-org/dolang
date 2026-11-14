@@ -8,6 +8,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
     vm::ModuleBuilder,
+    with_instance,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_vfs_winnet::user;
@@ -506,9 +507,11 @@ fn principal<'v, 's>(
     value: &Value<'v>,
 ) -> Result<'v, 's, ResultPrincipal> {
     if let Some(info) = global.types.info.cast(value) {
-        return Ok(ResultPrincipal::Info(Box::new(
-            info.enter_sync(strand, |_, info| info.annex().info.clone()),
-        )));
+        return Ok(ResultPrincipal::Info(Box::new(with_instance!(
+            strand,
+            info,
+            |info| info.annex().info.clone()
+        ))));
     }
     if let Some(name) = value.as_str(strand) {
         return Ok(ResultPrincipal::Name(name.to_string()));

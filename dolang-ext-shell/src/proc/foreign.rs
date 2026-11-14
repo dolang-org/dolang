@@ -12,7 +12,7 @@ use dolang::runtime::{
     object::{TypeBuilder, fmt},
     unpack,
     value::{Nil, TypeObject},
-    with_slots,
+    with_instance, with_slots,
 };
 use dolang_vfs::process::{
     Process as VfsProcess, ProcessExit, ProcessInfo, Processes as VfsProcesses,
@@ -368,7 +368,7 @@ pub(crate) async fn open_value<'v, 's>(
 ) -> Result<'v, 's, VfsProcess> {
     let vfs = global.local.get(strand).vfs();
     if let Some(info) = global.types.proc_info.cast(value) {
-        let record = info.enter_sync(strand, |_strand, info| info.annex().info.clone());
+        let record = with_instance!(strand, info, |info| info.annex().info.clone());
         return vfs.open_process_info(&record).await.into_sys(strand);
     }
     let Some(pid) = value.as_int(strand) else {

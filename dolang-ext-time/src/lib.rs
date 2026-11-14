@@ -5,6 +5,7 @@ mod global;
 mod time;
 
 use crate::global::Tag;
+use dolang::runtime::with_instance;
 
 use std::{io, time::SystemTime};
 
@@ -19,7 +20,7 @@ pub use extension::TimeExt;
 pub fn as_datetime<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Option<SystemTime> {
     let global = strand.try_state::<Tag>()?;
     let datetime = global.types.date_time.cast(value)?;
-    datetime.enter_sync(strand, |_strand, inst| inst.annex().to_system_time().ok())
+    with_instance!(strand, datetime, |inst| inst.annex().to_system_time().ok())
 }
 
 /// Constructs a Do `time.DateTime` from a Rust system time.
@@ -84,7 +85,7 @@ pub fn as_duration<'v, 's>(
 ) -> Option<std::time::Duration> {
     let global = strand.try_state::<Tag>()?;
     let duration = global.types.duration.cast(value)?;
-    duration.enter_sync(strand, |strand, duration| {
+    with_instance!(strand, duration, |duration| {
         duration.annex().to_std_duration(strand).ok()
     })
 }

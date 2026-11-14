@@ -31,6 +31,7 @@ use crate::{
     BYTE_STREAM_CHUNK_SIZE,
     arg::{Arg, Args},
     error::{Error, ErrorKind, Result},
+    gc::with_pin,
     io::{
         ByteHandle, ByteIo, ByteStream, IntoByteIo, IoCaps, IoErrorExt as _, IoResultExt as _,
         Prefixed, Shared,
@@ -48,7 +49,7 @@ use crate::{
         view::{PinBin, PinStr},
     },
     vm::{Alloc, Builder, StateTag},
-    with_slots,
+    with_instance, with_slots,
 };
 
 /// Buffer capacity, and the size from which reads and writes skip the buffer.
@@ -1090,7 +1091,7 @@ impl<'v> Object<'v> for Concat {
             }
         };
         this.create(strand, Concat::new(end), &mut out);
-        this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+        with_instance!(strand, this.cast(&out).unwrap(), |inst| {
             let mut borrow = inst.borrow_mut_unwrap();
             Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &items);
         });
@@ -1232,7 +1233,7 @@ impl Cursor {
                     let buf = target
                         .downcast_native(strand, strand.builtin_types().binbuf)
                         .expect("target is a `BinBuf`");
-                    buf.pin_sync(strand, |strand, buf| {
+                    with_pin!(strand, buf, |buf| {
                         let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
                         buf.overwrite(strand, at, &data[..n]);
                         Ok(())
@@ -1267,7 +1268,7 @@ impl Cursor {
             let buf = target
                 .downcast_native(strand, strand.builtin_types().strbuf)
                 .expect("target is a `StrBuf`");
-            buf.pin_sync(strand, |strand, buf| {
+            with_pin!(strand, buf, |buf| {
                 let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
                 if !buf.overwrite(strand, at, text) {
                     return Err(Error::value(strand, "write would split a character"));
@@ -1338,7 +1339,7 @@ fn with_bytes<'v, 's, R>(
             let buf = target
                 .downcast_native(strand, strand.builtin_types().binbuf)
                 .expect("target is a `BinBuf`");
-            buf.pin_sync(strand, |strand, buf| {
+            with_pin!(strand, buf, |buf| {
                 let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
                 Ok(f(strand, buf.as_slice()))
             })
@@ -1347,7 +1348,7 @@ fn with_bytes<'v, 's, R>(
             let buf = target
                 .downcast_native(strand, strand.builtin_types().strbuf)
                 .expect("target is a `StrBuf`");
-            buf.pin_sync(strand, |strand, buf| {
+            with_pin!(strand, buf, |buf| {
                 let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
                 Ok(f(strand, buf.as_str().as_bytes()))
             })
@@ -1366,7 +1367,7 @@ fn range_arg<'v, 's>(
     let Some(range) = range.downcast_ref(strand.builtin_types().range) else {
         return Err(Error::type_error(strand, "expected `Range` for `range`"));
     };
-    range.pin_sync(strand, |strand, range| {
+    with_pin!(strand, range, |range| {
         let (start, end, step) = range.get().parts();
         if !step.is_nil() && step.to_i64(strand).ok() != Some(1) {
             return Err(Error::value(strand, "range step must be 1"));
@@ -1439,7 +1440,7 @@ impl<'v> Object<'v> for Cursor {
             open: true,
         };
         this.create(strand, cursor, &mut out);
-        this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+        with_instance!(strand, this.cast(&out).unwrap(), |inst| {
             let mut borrow = inst.borrow_mut_unwrap();
             Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &target);
         });
@@ -1471,7 +1472,7 @@ impl<'v> Object<'v> for Cursor {
                 let size = size_value(strand, size)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
-                strand.with_slots_sync(|strand, [mut target]| {
+                with_slots!(strand, |mut target| {
                     Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
                     borrow.read(strand, &target, size, out)
                 })
@@ -1485,7 +1486,7 @@ impl<'v> Object<'v> for Cursor {
                     .map(|piece| &**piece)
                     .collect::<Vec<_>>()
                     .concat();
-                let n = strand.with_slots_sync(|strand, [mut target]| {
+                let n = with_slots!(strand, |mut target| {
                     Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
                     borrow.write(strand, &target, &data)
                 })?;
@@ -1498,7 +1499,7 @@ impl<'v> Object<'v> for Cursor {
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
-                let pos = strand.with_slots_sync(|strand, [mut target]| {
+                let pos = with_slots!(strand, |mut target| {
                     Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
                     borrow.seek(strand, &target, pos)
                 })?;

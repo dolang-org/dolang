@@ -19,7 +19,7 @@ use dolang::runtime::{
     unpack,
     value::{DictPairs, RecordPairs, Singleton, Slot, View},
     vm::Register,
-    with_slots,
+    with_instance, with_slots,
 };
 use dolang_ext_shell::with_terminal;
 use indicatif as ix;
@@ -558,14 +558,9 @@ async fn finish_indicator<'v, 's>(
     active: ActiveIndicator,
     slot: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    global
-        .types
-        .indicator
-        .cast(slot)
-        .unwrap()
-        .enter_sync(strand, |_strand, inst| {
-            inst.annex().closed.set(true);
-        });
+    with_instance!(strand, global.types.indicator.cast(slot).unwrap(), |inst| {
+        inst.annex().closed.set(true);
+    });
 
     match active.kind {
         ShowKind::None => Ok(()),

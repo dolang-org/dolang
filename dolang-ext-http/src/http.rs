@@ -18,7 +18,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
     vm::Register,
-    with_interrupt_mask, with_slots,
+    with_instance, with_interrupt_mask, with_slots,
 };
 use dolang_ext_time::{as_datetime, datetime};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -145,7 +145,7 @@ fn header_flatten<'v, 's>(
     sink: &mut DictViewSink<'v, '_>,
 ) -> Result<'v, 's, ()> {
     for (name, value) in headers {
-        strand.with_slots_sync(|strand, [mut tmp]| {
+        with_slots!(strand, |mut tmp| {
             header_value_or_datetime(strand, value, Slot::reborrow(&mut tmp))?;
             sink.push(strand, name.as_str(), &tmp);
             Ok(())
@@ -1169,13 +1169,14 @@ impl<'v> Object<'v> for Response {
                         global,
                         &mut iter,
                     );
-                    global.types.event_iter.cast(&iter).unwrap().enter_sync(
+                    with_instance!(
                         strand,
-                        |strand, iterator| {
+                        global.types.event_iter.cast(&iter).unwrap(),
+                        |iterator| {
                             let mut iter_borrow = iterator.borrow_mut(strand)?;
                             Output::set(strand, Mut::slot_mut::<0>(&mut iter_borrow), this);
                             Ok(())
-                        },
+                        }
                     )?;
                     Output::set(strand, out, iter);
                     Ok(())

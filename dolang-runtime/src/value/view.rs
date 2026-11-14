@@ -9,7 +9,7 @@ use std::{
 
 use crate::{
     error::{Error, Result},
-    gc,
+    gc::{self, with_pin},
     object::{
         array,
         bin::BinObj,
@@ -26,6 +26,7 @@ use crate::{
     sym::Sym,
     value::{Input, Output, Slot, Value, fmt::Spec},
     vm::Alloc,
+    with_instance,
 };
 
 /// Object identifier
@@ -77,6 +78,8 @@ impl<'v, 'a> Hash for ObjectId<'v, 'a> {
 macro_rules! with_str {
     ($strand:ident, $value:expr, |$s:pat_param| $body:expr) => {{
         let value = &$value;
+        // The pin is tied to the strand, as a moving collector's pin list would be
+        let _: &$crate::strand::Strand<'_, '_> = $strand;
         let scope = $crate::strand::PinScope;
         // Safety: `scope` is a local of this block
         #[allow(unused_unsafe)]
@@ -101,6 +104,8 @@ macro_rules! with_str {
 macro_rules! with_slice {
     ($strand:ident, $value:expr, |$bytes:pat_param| $body:expr) => {{
         let value = &$value;
+        // The pin is tied to the strand, as a moving collector's pin list would be
+        let _: &$crate::strand::Strand<'_, '_> = $strand;
         let scope = $crate::strand::PinScope;
         // Safety: `scope` is a local of this block
         #[allow(unused_unsafe)]
@@ -136,16 +141,6 @@ impl<'v, 'a> Str<'v, 'a> {
         self.0.pin_access(access).str()
     }
 
-    /// Call `f` with the underlying string slice.  Unlike [`Self::as_str`], `f` keeps
-    /// the strand.
-    pub fn with_str<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl FnOnce(&mut Strand<'v, 's>, &str) -> R,
-    ) -> R {
-        self.0.pin_sync(strand, |strand, pin| f(strand, pin.str()))
-    }
-
     /// Pin the string slice for the borrow of `scope`.
     ///
     /// This backs [`with_str!`](crate::with_str).
@@ -159,7 +154,7 @@ impl<'v, 'a> Str<'v, 'a> {
     where
         'a: 'p,
     {
-        // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+        // SAFETY: scoped to the caller's block, as for `GcObj::scoped_pin`
         unsafe { self.0.pin_unchecked() }.str()
     }
 
@@ -237,17 +232,6 @@ impl<'v, 'a> Bin<'v, 'a> {
         self.0.pin_access(access).bytes()
     }
 
-    /// Call `f` with the underlying byte slice.  Unlike [`Self::as_slice`], `f` keeps
-    /// the strand.
-    pub fn with_slice<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl FnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
-    ) -> R {
-        self.0
-            .pin_sync(strand, |strand, pin| f(strand, pin.bytes()))
-    }
-
     /// Pin the byte slice for the borrow of `scope`.
     ///
     /// This backs [`with_slice!`](crate::with_slice).
@@ -261,7 +245,7 @@ impl<'v, 'a> Bin<'v, 'a> {
     where
         'a: 'p,
     {
-        // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+        // SAFETY: scoped to the caller's block, as for `GcObj::scoped_pin`
         unsafe { self.0.pin_unchecked() }.bytes()
     }
 
@@ -324,7 +308,7 @@ pub struct Range<'v, 'a>(pub(crate) &'a GcObj<'v, range::RangeObj<'v>>);
 impl<'v, 'a> Range<'v, 'a> {
     /// Copy the start, end, and step into rooted output slots.
     pub fn parts<'s>(&self, strand: &mut Strand<'v, 's>, [start, end, step]: [Slot<'v, '_>; 3]) {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let (start_value, end_value, step_value) = pin.get().parts();
             Output::set(strand, start, start_value);
             Output::set(strand, end, end_value);
@@ -363,7 +347,7 @@ impl<'v, 'a> Array<'v, 'a> {
 
     /// Number of elements. Briefly takes a shared interior borrow.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -379,7 +363,7 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -401,7 +385,7 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -422,7 +406,7 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         input: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             // Build the value before taking the exclusive borrow.
             let value = Value::from_input(strand, input);
             let mut borrow = match pin.borrow_mut() {
@@ -440,7 +424,7 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -458,7 +442,7 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -479,7 +463,7 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             // Remove before calling Output::set, mirroring push's pattern.
             let val = {
                 let mut borrow = match pin.borrow_mut() {
@@ -506,7 +490,7 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let val = {
                 let mut borrow = match pin.borrow_mut() {
                     Some(b) => b,
@@ -525,7 +509,7 @@ impl<'v, 'a> Array<'v, 'a> {
     /// Remove the element at `index`, shifting later elements down. Returns
     /// `false` if out of bounds.
     pub fn delete<'s>(&self, strand: &mut Strand<'v, 's>, index: usize) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -540,7 +524,7 @@ impl<'v, 'a> Array<'v, 'a> {
 
     /// Remove all elements.
     pub fn clear<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -552,7 +536,7 @@ impl<'v, 'a> Array<'v, 'a> {
 
     /// Reverse the elements in place.
     pub fn reverse<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -568,7 +552,7 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let tuple = {
                 let borrow = match pin.borrow() {
                     Some(b) => b,
@@ -597,7 +581,7 @@ impl<'v, 'a> Dict<'v, 'a> {
 
     /// Total number of key-value pairs (counting duplicate keys).
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -627,7 +611,7 @@ impl<'v, 'a> Dict<'v, 'a> {
         instance: Option<i64>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let key = Value::from_input(strand, key);
             let borrow = match pin.borrow() {
                 Some(b) => b,
@@ -654,7 +638,7 @@ impl<'v, 'a> Dict<'v, 'a> {
         value: impl Input<'v>,
         unique: bool,
     ) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let key = Value::from_input(strand, key);
             let value = Value::from_input(strand, value);
             let mut hasher = strand.vm().hasher();
@@ -675,7 +659,7 @@ impl<'v, 'a> Dict<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         key: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let key = Value::from_input(strand, key);
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
@@ -701,7 +685,7 @@ impl<'v, 'a> Set<'v, 'a> {
 
     /// Number of members.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -724,7 +708,7 @@ impl<'v, 'a> Set<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let value = Value::from_input(strand, value);
             let mut hasher = strand.vm().hasher();
             value.op_hash(strand, &mut hasher)?;
@@ -744,7 +728,7 @@ impl<'v, 'a> Set<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             // Build the value and hash it before taking the exclusive borrow.
             let value = Value::from_input(strand, value);
             let mut hasher = strand.vm().hasher();
@@ -764,7 +748,7 @@ impl<'v, 'a> Set<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let value = Value::from_input(strand, value);
             let mut hasher = strand.vm().hasher();
             value.op_hash(strand, &mut hasher)?;
@@ -779,7 +763,7 @@ impl<'v, 'a> Set<'v, 'a> {
 
     /// Remove every member.
     pub fn clear<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -805,8 +789,7 @@ impl<'v, 'a> Pack<'v, 'a> {
 
     /// Total number of key-value pairs.
     pub fn len<'s>(&self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0
-            .pin_sync(_strand, |_strand, pin| Ok(pin.get().items().len()))
+        with_pin!(_strand, self.0, |pin| Ok(pin.get().items().len()))
     }
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
@@ -835,7 +818,7 @@ impl<'v, 'a> Record<'v, 'a> {
 
     /// Total number of items.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -870,7 +853,7 @@ impl<'v, 'a> Struct<'v, 'a> {
 
     /// Total number of key-value pairs.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.0, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -919,14 +902,13 @@ impl<'v, 'a> Tuple<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0
-            .pin_sync(strand, |strand, pin| match pin.items().get(index) {
-                Some(v) => {
-                    Output::set(strand, out, v);
-                    Ok(true)
-                }
-                None => Ok(false),
-            })
+        with_pin!(strand, self.0, |pin| match pin.items().get(index) {
+            Some(v) => {
+                Output::set(strand, out, v);
+                Ok(true)
+            }
+            None => Ok(false),
+        })
     }
 }
 
@@ -945,8 +927,7 @@ impl<'v, 'a> Fmt<'v, 'a> {
 
     /// Number of segments.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        self.0
-            .enter_sync(strand, |strand, this| stdfmt::view_fmt_len(this, strand))
+        with_instance!(strand, self.0, |this| stdfmt::view_fmt_len(this, strand))
     }
 
     /// Write segment `index` to `out`. Returns `false` if out of bounds.
@@ -956,7 +937,7 @@ impl<'v, 'a> Fmt<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.0.enter_sync(strand, |strand, this| {
+        with_instance!(strand, self.0, |this| {
             stdfmt::view_fmt_segment(this, strand, index, out)
         })
     }
@@ -979,21 +960,20 @@ impl<'v, 'a> FmtValue<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        self.0.enter_sync(strand, |strand, this| {
+        with_instance!(strand, self.0, |this| {
             stdfmt::view_value_bound(this, strand, out)
         })
     }
 
     /// The formatting specification.
     pub fn spec(&self, strand: &mut Strand<'v, '_>) -> Spec {
-        self.0.enter_sync(strand, |_, this| stdfmt::view_spec(this))
+        with_instance!(strand, self.0, |this| stdfmt::view_spec(this))
     }
 
     /// The text this was written as, or [`None`] when it was built at runtime
     /// and so has no source.
     pub fn source<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Option<String>> {
-        self.0
-            .enter_sync(strand, |strand, this| stdfmt::view_source(this, strand))
+        with_instance!(strand, self.0, |this| stdfmt::view_source(this, strand))
     }
 }
 
@@ -1014,21 +994,20 @@ impl<'v, 'a> FmtParam<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        self.0.enter_sync(strand, |strand, this| {
+        with_instance!(strand, self.0, |this| {
             stdfmt::view_param_name(this, strand, out)
         })
     }
 
     /// The formatting specification.
     pub fn spec(&self, strand: &mut Strand<'v, '_>) -> Spec {
-        self.0.enter_sync(strand, |_, this| stdfmt::view_spec(this))
+        with_instance!(strand, self.0, |this| stdfmt::view_spec(this))
     }
 
     /// The text this was written as, or [`None`] when it was built at runtime
     /// and so has no source.
     pub fn source<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, Option<String>> {
-        self.0
-            .enter_sync(strand, |strand, this| stdfmt::view_source(this, strand))
+        with_instance!(strand, self.0, |this| stdfmt::view_source(this, strand))
     }
 }
 
@@ -1094,7 +1073,7 @@ impl<'v, 'a> DictPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.borrow.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.borrow, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -1118,7 +1097,7 @@ impl<'v, 'a> SetMembers<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.borrow.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.borrow, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -1150,7 +1129,7 @@ impl<'v, 'a> PackPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.borrow.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.borrow, |pin| {
             let borrow = pin.get();
             Ok(next_item_pair(
                 borrow.items(),
@@ -1180,7 +1159,7 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.borrow.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.borrow, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
@@ -1222,7 +1201,7 @@ impl<'v, 'a> StructPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        self.borrow.pin_sync(strand, |strand, pin| {
+        with_pin!(strand, self.borrow, |pin| {
             let borrow = match pin.borrow() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),

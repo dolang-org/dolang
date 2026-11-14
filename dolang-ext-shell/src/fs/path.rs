@@ -15,7 +15,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
     object::{ArrayLike, TypeBuilder},
-    unpack,
+    unpack, with_instance,
 };
 use dolang_vfs::metadata::{AttrFlags, Resolve};
 use dolang_vfs::path as vfs_path;
@@ -74,9 +74,9 @@ fn any_path_from_value<'v, 's>(
     value: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
     if let Some(path) = global.types.unix_path.cast(value) {
-        Ok(path.enter_sync(strand, |_strand, inst| inst.annex().path_buf()))
+        Ok(with_instance!(strand, path, |inst| inst.annex().path_buf()))
     } else if let Some(path) = global.types.windows_path.cast(value) {
-        Ok(path.enter_sync(strand, |_strand, inst| inst.annex().path_buf()))
+        Ok(with_instance!(strand, path, |inst| inst.annex().path_buf()))
     } else if let Some(value) = value.as_str(strand) {
         let target = target_path_type(strand, global);
         Ok(strand.access(|x| match target {
@@ -94,13 +94,13 @@ fn path_object_from_value<'v, 's>(
     value: &Value<'v>,
 ) -> Option<vfs_path::PathBuf> {
     if let Some(path) = global.types.unix_path.cast(value) {
-        Some(path.enter_sync(strand, |_strand, inst| inst.annex().path_buf()))
+        Some(with_instance!(strand, path, |inst| inst.annex().path_buf()))
     } else {
         global
             .types
             .windows_path
             .cast(value)
-            .map(|path| path.enter_sync(strand, |_strand, inst| inst.annex().path_buf()))
+            .map(|path| with_instance!(strand, path, |inst| inst.annex().path_buf()))
     }
 }
 

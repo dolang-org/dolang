@@ -11,6 +11,7 @@ use dolang::runtime::{
     unpack,
     value::{Array, Nil, PinStr, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
+    with_instance, with_slots,
 };
 use saphyr_parser::{Event, Marker, Parser, ScalarStyle, Span, StrInput};
 
@@ -102,7 +103,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         })
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            strand.with_slots_sync(|strand, [mut keep, path, mut tuple, mut error]| {
+            with_slots!(strand, |mut keep, path, mut tuple, mut error| {
                 strand.new_array(&mut keep);
                 let mut builder = Builder {
                     keep: keep.as_array(strand.vm()).expect("keep must be an array"),
@@ -125,12 +126,10 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                         }
                         let ty = strand.state::<Tag>().types.encode_error;
                         ty.create_with_annex(strand, EncodeError, annex, &mut error);
-                        ty.cast(&error)
-                            .unwrap()
-                            .enter_sync(strand, |strand, instance| {
-                                let mut borrow = instance.borrow_mut_unwrap();
-                                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
-                            });
+                        with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
+                            let mut borrow = instance.borrow_mut_unwrap();
+                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                        });
                         return Err(Error::from_value(strand, &error));
                     }
                 };
@@ -232,7 +231,7 @@ impl<'v> Builder<'_, 'v> {
                 let id = handle.id().addr();
                 self.enter(id, "array")?;
                 let mut seq = Vec::new();
-                strand.with_slots_sync(|strand, [mut elem]| {
+                with_slots!(strand, |mut elem| {
                     let len = handle.len(strand)?;
                     seq.reserve(len);
                     for i in 0..len {
@@ -253,7 +252,7 @@ impl<'v> Builder<'_, 'v> {
                 let id = handle.id().addr();
                 self.enter(id, "tuple")?;
                 let mut seq = Vec::with_capacity(handle.len());
-                strand.with_slots_sync(|strand, [mut elem]| {
+                with_slots!(strand, |mut elem| {
                     for i in 0..handle.len() {
                         if !handle.get(strand, i, &mut elem)? {
                             break;
@@ -328,7 +327,7 @@ impl<'v> Builder<'_, 'v> {
         mut next: impl FnMut(&mut Strand<'v, 's>, Slot<'v, '_>, Slot<'v, '_>) -> Result<'v, 's, bool>,
     ) -> EncodeResult<'v, 's, YamlMapping<'static>> {
         let mut map = YamlMapping::new();
-        strand.with_slots_sync(|strand, [mut key, mut val]| {
+        with_slots!(strand, |mut key, mut val| {
             while next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut val))? {
                 let yaml_key = self.value(strand, &key)?;
                 let yaml_val = self
@@ -480,7 +479,7 @@ fn parse_event_into<'v, 's, 'i>(
                     break;
                 }
 
-                strand.with_slots_sync(|strand, [mut item]| {
+                with_slots!(strand, |mut item| {
                     parse_event_into(strand, parser, next, Slot::reborrow(&mut item))?;
                     array.push(strand, &item)
                 })?;
@@ -505,7 +504,7 @@ fn parse_event_into<'v, 's, 'i>(
                     break;
                 }
 
-                strand.with_slots_sync(|strand, [mut key, mut value]| {
+                with_slots!(strand, |mut key, mut value| {
                     parse_event_into(strand, parser, next, Slot::reborrow(&mut key))?;
                     let value_event = next_event(strand, parser)?;
                     if matches!(value_event.0, Event::MappingEnd) {

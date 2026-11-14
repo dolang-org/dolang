@@ -10,6 +10,7 @@ use crate::{
     sym::{self, Sym},
     value::{Output, Slot, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -90,7 +91,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let pack = this.borrow(strand)?;
-        strand.with_slots_sync(|strand, [mut key_slot, mut value_slot]| {
+        with_slots!(strand, |mut key_slot, mut value_slot| {
             for (key, value) in &pack.inner {
                 Output::set(strand, &mut value_slot, value);
                 if let Some(key) = key {

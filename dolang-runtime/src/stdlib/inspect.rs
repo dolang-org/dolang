@@ -15,6 +15,7 @@ use crate::{
     unpack,
     value::{Output, Value, fmt::Format},
     vm::{AllocExt, Builder, StateTag, Vm},
+    with_instance,
 };
 
 /// Bound on the wrappers [`definition`] unwraps, as a class's method table can hold any value
@@ -91,7 +92,7 @@ impl<'v> Object<'v> for Location {
         let Some(other) = strand.state::<InspectStateTag>().location.cast(other) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        Ok(other.enter_sync(strand, |_strand, other| {
+        Ok(with_instance!(strand, other, |other| {
             let (this, other) = (this.annex(), other.annex());
             this.span == other.span && this.source == other.source
         }))

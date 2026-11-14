@@ -885,14 +885,15 @@ async fn lease_send<'v, 's>(
             match &mut inner.state {
                 PipeState::Value => {
                     let send_borrow = inst.borrow(strand)?;
-                    let stale_bytes = global
-                        .types
-                        .pipe_receiver
-                        .cast(Ref::slot::<0>(&send_borrow))
-                        .unwrap()
-                        .enter_sync(strand, |strand, recv_inst| {
-                            take_buffered_bytes(recv_inst, strand, &mut inner)
-                        })?;
+                    let stale_bytes = with_instance!(
+                        strand,
+                        global
+                            .types
+                            .pipe_receiver
+                            .cast(Ref::slot::<0>(&send_borrow))
+                            .unwrap(),
+                        |recv_inst| take_buffered_bytes(recv_inst, strand, &mut inner)
+                    )?;
                     drop(send_borrow);
                     let (w, r) = fresh_pipe.take().unwrap();
                     inner.send_end = EndState::Taken;
@@ -981,15 +982,14 @@ pub(crate) fn make_pair<'v, 's>(
         Slot::reborrow(&mut out_send),
     );
 
-    global
-        .types
-        .pipe_sender
-        .cast(&out_send)
-        .unwrap()
-        .enter_sync(strand, |strand, send_inst| {
+    with_instance!(
+        strand,
+        global.types.pipe_sender.cast(&out_send).unwrap(),
+        |send_inst| {
             let mut send_borrow = send_inst.borrow_mut_unwrap();
             Output::set(strand, Mut::slot_mut::<0>(&mut send_borrow), &out_recv);
-        });
+        }
+    );
 }
 
 impl<'v> Object<'v> for PipeReceiver {
@@ -1180,13 +1180,15 @@ impl<'v> Object<'v> for PipeSender {
                 let ([], [err, backtrace]) = unpack!(strand, args, 0, 1, backtrace_sym = None)?;
                 let shared = &this.annex().shared;
                 let send_borrow = this.borrow(strand)?;
-                this.annex()
-                    .global
-                    .types
-                    .pipe_receiver
-                    .cast(Ref::slot::<0>(&send_borrow))
-                    .unwrap()
-                    .enter_sync(strand, |strand, recv_inst| {
+                with_instance!(
+                    strand,
+                    this.annex()
+                        .global
+                        .types
+                        .pipe_receiver
+                        .cast(Ref::slot::<0>(&send_borrow))
+                        .unwrap(),
+                    |recv_inst| {
                         let mut recv_borrow = recv_inst.borrow_mut(strand)?;
                         if let Some(err) = err {
                             if let Some(backtrace) = backtrace {
@@ -1207,7 +1209,8 @@ impl<'v> Object<'v> for PipeSender {
                             Output::set(strand, Mut::slot_mut::<1>(&mut recv_borrow), err);
                         }
                         Ok(())
-                    })?;
+                    }
+                )?;
                 shared.borrow_mut().close_send();
                 Ok(())
             })
@@ -1247,12 +1250,14 @@ impl<'v> Object<'v> for PipeSender {
                             inner.buffered = true;
                             drop(inner);
                             let send_borrow = this.borrow(strand)?;
-                            global
-                                .types
-                                .pipe_receiver
-                                .cast(Ref::slot::<0>(&send_borrow))
-                                .unwrap()
-                                .enter_sync(strand, |strand, recv_inst| {
+                            with_instance!(
+                                strand,
+                                global
+                                    .types
+                                    .pipe_receiver
+                                    .cast(Ref::slot::<0>(&send_borrow))
+                                    .unwrap(),
+                                |recv_inst| {
                                     let mut recv_borrow = recv_inst.borrow_mut(strand)?;
                                     Output::set(
                                         strand,
@@ -1260,7 +1265,8 @@ impl<'v> Object<'v> for PipeSender {
                                         value,
                                     );
                                     Ok(())
-                                })?;
+                                }
+                            )?;
                             drop(send_borrow);
                             shared.borrow_mut().wake_receivers();
                             return Ok(());

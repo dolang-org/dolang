@@ -375,18 +375,17 @@ fn wrap_statement<'v, 's>(
     );
 
     // Store the connection object in slot 0 of the statement
-    global
-        .types
-        .statement
-        .cast(&wrapper)
-        .unwrap()
-        .enter_sync(strand, |strand, inst| {
+    with_instance!(
+        strand,
+        global.types.statement.cast(&wrapper).unwrap(),
+        |inst| {
             Output::set(
                 strand,
                 Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
                 this,
             );
-        });
+        }
+    );
 
     Ok(())
 }
@@ -455,19 +454,17 @@ async fn transact<'v, 's, 'a>(
         );
 
         // Store the connection object in slot 0
-        annex
-            .global
-            .types
-            .transaction
-            .cast(&wrapper)
-            .unwrap()
-            .enter_sync(strand, |strand, inst| {
+        with_instance!(
+            strand,
+            annex.global.types.transaction.cast(&wrapper).unwrap(),
+            |inst| {
                 Output::set(
                     strand,
                     Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
                     this,
                 );
-            });
+            }
+        );
 
         // Call the block with the transaction handle
         call!(strand, &block, out, &wrapper)

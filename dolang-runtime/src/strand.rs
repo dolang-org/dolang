@@ -126,8 +126,35 @@ macro_rules! with_interrupt_mask {
     }};
 }
 
+/// Run a block with `interrupt` as the strand's selected interrupt token.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_interrupt_token, strand::{InterruptMask, Strand}};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) {
+/// let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+/// with_interrupt_token!(strand, interrupt, {
+///     // Suspensions here are interrupted through `interrupt`
+/// })
+/// # }
+/// ```
+///
+/// The body runs inline, as for [`with_slots!`](crate::with_slots). While it runs, interrupt
+/// checks and the futures it suspends on use `interrupt`. The prior token is restored when
+/// the body finishes, including when it leaves by `?` or `return`, or the enclosing future
+/// is dropped.
+#[macro_export]
+macro_rules! with_interrupt_token {
+    ($strand:ident, $interrupt:expr, $body:expr) => {{
+        let _guard = $strand.interrupt_token_guard($interrupt);
+        $body
+    }};
+}
+
 /// Anchor bounding a pin minted by [`with_instance!`](crate::with_instance),
-/// [`with_str!`](crate::with_str) or [`with_slice!`](crate::with_slice) to a block.
+/// [`with_str!`](crate::with_str), [`with_slice!`](crate::with_slice), or the crate's
+/// internal pinning macros to a block.
 #[doc(hidden)]
 pub struct PinScope;
 
@@ -200,6 +227,23 @@ impl Drop for InterruptMaskGuard<'_, '_> {
     #[inline]
     fn drop(&mut self) {
         self.inner.interrupt_mask.set(self.orig);
+    }
+}
+
+/// Restores a strand's interrupt token when dropped; see
+/// [`with_interrupt_token!`](crate::with_interrupt_token).
+#[doc(hidden)]
+#[must_use]
+pub struct InterruptTokenGuard<'v, 's> {
+    inner: &'s StrandInner<'v>,
+    orig: InterruptToken<'v>,
+}
+
+impl Drop for InterruptTokenGuard<'_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        std::mem::swap(&mut *self.inner.interrupt.borrow_mut(), &mut self.orig);
+        self.inner.interrupt_registered.set(false);
     }
 }
 
@@ -670,7 +714,7 @@ pub(crate) struct StrandInner<'v> {
     arena: Arena,
     pub(crate) interrupt: RefCell<InterruptToken<'v>>,
     /// The strand's own token, which `interrupt` starts as.  Unlike `interrupt`,
-    /// it is never swapped by [`Strand::with_interrupt_token`], so canceling it
+    /// it is never swapped by [`with_interrupt_token!`](crate::with_interrupt_token), so canceling it
     /// cancels the whole strand.
     base_interrupt: InterruptToken<'v>,
     interrupt_registered: Cell<bool>,
@@ -920,7 +964,7 @@ impl<'v> StrandInner<'v> {
     }
 
     /// The strand's own interrupt token, regardless of any token selected with
-    /// [`Strand::with_interrupt_token`].
+    /// [`with_interrupt_token!`](crate::with_interrupt_token).
     pub(crate) fn base_interrupt(&self) -> &InterruptToken<'v> {
         &self.base_interrupt
     }
@@ -1134,9 +1178,14 @@ unsafe fn walk_entries<'v>(mut head: Option<frame::Ptr<'v>>, full: bool) -> Vec<
 /// ## Interrupt Integration
 ///
 /// This wrapper connects a future to the strand's interrupt system:
-/// - When first polled, registers with the interrupt notifier
-/// - On subsequent polls, checks if interruption has been requested
-/// - When the future completes, unregisters from the interrupt notifier
+/// - When the future suspends, registers the waker with the strand's current
+///   interrupt token, unless a nested `Pinned` already did; registering fails,
+///   and the future returns an interrupt error, if an unmasked interrupt is pending
+/// - When polled again, or dropped, unregisters first, so a registration only
+///   lasts while the strand is suspended
+///
+/// The innermost `Pinned` around the suspension point registers, and therefore
+/// returns the error; futures it encloses are dropped with it.
 ///
 /// ## Interrupt Masking
 ///
@@ -1153,48 +1202,48 @@ impl<'v, 's, 'a, R> Future for Pinned<'v, 's, 'a, R> {
     type Output = Result<'v, 's, R>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Self::Output> {
-        match unsafe { Pin::new_unchecked(&mut self.inner) }.poll(cx) {
-            Poll::Ready(res) => {
-                // Unregister from interrupt token if we were registered
-                if let Some((interrupt, id)) = self.registration.take() {
-                    interrupt.unregister(id);
-                    self.strand.interrupt_registered.set(false);
-                }
-                Poll::Ready(res)
-            }
-            Poll::Pending => {
-                if self.strand.sync_depth.get() != 0 {
-                    return Poll::Ready(Err(Error::runtime_raw(
-                        self.strand,
-                        "attempt to suspend in sync context",
-                    )));
-                }
-                // FIXME: probably should move interrupt mask testing into one check here to
-                // avoid waking up and going to sleep uselessly
-                let interrupt = self.strand.interrupt.borrow().clone();
-                if self.registration.is_none() && !self.strand.interrupt_registered.get() {
-                    // This strand is not registered with the interrupt token, so do it now
-                    let mask = self.strand.interrupt_mask.get();
-                    if let Some(id) = interrupt.register(cx.waker(), mask) {
-                        self.registration = Some((interrupt, id));
-                        self.strand.interrupt_registered.set(true);
-                        // If the interrupt token is triggered, it will wake the waker so
-                        // we can re-check interrupt status
-                        return Poll::Pending;
-                    } else {
-                        return Poll::Ready(Err(self.strand.interrupt_error()));
-                    }
-                } else if interrupt.inner.pending(self.strand.interrupt_mask.get()) {
-                    // Interrupt token was triggered and interruption is not masked
-                    if let Some((interrupt, id)) = self.registration.take() {
-                        interrupt.unregister(id);
-                        self.strand.interrupt_registered.set(false);
-                    }
-                    return Poll::Ready(Err(self.strand.interrupt_error()));
-                }
-                Poll::Pending
-            }
+        // A registration covers a single suspension; drop it on wake, so the next one
+        // snapshots the token and mask in effect when the strand suspends again
+        self.unregister();
+        let res = unsafe { Pin::new_unchecked(&mut self.inner) }.poll(cx);
+        if res.is_ready() {
+            return res;
         }
+        if self.strand.sync_depth.get() != 0 {
+            return Poll::Ready(Err(Error::runtime_raw(
+                self.strand,
+                "attempt to suspend in sync context",
+            )));
+        }
+        if self.strand.interrupt_registered.get() {
+            // A nested `Pinned` registered this suspension
+            return Poll::Pending;
+        }
+        let interrupt = self.strand.interrupt.borrow().clone();
+        let Some(id) = interrupt.register(cx.waker(), self.strand.interrupt_mask.get()) else {
+            // Interrupted, and the cause isn't masked
+            return Poll::Ready(Err(self.strand.interrupt_error()));
+        };
+        self.registration = Some((interrupt, id));
+        self.strand.interrupt_registered.set(true);
+        Poll::Pending
+    }
+}
+
+impl<R> Pinned<'_, '_, '_, R> {
+    #[inline]
+    fn unregister(&mut self) {
+        if let Some((interrupt, id)) = self.registration.take() {
+            interrupt.unregister(id);
+            self.strand.interrupt_registered.set(false);
+        }
+    }
+}
+
+impl<R> Drop for Pinned<'_, '_, '_, R> {
+    #[inline]
+    fn drop(&mut self) {
+        self.unregister();
     }
 }
 
@@ -1214,36 +1263,6 @@ impl<'v, 's> Strand<'v, 's> {
             inner,
             fp: frame::Ptr::Native(NonNull::from_ref(frame)),
             phantom: PhantomData,
-        }
-    }
-
-    pub(crate) fn for_native_frame<R>(
-        base: &mut Strand<'v, 's>,
-        module: Cow<'v, str>,
-        receiver: Cow<'v, str>,
-        method: Option<Cow<'v, str>>,
-        f: impl FnOnce(&mut Self) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let _depth_guard = base.inner.push_call_depth()?;
-        let frame = Native {
-            module,
-            receiver,
-            method,
-            parent: Some(base.fp),
-        };
-        match f(&mut unsafe { Self::from_native_frame(base.inner, &frame) }) {
-            Ok(v) => Ok(v),
-            Err(mut e) => {
-                e.push_backtrace(
-                    base.inner,
-                    UnwindEntry::Native {
-                        module: frame.module.clone(),
-                        receiver: frame.receiver.clone(),
-                        method: frame.method.clone(),
-                    },
-                );
-                Err(e)
-            }
         }
     }
 
@@ -1411,37 +1430,6 @@ impl<'v, 's> Strand<'v, 's> {
         f(&access)
     }
 
-    /// Call a sync function with `visit` rooting native-held GC references.
-    ///
-    /// `visit` runs whenever the collector scans this strand's stack while `f`
-    /// runs.  It holds a shared borrow of the data it roots, so rooted data that
-    /// changes needs interior mutability, such as a [`Cell`] or [`RefCell`].
-    /// [`Self::enter_scan`] pushes such a frame for async code.
-    ///
-    /// # Safety
-    ///
-    /// Each call to `visit` must visit every GC reference the rooted data owns,
-    /// exactly once, and nothing else.  The collector counts visits against
-    /// reference counts, so a missed, repeated, or foreign visit can free a live
-    /// object.  The rooted data must not change while a collection runs, so
-    /// every call within one collection visits the same references.
-    #[inline]
-    pub(crate) unsafe fn with_scan_sync<R>(
-        &mut self,
-        visit: impl Fn(&mut dyn Visit) -> ControlFlow<()>,
-        f: impl FnOnce(&mut Strand<'v, 's>) -> R,
-    ) -> R {
-        let frame = frame::Scan::new(Some(self.fp), &visit);
-        let fp = frame::Ptr::Scan(NonNull::from_ref(&frame));
-        // Safety: `frame` and `visit` outlive the guard, which pops the frame
-        let _guard = unsafe { self.inner.push_sp(fp) };
-        f(&mut Strand {
-            inner: self.inner,
-            fp,
-            phantom: PhantomData,
-        })
-    }
-
     /// Push `frame`, returning a handle on this strand with `frame` as its frame pointer, and
     /// the frame's slots.
     ///
@@ -1500,9 +1488,13 @@ impl<'v, 's> Strand<'v, 's> {
     ///
     /// # Safety
     ///
-    /// The scope must be dropped, not forgotten, before `scan` is, and whatever `scan` visits
-    /// must stay live and unchanged during collections until then.  See
-    /// [`Self::with_scan_sync`] for what the visits must be.
+    /// The scope must be dropped, not forgotten, before `scan` is.  Until then, each visit
+    /// must visit every GC reference the rooted data owns, exactly once, and nothing else:
+    /// the collector counts visits against reference counts, so a missed, repeated, or
+    /// foreign visit can free a live object.  The rooted data must not change while a
+    /// collection runs, so every visit within one collection sees the same references.
+    /// Data that changes between collections needs interior mutability, such as a
+    /// [`Cell`] or [`RefCell`], since the scan holds a shared borrow of it.
     #[inline]
     pub(crate) unsafe fn enter_scan<'f>(
         &'f mut self,
@@ -1521,19 +1513,6 @@ impl<'v, 's> Strand<'v, 's> {
         }
     }
 
-    /// Call a sync function with the requested number of scratch [`Slot`]s, usually inferred
-    /// from the passed function.
-    #[inline]
-    pub fn with_slots_sync<const N: usize, R>(
-        &mut self,
-        f: impl for<'b> FnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
-    ) -> R {
-        let frame = SlotFrame::new();
-        // Safety: the scope is dropped before `frame`
-        let (mut scope, slots) = unsafe { self.enter_slot_frame(&frame) };
-        f(&mut scope, slots)
-    }
-
     /// Store a new tuple of `items` into `out`.
     ///
     /// Each item is rooted as it is taken, so taking an item may allocate.
@@ -1550,25 +1529,26 @@ impl<'v, 's> Strand<'v, 's> {
         let cells: Vec<ValueCell<'v>> = (0..items.len()).map(|_| ValueCell::default()).collect();
         let visit =
             |visitor: &mut dyn Visit| cells.iter().try_for_each(|cell| cell.accept(visitor));
-        let fill = |strand: &mut Strand<'v, 's>| {
-            for cell in &cells {
-                let mut item = items.next().expect("tuple items fewer than their length");
-                // Safety: the cell is scanned and is written only through this slot
-                let slot = unsafe { cell.slot() };
-                item.input_take(strand, slot, crate::value::private::Sealed);
-            }
-            assert!(items.next().is_none(), "tuple items more than their length");
-            // Safety: as above; finishing the embryo does not allocate
-            let taken = cells.iter().map(|cell| unsafe { cell.slot() }.take());
-            tuple::embryo(strand, cells.len()).finish(strand, taken, out)
-        };
+        let scan = frame::Scan::new(Some(self.fp), &visit);
         // Safety: `visit` visits each cell, and each cell owns at most one reference
-        unsafe { self.with_scan_sync(visit, fill) }
+        let mut scope = unsafe { self.enter_scan(&scan) };
+        let strand = &mut *scope;
+        for cell in &cells {
+            let mut item = items.next().expect("tuple items fewer than their length");
+            // Safety: the cell is scanned and is written only through this slot
+            let slot = unsafe { cell.slot() };
+            item.input_take(strand, slot, crate::value::private::Sealed);
+        }
+        assert!(items.next().is_none(), "tuple items more than their length");
+        // Safety: as above; finishing the embryo does not allocate
+        let taken = cells.iter().map(|cell| unsafe { cell.slot() }.take());
+        tuple::embryo(strand, cells.len()).finish(strand, taken, out)
     }
 
     /// Store a new range from `start` to `end` into `out`.
     pub fn range(&mut self, start: impl Input<'v>, end: impl Input<'v>, out: impl Output<'v>) {
-        self.with_slots_sync(|strand, [mut start_slot, mut end_slot]| {
+        let strand = self;
+        with_slots!(strand, |mut start_slot, mut end_slot| {
             Output::set(strand, Slot::reborrow(&mut start_slot), start);
             Output::set(strand, Slot::reborrow(&mut end_slot), end);
             let embryo = strand.builtin_types().range.embryo(strand);
@@ -1589,6 +1569,23 @@ impl<'v, 's> Strand<'v, 's> {
         }
     }
 
+    /// Select `interrupt` as the strand's token until the returned guard is dropped.
+    ///
+    /// This backs [`with_interrupt_token!`](crate::with_interrupt_token).
+    #[doc(hidden)]
+    #[inline]
+    pub fn interrupt_token_guard(
+        &self,
+        interrupt: InterruptToken<'v>,
+    ) -> InterruptTokenGuard<'v, 's> {
+        let orig = self.inner.interrupt.replace(interrupt);
+        self.inner.interrupt_registered.set(false);
+        InterruptTokenGuard {
+            inner: self.inner,
+            orig,
+        }
+    }
+
     /// Return the currently active interrupt mask.
     pub fn interrupt_mask(&self) -> InterruptMask {
         self.inner.interrupt_mask.get()
@@ -1604,44 +1601,6 @@ impl<'v, 's> Strand<'v, 's> {
         f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
         self.pin_future_call(f).await
-    }
-
-    /// Run `f` one call level deeper.
-    #[inline]
-    pub async fn recursion_guard<R>(
-        &mut self,
-        f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let _depth = self.inner.push_call_depth()?;
-        self.pin_future_call(f).await
-    }
-
-    /// Run `f` one call level deeper, synchronous variant.
-    #[inline]
-    pub fn recursion_guard_sync<R>(
-        &mut self,
-        f: impl FnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let _depth = self.inner.push_call_depth()?;
-        f(self)
-    }
-
-    /// Run `f` with `interrupt` as the strand's selected token.
-    ///
-    /// The selection is dynamically scoped: interrupt polling and futures
-    /// registered while `f` runs use this token, and the prior token is
-    /// restored when `f` finishes.
-    pub async fn with_interrupt_token<R>(
-        &mut self,
-        interrupt: InterruptToken<'v>,
-        f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let orig = self.inner.interrupt.replace(interrupt);
-        self.inner.interrupt_registered.set(false);
-        let res = self.pin_future_call(f).await;
-        self.inner.interrupt.replace(orig);
-        self.inner.interrupt_registered.set(false);
-        res
     }
 
     /// Check trap without running garbage collection.
@@ -2255,16 +2214,18 @@ mod scan_tests {
     }
 
     #[test]
-    fn with_scan_sync_visits_its_data_only_while_running() {
+    fn scan_frame_visits_its_data_only_while_entered() {
         with_vm(async |strand, [tmp]| {
             let held = make_tuple(strand, tmp);
             let target = header(&held);
             assert!(!scanned(strand).contains(&target));
             let visit = |visitor: &mut dyn Visit| held.accept(visitor);
-            // Safety: `held` owns one reference, which `visit` visits
-            unsafe {
-                strand.with_scan_sync(visit, |strand| assert!(scanned(strand).contains(&target)))
-            };
+            let scan = frame::Scan::new(Some(strand.fp), &visit);
+            {
+                // Safety: `held` owns one reference, which `visit` visits
+                let scope = unsafe { strand.enter_scan(&scan) };
+                assert!(scanned(&scope).contains(&target));
+            }
             assert!(!scanned(strand).contains(&target));
         });
     }

@@ -1,3 +1,4 @@
+use dolang::runtime::with_slots;
 use dolang::runtime::{Error, Result, Strand, Value};
 
 use crate::check::{Checked, Invalid, validate_name, validate_text};
@@ -69,7 +70,7 @@ pub(crate) fn attr_name<'v, 's>(
     if tuple.len() != 2 {
         return Ok(None);
     }
-    strand.with_slots_sync(|strand, [mut namespace, mut local]| {
+    with_slots!(strand, |mut namespace, mut local| {
         tuple.get(strand, 0, &mut namespace)?;
         tuple.get(strand, 1, &mut local)?;
         let Some(namespace) = namespace.as_str(strand).map(|v| v.to_string()) else {

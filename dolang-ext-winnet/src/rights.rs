@@ -3,7 +3,7 @@
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Args, Error, Instance, Object, Output, Result, Slot, Strand, object::TypeBuilder, unpack,
-    value::Nil,
+    value::Nil, with_slots,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_winterop::security::Sid;
@@ -42,7 +42,7 @@ fn make_rights<'v, 's>(
     rights: Vec<String>,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut item]| {
+    with_slots!(strand, |mut item| {
         strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         for right in rights {

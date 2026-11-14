@@ -23,14 +23,15 @@ use dolang::runtime::{
     unpack,
     value::{Array, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
+    with_instance, with_slots,
 };
 
 use crate::{
     attr::{Attr, Name},
     check::{Invalid, XML_NS, validate_name, validate_namespace_binding, validate_text},
     comment::{Comment, validate_comment},
-    document::create_document,
-    element::{CHILDREN, check_new_attrs, create_element},
+    document::{Document, create_document},
+    element::{CHILDREN, Element, check_new_attrs, create_element},
     global::{Global, Tag},
 };
 
@@ -136,26 +137,15 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
                 .document_type
                 .cast(&arg)
                 .ok_or_else(|| Error::type_error(strand, "expected xml.Document"))?;
-            strand.with_slots_sync(|strand, [path, mut tuple, mut error]| {
+            with_slots!(strand, |path, mut tuple, mut error| {
                 let mut xml = StrEmbryo::new();
                 let mut walk = WalkState {
                     ancestry: HashSet::new(),
                     generated: 0,
                     path,
                 };
-                let result = document.enter_sync(strand, |strand, document| {
-                    let borrow = document.borrow(strand)?;
-                    let children = Ref::slot::<{ crate::document::CHILDREN }>(&borrow)
-                        .as_array(strand)
-                        .unwrap();
-                    strand.with_slots_sync(|strand, [mut child]| {
-                        for i in 0..children.len(strand)? {
-                            children.get(strand, i, &mut child)?;
-                            walk_value(strand, &child, state, &HashMap::new(), &mut walk, &mut xml)
-                                .map_err(|fault| walk.within(strand, fault, i))?;
-                        }
-                        Ok::<(), Fault<'_, '_>>(())
-                    })
+                let result = with_instance!(strand, document, |document| {
+                    walk_document(strand, document, state, &mut walk, &mut xml)
                 });
                 match result {
                     Ok(()) => {}
@@ -168,12 +158,10 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
                             .expect("path is not shared");
                         let ty = state.encode_error_type;
                         ty.create(strand, EncodeError, &mut error);
-                        ty.cast(&error)
-                            .unwrap()
-                            .enter_sync(strand, |strand, instance| {
-                                let mut borrow = instance.borrow_mut_unwrap();
-                                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
-                            });
+                        with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
+                            let mut borrow = instance.borrow_mut_unwrap();
+                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                        });
                         return Err(Error::from_value(strand, &error));
                     }
                 }
@@ -491,103 +479,98 @@ impl<'a> Decoder<'a> {
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         self.create_element(strand, start, state, out)?;
-        strand.with_slots_sync(|strand, [mut child, mut chunk]| {
-            state
-                .element_type
-                .cast(&*out)
-                .unwrap()
-                .enter_sync(strand, |strand, node| {
-                    let borrow = node.borrow(strand)?;
-                    let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
-                    // Adjacent text, CDATA, and references coalesce into one
-                    // child.
-                    let mut text = StrEmbryo::new();
-                    loop {
-                        match self.read(strand)? {
-                            Event::Start(start) => {
-                                flush_text(strand, &children, &mut text, &mut chunk)?;
-                                self.parse_element(strand, &start, state, &mut child)?;
-                                children.push(strand, &mut child)?;
-                            }
-                            Event::Empty(start) => {
-                                flush_text(strand, &children, &mut text, &mut chunk)?;
-                                self.create_element(strand, &start, state, &mut child)?;
-                                children.push(strand, &mut child)?;
-                            }
-                            Event::Comment(content) => {
-                                flush_text(strand, &children, &mut text, &mut chunk)?;
-                                self.comment(strand, &content, state, &mut child)?;
-                                children.push(strand, &mut child)?;
-                            }
-                            Event::Text(content) => {
-                                let content = content
-                                    .xml_content(XmlVersion::Implicit1_0)
-                                    .expect("input is UTF-8");
-                                validate_text(&content, "XML text").map_err(|error| {
-                                    self.invalid(strand, DecodeKind::IllFormed, error)
-                                })?;
-                                text.extend(strand, &content);
-                            }
-                            Event::CData(content) => {
-                                let content = utf8(content.as_ref());
-                                validate_text(content, "CDATA").map_err(|error| {
-                                    self.invalid(strand, DecodeKind::IllFormed, error)
-                                })?;
-                                text.extend(strand, content);
-                            }
-                            Event::GeneralRef(reference) => {
-                                let name = reference.decode().expect("input is UTF-8");
-                                match reference.resolve_char_ref() {
-                                    Ok(Some(character)) => {
-                                        let mut buf = [0; 4];
-                                        let character = character.encode_utf8(&mut buf);
-                                        if validate_text(character, "character reference").is_err()
-                                        {
-                                            return Err(self.fail(
-                                                strand,
-                                                DecodeKind::Reference,
-                                                self.start,
-                                                format!(
-                                                    "character reference &{name}; is forbidden \
+        with_slots!(strand, |mut child, mut chunk| {
+            with_instance!(strand, state.element_type.cast(&*out).unwrap(), |node| {
+                let borrow = node.borrow(strand)?;
+                let children = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
+                // Adjacent text, CDATA, and references coalesce into one
+                // child.
+                let mut text = StrEmbryo::new();
+                loop {
+                    match self.read(strand)? {
+                        Event::Start(start) => {
+                            flush_text(strand, &children, &mut text, &mut chunk)?;
+                            self.parse_element(strand, &start, state, &mut child)?;
+                            children.push(strand, &mut child)?;
+                        }
+                        Event::Empty(start) => {
+                            flush_text(strand, &children, &mut text, &mut chunk)?;
+                            self.create_element(strand, &start, state, &mut child)?;
+                            children.push(strand, &mut child)?;
+                        }
+                        Event::Comment(content) => {
+                            flush_text(strand, &children, &mut text, &mut chunk)?;
+                            self.comment(strand, &content, state, &mut child)?;
+                            children.push(strand, &mut child)?;
+                        }
+                        Event::Text(content) => {
+                            let content = content
+                                .xml_content(XmlVersion::Implicit1_0)
+                                .expect("input is UTF-8");
+                            validate_text(&content, "XML text").map_err(|error| {
+                                self.invalid(strand, DecodeKind::IllFormed, error)
+                            })?;
+                            text.extend(strand, &content);
+                        }
+                        Event::CData(content) => {
+                            let content = utf8(content.as_ref());
+                            validate_text(content, "CDATA").map_err(|error| {
+                                self.invalid(strand, DecodeKind::IllFormed, error)
+                            })?;
+                            text.extend(strand, content);
+                        }
+                        Event::GeneralRef(reference) => {
+                            let name = reference.decode().expect("input is UTF-8");
+                            match reference.resolve_char_ref() {
+                                Ok(Some(character)) => {
+                                    let mut buf = [0; 4];
+                                    let character = character.encode_utf8(&mut buf);
+                                    if validate_text(character, "character reference").is_err() {
+                                        return Err(self.fail(
+                                            strand,
+                                            DecodeKind::Reference,
+                                            self.start,
+                                            format!(
+                                                "character reference &{name}; is forbidden \
                                                      by XML 1.0"
-                                                ),
-                                            ));
-                                        }
-                                        text.extend(strand, character);
+                                            ),
+                                        ));
                                     }
-                                    Ok(None) => match resolve_predefined_entity(&name) {
-                                        Some(resolved) => text.extend(strand, resolved),
-                                        None => {
-                                            return Err(self.fail(
-                                                strand,
-                                                DecodeKind::Reference,
-                                                self.start,
-                                                unknown_entity(&name),
-                                            ));
-                                        }
-                                    },
-                                    Err(error) => {
-                                        return Err(self.quick(strand, &error, self.start));
+                                    text.extend(strand, character);
+                                }
+                                Ok(None) => match resolve_predefined_entity(&name) {
+                                    Some(resolved) => text.extend(strand, resolved),
+                                    None => {
+                                        return Err(self.fail(
+                                            strand,
+                                            DecodeKind::Reference,
+                                            self.start,
+                                            unknown_entity(&name),
+                                        ));
                                     }
+                                },
+                                Err(error) => {
+                                    return Err(self.quick(strand, &error, self.start));
                                 }
                             }
-                            Event::End(_) => {
-                                flush_text(strand, &children, &mut text, &mut chunk)?;
-                                break;
-                            }
-                            Event::Eof => {
-                                return Err(self.fail(
-                                    strand,
-                                    DecodeKind::Eof,
-                                    self.src.len(),
-                                    "unexpected end of XML document",
-                                ));
-                            }
-                            _ => {}
                         }
+                        Event::End(_) => {
+                            flush_text(strand, &children, &mut text, &mut chunk)?;
+                            break;
+                        }
+                        Event::Eof => {
+                            return Err(self.fail(
+                                strand,
+                                DecodeKind::Eof,
+                                self.src.len(),
+                                "unexpected end of XML document",
+                            ));
+                        }
+                        _ => {}
                     }
-                    Ok(())
-                })
+                }
+                Ok(())
+            })
         })
     }
 }
@@ -605,7 +588,7 @@ fn decode<'v, 's>(
         reader,
         start: 0,
     };
-    strand.with_slots_sync(|strand, [mut children, mut child]| {
+    with_slots!(strand, |mut children, mut child| {
         strand.new_array(&mut children);
         let array = children.as_array(strand).unwrap();
         let mut rooted = false;
@@ -762,6 +745,28 @@ fn write_attribute_value<'v>(strand: &mut Strand<'v, '_>, xml: &mut StrEmbryo<'v
     xml.extend(strand, "\"");
 }
 
+/// Writes a document's children.
+fn walk_document<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    document: Instance<'v, '_, Document>,
+    state: State<'v, Global<'v>>,
+    walk: &mut WalkState<'v, '_>,
+    xml: &mut StrEmbryo<'v>,
+) -> EncodeResult<'v, 's, ()> {
+    let borrow = document.borrow(strand)?;
+    let children = Ref::slot::<{ crate::document::CHILDREN }>(&borrow)
+        .as_array(strand)
+        .unwrap();
+    with_slots!(strand, |mut child| {
+        for i in 0..children.len(strand)? {
+            children.get(strand, i, &mut child)?;
+            walk_value(strand, &child, state, &HashMap::new(), walk, xml)
+                .map_err(|fault| walk.within(strand, fault, i))?;
+        }
+        Ok(())
+    })
+}
+
 /// Writes a tree, which mutation checks keep valid apart from cycles.
 fn walk_value<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -772,7 +777,7 @@ fn walk_value<'v, 's>(
     xml: &mut StrEmbryo<'v>,
 ) -> EncodeResult<'v, 's, ()> {
     if let Some(comment) = state.comment_type.cast(value) {
-        return Ok(comment.enter_sync(strand, |strand, comment| {
+        return Ok(with_instance!(strand, comment, |comment| {
             xml.extend(strand, "<!--");
             let borrow = comment.borrow(strand)?;
             xml.extend(strand, &borrow.text);
@@ -796,66 +801,78 @@ fn walk_value<'v, 's>(
         return Err(Fault::Cycle);
     }
 
-    let result = cast.enter_sync(strand, |strand, node| -> EncodeResult<'v, 's, ()> {
-        let node = node.borrow(strand)?;
-        let mut current = Cow::Borrowed(parent_namespaces);
-        let mut declarations = Vec::new();
-        for (prefix, namespace) in &node.namespaces {
-            // Undeclaring a default namespace that is not in scope is a no-op.
-            let unchanged = match current.get(prefix) {
-                Some(bound) => bound == namespace,
-                None => prefix.is_empty() && namespace.is_empty(),
-            };
-            if prefix != "xml" && !unchanged {
-                declare(
-                    &mut declarations,
-                    &mut current,
-                    prefix.clone(),
-                    namespace.clone(),
-                );
-            }
-        }
-        let element_qname = choose_qname(&node.name, false, &mut current, &mut declarations, walk);
-        let attr_qnames = node
-            .attrs
-            .iter()
-            .map(|attr| choose_qname(&attr.name, true, &mut current, &mut declarations, walk))
-            .collect::<Vec<_>>();
-
-        xml.extend(strand, "<");
-        xml.extend(strand, &element_qname);
-        for (prefix, namespace) in &declarations {
-            xml.extend(strand, " xmlns");
-            if !prefix.is_empty() {
-                xml.extend(strand, ":");
-                xml.extend(strand, prefix);
-            }
-            write_attribute_value(strand, xml, namespace);
-        }
-        for (qname, attr) in attr_qnames.iter().zip(&node.attrs) {
-            xml.extend(strand, " ");
-            xml.extend(strand, qname);
-            write_attribute_value(strand, xml, &attr.value);
-        }
-        xml.extend(strand, ">");
-
-        let children = Ref::slot::<CHILDREN>(&node).as_array(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut child]| {
-            for index in 0..children.len(strand)? {
-                children.get(strand, index, &mut child)?;
-                walk_value(strand, &child, state, &current, walk, xml)
-                    .map_err(|fault| walk.within(strand, fault, index))?;
-            }
-            Ok::<(), Fault<'v, 's>>(())
-        })?;
-
-        xml.extend(strand, "</");
-        xml.extend(strand, &element_qname);
-        xml.extend(strand, ">");
-        Ok(())
+    let result = with_instance!(strand, cast, |node| {
+        walk_element(strand, node, state, parent_namespaces, walk, xml)
     });
     walk.ancestry.remove(&id);
     result
+}
+
+/// Writes an element and its children, between `walk_value`'s cycle bookkeeping.
+fn walk_element<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    node: Instance<'v, '_, Element>,
+    state: State<'v, Global<'v>>,
+    parent_namespaces: &HashMap<String, String>,
+    walk: &mut WalkState<'v, '_>,
+    xml: &mut StrEmbryo<'v>,
+) -> EncodeResult<'v, 's, ()> {
+    let node = node.borrow(strand)?;
+    let mut current = Cow::Borrowed(parent_namespaces);
+    let mut declarations = Vec::new();
+    for (prefix, namespace) in &node.namespaces {
+        // Undeclaring a default namespace that is not in scope is a no-op.
+        let unchanged = match current.get(prefix) {
+            Some(bound) => bound == namespace,
+            None => prefix.is_empty() && namespace.is_empty(),
+        };
+        if prefix != "xml" && !unchanged {
+            declare(
+                &mut declarations,
+                &mut current,
+                prefix.clone(),
+                namespace.clone(),
+            );
+        }
+    }
+    let element_qname = choose_qname(&node.name, false, &mut current, &mut declarations, walk);
+    let attr_qnames = node
+        .attrs
+        .iter()
+        .map(|attr| choose_qname(&attr.name, true, &mut current, &mut declarations, walk))
+        .collect::<Vec<_>>();
+
+    xml.extend(strand, "<");
+    xml.extend(strand, &element_qname);
+    for (prefix, namespace) in &declarations {
+        xml.extend(strand, " xmlns");
+        if !prefix.is_empty() {
+            xml.extend(strand, ":");
+            xml.extend(strand, prefix);
+        }
+        write_attribute_value(strand, xml, namespace);
+    }
+    for (qname, attr) in attr_qnames.iter().zip(&node.attrs) {
+        xml.extend(strand, " ");
+        xml.extend(strand, qname);
+        write_attribute_value(strand, xml, &attr.value);
+    }
+    xml.extend(strand, ">");
+
+    let children = Ref::slot::<CHILDREN>(&node).as_array(strand).unwrap();
+    with_slots!(strand, |mut child| {
+        for index in 0..children.len(strand)? {
+            children.get(strand, index, &mut child)?;
+            walk_value(strand, &child, state, &current, walk, xml)
+                .map_err(|fault| walk.within(strand, fault, index))?;
+        }
+        Ok::<(), Fault<'v, 's>>(())
+    })?;
+
+    xml.extend(strand, "</");
+    xml.extend(strand, &element_qname);
+    xml.extend(strand, ">");
+    Ok(())
 }
 
 impl<'v> Object<'v> for DecodeError {

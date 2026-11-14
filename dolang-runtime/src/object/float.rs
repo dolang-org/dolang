@@ -19,6 +19,7 @@ use crate::{
         prim::Prim,
     },
     vm::Vm,
+    with_str,
 };
 
 unsafe impl crate::gc::ImmState for f64 {
@@ -492,7 +493,7 @@ pub(crate) fn coerce<'v, 's>(
     strand: &mut Strand<'v, 's>,
 ) -> Result<'v, 's, f64> {
     if let Some(str) = value.as_str(strand) {
-        str.with_str(strand, |strand, str| {
+        with_str!(strand, str, |str| {
             str.parse::<f64>()
                 .map_err(|_| Error::data(strand, format!("float: not a valid float: {:?}", str)))
         })

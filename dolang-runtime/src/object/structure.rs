@@ -10,7 +10,7 @@ use crate::{
     arg::Args,
     call,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     sig,
     strand::Strand,
@@ -165,7 +165,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             Ok(Value::from_bool(pack::eq_items(
                 strand,
@@ -184,7 +184,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             Ok(Value::from_bool(pack::lt_items(
                 strand,
@@ -422,7 +422,7 @@ impl<'v> Protocol<'v> for Class {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
                 let found = {
-                    expect_struct(strand, &target)?.pin_sync(strand, |strand, target| {
+                    with_pin!(strand, expect_struct(strand, &target)?, |target| {
                         let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         Ok(pack::find(strand, &borrow.items, &key).map(Value::dup))
                     })?
@@ -443,7 +443,7 @@ impl<'v> Protocol<'v> for Class {
             sym::CONTAINS => {
                 let ([target, key], []) = unpack!(strand, args, 2, 0)?;
                 let found = {
-                    expect_struct(strand, &target)?.pin_sync(strand, |strand, target| {
+                    with_pin!(strand, expect_struct(strand, &target)?, |target| {
                         let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
                         Ok(pack::find_index(strand, &borrow.items, &key).is_some())
                     })?

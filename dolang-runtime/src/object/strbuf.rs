@@ -8,13 +8,14 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, StrEmbryo, TypeObject, Value},
     vm::Vm,
+    with_str,
 };
 
 use super::{
@@ -227,7 +228,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             Ok(Value::from_bool(
                 this_borrow.as_str() == other_borrow.as_str(),
@@ -244,7 +245,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             Ok(Value::from_bool(
                 this_borrow.as_str() < other_borrow.as_str(),
@@ -389,8 +390,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 let prefix = prefix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
-                let input =
-                    prefix.with_str(strand, |_, prefix| borrow.as_str().starts_with(prefix));
+                let input = with_str!(strand, prefix, |prefix| borrow.as_str().starts_with(prefix));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -400,7 +400,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 let suffix = suffix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
-                let input = suffix.with_str(strand, |_, suffix| borrow.as_str().ends_with(suffix));
+                let input = with_str!(strand, suffix, |suffix| borrow.as_str().ends_with(suffix));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -410,7 +410,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 let needle = needle
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
-                let input = needle.with_str(strand, |_, needle| borrow.as_str().contains(needle));
+                let input = with_str!(strand, needle, |needle| borrow.as_str().contains(needle));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -710,7 +710,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
-        borrow.buf.pin_sync(strand, |strand, buf| {
+        with_pin!(strand, borrow.buf, |buf| {
             let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
             let len = buf.len();
             if len == 0 {

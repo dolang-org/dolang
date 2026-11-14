@@ -16,6 +16,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, StrEmbryo, TypeObject, View, fmt::Format},
     vm::Register,
+    with_instance, with_slots,
 };
 
 use crate::global::{Global, Tag};
@@ -234,7 +235,7 @@ impl<'v> Encoder<'_, 'v, '_> {
         seq: &Value<'v>,
         mut f: impl FnMut(&mut Self, &mut Strand<'v, 's>, &Value<'v>) -> EncodeResult<'v, 's, ()>,
     ) -> EncodeResult<'v, 's, ()> {
-        strand.with_slots_sync(|strand, [mut elem]| {
+        with_slots!(strand, |mut elem| {
             match seq.view(strand.vm()) {
                 View::Array(handle) => {
                     let len = handle.len(strand)?;
@@ -272,7 +273,7 @@ impl<'v> Encoder<'_, 'v, '_> {
             &Value<'v>,
         ) -> EncodeResult<'v, 's, ()>,
     ) -> EncodeResult<'v, 's, ()> {
-        strand.with_slots_sync(|strand, [mut key, mut val]| {
+        with_slots!(strand, |mut key, mut val| {
             match table.view(strand.vm()) {
                 View::Dict(handle) => {
                     let mut pairs = handle.pairs();
@@ -688,7 +689,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         let Seed(strand, mut out, kind) = self;
         strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut elem]| {
+        with_slots!(strand, |mut elem| {
             while let Some(()) =
                 seq.next_element_seed(Seed(strand, Slot::reborrow(&mut elem), &mut *kind))?
             {
@@ -705,7 +706,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         let Seed(strand, mut out, kind) = self;
         strand.new_dict(&mut out);
         let dict = out.as_dict(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut key, mut value, mut saved_key]| {
+        with_slots!(strand, |mut key, mut value, mut saved_key| {
             let mut key_text = None;
             let mut have_key = map
                 .next_key_seed(MapKeySeed {
@@ -858,7 +859,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("EncodeError", global.types.encode_error)
         .function("encode", async move |strand, args, out| {
             let ([arg], []) = unpack!(strand, args, 1, 0)?;
-            strand.with_slots_sync(|strand, [path, mut tuple, mut error]| {
+            with_slots!(strand, |path, mut tuple, mut error| {
                 let mut buf = StrEmbryo::new();
                 let mut encoder = Encoder {
                     out: &mut buf,
@@ -886,12 +887,10 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                         }
                         let ty = strand.state::<Tag>().types.encode_error;
                         ty.create_with_annex(strand, EncodeError, annex, &mut error);
-                        ty.cast(&error)
-                            .unwrap()
-                            .enter_sync(strand, |strand, instance| {
-                                let mut borrow = instance.borrow_mut_unwrap();
-                                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
-                            });
+                        with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
+                            let mut borrow = instance.borrow_mut_unwrap();
+                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                        });
                         return Err(Error::from_value(strand, &error));
                     }
                 }

@@ -19,7 +19,7 @@ use crate::{
     arg::{Arg, Args},
     call,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     sig,
     strand::Strand,
@@ -436,7 +436,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
                 return Ok(Value::FALSE);
@@ -708,7 +708,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        strand.with_slots_sync(|strand, [mut slot]| {
+        with_slots!(strand, |mut slot| {
             for (key, value) in borrow.items() {
                 Output::set(strand, &mut slot, value);
                 if let Some(key) = key {
@@ -833,7 +833,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let iter = this.borrow(strand)?;
-        iter.record.pin_sync(strand, |strand, record| {
+        with_pin!(strand, iter.record, |record| {
             let record = record.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if record.epoch != iter.epoch {
                 return Err(Error::concurrency_msg(

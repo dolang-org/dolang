@@ -13,6 +13,7 @@ mod detail {
             },
             unpack,
             vm::Builder,
+            with_slots,
         },
     };
     use futures::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, Cursor};
@@ -568,7 +569,7 @@ mod detail {
             strand: &mut Strand<'v, 's>,
             sink: &mut DictViewSink<'v, '_>,
         ) -> runtime::Result<'v, 's, ()> {
-            strand.with_slots_sync(|strand, [mut key]| {
+            with_slots!(strand, |mut key| {
                 strand.intern_sym("name", &mut key);
                 sink.push(strand, &key, 1_i64)
             });

@@ -23,6 +23,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, PinBin, PinStr, TypeObject},
     vm::Register,
+    with_instance,
 };
 
 use crate::global::Global;
@@ -155,15 +156,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 },
                 &mut out,
             );
-            global
-                .types
-                .patch_iter
-                .cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, inst| {
+            with_instance!(
+                strand,
+                global.types.patch_iter.cast(&out).unwrap(),
+                |inst| {
                     let mut borrow = inst.borrow_mut_unwrap();
                     Output::set(strand, Mut::slot_mut::<0>(&mut borrow), input);
-                });
+                }
+            );
             Ok(())
         })
         .function("diff", async move |strand, args, mut out| {
@@ -214,16 +214,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 },
                 &mut out,
             );
-            global
-                .types
-                .patch
-                .cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, inst| {
-                    let mut borrow = inst.borrow_mut_unwrap();
-                    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), before);
-                    Output::set(strand, Mut::slot_mut::<1>(&mut borrow), after);
-                });
+            with_instance!(strand, global.types.patch.cast(&out).unwrap(), |inst| {
+                let mut borrow = inst.borrow_mut_unwrap();
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), before);
+                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), after);
+            });
             Ok(())
         })
         .function_with_slots(
@@ -232,7 +227,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 let ([value], []) = unpack!(strand, args, 1, 0)?;
 
                 let bytes = if let Some(patch) = global.types.patch.cast(&value) {
-                    patch.enter_sync(strand, |strand, patch| {
+                    with_instance!(strand, patch, |patch| {
                         let borrow = patch.borrow(strand)?;
                         encode_payload(strand, &borrow.payload)
                     })?
@@ -243,7 +238,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                         let patch = global.types.patch.cast(&item).ok_or_else(|| {
                             Error::type_error(strand, "expected iterable of `Patch`")
                         })?;
-                        let chunk = patch.enter_sync(strand, |strand, patch| {
+                        let chunk = with_instance!(strand, patch, |patch| {
                             let borrow = patch.borrow(strand)?;
                             encode_payload(strand, &borrow.payload)
                         })?;
@@ -464,20 +459,15 @@ impl<'v> Object<'v> for PatchIter<'v> {
             },
             &mut out,
         );
-        global
-            .types
-            .patch
-            .cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, inst| {
-                let mut patch = inst.borrow_mut_unwrap();
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut patch),
-                    Mut::slot::<0>(&borrow),
-                );
-                Output::set(strand, Mut::slot_mut::<1>(&mut patch), Nil);
-            });
+        with_instance!(strand, global.types.patch.cast(&out).unwrap(), |inst| {
+            let mut patch = inst.borrow_mut_unwrap();
+            Output::set(
+                strand,
+                Mut::slot_mut::<0>(&mut patch),
+                Mut::slot::<0>(&borrow),
+            );
+            Output::set(strand, Mut::slot_mut::<1>(&mut patch), Nil);
+        });
         Ok(true)
     }
 }

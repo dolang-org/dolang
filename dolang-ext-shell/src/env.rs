@@ -5,6 +5,7 @@ use dolang::runtime::{
     object::{DictLike, DictView, DictViewSink, Spread, SpreadContext, TypeBuilder, Unpack},
     unpack,
     value::{TypeObject, View},
+    with_slots,
 };
 
 use crate::{global::ShellGlobal, local};
@@ -234,7 +235,7 @@ impl<'v> Object<'v> for Env<'v> {
                 return Err(Error::type_error(strand, "expected `Dict`"));
             };
             let mut pairs = dict.pairs();
-            strand.with_slots_sync(|strand, [mut key, mut value]| {
+            with_slots!(strand, |mut key, mut value| {
                 while pairs.next(strand, &mut key, &mut value)? {
                     let key = match key.view(strand) {
                         View::Str(key) => key.to_string(),

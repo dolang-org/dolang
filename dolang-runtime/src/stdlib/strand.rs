@@ -13,6 +13,7 @@ use crate::{
     arg::Arg,
     call,
     error::{Error, ErrorKind, Result},
+    frame,
     gc::arena::Visit,
     method,
     object::{
@@ -30,7 +31,7 @@ use crate::{
     unpack,
     value::{Output, Singleton, Slot, Value},
     vm::{AllocExt, Builder, State, StateTag},
-    with_interrupt_mask, with_slots,
+    with_instance, with_interrupt_mask, with_slots,
 };
 
 /// Creates a channel pair using the VM's registered factory if set,
@@ -314,7 +315,7 @@ impl<'v> Object<'v> for Key {
         let ([], [initial]) = unpack!(strand, args, 0, 1)?;
         this.create(strand, Key, &mut out);
         if let Some(initial) = initial {
-            this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+            with_instance!(strand, this.cast(&out).unwrap(), |inst| {
                 let mut borrow = inst.borrow_mut_unwrap();
                 Output::set(strand, Mut::slot_mut::<0>(&mut borrow), initial);
             });
@@ -384,7 +385,7 @@ fn clone_local_root<'v, 's>(
     state: State<'v, StrandState<'v>>,
     strand: &mut Strand<'v, 's>,
 ) -> Slot<'v, 's> {
-    strand.with_slots_sync(|strand, [mut copied, mut key, mut value]| {
+    with_slots!(strand, |mut copied, mut key, mut value| {
         let mut root = state.local_root.slot(strand);
         if root.is_nil() {
             strand.new_dict(&mut root);
@@ -647,25 +648,24 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     }
                     ControlFlow::Continue(())
                 };
+                let scan = frame::Scan::new(Some(strand.fp), &visit);
                 // Safety: `visit` visits each staged entry's program reference;
                 // an entry leaves its cell only after its object is allocated
-                unsafe {
-                    strand.with_scan_sync(visit, |strand| {
-                        with_slots_dynamic!(strand, raw.len(), |mut infos| {
-                            for (i, raw) in raw.iter().enumerate() {
-                                let embryo = ty.embryo(strand);
-                                embryo.finish_imm(
-                                    strand,
-                                    StrandInfo::new(raw.take().expect("taken once")),
-                                    infos.at(i),
-                                );
-                            }
-                            let len = infos.len();
-                            let embryo = tuple::embryo(strand, len);
-                            embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
-                        })
-                    })
-                }
+                let mut scope = unsafe { strand.enter_scan(&scan) };
+                let strand = &mut *scope;
+                with_slots_dynamic!(strand, raw.len(), |mut infos| {
+                    for (i, raw) in raw.iter().enumerate() {
+                        let embryo = ty.embryo(strand);
+                        embryo.finish_imm(
+                            strand,
+                            StrandInfo::new(raw.take().expect("taken once")),
+                            infos.at(i),
+                        );
+                    }
+                    let len = infos.len();
+                    let embryo = tuple::embryo(strand, len);
+                    embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
+                });
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
@@ -766,7 +766,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             output.store(tmp.take());
                         }
                         for _ in 0..count.saturating_sub(1) {
-                            let pair = strand.with_slots_sync(|strand, [mut send, mut recv]| {
+                            let pair = with_slots!(strand, |mut send, mut recv| {
                                 pipe_pair(strand, &mut send, &mut recv);
                                 (send.take(), recv.take())
                             });
@@ -964,19 +964,19 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
                 // Channel A: handle writes → strand reads
                 // Channel B: strand writes → handle reads
-                let (input_sender, input_receiver, output_sender, output_receiver) = strand
-                    .with_slots_sync(
-                        |strand, [mut in_send, mut in_recv, mut out_send, mut out_recv]| {
-                            pipe_pair(strand, &mut in_send, &mut in_recv);
-                            pipe_pair(strand, &mut out_send, &mut out_recv);
-                            (
-                                in_send.take(),
-                                in_recv.take(),
-                                out_send.take(),
-                                out_recv.take(),
-                            )
-                        },
-                    );
+                let (input_sender, input_receiver, output_sender, output_receiver) = with_slots!(
+                    strand,
+                    |mut in_send, mut in_recv, mut out_send, mut out_recv| {
+                        pipe_pair(strand, &mut in_send, &mut in_recv);
+                        pipe_pair(strand, &mut out_send, &mut out_recv);
+                        (
+                            in_send.take(),
+                            in_recv.take(),
+                            out_send.take(),
+                            out_recv.take(),
+                        )
+                    }
+                );
 
                 let handle = strand.spawn_background_raw(
                     callable.take(),

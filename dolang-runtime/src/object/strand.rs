@@ -15,7 +15,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, ErrorPair, Result, UnwindEntry},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     method,
     strand::{CellState, InterruptToken, RawInfo, Strand, StrandCell, StrandInner},
     sym::{self, Sym},
@@ -119,7 +119,7 @@ async fn join_handle<'v, 's>(
 ) -> Result<'v, 's, ()> {
     // Borrow only while polling so the handle remains collectable across suspension.
     future::poll_fn(|cx| {
-        handle.pin_sync(strand, |strand, handle| {
+        with_pin!(strand, handle, |handle| {
             let mut borrow = handle
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?;
@@ -131,7 +131,7 @@ async fn join_handle<'v, 's>(
         })
     })
     .await?;
-    handle.pin_sync(strand, |strand, handle| {
+    with_pin!(strand, handle, |handle| {
         let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
         match borrow.result.as_ref().unwrap() {
             Completion::Ok(v) => {
@@ -148,7 +148,7 @@ async fn wait_handle<'v, 's>(
     strand: &mut Strand<'v, 's>,
 ) -> Result<'v, 's, ()> {
     future::poll_fn(|cx| {
-        handle.pin_sync(strand, |strand, handle| {
+        with_pin!(strand, handle, |handle| {
             let mut borrow = handle
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?;
@@ -552,7 +552,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
             sym::CANCEL => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let handle = this.get().handle.clone();
-                handle.pin_sync(strand, |strand, handle| {
+                with_pin!(strand, handle, |handle| {
                     let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     borrow.interrupt.cancel();
                     Ok(())

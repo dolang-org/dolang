@@ -23,8 +23,9 @@ use crate::{
     sym,
     sym::Sym,
     unpack,
-    value::{Output, Slot, Slots, TypeObject, Value},
+    value::{Output, Slot, Slots, TypeObject, Value, with_u8_slice},
     vm::{Alloc, AllocExt, Vm},
+    with_slots,
 };
 
 /// Implements a lazy array-like projection over a native object.
@@ -318,9 +319,7 @@ impl<'v> ArrayViewGlue<'v> for Bytes {
         index: usize,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let byte = owner
-            .with_u8_slice(strand, |_, bytes| bytes[index])
-            .unwrap();
+        let byte = with_u8_slice!(strand, owner, |bytes| bytes[index]).unwrap();
         Output::set(strand, out, byte);
         Ok(())
     }
@@ -951,7 +950,7 @@ fn index_from<'v, 's>(
         };
         strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
-        return strand.with_slots_sync(|strand, [mut value]| {
+        return with_slots!(strand, |mut value| {
             for index in indices {
                 glue.get(owner, strand, index, Slot::reborrow(&mut value))?;
                 array.push(strand, &value)?;
@@ -972,7 +971,7 @@ fn spread_from<'v, 's>(
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
     let len = glue.len(owner, strand);
-    strand.with_slots_sync(|strand, [mut value]| {
+    with_slots!(strand, |mut value| {
         for index in start..len {
             glue.get(owner, strand, index, Slot::reborrow(&mut value))?;
             sink.positional(strand, Slot::reborrow(&mut value))?;

@@ -339,7 +339,10 @@ pub(crate) fn configure_module<'v, 'a>(
             let ([value], []) = unpack!(strand, args, 1, 0)?;
             let vfs = dolang_ext_shell::vfs(strand);
             let connection = if let Some(info) = global.types.connection_info.cast(&value) {
-                Ok(info.enter_sync(strand, |_, v| connection::from_info(&vfs, &v.annex().info)))
+                Ok(with_instance!(strand, info, |v| connection::from_info(
+                    &vfs,
+                    &v.annex().info
+                )))
             } else if let Some(name) = value.as_str(strand) {
                 let name = name.to_string();
                 connection::by_name(&vfs, &name).await

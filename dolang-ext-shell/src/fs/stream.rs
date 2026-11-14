@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
-    value::TypeObject,
+    value::TypeObject, with_instance,
 };
 use dolang_vfs::file::StreamEntry as VfsStreamEntry;
 use dolang_vfs::metadata::Resolve;
@@ -74,7 +74,7 @@ pub(crate) fn path_with_stream<'v, 's>(
         .stream_entry
         .cast(stream)
         .ok_or_else(|| Error::unsupported(strand, "joining a path with a non-stream value"))?;
-    Ok(stream.enter_sync(strand, |_strand, stream| {
+    Ok(with_instance!(strand, stream, |stream| {
         stream_path(path, &stream.annex().inner)
     }))
 }
