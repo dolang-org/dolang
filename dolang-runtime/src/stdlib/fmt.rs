@@ -610,11 +610,7 @@ impl<'v> Object<'v> for Fmt {
                 with_slots!(strand, |mut bindings, mut consumed, mut filled| {
                     // Positional arguments bind the parameters named by
                     // their index
-                    let dict = Dict::from_indexed_args(strand, args)?;
-                    strand
-                        .builtin_types()
-                        .dict
-                        .create(strand, dict, &mut bindings);
+                    Dict::from_indexed_args(strand, args, &mut bindings)?;
                     strand.new_set(&mut consumed);
                     substitute(strand, global, this, &bindings, &consumed, &mut filled)?;
                     reject_unused(strand, &bindings, &consumed)?;

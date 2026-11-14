@@ -22,6 +22,7 @@ use crate::{
     sig,
     strand::Strand,
     value::{Output, Slot, Value, ValueCell},
+    vm::Alloc,
 };
 
 pub trait Frame {
@@ -373,14 +374,20 @@ pub(crate) type UpvarsAnnex<'v> = gc::Tail<UpvarsPrefix<'v>, [ValueCell<'v>]>;
 type UpvarsCell<'v> = gc::GcCell<'v, gc::Boxed<gc::arena::Header, Upvars<'v>>>;
 
 impl<'v> Gc<'v, Upvars<'v>> {
-    /// Variable `index`, duplicated.
+    /// Copy variable `index` into `out`.
     ///
     /// # Safety
     ///
     /// `index` must be in bounds.
-    pub(crate) unsafe fn var(&self, index: usize) -> Value<'v> {
-        // SAFETY: a transient pin; duplicating cannot collect
-        unsafe { self.pin_unchecked().annex().tail.get_unchecked(index).get() }
+    pub(crate) unsafe fn var(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        index: usize,
+        out: impl Output<'v>,
+    ) {
+        // SAFETY: a transient pin; duplicating a cell cannot collect
+        let cell = unsafe { self.pin_unchecked().annex().tail.get_unchecked(index) };
+        Output::set(alloc, out, cell)
     }
 
     /// Store `value` into variable `index`.  The old value is dropped after the write.
@@ -482,11 +489,15 @@ impl<'v> CallFrame<'v> {
     ///
     /// - The chain must be at least `depth + 1` frames long
     /// - `index` must be valid in the target upvar frame
-    pub(crate) unsafe fn get_upvar(&self, index: usize, depth: usize, mut out: Slot<'v, '_>) {
-        unsafe {
-            let value = self.upvars_at(depth).tail.get_unchecked(index).get();
-            out.store(value)
-        }
+    pub(crate) unsafe fn get_upvar(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        index: usize,
+        depth: usize,
+        out: Slot<'v, '_>,
+    ) {
+        let cell = unsafe { self.upvars_at(depth).tail.get_unchecked(index) };
+        Output::set(alloc, out, cell)
     }
 
     /// Move the value in `src` into the upvar at `index` in the frame `depth` levels up.

@@ -112,13 +112,13 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let re = this.get();
         match re.map.binary_search_by_key(&field, |(s, _)| *s) {
             Ok(index) => {
                 unsafe {
-                    out.store(re.upvars.var(re.map.get_unchecked(index).1));
+                    re.upvars.var(strand, re.map.get_unchecked(index).1, out);
                 }
                 Ok(())
             }
@@ -224,17 +224,12 @@ impl<'v> Protocol<'v> for Iter<'v> {
         let Some((sym, var)) = entry else {
             return Ok(false);
         };
-        let embryo = tuple::embryo(strand, 2);
-        with_pin!(strand, this_borrow.module, |module| {
-            // SAFETY: the references move straight into the allocated tuple, and nothing
-            // borrows across a write to an upvar.
-            let items = unsafe {
-                [
-                    Value::from_object(strand.sym_obj(sym)),
-                    module.get().upvars.var(var),
-                ]
-            };
-            embryo.finish(strand, items, out);
+        with_slots!(strand, |mut value| {
+            with_pin!(strand, this_borrow.module, |module| {
+                // SAFETY: the map's indices are in bounds
+                unsafe { module.get().upvars.var(strand, var, &mut value) }
+            });
+            tuple::create_pair(strand, sym, &value, out);
         });
         this_borrow.index += 1;
         Ok(true)
@@ -532,7 +527,9 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                 // A name that isn't an export may be a submodule inserted beneath
                 if let Ok(index) = module.map.binary_search_by_key(&field, |(s, _)| *s) {
                     unsafe {
-                        out.store(module.upvars.var(module.map.get_unchecked(index).1));
+                        module
+                            .upvars
+                            .var(strand, module.map.get_unchecked(index).1, out);
                     }
                     return Ok(());
                 }

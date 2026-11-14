@@ -424,6 +424,25 @@ impl<'v, 'a> Args<'v, 'a> {
         Ok((unsafe { required.assume_init() }, optional, rest))
     }
 
+    /// The arguments as positional ones, failing on the first key argument.
+    ///
+    /// Checks for traps periodically along the way. Nothing is consumed before the check
+    /// passes, so a builder can allocate its object first and then take each slot.
+    pub(crate) fn positional<'s>(
+        mut self,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, PosArgs<'v, 'a>> {
+        for (index, arg) in self.reborrow().enumerate() {
+            if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                strand.check_trap_gc()?;
+            }
+            if let Arg::Key(key, _) = arg {
+                return Err(Error::unexpected_key(strand, key));
+            }
+        }
+        Ok(self.into_pos())
+    }
+
     #[doc(hidden)]
     pub fn into_pos(self) -> PosArgs<'v, 'a> {
         PosArgs(self)

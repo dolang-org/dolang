@@ -33,7 +33,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
-    vm::{Builder, StateTag, Vm},
+    vm::{Alloc, Builder, StateTag, Vm},
     with_instance, with_slots, with_str,
 };
 
@@ -1376,7 +1376,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 ));
                             }
                         };
-                        Output::set(strand, out, recv.field(slot_idx));
+                        recv.field(strand, slot_idx, out);
                         Ok(())
                     }
                     Some(ClassEntry::Property(Property {
@@ -1910,10 +1910,9 @@ impl<'v> ClassInstanceAnnex<'v> {
         Ok(())
     }
 
-    /// Field `idx`, duplicated.
-    pub(crate) fn field(&self, idx: usize) -> Value<'v> {
-        // Safety: field cells are only read by duplicating them, never borrowed
-        unsafe { self.tail[idx].get() }
+    /// Field `idx`'s cell, to read as an [`Input`].
+    pub(crate) fn field(&self, idx: usize) -> &ValueCell<'v> {
+        &self.tail[idx]
     }
 
     /// Stores `value` into field `idx`. The old value is dropped after the write.
@@ -1993,10 +1992,11 @@ impl<'v> GcObj<'v, ClassInstance<'v>> {
         native_value(&native_slots(self)[idx])
     }
 
-    /// Field `idx`, duplicated.
-    pub(crate) fn field(&self, idx: usize) -> Value<'v> {
-        // SAFETY: a transient pin; duplicating cannot collect
-        unsafe { self.pin_unchecked() }.annex().field(idx)
+    /// Copy field `idx` into `out`.
+    pub(crate) fn field(&self, alloc: &mut impl Alloc<'v>, idx: usize, out: impl Output<'v>) {
+        // SAFETY: a transient pin; duplicating a cell cannot collect
+        let cell = unsafe { self.pin_unchecked() }.annex().field(idx);
+        Output::set(alloc, out, cell)
     }
 
     /// Stores `value` into field `idx`; see [`ClassInstanceAnnex::set_field`].
@@ -2454,12 +2454,12 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry(field) {
             Some(ClassEntry::Field(slot_idx)) => {
-                out.store(annex.field(*slot_idx));
+                Output::set(strand, out, annex.field(*slot_idx));
                 Ok(())
             }
             Some(ClassEntry::Property(Property {
@@ -2564,8 +2564,10 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 return v.op_call(strand, args, out).await;
             }
             Some(ClassEntry::Field(slot_idx)) => {
-                let func = this.annex().field(*slot_idx);
-                return func.op_call(strand, args, out).await;
+                return with_slots!(strand, |mut callable| {
+                    Output::set(strand, &mut callable, this.annex().field(*slot_idx));
+                    callable.op_call(strand, args, out).await
+                });
             }
             Some(ClassEntry::Property(Property {
                 getter: Some(getter),

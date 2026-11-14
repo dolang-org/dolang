@@ -157,14 +157,14 @@ impl<'v> Dict<'v> {
         &self,
         strand: &mut Strand<'v, 's>,
         skip: &Skip<'v>,
-    ) -> Result<'v, 's, Option<Value<'v>>> {
+    ) -> Result<'v, 's, Option<&Value<'v>>> {
         let mut skip = skip.clone();
         for (bucket, _) in self.index.iter().flatten() {
             let bucket = unsafe { bucket.as_ref() };
             if skip.add(strand, &bucket.key, bucket.hash)? >= bucket.value.len() {
                 continue;
             }
-            return Ok(Some(bucket.key.dup()));
+            return Ok(Some(&bucket.key));
         }
         Ok(None)
     }
@@ -345,13 +345,19 @@ impl<'v> Dict<'v> {
         Ok(true)
     }
 
+    /// Store a dict of `args`, which must all be key arguments, into `out`.
     pub(crate) fn from_args<'s>(
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
-    ) -> Result<'v, 's, Self> {
-        let mut this = Self::new();
-        let mut sink = DictPairs { dict: &mut this };
-
+        mut out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        // Hashing runs arbitrary code, so the pairs go straight into the allocated dict
+        let mut dict = Slot::from_output(&mut out);
+        strand
+            .builtin_types()
+            .dict
+            .create(strand, Self::new(), Slot::reborrow(&mut dict));
+        let mut sink = DictPairs { dict: &dict };
         for (index, arg) in args.enumerate() {
             if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
                 strand.check_trap_gc()?;
@@ -361,24 +367,29 @@ impl<'v> Dict<'v> {
                 Arg::Key(key, value) => sink.symbol(strand, key, value)?,
             }
         }
-
-        Ok(this)
+        Ok(())
     }
 
-    /// Builds a dict from arguments, keying the positional ones by their
-    /// index among the positional arguments and the key ones by symbol.
+    /// Store a dict of `args` into `out`, keying the positional ones by their index among
+    /// the positional arguments and the key ones by symbol.
     pub(crate) fn from_indexed_args<'s>(
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
-    ) -> Result<'v, 's, Self> {
-        let mut this = Self::new();
+        mut out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        let mut dict = Slot::from_output(&mut out);
+        strand
+            .builtin_types()
+            .dict
+            .create(strand, Self::new(), Slot::reborrow(&mut dict));
+        let sink = DictPairs { dict: &dict };
         let mut position = 0i64;
         with_slots!(strand, |mut key| {
             for (index, arg) in args.enumerate() {
                 if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap_gc()?;
                 }
-                let mut value = match arg {
+                let value = match arg {
                     Arg::Pos(value) => {
                         Output::set(strand, Slot::reborrow(&mut key), position);
                         position += 1;
@@ -389,29 +400,32 @@ impl<'v> Dict<'v> {
                         value
                     }
                 };
-                let mut hasher = strand.vm().hasher();
-                key.op_hash(strand, &mut hasher)?;
-                this.insert(strand, key.take(), value.take(), hasher.finish(), false)?;
+                sink.insert(strand, Slot::reborrow(&mut key), value)?;
             }
-            Ok(this)
+            Ok(())
         })
     }
 
+    /// Store a dict of `args`, alternating keys and values, into `out`, expanding `...`
+    /// spreads (keyed `ITER`) of pairs.
     pub(crate) async fn from_builtin_args<'s>(
         strand: &mut Strand<'v, 's>,
         mut args: Args<'v, '_>,
-    ) -> Result<'v, 's, Self> {
-        let mut this = Self::new();
+        mut out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        let mut dict = Slot::from_output(&mut out);
+        strand
+            .builtin_types()
+            .dict
+            .create(strand, Self::new(), Slot::reborrow(&mut dict));
+        let mut sink = DictPairs { dict: &dict };
         let mut counter = 1;
-
-        let mut sink = DictPairs { dict: &mut this };
-
         loop {
             if counter % crate::INTERRUPT_INTERVAL == 0 {
                 strand.check_trap_gc()?
             }
             counter += 1;
-            let mut key = match args.next() {
+            let key = match args.next() {
                 Some(Arg::Pos(key)) => key,
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
                     expand
@@ -420,21 +434,15 @@ impl<'v> Dict<'v> {
                     continue;
                 }
                 Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
-                None => break,
+                None => return Ok(()),
             };
-            let mut value = match args.next() {
+            let value = match args.next() {
                 Some(Arg::Pos(value)) => value,
                 Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
                 None => return Err(Error::missing_positional(strand, counter)),
             };
-            let mut hasher = strand.vm().hasher();
-            key.op_hash(strand, &mut hasher)?;
-            let hv = hasher.finish();
-            sink.dict
-                .insert(strand, key.take(), value.take(), hv, false)?
+            sink.insert(strand, key, value)?;
         }
-
-        Ok(this)
     }
 }
 
@@ -444,9 +452,33 @@ fn hasher<'v>() -> impl Fn(&Entry<'v>) -> u64 {
     |Entry { hash, .. }| *hash
 }
 
-/// Collects spread pairs into a dict, which holds only keyed entries
+/// Collects spread pairs into a dict, which holds only keyed entries. The dict object is
+/// already allocated, so each pair is rooted as soon as it arrives, and is borrowed only
+/// for each insert.
 struct DictPairs<'b, 'v> {
-    dict: &'b mut Dict<'v>,
+    dict: &'b Value<'v>,
+}
+
+impl<'v> DictPairs<'_, 'v> {
+    fn insert<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        mut key: Slot<'v, '_>,
+        mut value: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        let mut hasher = strand.vm().hasher();
+        key.op_hash(strand, &mut hasher)?;
+        let hv = hasher.finish();
+        let dict = self
+            .dict
+            .downcast_ref(strand.builtin_types().dict)
+            .expect("dict accumulator");
+        with_pin!(strand, dict, |dict| {
+            dict.borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .insert(strand, key.take(), value.take(), hv, false)
+        })
+    }
 }
 
 impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
@@ -462,30 +494,21 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        mut value: Slot<'v, '_>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut key_slot| {
             Output::set(strand, Slot::reborrow(&mut key_slot), key);
-            let mut hasher = strand.vm().hasher();
-            key_slot.op_hash(strand, &mut hasher).unwrap();
-            let hv = hasher.finish();
-            self.dict
-                .insert(strand, key_slot.take(), value.take(), hv, false)
+            self.insert(strand, key_slot, value)
         })
     }
 
     fn keyed(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut key: Slot<'v, '_>,
-        mut value: Slot<'v, '_>,
+        key: Slot<'v, '_>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
-        let hv = hasher.finish();
-        self.dict
-            .insert(strand, key.take(), value.take(), hv, false)?;
-        Ok(())
+        self.insert(strand, key, value)
     }
 }
 
@@ -676,32 +699,41 @@ impl<'v> Dict<'v> {
         })
     }
 
-    fn next_value_from_index(dict: &Dict<'v>, index: usize) -> Option<(usize, Value<'v>)> {
+    /// The next value at or after `index`, borrowed from `dict`, and the index after it.
+    fn next_value_from_index<'d>(
+        dict: &'d Dict<'v>,
+        index: usize,
+    ) -> Option<(usize, &'d Value<'v>)> {
         let mut index = index;
         loop {
             let bucket = dict.index.get(index)?;
             index += 1;
             if let Some((bucket, subindex)) = bucket {
-                return Some((index, unsafe { bucket.as_ref().value.at(*subindex).dup() }));
+                // Safety: the bucket stays live while the dict is borrowed
+                return Some((index, unsafe { bucket.as_ref() }.value.at(*subindex)));
             }
         }
     }
 
-    fn next_value_from_bucket(
+    /// Instance `index` of `bucket`'s values, borrowed from the `dict` that holds the bucket.
+    fn next_value_from_bucket<'d>(
+        _dict: &'d Dict<'v>,
         bucket: Option<Bucket<Entry<'v>>>,
         index: usize,
-    ) -> Option<(usize, Value<'v>)> {
+    ) -> Option<(usize, &'d Value<'v>)> {
         let bucket = bucket?;
-        let value = unsafe { bucket.as_ref().value.get(Some(index))?.dup() };
+        // Safety: the bucket stays live while the dict is borrowed
+        let value = unsafe { bucket.as_ref() }.value.get(Some(index))?;
         Some((index + 1, value))
     }
 
-    fn next_key_from_index(
-        dict: &Dict<'v>,
+    /// The next key at or after `index` not yet visited, borrowed from `dict`.
+    fn next_key_from_index<'d>(
+        dict: &'d Dict<'v>,
         index: usize,
         visited: &BitBox,
         pending: &mut Vec<usize>,
-    ) -> Option<(usize, Value<'v>)> {
+    ) -> Option<(usize, &'d Value<'v>)> {
         let mut index = index;
         loop {
             let entry = dict.index.get(index)?;
@@ -714,7 +746,8 @@ impl<'v> Dict<'v> {
                 continue;
             }
             pending.push(bucket_index);
-            return Some((index, unsafe { bucket.as_ref().key.dup() }));
+            // Safety: the bucket stays live while the dict is borrowed
+            return Some((index, &unsafe { bucket.as_ref() }.key));
         }
     }
 
@@ -728,7 +761,7 @@ impl<'v> Dict<'v> {
         Self::with_iter_inner(container, epoch, strand, |dict| {
             if let Some((next_index, value)) = Self::next_value_from_index(dict, index.get()) {
                 index.set(next_index);
-                out.store(value);
+                out.store(value.dup());
                 Ok(true)
             } else {
                 Ok(false)
@@ -744,10 +777,12 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, bool> {
-        Self::with_iter_inner(container, epoch, strand, |_inner| {
-            if let Some((next_index, value)) = Self::next_value_from_bucket(bucket, index.get()) {
+        Self::with_iter_inner(container, epoch, strand, |dict| {
+            if let Some((next_index, value)) =
+                Self::next_value_from_bucket(dict, bucket, index.get())
+            {
                 index.set(next_index);
-                out.store(value);
+                out.store(value.dup());
                 Ok(true)
             } else {
                 Ok(false)
@@ -773,7 +808,7 @@ impl<'v> Dict<'v> {
                     visited.set(bucket_index, true);
                 }
                 index.set(next_index);
-                out.store(key);
+                out.store(key.dup());
                 Ok(true)
             } else {
                 Ok(false)
@@ -833,7 +868,7 @@ impl<'v> Protocol<'v> for Values<'v> {
                     borrow.index.get(),
                     |_, i, mut out| {
                         Dict::next_value_from_index(&dict, i).map(|(next, value)| {
-                            out.store(value);
+                            out.store(value.dup());
                             next
                         })
                     },
@@ -945,9 +980,9 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
                     &mut out,
                     borrow.index.get(),
                     |_, i, mut out| {
-                        Dict::next_value_from_bucket(borrow.bucket.clone(), i).map(
+                        Dict::next_value_from_bucket(&dict, borrow.bucket.clone(), i).map(
                             |(next, value)| {
-                                out.store(value);
+                                out.store(value.dup());
                                 next
                             },
                         )
@@ -1072,7 +1107,7 @@ impl<'v> Protocol<'v> for Keys<'v> {
                     |_, i, mut out| {
                         Dict::next_key_from_index(&dict, i, &visited, &mut pending).map(
                             |(next, key)| {
-                                out.store(key);
+                                out.store(key.dup());
                                 next
                             },
                         )
@@ -1239,11 +1274,11 @@ struct UnpackState<'v> {
 
 impl<'v> UnpackState<'v> {
     /// Returns the next leftover pair, advancing past it.
-    fn next_pair<'s>(
+    fn next_pair<'d, 's>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        dict: &Dict<'v>,
-    ) -> Result<'v, 's, Option<(Value<'v>, Value<'v>)>> {
+        dict: &'d Dict<'v>,
+    ) -> Result<'v, 's, Option<(&'d Value<'v>, &'d Value<'v>)>> {
         while let Some(slot) = dict.index.get(self.index) {
             self.index += 1;
             let Some((bucket, _)) = slot else {
@@ -1252,7 +1287,7 @@ impl<'v> UnpackState<'v> {
             let entry = unsafe { bucket.as_ref() };
             let instance = self.skip.add(strand, &entry.key, entry.hash)?;
             if instance < entry.value.len() {
-                return Ok(Some((entry.key.dup(), entry.value.at(instance).dup())));
+                return Ok(Some((&entry.key, entry.value.at(instance))));
             }
         }
         Ok(None)
@@ -1388,27 +1423,32 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         }
         let mut state = borrow.state.clone();
         let mut counter = 0usize;
-        loop {
-            counter += 1;
-            if counter.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            let pair = {
-                with_pin!(strand, container, |container| {
+        with_slots!(strand, |mut key, mut value| {
+            loop {
+                counter += 1;
+                if counter.is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                    strand.check_trap()?;
+                }
+                let found = with_pin!(strand, container, |container| {
                     let dict = container
                         .borrow()
                         .ok_or_else(|| Error::concurrency(strand))?;
                     if dict.epoch != borrow.epoch {
                         return Err(Error::concurrency(strand));
                     }
-                    state.next_pair(strand, &dict)
+                    let pair = state.next_pair(strand, &dict)?;
+                    Ok(pair.map(|(k, v)| {
+                        key.store(k.dup());
+                        value.store(v.dup());
+                    }))
                 })?
-            };
-            let Some((key, value)) = pair else {
-                return Ok(());
-            };
-            Dict::spread_key_value(strand, key, value, sink)?;
-        }
+                .is_some();
+                if !found {
+                    return Ok(());
+                }
+                Dict::spread_key_value(strand, &mut key, &mut value, sink)?;
+            }
+        })
     }
 
     async fn op_iter<'a, 's>(
@@ -1504,7 +1544,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
             let Some((key, value)) = state.next_pair(strand, &dict)? else {
                 return Ok(false);
             };
-            tuple::create(strand, [key, value], out);
+            tuple::create_pair(strand, key, value, out);
             Ok(true)
         })
     }
@@ -2128,7 +2168,7 @@ impl<'v> Dict<'v> {
         if sig.key_rest() == Rest::None
             && let Some(key) = self.leftover_key(strand, skip)?
         {
-            return Err(Error::unexpected_key(strand, &key));
+            return Err(Error::unexpected_key(strand, key));
         }
         Ok(())
     }
@@ -2407,19 +2447,18 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => items);
-        let mut dict = Dict::new();
-
-        // FIXME: `Dict` is not GC-scannable, but then again if it were it would also
-        // be mutably borrowed, which would inhibit GC.  This needs a resolution.
-        let mut sink = DictPairs { dict: &mut dict };
+        // Spreading runs arbitrary code, so the pairs go straight into the allocated dict,
+        // which is borrowed only for each insert
+        strand
+            .builtin_types()
+            .dict
+            .create(strand, Dict::new(), Slot::reborrow(&mut out));
         items
-            .op_spread(strand, SpreadContext::Pairs, &mut sink)
-            .await?;
-        strand.builtin_types().dict.create(strand, dict, out);
-        Ok(())
+            .op_spread(strand, SpreadContext::Pairs, &mut DictPairs { dict: &out })
+            .await
     }
 
     fn op_type<'a, 's>(

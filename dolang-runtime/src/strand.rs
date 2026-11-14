@@ -274,6 +274,26 @@ macro_rules! with_slots_dynamic {
 }
 pub(crate) use with_slots_dynamic;
 
+/// Run a block with an ad-hoc rooting frame that visits through `visit`.
+///
+/// As with [`with_slots_dynamic!`], the body runs inline with `strand` rebound to a handle
+/// whose frame is the scan: `?` and `return` leave the enclosing function.
+///
+/// The expansion calls [`Strand::enter_scan`] without an `unsafe` block of its own, so it
+/// must be written inside one, with a SAFETY comment showing that `visit` meets that
+/// function's contract for the whole body.
+macro_rules! with_scan {
+    ($strand:ident, $visit:expr, $body:expr) => {{
+        let visit = $visit;
+        let scan = $crate::frame::Scan::new(Some($strand.fp), &visit);
+        let mut scope = $strand.enter_scan(&scan);
+        #[allow(unused_variables)]
+        let $strand = &mut *scope;
+        $body
+    }};
+}
+pub(crate) use with_scan;
+
 /// The frame a [`FrameScope`] entered.
 enum FrameEntry<'v, 'f> {
     Do(&'f frame::CallFrame<'v>),
@@ -862,7 +882,14 @@ impl<'v> StrandInner<'v> {
         Ok(CallDepthGuard { inner: self })
     }
 
-    pub(crate) fn derived(
+    /// A fresh strand state inheriting `strand`'s locals, streams and local roots.
+    ///
+    /// # Safety
+    ///
+    /// The result is unrooted: no scan reaches its cells until it is linked into a strand
+    /// group or the VM's strand list. The caller must link it before anything can
+    /// collect.
+    pub(crate) unsafe fn derived(
         strand: &Strand<'v, '_>,
         interrupt: Option<InterruptToken<'v>>,
         kind: InheritKind,
@@ -877,8 +904,10 @@ impl<'v> StrandInner<'v> {
         Self {
             group_link: Link::new(),
             vm: strand.inner.vm,
-            input: strand.inner.input().into(),
-            output: strand.inner.output().into(),
+            // Safety: nothing writes the cells during the reads; see the caller's contract
+            // for the copies
+            input: unsafe { strand.inner.input.as_ref() }.dup().into(),
+            output: unsafe { strand.inner.output.as_ref() }.dup().into(),
             errors: ErrorTable::new(),
             error_focus: Cell::new(None),
             locals: locals.into(),
@@ -886,8 +915,8 @@ impl<'v> StrandInner<'v> {
                 .inner
                 .local_roots
                 .iter()
-                // Safety: see the field
-                .map(|cell| unsafe { cell.get() }.into())
+                // Safety: as for the streams above
+                .map(|cell| unsafe { cell.as_ref() }.dup().into())
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
@@ -1017,14 +1046,12 @@ impl<'v> StrandInner<'v> {
         self.vm
     }
 
-    pub(crate) fn input(&self) -> Value<'v> {
-        // Safety: see the field
-        unsafe { self.input.get() }
+    pub(crate) fn input(&self) -> &ValueCell<'v> {
+        &self.input
     }
 
-    pub(crate) fn output(&self) -> Value<'v> {
-        // Safety: see the field
-        unsafe { self.output.get() }
+    pub(crate) fn output(&self) -> &ValueCell<'v> {
+        &self.output
     }
 
     /// Replace the strand's input, returning the old value for the caller to drop.
@@ -1535,23 +1562,17 @@ impl<'v, 's> Strand<'v, 's> {
         I::IntoIter: ExactSizeIterator,
     {
         let mut items = items.into_iter();
-        let cells: Vec<ValueCell<'v>> = (0..items.len()).map(|_| ValueCell::default()).collect();
-        let visit =
-            |visitor: &mut dyn Visit| cells.iter().try_for_each(|cell| cell.accept(visitor));
-        let scan = frame::Scan::new(Some(self.fp), &visit);
-        // Safety: `visit` visits each cell, and each cell owns at most one reference
-        let mut scope = unsafe { self.enter_scan(&scan) };
-        let strand = &mut *scope;
-        for cell in &cells {
-            let mut item = items.next().expect("tuple items fewer than their length");
-            // Safety: the cell is scanned and is written only through this slot
-            let slot = unsafe { cell.slot() };
-            item.input_take(strand, slot, crate::value::private::Sealed);
-        }
-        assert!(items.next().is_none(), "tuple items more than their length");
-        // Safety: as above; finishing the embryo does not allocate
-        let taken = cells.iter().map(|cell| unsafe { cell.slot() }.take());
-        tuple::embryo(strand, cells.len()).finish(strand, taken, out)
+        let len = items.len();
+        let strand = self;
+        with_slots_dynamic!(strand, len, |mut cells| {
+            for i in 0..len {
+                let item = items.next().expect("tuple items fewer than their length");
+                Output::set(strand, cells.at(i), item);
+            }
+            assert!(items.next().is_none(), "tuple items more than their length");
+            let embryo = tuple::embryo(strand, len);
+            embryo.finish(strand, (0..len).map(|i| cells.at(i).take()), out)
+        })
     }
 
     /// Store a new range from `start` to `end` into `out`.
@@ -1630,12 +1651,16 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Get current iterator.
     pub fn input(&self, mut out: impl Output<'v>) {
-        Slot::from_output(&mut out).store(self.inner.input());
+        // Safety: nothing writes the cell during the read, and the copy moves straight
+        // into `out`
+        Slot::from_output(&mut out).store(unsafe { self.inner.input().as_ref() }.dup());
     }
 
     /// Get current sink.
     pub fn output(&self, mut out: impl Output<'v>) {
-        Slot::from_output(&mut out).store(self.inner.output());
+        // Safety: nothing writes the cell during the read, and the copy moves straight
+        // into `out`
+        Slot::from_output(&mut out).store(unsafe { self.inner.output().as_ref() }.dup());
     }
 
     /// Spawn a new strand scoped to this strand which executes `f`.
@@ -1649,7 +1674,8 @@ impl<'v, 's> Strand<'v, 's> {
     ) -> Result<'v, 's, R> {
         let interrupt = interrupt
             .unwrap_or_else(|| self.inner.interrupt.borrow().nested(InterruptMask::empty()));
-        let strand = StrandInner::derived(self, Some(interrupt), InheritKind::Scoped);
+        // Safety: linked into the leader's group below, before anything can collect
+        let strand = unsafe { StrandInner::derived(self, Some(interrupt), InheritKind::Scoped) };
         // Safety: strand is at a stable address (async fn generator state is heap-allocated)
         // and the leader's StrandGroup outlives this scoped strand.
         unsafe { strand.init_group_member(self.inner) };
@@ -1729,8 +1755,9 @@ impl<'v, 's> Strand<'v, 's> {
         }
 
         // Create StrandInner
+        // Safety: not upheld yet; see the FIXME below, which covers these copies too
         let mut inner =
-            StrandInner::derived(self, Some(interrupt.clone()), InheritKind::Background);
+            unsafe { StrandInner::derived(self, Some(interrupt.clone()), InheritKind::Background) };
         inner.call_depth.set(0);
 
         // The cell stays unattached until first poll, when `inner` reaches its
@@ -1751,8 +1778,8 @@ impl<'v, 's> Strand<'v, 's> {
         // Keeps `arg` rooted (via `scan_stack`) for as long as the strand exists,
         // including before `f` first runs.
         //
-        // FIXME: until first poll nothing scans `inner`, so `start` and the stream
-        // endpoints below are loose (sound only under refcounting). Root them
+        // FIXME: until first poll nothing scans `inner`, so `start`, the stream
+        // endpoints below and the state `derived` copied above are loose (sound only under refcounting). Root them
         // elsewhere until then, e.g. in an actual root or the global root
         // registration (#1728), and drop that root on first poll once the strand is
         // linked into the VM ring, or make some other special arrangement.
@@ -2254,7 +2281,7 @@ mod scan_tests {
         with_vm(async |strand, [tmp]| {
             let sink = make_tuple(strand, tmp);
             let mask = strand.interrupt_mask();
-            let output = heap_header(&strand.inner.output());
+            let output = heap_header(unsafe { strand.inner.output().as_ref() });
             let mut rooted = None;
             {
                 let mut body = pin!(async {
@@ -2266,7 +2293,7 @@ mod scan_tests {
                             redirect!(strand, output: &sink, {
                                 assert_eq!(strand.interrupt_mask(), InterruptMask::all());
                                 assert_eq!(
-                                    heap_header(&strand.inner.output()),
+                                    heap_header(unsafe { strand.inner.output().as_ref() }),
                                     Some(header(&sink))
                                 );
                                 future::pending::<()>().await;
@@ -2278,7 +2305,10 @@ mod scan_tests {
                 assert!(futures::poll!(body.as_mut()).is_pending());
             }
             assert_eq!(strand.interrupt_mask(), mask);
-            assert_eq!(heap_header(&strand.inner.output()), output);
+            assert_eq!(
+                heap_header(unsafe { strand.inner.output().as_ref() }),
+                output
+            );
             assert!(!scanned(strand).contains(&rooted.unwrap()));
         });
     }
