@@ -20,6 +20,7 @@ use crate::{
     unpack,
     value::{Input, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
     vm::{Alloc, Vm},
+    with_slots,
 };
 
 pub(crate) struct Inspect<'v, 'a> {
@@ -125,12 +126,10 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
-        strand
-            .with_slots(async move |strand, [mut func]| {
-                Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
-                func.op_call(strand, args, out).await
-            })
-            .await
+        with_slots!(strand, |mut func| {
+            Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
+            func.op_call(strand, args, out).await
+        })
     }
 
     fn op_type<'a, 's>(this: Recv<'v, 'a, Self>, strand: &'a mut Strand<'v, 's>, out: Slot<'v, 'a>);

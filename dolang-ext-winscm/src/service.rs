@@ -5,7 +5,7 @@ use crate::global::Tag;
 use dolang::runtime::{
     Error, Object, Result, Slot, State, Strand, call, method,
     object::{FlagsTypeExt, TypeBuilder},
-    unpack,
+    unpack, with_slots,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_vfs_winscm::ServiceConfigUpdate;
@@ -34,17 +34,15 @@ pub(crate) async fn finish_open_service<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     if let Some(block) = block {
-        strand
-            .with_slots(async move |strand, [mut handle, mut tmp]| {
-                global
-                    .types
-                    .service
-                    .create(strand, Service(Some(inner)), &mut handle);
-                let result = call!(strand, block, out, &handle).await;
-                let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
-                result
-            })
-            .await
+        with_slots!(strand, |mut handle, mut tmp| {
+            global
+                .types
+                .service
+                .create(strand, Service(Some(inner)), &mut handle);
+            let result = call!(strand, block, out, &handle).await;
+            let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
+            result
+        })
     } else {
         global
             .types

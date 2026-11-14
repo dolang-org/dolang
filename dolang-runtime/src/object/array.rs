@@ -17,6 +17,7 @@ use crate::{
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -1063,13 +1064,11 @@ impl<'v> Protocol<'v> for Array<'v> {
             sym::COPY => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 if this.delegator().is_some() {
-                    return strand
-                        .with_slots(async |strand, [mut receiver, mut ty]| {
-                            Output::set(strand, Slot::reborrow(&mut receiver), &this);
-                            receiver.op_type(strand, Slot::reborrow(&mut ty));
-                            call!(strand, &ty, out, &receiver).await
-                        })
-                        .await;
+                    return with_slots!(strand, |mut receiver, mut ty| {
+                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        receiver.op_type(strand, Slot::reborrow(&mut ty));
+                        call!(strand, &ty, out, &receiver).await
+                    });
                 }
                 let borrow = this.borrow(strand)?;
                 let array = Array {
@@ -1415,13 +1414,11 @@ impl<'v> Protocol<'v> for Type {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
-                strand
-                    .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().array, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().array, native.take())?;
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut native| {
+                    call!(strand, &strand.singletons().array, &mut native, items).await?;
+                    self_val.op_fill(strand, &strand.singletons().array, native.take())?;
+                    Ok(())
+                })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().array, method, args, out).await,
         }

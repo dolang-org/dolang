@@ -1,4 +1,5 @@
 use crate::global::MacosSecurityTag;
+use dolang::runtime::with_slots;
 
 use super::*;
 
@@ -307,64 +308,61 @@ async fn coerce_ace<'v, 's>(
     let mut mask = None;
     let mut flags = None;
     let mut pairs = dict.pairs();
-    strand
-        .with_slots(async |strand, [mut key, mut entry]| {
-            while pairs.next(strand, &mut key, &mut entry)? {
-                let sym = key
-                    .as_sym(strand.vm())
-                    .ok_or_else(|| Error::value(strand, format!("{path}: keys must be symbols")))?;
-                match sym.as_str(strand.vm()) {
-                    name @ ("allow" | "deny") => {
-                        if ace_type.is_some() {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: multiple keys name conflicting ACE types"),
-                            ));
-                        }
-                        ace_type = Some(if name == "allow" {
-                            VfsMacosAceType::Allow
-                        } else {
-                            VfsMacosAceType::Deny
-                        });
-                        principal =
-                            Some(dolang_ext_uuid::value_to_uuid(strand, &entry).map_err(|_| {
-                                Error::type_error(
-                                    strand,
-                                    format!("{}: expected uuid.Uuid, Str, or Bin", path.key(name)),
-                                )
-                            })?);
-                    }
-                    "mask" => {
-                        if mask.is_some() {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: duplicate key `mask`"),
-                            ));
-                        }
-                        mask = Some(coerce_mask(strand, global, &entry, &path.key("mask")).await?);
-                    }
-                    "flags" => {
-                        if flags.is_some() {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: duplicate key `flags`"),
-                            ));
-                        }
-                        flags = Some(
-                            coerce_flags(strand, global, Some(&entry), &path.key("flags")).await?,
-                        );
-                    }
-                    name => {
+    with_slots!(strand, |mut key, mut entry| {
+        while pairs.next(strand, &mut key, &mut entry)? {
+            let sym = key
+                .as_sym(strand.vm())
+                .ok_or_else(|| Error::value(strand, format!("{path}: keys must be symbols")))?;
+            match sym.as_str(strand.vm()) {
+                name @ ("allow" | "deny") => {
+                    if ace_type.is_some() {
                         return Err(Error::value(
                             strand,
-                            format!("{path}: unknown key `{name}`"),
+                            format!("{path}: multiple keys name conflicting ACE types"),
                         ));
                     }
+                    ace_type = Some(if name == "allow" {
+                        VfsMacosAceType::Allow
+                    } else {
+                        VfsMacosAceType::Deny
+                    });
+                    principal =
+                        Some(dolang_ext_uuid::value_to_uuid(strand, &entry).map_err(|_| {
+                            Error::type_error(
+                                strand,
+                                format!("{}: expected uuid.Uuid, Str, or Bin", path.key(name)),
+                            )
+                        })?);
+                }
+                "mask" => {
+                    if mask.is_some() {
+                        return Err(Error::value(
+                            strand,
+                            format!("{path}: duplicate key `mask`"),
+                        ));
+                    }
+                    mask = Some(coerce_mask(strand, global, &entry, &path.key("mask")).await?);
+                }
+                "flags" => {
+                    if flags.is_some() {
+                        return Err(Error::value(
+                            strand,
+                            format!("{path}: duplicate key `flags`"),
+                        ));
+                    }
+                    flags =
+                        Some(coerce_flags(strand, global, Some(&entry), &path.key("flags")).await?);
+                }
+                name => {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: unknown key `{name}`"),
+                    ));
                 }
             }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     let ace_type =
         ace_type.ok_or_else(|| Error::value(strand, format!("{path}: expected allow or deny")))?;
     let principal = principal.expect("ACE type and principal are set together");
@@ -388,17 +386,15 @@ pub(super) async fn coerce_acl<'v, 's>(
         return Ok(acl.enter_sync(strand, |_strand, acl| acl.annex().clone()));
     }
     let mut entries = Vec::new();
-    strand
-        .with_slots(async |strand, [mut iter, mut item]| {
-            value.iter(strand, &mut iter).await?;
-            let mut index = 0;
-            while iter.next(strand, &mut item).await? {
-                entries.push(coerce_ace(strand, global, &item, &path.index(index)).await?);
-                index += 1;
-            }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+    with_slots!(strand, |mut iter, mut item| {
+        value.iter(strand, &mut iter).await?;
+        let mut index = 0;
+        while iter.next(strand, &mut item).await? {
+            entries.push(coerce_ace(strand, global, &item, &path.index(index)).await?);
+            index += 1;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     Ok(VfsMacosAcl::new(entries))
 }
 

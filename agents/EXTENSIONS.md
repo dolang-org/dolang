@@ -311,6 +311,25 @@ strand.range(0i64, len, &mut out);          // Strand
 `tuple` and `range` need a `Strand`. To pass a built value as a call argument,
 build it into a slot from `with_slots_sync` first.
 
+### Scoped Helpers
+
+In async code, use the macro forms of the scoped APIs rather than calling the
+methods with an `async` closure. Each one awaits its body and rebinds `strand`
+inside it:
+
+```rust
+with_slots!(strand, |mut key, mut value| { ... })     // Strand::with_slots
+with_instance!(strand, cast, |this| { ... })          // Cast::enter
+with_interrupt_mask!(strand, InterruptMask::all(), { ... })
+redirect!(strand, Redirect::new(strand).output(&sink), { ... })
+with_str!(strand, text, |s| { ... })                  // also with_slice!
+```
+
+Don't `return` from a macro body. End it with a tail expression instead. If
+the code holds or inspects the body's result rather than propagating it, wrap
+the macro in `async { ... }.await`, so that `?` in the body still ends only the
+body.
+
 ## Flags Types
 
 Expose a bitset by implementing `FlagLike` and registering it with

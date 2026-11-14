@@ -23,6 +23,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, Nil, PinBin, PinStr, TypeObject, View},
     vm::Register,
+    with_instance, with_slots,
 };
 use tokio::io::{
     AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream, ReadBuf,
@@ -700,12 +701,14 @@ impl<'v> Object<'v> for TarEntry {
                     .map_err(|_| Error::overflow(strand))?;
                 let child = this.borrow(strand)?;
                 let generation = child.generation;
-                this.annex()
-                    .types
-                    .reader
-                    .cast(Ref::slot::<0>(&child))
-                    .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?
-                    .enter(strand, async move |strand, reader| {
+                with_instance!(
+                    strand,
+                    this.annex()
+                        .types
+                        .reader
+                        .cast(Ref::slot::<0>(&child))
+                        .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?,
+                    |reader| {
                         let mut borrow = reader.borrow_mut(strand)?;
                         if borrow.generation != generation {
                             return Err(Error::state_error(
@@ -719,8 +722,8 @@ impl<'v> Object<'v> for TarEntry {
                             .into_do_decode(strand)?;
                         data.finish(strand, out);
                         Ok(())
-                    })
-                    .await
+                    }
+                )
             })
     }
 
@@ -740,12 +743,14 @@ impl<'v> Object<'v> for TarEntry {
     ) -> Result<'v, 's, bool> {
         let child = this.borrow(strand)?;
         let generation = child.generation;
-        this.annex()
-            .types
-            .reader
-            .cast(Ref::slot::<0>(&child))
-            .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?
-            .enter(strand, async move |strand, reader| {
+        with_instance!(
+            strand,
+            this.annex()
+                .types
+                .reader
+                .cast(Ref::slot::<0>(&child))
+                .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?,
+            |reader| {
                 let mut borrow = reader.borrow_mut(strand)?;
                 if borrow.generation != generation {
                     return Err(Error::state_error(strand, "tar entry is no longer active"));
@@ -759,8 +764,8 @@ impl<'v> Object<'v> for TarEntry {
                 }
                 data.finish(strand, out);
                 Ok(true)
-            })
-            .await
+            }
+        )
     }
 }
 
@@ -1190,34 +1195,32 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let ([source, block], []) = unpack!(strand, args, 2, 0)?;
             let handle = endpoint_handle(strand, &source, IoCaps::READ, "source").await?;
             let (entries, compression) = open_reader(strand, handle).await?;
-            strand
-                .with_slots(async move |strand, [mut reader]| {
-                    global.types.reader.create_with_annex(
-                        strand,
-                        TarReader {
-                            entries,
-                            current: None,
-                            generation: 0,
-                            compression,
-                            closed: false,
-                        },
-                        global,
-                        &mut reader,
-                    );
-                    let result = call!(strand, block, out, &reader).await;
-                    global.types.reader.cast(&reader).unwrap().enter_sync(
-                        strand,
-                        |strand, reader_obj| {
-                            let mut borrow = reader_obj.borrow_mut(strand)?;
-                            borrow.current = None;
-                            borrow.closed = true;
-                            borrow.generation = borrow.generation.wrapping_add(1);
-                            Ok(())
-                        },
-                    )?;
-                    result
-                })
-                .await
+            with_slots!(strand, |mut reader| {
+                global.types.reader.create_with_annex(
+                    strand,
+                    TarReader {
+                        entries,
+                        current: None,
+                        generation: 0,
+                        compression,
+                        closed: false,
+                    },
+                    global,
+                    &mut reader,
+                );
+                let result = call!(strand, block, out, &reader).await;
+                global.types.reader.cast(&reader).unwrap().enter_sync(
+                    strand,
+                    |strand, reader_obj| {
+                        let mut borrow = reader_obj.borrow_mut(strand)?;
+                        borrow.current = None;
+                        borrow.closed = true;
+                        borrow.generation = borrow.generation.wrapping_add(1);
+                        Ok(())
+                    },
+                )?;
+                result
+            })
         })
         .function("write", async move |strand, args, out| {
             let ([sink, block], [compression]) =
@@ -1235,49 +1238,47 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 Compression::Zstd => Box::pin(ZstdEncoder::new(sink)),
             };
             let native_builder = TarBuilder::new(writer);
-            strand
-                .with_slots(async move |strand, [mut writer]| {
-                    global.types.writer.create_with_annex(
+            with_slots!(strand, |mut writer| {
+                global.types.writer.create_with_annex(
+                    strand,
+                    TarWriter {
+                        builder: Some(native_builder),
+                        generation: 0,
+                        active: false,
+                        poisoned: false,
+                        compression,
+                    },
+                    global,
+                    &mut writer,
+                );
+                let result = call!(strand, block, out, &writer).await;
+                let (builder, poisoned, active) =
+                    global.types.writer.cast(&writer).unwrap().enter_sync(
                         strand,
-                        TarWriter {
-                            builder: Some(native_builder),
-                            generation: 0,
-                            active: false,
-                            poisoned: false,
-                            compression,
+                        |strand, writer_obj| {
+                            let mut borrow = writer_obj.borrow_mut(strand)?;
+                            Ok((borrow.builder.take(), borrow.poisoned, borrow.active))
                         },
-                        global,
-                        &mut writer,
-                    );
-                    let result = call!(strand, block, out, &writer).await;
-                    let (builder, poisoned, active) =
-                        global.types.writer.cast(&writer).unwrap().enter_sync(
-                            strand,
-                            |strand, writer_obj| {
-                                let mut borrow = writer_obj.borrow_mut(strand)?;
-                                Ok((borrow.builder.take(), borrow.poisoned, borrow.active))
-                            },
-                        )?;
-                    let cleanup = if active || poisoned {
-                        Err(Error::state_error(
-                            strand,
-                            "tar writer did not finish cleanly",
-                        ))
-                    } else {
-                        async {
-                            let mut inner = builder
-                                .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?
-                                .into_inner()
-                                .await
-                                .into_do_io(strand)?;
-                            inner.shutdown().await.into_do_io(strand)?;
-                            Ok(())
-                        }
-                        .await
-                    };
-                    result.and(cleanup)
-                })
-                .await
+                    )?;
+                let cleanup = if active || poisoned {
+                    Err(Error::state_error(
+                        strand,
+                        "tar writer did not finish cleanly",
+                    ))
+                } else {
+                    async {
+                        let mut inner = builder
+                            .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?
+                            .into_inner()
+                            .await
+                            .into_do_io(strand)?;
+                        inner.shutdown().await.into_do_io(strand)?;
+                        Ok(())
+                    }
+                    .await
+                };
+                result.and(cleanup)
+            })
         })
         .commit();
 }

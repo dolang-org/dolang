@@ -26,6 +26,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, PinBin, PinStr, TypeObject, View},
     vm::Register,
+    with_instance, with_interrupt_mask, with_slots,
 };
 use dolang_ext_shell::ErrorExt as _;
 use futures_lite::io::{AsyncWriteExt as _, BufReader};
@@ -411,11 +412,9 @@ impl<'v> Object<'v> for Archive {
 
                     if let Some(block) = block {
                         let result = call!(strand, block, out, &file).await;
-                        let close_result = strand
-                            .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                                method!(strand, &file, close, &mut tmp).await
-                            })
-                            .await;
+                        let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
+                            method!(strand, &file, close, &mut tmp).await
+                        });
                         result.and(close_result)
                     } else {
                         Output::set(strand, out, file);
@@ -703,12 +702,14 @@ impl<'v> Object<'v> for Entry {
                     let index = annex.index;
 
                     let borrow = this.borrow(strand)?;
-                    global
-                        .types
-                        .archive
-                        .cast(Ref::slot::<0>(&borrow))
-                        .expect("Entry always roots its Archive in slot 0")
-                        .enter(strand, async move |strand, archive| {
+                    with_instance!(
+                        strand,
+                        global
+                            .types
+                            .archive
+                            .cast(Ref::slot::<0>(&borrow))
+                            .expect("Entry always roots its Archive in slot 0"),
+                        |archive| {
                             let archive_annex = archive.annex();
 
                             if archive_annex.is_file_open() {
@@ -747,21 +748,17 @@ impl<'v> Object<'v> for Entry {
 
                             if let Some(block) = block {
                                 let result = call!(strand, block, out, &file).await;
-                                let close_result = strand
-                                    .with_interrupt_mask(
-                                        InterruptMask::all(),
-                                        async move |strand| {
-                                            method!(strand, &file, close, &mut tmp).await
-                                        },
-                                    )
-                                    .await;
+                                let close_result =
+                                    with_interrupt_mask!(strand, InterruptMask::all(), {
+                                        method!(strand, &file, close, &mut tmp).await
+                                    });
                                 result.and(close_result)
                             } else {
                                 Output::set(strand, out, file);
                                 Ok(())
                             }
-                        })
-                        .await
+                        }
+                    )
                 },
             )
     }
@@ -980,12 +977,14 @@ impl<'v> Object<'v> for File {
                 };
 
                 let borrow = this.borrow(strand)?;
-                global
-                    .types
-                    .archive
-                    .cast(Ref::slot::<0>(&borrow))
-                    .ok_or_else(|| Error::state_error(strand, "invalid archive reference"))?
-                    .enter(strand, async move |strand, archive| {
+                with_instance!(
+                    strand,
+                    global
+                        .types
+                        .archive
+                        .cast(Ref::slot::<0>(&borrow))
+                        .ok_or_else(|| Error::state_error(strand, "invalid archive reference"))?,
+                    |archive| {
                         let result = match inner {
                             FileInner::Write(entry) => {
                                 EntrySeekableWriter::close(*entry).await.into_do_zip(strand)
@@ -994,8 +993,8 @@ impl<'v> Object<'v> for File {
                         };
                         archive.annex().file_open.set(false);
                         result
-                    })
-                    .await
+                    }
+                )
             })
     }
 }
@@ -1086,23 +1085,19 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             };
 
             if let Some(block) = block {
-                strand
-                    .with_slots(async |strand, [mut wrapper, mut tmp]| {
-                        global.types.archive.create_with_annex(
-                            strand,
-                            Archive::new(),
-                            ArchiveAnnex::new(inner, global),
-                            &mut wrapper,
-                        );
-                        let result = call!(strand, block, out, &wrapper).await;
-                        let close_result = strand
-                            .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                                method!(strand, &wrapper, close, &mut tmp).await
-                            })
-                            .await;
-                        result.and(close_result)
-                    })
-                    .await
+                with_slots!(strand, |mut wrapper, mut tmp| {
+                    global.types.archive.create_with_annex(
+                        strand,
+                        Archive::new(),
+                        ArchiveAnnex::new(inner, global),
+                        &mut wrapper,
+                    );
+                    let result = call!(strand, block, out, &wrapper).await;
+                    let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
+                        method!(strand, &wrapper, close, &mut tmp).await
+                    });
+                    result.and(close_result)
+                })
             } else {
                 global.types.archive.create_with_annex(
                     strand,

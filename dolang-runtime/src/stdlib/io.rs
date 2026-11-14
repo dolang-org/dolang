@@ -48,6 +48,7 @@ use crate::{
         view::{PinBin, PinStr},
     },
     vm::{Alloc, Builder, StateTag},
+    with_slots,
 };
 
 /// Buffer capacity, and the size from which reads and writes skip the buffer.
@@ -1027,38 +1028,36 @@ impl Concat {
         strand: &mut Strand<'v, 's>,
         size: usize,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut item]| {
-                if this.state == ConcatState::Ready {
-                    Mut::slot::<0>(this)
-                        .iter(strand, Slot::reborrow(&mut item))
-                        .await?;
-                    Output::set(strand, Mut::slot_mut::<0>(this), &item);
-                    this.state = ConcatState::Iterating;
+        with_slots!(strand, |mut item| {
+            if this.state == ConcatState::Ready {
+                Mut::slot::<0>(this)
+                    .iter(strand, Slot::reborrow(&mut item))
+                    .await?;
+                Output::set(strand, Mut::slot_mut::<0>(this), &item);
+                this.state = ConcatState::Iterating;
+            }
+            while this.state == ConcatState::Iterating && this.pending.len() < size {
+                if !Mut::slot::<0>(this)
+                    .next(strand, Slot::reborrow(&mut item))
+                    .await?
+                {
+                    this.state = ConcatState::Done;
+                    Mut::slot_mut::<0>(this).store(Value::NIL);
+                    break;
                 }
-                while this.state == ConcatState::Iterating && this.pending.len() < size {
-                    if !Mut::slot::<0>(this)
-                        .next(strand, Slot::reborrow(&mut item))
-                        .await?
-                    {
-                        this.state = ConcatState::Done;
-                        Mut::slot_mut::<0>(this).store(Value::NIL);
-                        break;
-                    }
-                    if let Some(b) = item.as_bin(strand.vm()) {
-                        this.pending.extend_from_slice(&b.pin());
-                    } else if let Some(s) = item.as_str(strand.vm()) {
-                        this.pending.extend_from_slice(s.pin().as_bytes());
-                    } else {
-                        let text = item.to_string(strand)?;
-                        this.pending.extend_from_slice(text.as_bytes());
-                    }
-                    let Self { end, pending, .. } = &mut **this;
-                    pending.extend_from_slice(end);
+                if let Some(b) = item.as_bin(strand.vm()) {
+                    this.pending.extend_from_slice(&b.pin());
+                } else if let Some(s) = item.as_str(strand.vm()) {
+                    this.pending.extend_from_slice(s.pin().as_bytes());
+                } else {
+                    let text = item.to_string(strand)?;
+                    this.pending.extend_from_slice(text.as_bytes());
                 }
-                Ok(())
-            })
-            .await
+                let Self { end, pending, .. } = &mut **this;
+                pending.extend_from_slice(end);
+            }
+            Ok(())
+        })
     }
 }
 

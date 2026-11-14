@@ -19,6 +19,7 @@ use dolang::runtime::{
     unpack,
     value::{DictPairs, RecordPairs, Singleton, Slot, View},
     vm::Register,
+    with_slots,
 };
 use dolang_ext_shell::with_terminal;
 use indicatif as ix;
@@ -603,15 +604,13 @@ async fn write_plain_line<'v, 's>(
     info: &plain::PlainInfo,
     line: &str,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut output]| {
-            {
-                let root = global.output.borrow();
-                Output::set(strand, &mut output, &*root);
-            }
-            dolang_ext_term::write_terminal_line(strand, &output, info.line_ending(), line).await
-        })
-        .await
+    with_slots!(strand, |mut output| {
+        {
+            let root = global.output.borrow();
+            Output::set(strand, &mut output, &*root);
+        }
+        dolang_ext_term::write_terminal_line(strand, &output, info.line_ending(), line).await
+    })
 }
 
 struct StepMetadata {

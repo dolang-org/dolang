@@ -1,9 +1,9 @@
 pub use dolang_runtime::{
     BYTE_STREAM_CHUNK_SIZE,
     arg::{Arg, Args},
-    call, method,
+    call, method, redirect,
     sym::Sym,
-    unpack,
+    unpack, with_instance, with_interrupt_mask, with_slice, with_slots, with_str,
 };
 
 /// Value manipulation

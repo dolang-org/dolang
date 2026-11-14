@@ -3,7 +3,7 @@
 
 use dolang::runtime::{
     Error, Result, Slot, State, Strand, Sym, io::IoCaps, object::FlagsTypeExt, value::Value,
-    vm::Register,
+    vm::Register, with_slots,
 };
 use dolang_vfs::{
     file::{OpenCaps, OpenOptions, ShareMode},
@@ -395,14 +395,12 @@ async fn share_mode<'v, 's>(
     if value.as_sym(strand).is_some() {
         return one(strand, value);
     }
-    strand
-        .with_slots(async |strand, [mut iter, mut item]| {
-            value.iter(strand, &mut iter).await?;
-            let mut share = ShareMode::empty();
-            while iter.next(strand, &mut item).await? {
-                share |= one(strand, &item)?;
-            }
-            Ok(share)
-        })
-        .await
+    with_slots!(strand, |mut iter, mut item| {
+        value.iter(strand, &mut iter).await?;
+        let mut share = ShareMode::empty();
+        while iter.next(strand, &mut item).await? {
+            share |= one(strand, &item)?;
+        }
+        Ok(share)
+    })
 }

@@ -8,6 +8,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
     vm::ModuleBuilder,
+    with_instance, with_interrupt_mask, with_slots,
 };
 use dolang_ext_shell::{ResultExt, as_windows_path};
 use dolang_vfs_winnet::connection;
@@ -189,11 +190,9 @@ impl<'v> Object<'v> for Connection {
                     Some(v) => Some(expect_bool(strand, &v, "forget_credentials")?),
                     None => None,
                 };
-                strand
-                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                        Connection::teardown(this, strand, force, forget).await
-                    })
-                    .await?;
+                with_interrupt_mask!(strand, InterruptMask::all(), {
+                    Connection::teardown(this, strand, force, forget).await
+                })?;
                 Output::set(strand, out, Nil);
                 Ok(())
             })
@@ -305,33 +304,28 @@ async fn finish_connect<'v, 's>(
         make_connection(strand, global, inner, out);
         return Ok(());
     };
-    strand
-        .with_slots(async move |strand, [mut handle]| {
-            make_connection(strand, global, inner, &mut handle);
-            let result = call!(strand, block, out, &handle).await;
-            // Masking interrupts keeps a cancellation from skipping the
-            // disconnect, which would leave the mapping behind — the one thing
-            // the scoped form exists to prevent.
-            let cleanup = strand
-                .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                    let this = global
-                        .types
-                        .connection
-                        .cast(&handle)
-                        .expect("connection handle");
-                    this.enter(strand, async move |strand, this| {
-                        Connection::teardown(this, strand, false, None).await
-                    })
-                    .await
-                })
-                .await;
-            match (result, cleanup) {
-                (Ok(()), Ok(())) => Ok(()),
-                (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-                (Err(cause), Err(error)) => Err(error.caused_by(strand, cause)),
-            }
-        })
-        .await
+    with_slots!(strand, |mut handle| {
+        make_connection(strand, global, inner, &mut handle);
+        let result = call!(strand, block, out, &handle).await;
+        // Masking interrupts keeps a cancellation from skipping the
+        // disconnect, which would leave the mapping behind — the one thing
+        // the scoped form exists to prevent.
+        let cleanup = with_interrupt_mask!(strand, InterruptMask::all(), {
+            let this = global
+                .types
+                .connection
+                .cast(&handle)
+                .expect("connection handle");
+            with_instance!(strand, this, |this| {
+                Connection::teardown(this, strand, false, None).await
+            })
+        });
+        match (result, cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+            (Err(cause), Err(error)) => Err(error.caused_by(strand, cause)),
+        }
+    })
 }
 
 pub(crate) fn configure_module<'v, 'a>(

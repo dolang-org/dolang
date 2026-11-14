@@ -12,6 +12,7 @@ use dolang::runtime::{
     object::{TypeBuilder, fmt},
     unpack,
     value::{Nil, TypeObject},
+    with_slots,
 };
 use dolang_vfs::process::{
     Process as VfsProcess, ProcessExit, ProcessInfo, Processes as VfsProcesses,
@@ -438,18 +439,16 @@ pub(crate) async fn open<'v, 's>(
             .create(strand, Proc(Some(process)), out);
         return Ok(());
     };
-    strand
-        .with_slots(async move |strand, [mut handle, mut tmp]| {
-            global
-                .types
-                .proc_handle
-                .create(strand, Proc(Some(process)), &mut handle);
-            let result = call!(strand, block, out, &handle).await;
-            // Closing is best-effort here: the block's outcome is the call's
-            // outcome, and a close failure must not displace an error it raised.
-            let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
-            result
-        })
-        .await
+    with_slots!(strand, |mut handle, mut tmp| {
+        global
+            .types
+            .proc_handle
+            .create(strand, Proc(Some(process)), &mut handle);
+        let result = call!(strand, block, out, &handle).await;
+        // Closing is best-effort here: the block's outcome is the call's
+        // outcome, and a close failure must not displace an error it raised.
+        let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
+        result
+    })
 }
 use dolang::runtime::value::fmt::Format;

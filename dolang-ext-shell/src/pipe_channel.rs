@@ -18,6 +18,7 @@ use dolang::runtime::{
     object::{Mut, Ref, Request, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
+    with_instance, with_slots,
 };
 
 use crate::{
@@ -646,28 +647,22 @@ async fn open_stream<'v, 's>(
             .create_with_annex(strand, stream, annex, out);
         return Ok(());
     };
-    strand
-        .with_slots(async move |strand, [mut handle]| {
-            global.types.pipe_stream.create_with_annex(
-                strand,
-                stream,
-                annex,
-                Slot::reborrow(&mut handle),
-            );
-            let result = call!(strand, block, out, &handle).await;
-            // Always released, even when the block raised.
-            let closed = global
-                .types
-                .pipe_stream
-                .cast(&handle)
-                .unwrap()
-                .enter(strand, async move |strand, inst| {
-                    close_stream(inst, strand).await
-                })
-                .await;
-            result.and(closed)
-        })
-        .await
+    with_slots!(strand, |mut handle| {
+        global.types.pipe_stream.create_with_annex(
+            strand,
+            stream,
+            annex,
+            Slot::reborrow(&mut handle),
+        );
+        let result = call!(strand, block, out, &handle).await;
+        // Always released, even when the block raised.
+        let closed = with_instance!(
+            strand,
+            global.types.pipe_stream.cast(&handle).unwrap(),
+            |inst| { close_stream(inst, strand).await }
+        );
+        result.and(closed)
+    })
 }
 
 /// Gives the stream's end back to its channel. Closing again does nothing.
@@ -726,10 +721,9 @@ pub(crate) async fn negotiate_recv<'v, 's>(
     let Some(cast) = global.types.pipe_receiver.cast(input) else {
         return Ok(None);
     };
-    cast.enter(strand, async move |strand, inst| {
+    with_instance!(strand, cast, |inst| {
         lease_recv(inst, strand, false).await.map(Some)
     })
-    .await
 }
 
 async fn lease_recv<'v, 's>(
@@ -849,10 +843,9 @@ pub(crate) async fn negotiate_send<'v, 's>(
     let Some(cast) = global.types.pipe_sender.cast(output) else {
         return Ok(None);
     };
-    cast.enter(strand, async move |strand, inst| {
+    with_instance!(strand, cast, |inst| {
         lease_send(inst, strand).await.map(Some)
     })
-    .await
 }
 
 async fn lease_send<'v, 's>(

@@ -24,6 +24,7 @@ use crate::{
     unpack,
     value::{Case, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed},
     vm::{Alloc, Register, Vm},
+    with_slots,
 };
 
 use super::{
@@ -402,6 +403,29 @@ impl<'v, 'a, T: Object<'v>> Clone for Instance<'v, 'a, T> {
 
 impl<'v, 'a, T: Object<'v>> Copy for Instance<'v, 'a, T> {}
 
+/// Run a block with the [`Instance`] behind a [`Cast`].
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_instance, object::native::{Cast, Object}, strand::Strand};
+/// # async fn example<'v, 's, T: Object<'v>>(strand: &mut Strand<'v, 's>, cast: Cast<'v, '_, T>) {
+/// with_instance!(strand, cast, |this| {
+///     let _ = this;
+/// })
+/// # }
+/// ```
+///
+/// The closure-like pattern binds the instance. `strand` must be the name of the current
+/// [`Strand`], rebound inside the body as for [`with_slots!`](crate::with_slots). The macro
+/// awaits the body and evaluates to its value. Don't use `return` in the body.
+#[macro_export]
+macro_rules! with_instance {
+    ($strand:ident, $cast:expr, |$this:pat_param| $body:expr) => {
+        ($cast).enter($strand, async |$strand, $this| $body).await
+    };
+}
+
 /// Witness that a [`Value`] has dynamic type `T`, obtained from [`Type::downcast`].
 ///
 /// Use [`Cast::enter`]/[`Cast::enter_sync`] to obtain an [`Instance`] for a
@@ -425,6 +449,8 @@ impl<'v, 'a, T: Object<'v>> Copy for Cast<'v, 'a, T> {}
 
 impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
     /// Obtain an [`Instance`] for the duration of `f`.
+    ///
+    /// Prefer [`with_instance!`](crate::with_instance) for an inline closure.
     #[inline]
     pub async fn enter<'s, R>(
         self,
@@ -1645,14 +1671,12 @@ async fn default_object_sink<'v, 'a, 's, T: Object<'v>>(
         ));
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
-    strand
-        .with_slots(async |strand, [mut delegator]| {
-            Output::set(strand, Slot::reborrow(&mut delegator), this);
-            Delegated::new(supertype, &delegator)
-                .op_sink(strand, out)
-                .await
-        })
-        .await
+    with_slots!(strand, |mut delegator| {
+        Output::set(strand, Slot::reborrow(&mut delegator), this);
+        Delegated::new(supertype, &delegator)
+            .op_sink(strand, out)
+            .await
+    })
 }
 
 async fn default_object_put<'v, 'a, 's, T: Object<'v>>(
@@ -1670,14 +1694,12 @@ async fn default_object_put<'v, 'a, 's, T: Object<'v>>(
         ));
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
-    strand
-        .with_slots(async |strand, [mut delegator]| {
-            Output::set(strand, Slot::reborrow(&mut delegator), this);
-            Delegated::new(supertype, &delegator)
-                .op_put(strand, value)
-                .await
-        })
-        .await
+    with_slots!(strand, |mut delegator| {
+        Output::set(strand, Slot::reborrow(&mut delegator), this);
+        Delegated::new(supertype, &delegator)
+            .op_put(strand, value)
+            .await
+    })
 }
 
 async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
@@ -1693,14 +1715,12 @@ async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
         return Err(Error::unsupported(strand, "spread"));
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
-    strand
-        .with_slots(async |strand, [mut delegator]| {
-            Output::set(strand, Slot::reborrow(&mut delegator), this);
-            Delegated::new(supertype, &delegator)
-                .op_spread(strand, context, sink)
-                .await
-        })
-        .await
+    with_slots!(strand, |mut delegator| {
+        Output::set(strand, Slot::reborrow(&mut delegator), this);
+        Delegated::new(supertype, &delegator)
+            .op_spread(strand, context, sink)
+            .await
+    })
 }
 
 unsafe impl<'v, T: Object<'v>> Collect for ObjectWrap<'v, T> {
@@ -1887,14 +1907,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                     },
                     Entry::Delegate(idx, MemberKind::Method) => {
                         let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
-                        strand
-                            .with_slots(async |strand, [mut delegator]| {
-                                Output::set(strand, Slot::reborrow(&mut delegator), &this);
-                                Delegated::new(supertype, &delegator)
-                                    .op_mcall(strand, method, args, out)
-                                    .await
-                            })
-                            .await
+                        with_slots!(strand, |mut delegator| {
+                            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                            Delegated::new(supertype, &delegator)
+                                .op_mcall(strand, method, args, out)
+                                .await
+                        })
                     }
                     _ => Err(Error::field(strand, method)),
                 },
@@ -5029,61 +5047,55 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
-            state
-                .fixture_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
-                    strand
-                        .with_slots_dynamic(0, async |strand, slots| {
-                            let error =
-                                ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
-                                    .await
-                                    .unwrap_err();
-                            assert_eq!(error.kind(), ErrorKind::Unsupported);
-                        })
-                        .await;
+            with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
+                strand
+                    .with_slots_dynamic(0, async |strand, slots| {
+                        let error =
+                            ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
+                                .await
+                                .unwrap_err();
+                        assert_eq!(error.kind(), ErrorKind::Unsupported);
+                    })
+                    .await;
 
-                    struct NullSpread;
-                    impl<'v, 's> protocol::Spread<'v, 's> for NullSpread {
-                        fn positional(
-                            &mut self,
-                            _strand: &mut Strand<'v, 's>,
-                            _value: Slot<'v, '_>,
-                        ) -> Result<'v, 's, ()> {
-                            Ok(())
-                        }
-                        fn symbol(
-                            &mut self,
-                            _strand: &mut Strand<'v, 's>,
-                            _key: Sym<'v, '_>,
-                            _value: Slot<'v, '_>,
-                        ) -> Result<'v, 's, ()> {
-                            Ok(())
-                        }
-                        fn keyed(
-                            &mut self,
-                            _strand: &mut Strand<'v, 's>,
-                            _key: Slot<'v, '_>,
-                            _value: Slot<'v, '_>,
-                        ) -> Result<'v, 's, ()> {
-                            Ok(())
-                        }
+                struct NullSpread;
+                impl<'v, 's> protocol::Spread<'v, 's> for NullSpread {
+                    fn positional(
+                        &mut self,
+                        _strand: &mut Strand<'v, 's>,
+                        _value: Slot<'v, '_>,
+                    ) -> Result<'v, 's, ()> {
+                        Ok(())
                     }
-                    let mut sink = NullSpread;
-                    // Spreading does not fall back to iteration.
-                    let err = ObjectWrap::<Fixture>::op_spread(
-                        recv,
-                        strand,
-                        protocol::SpreadContext::Sequence,
-                        &mut sink,
-                    )
-                    .await
-                    .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Unsupported);
-                })
-                .await;
+                    fn symbol(
+                        &mut self,
+                        _strand: &mut Strand<'v, 's>,
+                        _key: Sym<'v, '_>,
+                        _value: Slot<'v, '_>,
+                    ) -> Result<'v, 's, ()> {
+                        Ok(())
+                    }
+                    fn keyed(
+                        &mut self,
+                        _strand: &mut Strand<'v, 's>,
+                        _key: Slot<'v, '_>,
+                        _value: Slot<'v, '_>,
+                    ) -> Result<'v, 's, ()> {
+                        Ok(())
+                    }
+                }
+                let mut sink = NullSpread;
+                // Spreading does not fall back to iteration.
+                let err = ObjectWrap::<Fixture>::op_spread(
+                    recv,
+                    strand,
+                    protocol::SpreadContext::Sequence,
+                    &mut sink,
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Unsupported);
+            });
             let _ = &mut out;
         });
     }
@@ -5217,30 +5229,24 @@ mod tests {
             Output::set(strand, Slot::reborrow(&mut delegator), 42_i64);
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .fixture_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<Fixture>::op_mcall(
-                                recv.with_delegator(&delegator),
-                                strand,
-                                Sym::well_known(sym::LEN),
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                            assert!(out.repr_eq(&delegator));
-                        })
-                        .await;
-                })
-                .await;
+            with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
+                strand
+                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<Fixture>::op_mcall(
+                            recv.with_delegator(&delegator),
+                            strand,
+                            Sym::well_known(sym::LEN),
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                        assert!(out.repr_eq(&delegator));
+                    })
+                    .await;
+            });
         });
     }
 
@@ -5251,30 +5257,24 @@ mod tests {
             Output::set(strand, Slot::reborrow(&mut delegator), 42_i64);
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .slot_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<SlotFixture>::op_mcall(
-                                recv.with_delegator(&delegator),
-                                strand,
-                                state.receiver_sym,
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                            assert!(out.repr_eq(&delegator));
-                        })
-                        .await;
-                })
-                .await;
+            with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
+                strand
+                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<SlotFixture>::op_mcall(
+                            recv.with_delegator(&delegator),
+                            strand,
+                            state.receiver_sym,
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                        assert!(out.repr_eq(&delegator));
+                    })
+                    .await;
+            });
             assert!(out.repr_eq(&delegator));
         });
     }
@@ -5400,106 +5400,100 @@ mod tests {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .slot_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
-                    // Registered method entry.
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<SlotFixture>::op_mcall(
-                                recv.clone(),
-                                strand,
-                                state.bump_sym,
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
-                    assert_eq!(out.to_i64(strand).unwrap(), 1);
+            with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
+                // Registered method entry.
+                strand
+                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<SlotFixture>::op_mcall(
+                            recv.clone(),
+                            strand,
+                            state.bump_sym,
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    })
+                    .await;
+                assert_eq!(out.to_i64(strand).unwrap(), 1);
 
-                    // Synthetic `(get)` special-cased inside `op_mcall`.
-                    strand
-                        .with_slots_dynamic(1, async |strand, mut arg_slots| {
-                            Output::set(strand, arg_slots.at(0), state.counter_sym);
-                            let sig = [None];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<SlotFixture>::op_mcall(
-                                recv.clone(),
-                                strand,
-                                Sym::well_known(sym::GET_METHOD),
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
-                    assert_eq!(out.to_i64(strand).unwrap(), 1);
+                // Synthetic `(get)` special-cased inside `op_mcall`.
+                strand
+                    .with_slots_dynamic(1, async |strand, mut arg_slots| {
+                        Output::set(strand, arg_slots.at(0), state.counter_sym);
+                        let sig = [None];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<SlotFixture>::op_mcall(
+                            recv.clone(),
+                            strand,
+                            Sym::well_known(sym::GET_METHOD),
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    })
+                    .await;
+                assert_eq!(out.to_i64(strand).unwrap(), 1);
 
-                    // Synthetic `(set)` special-cased inside `op_mcall`.
-                    strand
-                        .with_slots_dynamic(2, async |strand, mut arg_slots| {
-                            let prop_sym = state.prop_sym;
-                            Output::set(strand, arg_slots.at(0), prop_sym);
-                            Output::set(strand, arg_slots.at(1), 42_i64);
-                            let sig = [None, None];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<SlotFixture>::op_mcall(
-                                recv.clone(),
-                                strand,
-                                Sym::well_known(sym::SET_METHOD),
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
+                // Synthetic `(set)` special-cased inside `op_mcall`.
+                strand
+                    .with_slots_dynamic(2, async |strand, mut arg_slots| {
+                        let prop_sym = state.prop_sym;
+                        Output::set(strand, arg_slots.at(0), prop_sym);
+                        Output::set(strand, arg_slots.at(1), 42_i64);
+                        let sig = [None, None];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<SlotFixture>::op_mcall(
+                            recv.clone(),
+                            strand,
+                            Sym::well_known(sym::SET_METHOD),
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    })
+                    .await;
 
-                    // Unregistered special methods use the receiver protocol.
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<SlotFixture>::op_mcall(
-                                recv.clone(),
-                                strand,
-                                Sym::well_known(sym::BOOL_METHOD),
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
-                    assert!(out.to_bool(strand).unwrap());
+                // Unregistered special methods use the receiver protocol.
+                strand
+                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<SlotFixture>::op_mcall(
+                            recv.clone(),
+                            strand,
+                            Sym::well_known(sym::BOOL_METHOD),
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    })
+                    .await;
+                assert!(out.to_bool(strand).unwrap());
 
-                    // Falls through to `T::method`'s default field error.
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            let err = ObjectWrap::<SlotFixture>::op_mcall(
-                                recv,
-                                strand,
-                                Sym::well_known(sym::LEN),
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap_err();
-                            assert_eq!(err.kind(), ErrorKind::Field);
-                        })
-                        .await;
-                })
-                .await;
+                // Falls through to `T::method`'s default field error.
+                strand
+                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        let err = ObjectWrap::<SlotFixture>::op_mcall(
+                            recv,
+                            strand,
+                            Sym::well_known(sym::LEN),
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap_err();
+                        assert_eq!(err.kind(), ErrorKind::Field);
+                    })
+                    .await;
+            });
         });
     }
 
@@ -5629,12 +5623,10 @@ mod tests {
             let ty_value: &Value = &ty_slot;
             let inst_value = inst_slot.dup();
 
-            state
-                .slot_ty
-                .type_vtbl
-                .cast(ty_value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
+            with_instance!(
+                strand,
+                state.slot_ty.type_vtbl.cast(ty_value).unwrap(),
+                |recv| {
                     // Registered type-method entry: instantiates a fresh object.
                     let make_sym = state.make_sym;
                     strand
@@ -5690,8 +5682,8 @@ mod tests {
                             assert_eq!(err.kind(), ErrorKind::Field);
                         })
                         .await;
-                })
-                .await;
+                }
+            );
         });
     }
 
@@ -5987,29 +5979,23 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             let with_slot_sym = state.with_slot_sym;
-            state
-                .slot_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter(strand, async |strand, recv| {
-                    strand
-                        .with_slots_dynamic(0, async |strand, mut arg_slots| {
-                            let sig: [Option<Sym>; 0] = [];
-                            let args = args_from_slots(&mut arg_slots, &sig, 0);
-                            ObjectWrap::<SlotFixture>::op_mcall(
-                                recv,
-                                strand,
-                                with_slot_sym,
-                                args,
-                                Slot::reborrow(&mut out),
-                            )
-                            .await
-                            .unwrap();
-                        })
-                        .await;
-                })
-                .await;
+            with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
+                strand
+                    .with_slots_dynamic(0, async |strand, mut arg_slots| {
+                        let sig: [Option<Sym>; 0] = [];
+                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        ObjectWrap::<SlotFixture>::op_mcall(
+                            recv,
+                            strand,
+                            with_slot_sym,
+                            args,
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
+                        .unwrap();
+                    })
+                    .await;
+            });
             assert_eq!(out.to_i64(strand).unwrap(), 5);
         });
     }

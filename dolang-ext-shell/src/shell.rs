@@ -5,6 +5,7 @@ use std::{
 };
 
 use dolang::runtime::value::fmt::Format;
+use dolang::runtime::{redirect, with_slots};
 
 use futures::AsyncWriteExt as _;
 
@@ -580,130 +581,104 @@ impl<'v> Object<'v> for Vfs {
     ) -> Result<'v, 's, ()> {
         let ([callable], []) = unpack!(strand, args, 1, 0)?;
         let global = strand.state::<ShellTag>();
-        strand
-            .with_slots(
-                async move |strand,
-                            [
-                    mut to_bg_send,
-                    mut to_bg_recv,
-                    mut from_bg_send,
-                    mut from_bg_recv,
-                    mut handle,
-                    mut tmp,
-                ]| {
-                    // The remote VFS connection's RPC framing runs over these
-                    // pipes, so they want a generous kernel buffer to make
-                    // short reads/writes (and the fragment-size backoff they
-                    // trigger) rare rather than routine. Fixed at
-                    // construction time so it can't be forgotten when the
-                    // channel is later negotiated into a real OS pipe.
-                    pipe_channel::make_pair(
-                        strand,
-                        Slot::reborrow(&mut to_bg_send),
-                        Slot::reborrow(&mut to_bg_recv),
-                        Some(REMOTE_VFS_PIPE_BUFFER_SIZE),
-                    );
-                    pipe_channel::make_pair(
-                        strand,
-                        Slot::reborrow(&mut from_bg_send),
-                        Slot::reborrow(&mut from_bg_recv),
-                        Some(REMOTE_VFS_PIPE_BUFFER_SIZE),
-                    );
+        with_slots!(strand, |mut to_bg_send,
+                             mut to_bg_recv,
+                             mut from_bg_send,
+                             mut from_bg_recv,
+                             mut handle,
+                             mut tmp| {
+            // The remote VFS connection's RPC framing runs over these
+            // pipes, so they want a generous kernel buffer to make
+            // short reads/writes (and the fragment-size backoff they
+            // trigger) rare rather than routine. Fixed at
+            // construction time so it can't be forgotten when the
+            // channel is later negotiated into a real OS pipe.
+            pipe_channel::make_pair(
+                strand,
+                Slot::reborrow(&mut to_bg_send),
+                Slot::reborrow(&mut to_bg_recv),
+                Some(REMOTE_VFS_PIPE_BUFFER_SIZE),
+            );
+            pipe_channel::make_pair(
+                strand,
+                Slot::reborrow(&mut from_bg_send),
+                Slot::reborrow(&mut from_bg_recv),
+                Some(REMOTE_VFS_PIPE_BUFFER_SIZE),
+            );
 
-                    // Bundled into a plain tuple so `callable`/the background
-                    // strand's input/output stay rooted together as the
-                    // single `arg` value `spawn_background` keeps alive until
-                    // the background strand starts running.
-                    let close_sym = global.syms.close;
-                    strand.with_slots_sync(|strand, [mut arg]| {
-                        strand.tuple([&callable, &to_bg_recv, &from_bg_send], &mut arg);
-                        strand.spawn_background(
-                            &arg,
-                            None,
-                            &mut handle,
-                            async move |strand, arg, out| {
-                                let Some(tuple) = arg.as_tuple(strand) else {
-                                    unreachable!("spawn_background arg is not a tuple")
-                                };
-                                strand
-                                    .with_slots(
-                                        async move |strand,
-                                                    [
-                                            mut callable,
-                                            mut input,
-                                            mut output,
-                                            mut tmp,
-                                        ]| {
-                                            tuple.get(strand, 0, &mut callable)?;
-                                            tuple.get(strand, 1, &mut input)?;
-                                            tuple.get(strand, 2, &mut output)?;
-                                            let res = Redirect::new(strand)
-                                                .input(&input)
-                                                .output(&output)
-                                                .enter(async move |strand| {
-                                                    call!(strand, &callable, out).await
-                                                })
-                                                .await;
-                                            // Plain close, no poisoning: these pipe
-                                            // ends get negotiated into a raw OS
-                                            // pipe before any RPC framing runs
-                                            // over them, which loses Do object-
-                                            // passing semantics anyway. `Vfs.stop`
-                                            // always joins and checks status, and a
-                                            // dead server surfaces its own errors
-                                            // on the next VFS operation.
-                                            let _ =
-                                                method!(strand, &input, close_sym, &mut tmp).await;
-                                            let _ =
-                                                method!(strand, &output, close_sym, &mut tmp).await;
-                                            res
-                                        },
-                                    )
-                                    .await
-                            },
-                        )
-                    })?;
-
-                    let (recv_guard, recv, send_guard, send) =
-                        negotiate_stream_pipes(strand, &from_bg_recv, &to_bg_send).await?;
-
-                    let vfs = match VfsVfs::new_split(recv, send).await {
-                        Ok(client) => client,
-                        Err(negotiate_error) => {
-                            let join = global.syms.join;
-                            return match method!(strand, &handle, join, &mut tmp).await {
-                                Ok(()) => Err(negotiate_error.into_sys(strand)),
-                                Err(launcher_error) => Err(launcher_error),
-                            };
-                        }
+            // Bundled into a plain tuple so `callable`/the background
+            // strand's input/output stay rooted together as the
+            // single `arg` value `spawn_background` keeps alive until
+            // the background strand starts running.
+            let close_sym = global.syms.close;
+            strand.with_slots_sync(|strand, [mut arg]| {
+                strand.tuple([&callable, &to_bg_recv, &from_bg_send], &mut arg);
+                strand.spawn_background(&arg, None, &mut handle, async move |strand, arg, out| {
+                    let Some(tuple) = arg.as_tuple(strand) else {
+                        unreachable!("spawn_background arg is not a tuple")
                     };
-                    drop((recv_guard, send_guard));
-                    global.types.vfs.create_with_annex(
-                        strand,
-                        Vfs,
-                        VfsAnnex {
-                            vfs,
-                            source: VfsSource::Stream,
-                            global,
-                        },
-                        &mut out,
-                    );
-                    global
-                        .types
-                        .vfs
-                        .cast(&out)
-                        .unwrap()
-                        .enter_sync(strand, |strand, this| {
-                            Output::set(
-                                strand,
-                                Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
-                                &handle,
-                            );
-                        });
-                    Ok(())
+                    with_slots!(strand, |mut callable, mut input, mut output, mut tmp| {
+                        tuple.get(strand, 0, &mut callable)?;
+                        tuple.get(strand, 1, &mut input)?;
+                        tuple.get(strand, 2, &mut output)?;
+                        let res = redirect!(
+                            strand,
+                            Redirect::new(strand).input(&input).output(&output),
+                            { call!(strand, &callable, out).await }
+                        );
+                        // Plain close, no poisoning: these pipe
+                        // ends get negotiated into a raw OS
+                        // pipe before any RPC framing runs
+                        // over them, which loses Do object-
+                        // passing semantics anyway. `Vfs.stop`
+                        // always joins and checks status, and a
+                        // dead server surfaces its own errors
+                        // on the next VFS operation.
+                        let _ = method!(strand, &input, close_sym, &mut tmp).await;
+                        let _ = method!(strand, &output, close_sym, &mut tmp).await;
+                        res
+                    })
+                })
+            })?;
+
+            let (recv_guard, recv, send_guard, send) =
+                negotiate_stream_pipes(strand, &from_bg_recv, &to_bg_send).await?;
+
+            let vfs = match VfsVfs::new_split(recv, send).await {
+                Ok(client) => client,
+                Err(negotiate_error) => {
+                    let join = global.syms.join;
+                    return match method!(strand, &handle, join, &mut tmp).await {
+                        Ok(()) => Err(negotiate_error.into_sys(strand)),
+                        Err(launcher_error) => Err(launcher_error),
+                    };
+                }
+            };
+            drop((recv_guard, send_guard));
+            global.types.vfs.create_with_annex(
+                strand,
+                Vfs,
+                VfsAnnex {
+                    vfs,
+                    source: VfsSource::Stream,
+                    global,
                 },
-            )
-            .await
+                &mut out,
+            );
+            global
+                .types
+                .vfs
+                .cast(&out)
+                .unwrap()
+                .enter_sync(strand, |strand, this| {
+                    Output::set(
+                        strand,
+                        Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
+                        &handle,
+                    );
+                });
+            Ok(())
+        })
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
@@ -762,14 +737,15 @@ impl<'v> Object<'v> for Vfs {
                 let annex = this.annex();
                 let stop_result = annex.vfs.clone().stop().await;
                 let join_result = if matches!(&annex.source, VfsSource::Stream) {
-                    strand
-                        .with_slots(async move |strand, [mut stream, mut output]| {
+                    async {
+                        with_slots!(strand, |mut stream, mut output| {
                             let borrow = this.borrow(strand)?;
                             Output::set(strand, &mut stream, Ref::slot::<0>(&borrow));
                             drop(borrow);
                             method!(strand, &stream, annex.global.syms.join, &mut output).await
                         })
-                        .await
+                    }
+                    .await
                 } else {
                     Ok(())
                 };
@@ -1192,10 +1168,11 @@ pub(crate) fn configure_vm<'v>(
                 .transpose()?
                 .unwrap_or(true);
             capture_ty.create(strand, Capture::new(), &mut cap);
-            Redirect::new(strand)
-                .output(&cap)
-                .enter(async move |strand| call!(strand, func, tmp).await)
-                .await?;
+            redirect!(
+                strand,
+                Redirect::new(strand).output(&cap),
+                call!(strand, func, tmp).await
+            )?;
             capture_ty
                 .cast(&cap)
                 .unwrap()

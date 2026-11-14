@@ -4,6 +4,7 @@ use super::*;
 use crate::util;
 use dolang::runtime::AllocExt;
 use dolang::runtime::value::{DictPairs, RecordPairs, View};
+use dolang::runtime::with_slots;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SecInfo(pub WinSecInfo);
@@ -1691,128 +1692,122 @@ async fn ace_components_from_spec<'v, 's>(
 ) -> Result<'v, 's, AceComponents> {
     let mut pairs = dict.pairs();
     let mut components = AceComponents::default();
-    strand
-        .with_slots(async |strand, [mut key, mut entry]| {
-            while pairs.next(strand, &mut key, &mut entry)? {
-                let Some(sym) = key.as_sym(strand.vm()) else {
+    with_slots!(strand, |mut key, mut entry| {
+        while pairs.next(strand, &mut key, &mut entry)? {
+            let Some(sym) = key.as_sym(strand.vm()) else {
+                return Err(Error::value(
+                    strand,
+                    format!("{path}: keys must be symbols"),
+                ));
+            };
+            if sym == global.syms.allow {
+                if components.allow.is_some() {
                     return Err(Error::value(
                         strand,
-                        format!("{path}: keys must be symbols"),
-                    ));
-                };
-                if sym == global.syms.allow {
-                    if components.allow.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `allow`"),
-                        ));
-                    }
-                    components.allow =
-                        Some(coerce_sid(strand, global, &entry, &path.key("allow"))?);
-                } else if sym == global.syms.deny {
-                    if components.deny.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `deny`"),
-                        ));
-                    }
-                    components.deny = Some(coerce_sid(strand, global, &entry, &path.key("deny"))?);
-                } else if sym == global.syms.audit {
-                    if components.audit.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `audit`"),
-                        ));
-                    }
-                    components.audit =
-                        Some(coerce_sid(strand, global, &entry, &path.key("audit"))?);
-                } else if sym == global.syms.mask {
-                    if components.mask.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `mask`"),
-                        ));
-                    }
-                    components.mask =
-                        Some(ace_mask(strand, global, &entry, &path.key("mask")).await?);
-                } else if sym == global.syms.flags {
-                    if components.flags.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `flags`"),
-                        ));
-                    }
-                    components.flags = Some(ace_flags(strand, &entry, &path.key("flags")).await?);
-                } else if sym == global.syms.object_type {
-                    if components.object_type.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `object_type`"),
-                        ));
-                    }
-                    components.object_type = Some(dolang_ext_uuid::value_to_guid(strand, &entry)?);
-                } else if sym == global.syms.inherited_object_type {
-                    if components.inherited_object_type.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `inherited_object_type`"),
-                        ));
-                    }
-                    components.inherited_object_type =
-                        Some(dolang_ext_uuid::value_to_guid(strand, &entry)?);
-                } else if sym == global.syms.callback {
-                    if components.callback.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `callback`"),
-                        ));
-                    }
-                    components.callback = Some(ace_bool(strand, &entry, &path.key("callback"))?);
-                } else if sym == global.syms.application_data {
-                    if components.application_data.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `application_data`"),
-                        ));
-                    }
-                    components.application_data = Some(
-                        entry
-                            .as_bin(strand)
-                            .map(|value| value.to_vec())
-                            .ok_or_else(|| {
-                                Error::type_error(
-                                    strand,
-                                    format!("{}: expected Bin", path.key("application_data")),
-                                )
-                            })?,
-                    );
-                } else if sym == global.syms.successful {
-                    if components.successful.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `successful`"),
-                        ));
-                    }
-                    components.successful =
-                        Some(ace_bool(strand, &entry, &path.key("successful"))?);
-                } else if sym == global.syms.failed {
-                    if components.failed.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `failed`"),
-                        ));
-                    }
-                    components.failed = Some(ace_bool(strand, &entry, &path.key("failed"))?);
-                } else {
-                    return Err(Error::value(
-                        strand,
-                        format!("{path}: unknown key `{}`", sym.as_str(strand.vm())),
+                        format!("{path}: duplicate key `allow`"),
                     ));
                 }
+                components.allow = Some(coerce_sid(strand, global, &entry, &path.key("allow"))?);
+            } else if sym == global.syms.deny {
+                if components.deny.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `deny`"),
+                    ));
+                }
+                components.deny = Some(coerce_sid(strand, global, &entry, &path.key("deny"))?);
+            } else if sym == global.syms.audit {
+                if components.audit.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `audit`"),
+                    ));
+                }
+                components.audit = Some(coerce_sid(strand, global, &entry, &path.key("audit"))?);
+            } else if sym == global.syms.mask {
+                if components.mask.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `mask`"),
+                    ));
+                }
+                components.mask = Some(ace_mask(strand, global, &entry, &path.key("mask")).await?);
+            } else if sym == global.syms.flags {
+                if components.flags.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `flags`"),
+                    ));
+                }
+                components.flags = Some(ace_flags(strand, &entry, &path.key("flags")).await?);
+            } else if sym == global.syms.object_type {
+                if components.object_type.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `object_type`"),
+                    ));
+                }
+                components.object_type = Some(dolang_ext_uuid::value_to_guid(strand, &entry)?);
+            } else if sym == global.syms.inherited_object_type {
+                if components.inherited_object_type.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `inherited_object_type`"),
+                    ));
+                }
+                components.inherited_object_type =
+                    Some(dolang_ext_uuid::value_to_guid(strand, &entry)?);
+            } else if sym == global.syms.callback {
+                if components.callback.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `callback`"),
+                    ));
+                }
+                components.callback = Some(ace_bool(strand, &entry, &path.key("callback"))?);
+            } else if sym == global.syms.application_data {
+                if components.application_data.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `application_data`"),
+                    ));
+                }
+                components.application_data = Some(
+                    entry
+                        .as_bin(strand)
+                        .map(|value| value.to_vec())
+                        .ok_or_else(|| {
+                            Error::type_error(
+                                strand,
+                                format!("{}: expected Bin", path.key("application_data")),
+                            )
+                        })?,
+                );
+            } else if sym == global.syms.successful {
+                if components.successful.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `successful`"),
+                    ));
+                }
+                components.successful = Some(ace_bool(strand, &entry, &path.key("successful"))?);
+            } else if sym == global.syms.failed {
+                if components.failed.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `failed`"),
+                    ));
+                }
+                components.failed = Some(ace_bool(strand, &entry, &path.key("failed"))?);
+            } else {
+                return Err(Error::value(
+                    strand,
+                    format!("{path}: unknown key `{}`", sym.as_str(strand.vm())),
+                ));
             }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     Ok(components)
 }
 
@@ -2057,48 +2052,46 @@ async fn acl_components_from_spec<'v, 's>(
     };
     let mut index = 0_usize;
     let positional = matches!(pairs, AclSpecPairs::Record(_));
-    strand
-        .with_slots(async |strand, [mut key, mut entry]| {
-            while pairs.next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut entry))? {
-                if let Some(sym) = key.as_sym(strand.vm()) {
-                    if sym != global.syms.revision {
-                        return Err(Error::value(
-                            strand,
-                            format!(
-                                "{path}: unknown key `{}`; expected revision",
-                                sym.as_str(strand.vm())
-                            ),
-                        ));
-                    }
-                    if components.revision.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `revision`"),
-                        ));
-                    }
-                    components.revision =
-                        Some(acl_revision(strand, global, &entry, &path.key("revision"))?);
-                } else if positional && let Some(found) = key.as_int(strand) {
-                    if found != i128::try_from(index).expect("entry count fits in i128") {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: expected entry {index}, found {found}"),
-                        ));
-                    }
-                    components
-                        .aces
-                        .push(coerce_ace(strand, global, &entry, &path.index(index)).await?);
-                    index += 1;
-                } else {
+    with_slots!(strand, |mut key, mut entry| {
+        while pairs.next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut entry))? {
+            if let Some(sym) = key.as_sym(strand.vm()) {
+                if sym != global.syms.revision {
                     return Err(Error::value(
                         strand,
-                        format!("{path}: keys must be symbols or entry indices"),
+                        format!(
+                            "{path}: unknown key `{}`; expected revision",
+                            sym.as_str(strand.vm())
+                        ),
                     ));
                 }
+                if components.revision.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `revision`"),
+                    ));
+                }
+                components.revision =
+                    Some(acl_revision(strand, global, &entry, &path.key("revision"))?);
+            } else if positional && let Some(found) = key.as_int(strand) {
+                if found != i128::try_from(index).expect("entry count fits in i128") {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: expected entry {index}, found {found}"),
+                    ));
+                }
+                components
+                    .aces
+                    .push(coerce_ace(strand, global, &entry, &path.index(index)).await?);
+                index += 1;
+            } else {
+                return Err(Error::value(
+                    strand,
+                    format!("{path}: keys must be symbols or entry indices"),
+                ));
             }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     Ok(components)
 }
 
@@ -2126,17 +2119,15 @@ async fn coerce_acl<'v, 's>(
     }
 
     let mut aces = Vec::new();
-    strand
-        .with_slots(async |strand, [mut iter, mut item]| {
-            value.iter(strand, &mut iter).await?;
-            let mut index = 0;
-            while iter.next(strand, &mut item).await? {
-                aces.push(coerce_ace(strand, global, &item, &path.index(index)).await?);
-                index += 1;
-            }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+    with_slots!(strand, |mut iter, mut item| {
+        value.iter(strand, &mut iter).await?;
+        let mut index = 0;
+        while iter.next(strand, &mut item).await? {
+            aces.push(coerce_ace(strand, global, &item, &path.index(index)).await?);
+            index += 1;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     VfsAclBuf::from_aces(&aces, None)
         .map_err(|error| Error::value(strand, format!("{path}: {error}")))
 }
@@ -2244,197 +2235,195 @@ async fn sec_desc_components_from_spec<'v, 's>(
 ) -> Result<'v, 's, SecDescComponents> {
     let mut pairs = dict.pairs();
     let mut components = SecDescComponents::default();
-    strand
-        .with_slots(async |strand, [mut key, mut entry]| {
-            while pairs.next(strand, &mut key, &mut entry)? {
-                let Some(sym) = key.as_sym(strand.vm()) else {
+    with_slots!(strand, |mut key, mut entry| {
+        while pairs.next(strand, &mut key, &mut entry)? {
+            let Some(sym) = key.as_sym(strand.vm()) else {
+                return Err(Error::value(
+                    strand,
+                    format!("{path}: keys must be symbols"),
+                ));
+            };
+            if sym == global.syms.owner {
+                if !components.owner.is_unspecified() {
                     return Err(Error::value(
                         strand,
-                        format!("{path}: keys must be symbols"),
-                    ));
-                };
-                if sym == global.syms.owner {
-                    if !components.owner.is_unspecified() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `owner`"),
-                        ));
-                    }
-                    components.owner = NullableComponent::from_option(coerce_sid_option(
-                        strand,
-                        global,
-                        &entry,
-                        &path.key("owner"),
-                    )?);
-                } else if sym == global.syms.group {
-                    if !components.group.is_unspecified() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `group`"),
-                        ));
-                    }
-                    components.group = NullableComponent::from_option(coerce_sid_option(
-                        strand,
-                        global,
-                        &entry,
-                        &path.key("group"),
-                    )?);
-                } else if sym == global.syms.dacl {
-                    if !components.dacl.is_unspecified() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `dacl`"),
-                        ));
-                    }
-                    components.dacl = NullableComponent::from_option(
-                        coerce_acl_option(strand, global, &entry, &path.key("dacl")).await?,
-                    );
-                } else if sym == global.syms.sacl {
-                    if !components.sacl.is_unspecified() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `sacl`"),
-                        ));
-                    }
-                    components.sacl = NullableComponent::from_option(
-                        coerce_acl_option(strand, global, &entry, &path.key("sacl")).await?,
-                    );
-                } else if sym == global.syms.owner_defaulted {
-                    if components.owner_defaulted.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `owner_defaulted`"),
-                        ));
-                    }
-                    components.owner_defaulted =
-                        Some(ace_bool(strand, &entry, &path.key("owner_defaulted"))?);
-                } else if sym == global.syms.group_defaulted {
-                    if components.group_defaulted.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `group_defaulted`"),
-                        ));
-                    }
-                    components.group_defaulted =
-                        Some(ace_bool(strand, &entry, &path.key("group_defaulted"))?);
-                } else if sym == global.syms.dacl_present {
-                    if components.dacl_present.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `dacl_present`"),
-                        ));
-                    }
-                    components.dacl_present =
-                        Some(ace_bool(strand, &entry, &path.key("dacl_present"))?);
-                } else if sym == global.syms.dacl_defaulted {
-                    if components.dacl_defaulted.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `dacl_defaulted`"),
-                        ));
-                    }
-                    components.dacl_defaulted =
-                        Some(ace_bool(strand, &entry, &path.key("dacl_defaulted"))?);
-                } else if sym == global.syms.dacl_auto_inherit_required {
-                    if components.dacl_auto_inherit_required.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `dacl_auto_inherit_required`"),
-                        ));
-                    }
-                    components.dacl_auto_inherit_required = Some(ace_bool(
-                        strand,
-                        &entry,
-                        &path.key("dacl_auto_inherit_required"),
-                    )?);
-                } else if sym == global.syms.dacl_auto_inherited {
-                    if components.dacl_auto_inherited.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `dacl_auto_inherited`"),
-                        ));
-                    }
-                    components.dacl_auto_inherited =
-                        Some(ace_bool(strand, &entry, &path.key("dacl_auto_inherited"))?);
-                } else if sym == global.syms.dacl_protected {
-                    if components.dacl_protected.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `dacl_protected`"),
-                        ));
-                    }
-                    components.dacl_protected =
-                        Some(ace_bool(strand, &entry, &path.key("dacl_protected"))?);
-                } else if sym == global.syms.sacl_present {
-                    if components.sacl_present.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `sacl_present`"),
-                        ));
-                    }
-                    components.sacl_present =
-                        Some(ace_bool(strand, &entry, &path.key("sacl_present"))?);
-                } else if sym == global.syms.sacl_defaulted {
-                    if components.sacl_defaulted.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `sacl_defaulted`"),
-                        ));
-                    }
-                    components.sacl_defaulted =
-                        Some(ace_bool(strand, &entry, &path.key("sacl_defaulted"))?);
-                } else if sym == global.syms.sacl_auto_inherit_required {
-                    if components.sacl_auto_inherit_required.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `sacl_auto_inherit_required`"),
-                        ));
-                    }
-                    components.sacl_auto_inherit_required = Some(ace_bool(
-                        strand,
-                        &entry,
-                        &path.key("sacl_auto_inherit_required"),
-                    )?);
-                } else if sym == global.syms.sacl_auto_inherited {
-                    if components.sacl_auto_inherited.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `sacl_auto_inherited`"),
-                        ));
-                    }
-                    components.sacl_auto_inherited =
-                        Some(ace_bool(strand, &entry, &path.key("sacl_auto_inherited"))?);
-                } else if sym == global.syms.sacl_protected {
-                    if components.sacl_protected.is_some() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `sacl_protected`"),
-                        ));
-                    }
-                    components.sacl_protected =
-                        Some(ace_bool(strand, &entry, &path.key("sacl_protected"))?);
-                } else if sym == global.syms.rm_control {
-                    if !components.rm_control.is_unspecified() {
-                        return Err(Error::value(
-                            strand,
-                            format!("{path}: duplicate key `rm_control`"),
-                        ));
-                    }
-                    components.rm_control = if entry.is_nil() {
-                        NullableComponent::Clear
-                    } else {
-                        NullableComponent::Set(ace_u8(strand, &entry, &path.key("rm_control"))?)
-                    };
-                } else {
-                    return Err(Error::value(
-                        strand,
-                        format!("{path}: unknown key `{}`", sym.as_str(strand.vm())),
+                        format!("{path}: duplicate key `owner`"),
                     ));
                 }
+                components.owner = NullableComponent::from_option(coerce_sid_option(
+                    strand,
+                    global,
+                    &entry,
+                    &path.key("owner"),
+                )?);
+            } else if sym == global.syms.group {
+                if !components.group.is_unspecified() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `group`"),
+                    ));
+                }
+                components.group = NullableComponent::from_option(coerce_sid_option(
+                    strand,
+                    global,
+                    &entry,
+                    &path.key("group"),
+                )?);
+            } else if sym == global.syms.dacl {
+                if !components.dacl.is_unspecified() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `dacl`"),
+                    ));
+                }
+                components.dacl = NullableComponent::from_option(
+                    coerce_acl_option(strand, global, &entry, &path.key("dacl")).await?,
+                );
+            } else if sym == global.syms.sacl {
+                if !components.sacl.is_unspecified() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `sacl`"),
+                    ));
+                }
+                components.sacl = NullableComponent::from_option(
+                    coerce_acl_option(strand, global, &entry, &path.key("sacl")).await?,
+                );
+            } else if sym == global.syms.owner_defaulted {
+                if components.owner_defaulted.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `owner_defaulted`"),
+                    ));
+                }
+                components.owner_defaulted =
+                    Some(ace_bool(strand, &entry, &path.key("owner_defaulted"))?);
+            } else if sym == global.syms.group_defaulted {
+                if components.group_defaulted.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `group_defaulted`"),
+                    ));
+                }
+                components.group_defaulted =
+                    Some(ace_bool(strand, &entry, &path.key("group_defaulted"))?);
+            } else if sym == global.syms.dacl_present {
+                if components.dacl_present.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `dacl_present`"),
+                    ));
+                }
+                components.dacl_present =
+                    Some(ace_bool(strand, &entry, &path.key("dacl_present"))?);
+            } else if sym == global.syms.dacl_defaulted {
+                if components.dacl_defaulted.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `dacl_defaulted`"),
+                    ));
+                }
+                components.dacl_defaulted =
+                    Some(ace_bool(strand, &entry, &path.key("dacl_defaulted"))?);
+            } else if sym == global.syms.dacl_auto_inherit_required {
+                if components.dacl_auto_inherit_required.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `dacl_auto_inherit_required`"),
+                    ));
+                }
+                components.dacl_auto_inherit_required = Some(ace_bool(
+                    strand,
+                    &entry,
+                    &path.key("dacl_auto_inherit_required"),
+                )?);
+            } else if sym == global.syms.dacl_auto_inherited {
+                if components.dacl_auto_inherited.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `dacl_auto_inherited`"),
+                    ));
+                }
+                components.dacl_auto_inherited =
+                    Some(ace_bool(strand, &entry, &path.key("dacl_auto_inherited"))?);
+            } else if sym == global.syms.dacl_protected {
+                if components.dacl_protected.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `dacl_protected`"),
+                    ));
+                }
+                components.dacl_protected =
+                    Some(ace_bool(strand, &entry, &path.key("dacl_protected"))?);
+            } else if sym == global.syms.sacl_present {
+                if components.sacl_present.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `sacl_present`"),
+                    ));
+                }
+                components.sacl_present =
+                    Some(ace_bool(strand, &entry, &path.key("sacl_present"))?);
+            } else if sym == global.syms.sacl_defaulted {
+                if components.sacl_defaulted.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `sacl_defaulted`"),
+                    ));
+                }
+                components.sacl_defaulted =
+                    Some(ace_bool(strand, &entry, &path.key("sacl_defaulted"))?);
+            } else if sym == global.syms.sacl_auto_inherit_required {
+                if components.sacl_auto_inherit_required.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `sacl_auto_inherit_required`"),
+                    ));
+                }
+                components.sacl_auto_inherit_required = Some(ace_bool(
+                    strand,
+                    &entry,
+                    &path.key("sacl_auto_inherit_required"),
+                )?);
+            } else if sym == global.syms.sacl_auto_inherited {
+                if components.sacl_auto_inherited.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `sacl_auto_inherited`"),
+                    ));
+                }
+                components.sacl_auto_inherited =
+                    Some(ace_bool(strand, &entry, &path.key("sacl_auto_inherited"))?);
+            } else if sym == global.syms.sacl_protected {
+                if components.sacl_protected.is_some() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `sacl_protected`"),
+                    ));
+                }
+                components.sacl_protected =
+                    Some(ace_bool(strand, &entry, &path.key("sacl_protected"))?);
+            } else if sym == global.syms.rm_control {
+                if !components.rm_control.is_unspecified() {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: duplicate key `rm_control`"),
+                    ));
+                }
+                components.rm_control = if entry.is_nil() {
+                    NullableComponent::Clear
+                } else {
+                    NullableComponent::Set(ace_u8(strand, &entry, &path.key("rm_control"))?)
+                };
+            } else {
+                return Err(Error::value(
+                    strand,
+                    format!("{path}: unknown key `{}`", sym.as_str(strand.vm())),
+                ));
             }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     Ok(components)
 }
 

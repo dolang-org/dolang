@@ -59,6 +59,50 @@ impl<'v, 'a> Hash for ObjectId<'v, 'a> {
     }
 }
 
+/// Run a block with the string slice of a [`Str`] pinned for its duration.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_str, strand::Strand, value::view::Str};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>, value: Str<'v, '_>) -> usize {
+/// with_str!(strand, value, |s| s.len())
+/// # }
+/// ```
+///
+/// The closure-like pattern binds the `&str`. `strand` must be the name of the current
+/// [`Strand`], rebound inside the body as for [`with_slots!`](crate::with_slots). The
+/// macro awaits the body and evaluates to its value. Don't use `return` in the body.
+#[macro_export]
+macro_rules! with_str {
+    ($strand:ident, $value:expr, |$s:pat_param| $body:expr) => {
+        ($value)
+            .with_str_async($strand, async |$strand, $s| $body)
+            .await
+    };
+}
+
+/// Run a block with the byte slice of a [`Bin`] pinned for its duration.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_slice, strand::Strand, value::view::Bin};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>, value: Bin<'v, '_>) -> usize {
+/// with_slice!(strand, value, |bytes| bytes.len())
+/// # }
+/// ```
+///
+/// As for [`with_str!`](crate::with_str), with a `&[u8]`.
+#[macro_export]
+macro_rules! with_slice {
+    ($strand:ident, $value:expr, |$bytes:pat_param| $body:expr) => {
+        ($value)
+            .with_slice_async($strand, async |$strand, $bytes| $body)
+            .await
+    };
+}
+
 /// Typed view of a `Str` value.
 #[derive(Clone, Copy)]
 pub struct Str<'v, 'a>(&'a GcObj<'v, StrObj>);
@@ -97,6 +141,8 @@ impl<'v, 'a> Str<'v, 'a> {
     }
 
     /// Async counterpart to [`Self::with_str`].
+    ///
+    /// Prefer [`with_str!`](crate::with_str) for an inline closure.
     pub async fn with_str_async<'s, R>(
         &self,
         strand: &mut Strand<'v, 's>,
@@ -192,6 +238,8 @@ impl<'v, 'a> Bin<'v, 'a> {
     }
 
     /// Async counterpart to [`Self::with_slice`].
+    ///
+    /// Prefer [`with_slice!`](crate::with_slice) for an inline closure.
     pub async fn with_slice_async<'s, R>(
         &self,
         strand: &mut Strand<'v, 's>,

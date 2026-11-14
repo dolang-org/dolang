@@ -13,7 +13,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::strand::InterruptMask;
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, io::IoResultExt as _,
-    object::TypeBuilder, unpack, value::Root, vm::Register,
+    object::TypeBuilder, unpack, value::Root, vm::Register, with_interrupt_mask,
 };
 use futures::future::{AbortHandle, Abortable};
 use time::{
@@ -1143,15 +1143,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 )
                 .await;
             });
-            let res = strand
-                .with_interrupt_mask(mask - timeout_mask, async move |strand| {
-                    strand
-                        .with_interrupt_token(interrupt, async move |strand| {
-                            call!(strand, block, out).await
-                        })
-                        .await
-                })
-                .await;
+            let res = with_interrupt_mask!(strand, mask - timeout_mask, {
+                strand
+                    .with_interrupt_token(interrupt, async move |strand| {
+                        call!(strand, block, out).await
+                    })
+                    .await
+            });
             abort.abort();
             res
         })

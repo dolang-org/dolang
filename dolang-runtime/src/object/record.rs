@@ -27,6 +27,7 @@ use crate::{
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value, fmt::Format},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -618,12 +619,10 @@ impl<'v> Protocol<'v> for Record<'v> {
                     Some(key @ Key::Pos(_)) => {
                         // A position has at most one value
                         let found = this.borrow(strand)?.get(&key, None).map(Value::dup);
-                        return strand
-                            .with_slots(async |strand, [mut values]| {
-                                tuple::create(strand, found, &mut values);
-                                values.op_iter(strand, out).await
-                            })
-                            .await;
+                        return with_slots!(strand, |mut values| {
+                            tuple::create(strand, found, &mut values);
+                            values.op_iter(strand, out).await
+                        });
                     }
                 };
                 Iter::create(strand, &this, mode, out)
@@ -673,13 +672,11 @@ impl<'v> Protocol<'v> for Record<'v> {
             sym::COPY => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 if this.delegator().is_some() {
-                    return strand
-                        .with_slots(async |strand, [mut receiver, mut ty]| {
-                            Output::set(strand, Slot::reborrow(&mut receiver), &this);
-                            receiver.op_type(strand, Slot::reborrow(&mut ty));
-                            call!(strand, &ty, out, &receiver).await
-                        })
-                        .await;
+                    return with_slots!(strand, |mut receiver, mut ty| {
+                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        receiver.op_type(strand, Slot::reborrow(&mut ty));
+                        call!(strand, &ty, out, &receiver).await
+                    });
                 }
                 let copy = Record::from_items(this.borrow(strand)?.snapshot());
                 strand.builtin_types().record.create(strand, copy, out);
@@ -1002,13 +999,11 @@ impl<'v> Protocol<'v> for Class {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
-                strand
-                    .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().record, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().record, native.take())?;
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut native| {
+                    call!(strand, &strand.singletons().record, &mut native, items).await?;
+                    self_val.op_fill(strand, &strand.singletons().record, native.take())?;
+                    Ok(())
+                })
             }
             _ => {
                 let vm = strand.vm();

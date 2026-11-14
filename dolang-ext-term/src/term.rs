@@ -2,6 +2,7 @@ use crate::global::Tag;
 
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::{self as fmt_spec, Fill, Format, Kind, Pad, Spec};
+use dolang::runtime::{redirect, with_slots};
 use dolang::{
     compile::Config,
     runtime::{
@@ -40,27 +41,25 @@ async fn with_capture<'v, 's, R>(
     line_ending: &Slot<'v, '_>,
     f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
 ) -> R {
-    strand
-        .with_slots(async move |strand, [mut prev, mut prev_ending]| {
-            let mut root = global.capture.slot(strand);
-            Output::set(strand, &mut prev, &root);
-            Output::set(strand, &mut root, console);
-            let mut ending = global.capture_line_ending.slot(strand);
-            Output::set(strand, &mut prev_ending, &ending);
-            Output::set(strand, &mut ending, line_ending);
-            let prev_can_style = global.local.get(strand).set_capture_can_style(can_style);
-            let result = f(strand).await;
-            let mut root = global.capture.slot(strand);
-            Output::set(strand, &mut root, &prev);
-            let mut ending = global.capture_line_ending.slot(strand);
-            Output::set(strand, &mut ending, &prev_ending);
-            global
-                .local
-                .get(strand)
-                .set_capture_can_style(prev_can_style);
-            result
-        })
-        .await
+    with_slots!(strand, |mut prev, mut prev_ending| {
+        let mut root = global.capture.slot(strand);
+        Output::set(strand, &mut prev, &root);
+        Output::set(strand, &mut root, console);
+        let mut ending = global.capture_line_ending.slot(strand);
+        Output::set(strand, &mut prev_ending, &ending);
+        Output::set(strand, &mut ending, line_ending);
+        let prev_can_style = global.local.get(strand).set_capture_can_style(can_style);
+        let result = f(strand).await;
+        let mut root = global.capture.slot(strand);
+        Output::set(strand, &mut root, &prev);
+        let mut ending = global.capture_line_ending.slot(strand);
+        Output::set(strand, &mut ending, &prev_ending);
+        global
+            .local
+            .get(strand)
+            .set_capture_can_style(prev_can_style);
+        result
+    })
 }
 
 const BOLD: usize = 0;
@@ -1570,11 +1569,11 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .types
                     .default
                     .create(strand, DefaultOutput, &mut output);
-                Redirect::new(strand)
-                    .input(&input)
-                    .output(&output)
-                    .enter(async move |strand| call!(strand, func, out).await)
-                    .await
+                redirect!(
+                    strand,
+                    Redirect::new(strand).input(&input).output(&output),
+                    call!(strand, func, out).await
+                )
             },
         )
         .function_with_slots(
@@ -1680,20 +1679,17 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 } else {
                     &scratch
                 };
-                Redirect::new(strand)
-                    .output(target)
-                    .enter(async move |strand| {
-                        with_capture(
-                            strand,
-                            global,
-                            &console,
-                            false,
-                            &line_ending,
-                            async move |strand| call!(strand, func, out).await,
-                        )
-                        .await
-                    })
+                redirect!(strand, Redirect::new(strand).output(target), {
+                    with_capture(
+                        strand,
+                        global,
+                        &console,
+                        false,
+                        &line_ending,
+                        async move |strand| call!(strand, func, out).await,
+                    )
                     .await
+                })
             },
         )
         .function_with_slots("echo", async move |strand, args, _, [mut line]| {

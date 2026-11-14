@@ -1155,6 +1155,7 @@ mod tests {
         sym::Sym,
         test_support::with_builder,
         vm::{Builder, StateTag},
+        with_slots,
     };
 
     use super::*;
@@ -1376,32 +1377,30 @@ mod tests {
             // (2) slices nothing. `start`/`end` are constructed and consumed in the
             // same expression, immediately embedded (by value) into the `Range`,
             // which becomes GC-scanned as soon as it's rooted in `range_slot` below.
-            strand
-                .with_slots(async |strand, [mut range_slot, mut out_slot]| {
-                    let range = range::Range::new(
-                        Value::from_i64(strand, 5),
-                        Value::from_i64(strand, 2),
-                        Value::NIL,
-                    );
-                    strand.builtin_types().range.create_imm(
-                        strand,
-                        range,
-                        Slot::reborrow(&mut range_slot),
-                    );
-                    let range_value: &Value = &range_slot;
-                    index_from(
-                        owner,
-                        &glue,
-                        strand,
-                        range_value,
-                        Slot::reborrow(&mut out_slot),
-                    )
-                    .unwrap();
-                    let out: &Value = &out_slot;
-                    let array = out.downcast_ref(strand.builtin_types().array).unwrap();
-                    assert!(array.read(|array| array.borrow().unwrap().inner.is_empty()));
-                })
-                .await;
+            with_slots!(strand, |mut range_slot, mut out_slot| {
+                let range = range::Range::new(
+                    Value::from_i64(strand, 5),
+                    Value::from_i64(strand, 2),
+                    Value::NIL,
+                );
+                strand.builtin_types().range.create_imm(
+                    strand,
+                    range,
+                    Slot::reborrow(&mut range_slot),
+                );
+                let range_value: &Value = &range_slot;
+                index_from(
+                    owner,
+                    &glue,
+                    strand,
+                    range_value,
+                    Slot::reborrow(&mut out_slot),
+                )
+                .unwrap();
+                let out: &Value = &out_slot;
+                let array = out.downcast_ref(strand.builtin_types().array).unwrap();
+                assert!(array.read(|array| array.borrow().unwrap().inner.is_empty()));
+            });
         });
     }
 }

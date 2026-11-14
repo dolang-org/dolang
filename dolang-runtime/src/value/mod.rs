@@ -36,6 +36,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     vm::{Alloc, Vm},
+    with_slots,
 };
 
 use prim::Prim;
@@ -1559,12 +1560,10 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         item: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async |strand, [mut slot]| {
-                Output::set(strand, &mut slot, item);
-                self.op_put(strand, slot).await
-            })
-            .await
+        with_slots!(strand, |mut slot| {
+            Output::set(strand, &mut slot, item);
+            self.op_put(strand, slot).await
+        })
     }
 
     /// Downcast to `Int` ([`i128`]).

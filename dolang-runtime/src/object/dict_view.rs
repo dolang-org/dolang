@@ -24,6 +24,7 @@ use crate::{
     unpack,
     value::{Input, Output, Slot, Slots, TypeObject, Value},
     vm::{Alloc, AllocExt, Vm},
+    with_slots,
 };
 
 /// Receives ordered key/value pairs while a dictionary view is flattened.
@@ -195,12 +196,10 @@ impl<'v, I: DictLike<'v>> DictView<'v, I> {
         args: Args<'v, '_>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut slot]| {
-                strand.dict_view(owner, view, &mut slot);
-                slot.method(strand, method, args, out).await
-            })
-            .await
+        with_slots!(strand, |mut slot| {
+            strand.dict_view(owner, view, &mut slot);
+            slot.method(strand, method, args, out).await
+        })
     }
 
     /// Implements [`Object::iter`] directly without constructing a view object.
@@ -920,12 +919,10 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             flatten_glue(view, strand)?
         };
         // The snapshot is called across an await, so it lives in a scanned slot.
-        strand
-            .with_slots(async |strand, [mut snapshot]| {
-                snapshot_dict(strand, pairs, &mut snapshot)?;
-                snapshot.op_mcall(strand, method, args, out).await
-            })
-            .await
+        with_slots!(strand, |mut snapshot| {
+            snapshot_dict(strand, pairs, &mut snapshot)?;
+            snapshot.op_mcall(strand, method, args, out).await
+        })
     }
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1224,7 +1221,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{error::ErrorKind, method, test_support::with_builder};
+    use crate::{error::ErrorKind, method, test_support::with_builder, with_instance};
 
     use super::*;
 
@@ -1363,7 +1360,7 @@ mod tests {
                         &mut owner,
                     );
                     let cast = ty.cast(&owner).unwrap();
-                    cast.enter(strand, async |strand, native| {
+                    with_instance!(strand, cast, |native| {
                         strand.dict_view(native, Projection::<true>, &mut view);
                         let pop = Sym::well_known(sym::POP);
                         method!(strand, &view, pop, &mut out, 1_i64).await.unwrap();
@@ -1398,8 +1395,7 @@ mod tests {
                             .await
                             .unwrap();
                         assert_eq!(out.as_int(strand), Some(99));
-                    })
-                    .await;
+                    });
                 },
             )
             .await;
@@ -1413,7 +1409,7 @@ mod tests {
             vm.enter_with_slots::<3, _>(async move |strand, [mut owner, mut view, mut out]| {
                 ty.create(strand, Fixture(vec![(1, Some(10))]), &mut owner);
                 let cast = ty.cast(&owner).unwrap();
-                cast.enter(strand, async |strand, native| {
+                with_instance!(strand, cast, |native| {
                     strand.dict_view(native, Projection::<true>, &mut view);
                     let default = Sym::well_known(sym::DEFAULT);
                     let otherwise = Sym::well_known(sym::ELSE);
@@ -1428,8 +1424,7 @@ mod tests {
                     let err = method!(strand, &view, Sym::well_known(sym::CLEAR), &mut out).await.unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Immutable);
                     assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
-                })
-                .await;
+                });
             }).await;
         });
     }

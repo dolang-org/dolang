@@ -1,4 +1,5 @@
 use crate::global::UnixSecurityTag;
+use dolang::runtime::with_slots;
 
 use super::macos::resolve_uid_or_gid_arg;
 use super::*;
@@ -350,75 +351,72 @@ async fn coerce_ace<'v, 's>(
     let mut permissions = None;
     let mut separate_permissions = false;
     let mut pairs = dict.pairs();
-    strand
-        .with_slots(async |strand, [mut key, mut entry]| {
-            while pairs.next(strand, &mut key, &mut entry)? {
-                let sym = key
-                    .as_sym(strand.vm())
-                    .ok_or_else(|| Error::value(strand, format!("{path}: keys must be symbols")))?;
-                let name = sym.as_str(strand.vm());
-                match name {
-                    "user_obj" | "group_obj" | "mask" | "other" => {
-                        if qualifier.is_some() {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: multiple keys name conflicting qualifiers"),
-                            ));
-                        }
-                        qualifier = Some(match name {
-                            "user_obj" => VfsPosixAclQualifier::UserObj,
-                            "group_obj" => VfsPosixAclQualifier::GroupObj,
-                            "mask" => VfsPosixAclQualifier::Mask,
-                            _ => VfsPosixAclQualifier::Other,
-                        });
-                        if separate_permissions {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: permissions conflicts with qualifier value"),
-                            ));
-                        }
-                        permissions = Some(
-                            coerce_permissions(strand, global, &entry, &path.key(name)).await?,
-                        );
-                    }
-                    "user" | "group" => {
-                        if qualifier.is_some() {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: multiple keys name conflicting qualifiers"),
-                            ));
-                        }
-                        let id = spec_id(strand, &entry, &path.key(name))?;
-                        qualifier = Some(if name == "user" {
-                            VfsPosixAclQualifier::User(id)
-                        } else {
-                            VfsPosixAclQualifier::Group(id)
-                        });
-                    }
-                    "permissions" => {
-                        if permissions.is_some() {
-                            return Err(Error::value(
-                                strand,
-                                format!("{path}: duplicate key `permissions`"),
-                            ));
-                        }
-                        permissions = Some(
-                            coerce_permissions(strand, global, &entry, &path.key("permissions"))
-                                .await?,
-                        );
-                        separate_permissions = true;
-                    }
-                    _ => {
+    with_slots!(strand, |mut key, mut entry| {
+        while pairs.next(strand, &mut key, &mut entry)? {
+            let sym = key
+                .as_sym(strand.vm())
+                .ok_or_else(|| Error::value(strand, format!("{path}: keys must be symbols")))?;
+            let name = sym.as_str(strand.vm());
+            match name {
+                "user_obj" | "group_obj" | "mask" | "other" => {
+                    if qualifier.is_some() {
                         return Err(Error::value(
                             strand,
-                            format!("{path}: unknown key `{name}`"),
+                            format!("{path}: multiple keys name conflicting qualifiers"),
                         ));
                     }
+                    qualifier = Some(match name {
+                        "user_obj" => VfsPosixAclQualifier::UserObj,
+                        "group_obj" => VfsPosixAclQualifier::GroupObj,
+                        "mask" => VfsPosixAclQualifier::Mask,
+                        _ => VfsPosixAclQualifier::Other,
+                    });
+                    if separate_permissions {
+                        return Err(Error::value(
+                            strand,
+                            format!("{path}: permissions conflicts with qualifier value"),
+                        ));
+                    }
+                    permissions =
+                        Some(coerce_permissions(strand, global, &entry, &path.key(name)).await?);
+                }
+                "user" | "group" => {
+                    if qualifier.is_some() {
+                        return Err(Error::value(
+                            strand,
+                            format!("{path}: multiple keys name conflicting qualifiers"),
+                        ));
+                    }
+                    let id = spec_id(strand, &entry, &path.key(name))?;
+                    qualifier = Some(if name == "user" {
+                        VfsPosixAclQualifier::User(id)
+                    } else {
+                        VfsPosixAclQualifier::Group(id)
+                    });
+                }
+                "permissions" => {
+                    if permissions.is_some() {
+                        return Err(Error::value(
+                            strand,
+                            format!("{path}: duplicate key `permissions`"),
+                        ));
+                    }
+                    permissions = Some(
+                        coerce_permissions(strand, global, &entry, &path.key("permissions"))
+                            .await?,
+                    );
+                    separate_permissions = true;
+                }
+                _ => {
+                    return Err(Error::value(
+                        strand,
+                        format!("{path}: unknown key `{name}`"),
+                    ));
                 }
             }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     let qualifier =
         qualifier.ok_or_else(|| Error::value(strand, format!("{path}: expected one qualifier")))?;
     if !matches!(
@@ -444,17 +442,15 @@ pub(super) async fn coerce_acl<'v, 's>(
         return Ok(acl.enter_sync(strand, |_strand, acl| acl.annex().clone()));
     }
     let mut entries = Vec::new();
-    strand
-        .with_slots(async |strand, [mut iter, mut item]| {
-            value.iter(strand, &mut iter).await?;
-            let mut index = 0;
-            while iter.next(strand, &mut item).await? {
-                entries.push(coerce_ace(strand, global, &item, &path.index(index)).await?);
-                index += 1;
-            }
-            Ok::<_, Error<'v, 's>>(())
-        })
-        .await?;
+    with_slots!(strand, |mut iter, mut item| {
+        value.iter(strand, &mut iter).await?;
+        let mut index = 0;
+        while iter.next(strand, &mut item).await? {
+            entries.push(coerce_ace(strand, global, &item, &path.index(index)).await?);
+            index += 1;
+        }
+        Ok::<_, Error<'v, 's>>(())
+    })?;
     VfsPosixAcl::new(entries).map_err(|error| Error::value(strand, format!("{path}: {error}")))
 }
 

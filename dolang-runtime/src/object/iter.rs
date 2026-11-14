@@ -23,6 +23,7 @@ use crate::{
     unpack,
     value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View},
     vm::Vm,
+    with_slots,
 };
 
 /// Methods of [`Iter`] that [`Iterable`] forwards, by materializing an
@@ -171,21 +172,19 @@ pub(crate) async fn spread_iter<'v, 's>(
     value: impl Input<'v>,
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut root, mut iter, mut item]| {
-            Output::set(strand, Slot::reborrow(&mut root), value);
-            root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
-            let mut count = 0usize;
-            while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
-                sink.positional(strand, Slot::reborrow(&mut item))?;
-                count += 1;
-                if count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_trap_gc()?;
-                }
+    with_slots!(strand, |mut root, mut iter, mut item| {
+        Output::set(strand, Slot::reborrow(&mut root), value);
+        root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
+        let mut count = 0usize;
+        while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
+            sink.positional(strand, Slot::reborrow(&mut item))?;
+            count += 1;
+            if count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                strand.check_trap_gc()?;
             }
-            Ok(())
-        })
-        .await
+        }
+        Ok(())
+    })
 }
 
 /// Unpacks `sig` positionally from a cursor, returning the cursor after the
@@ -252,29 +251,27 @@ async fn iter_extrema<'v, 'a, 's>(
     mut out: Slot<'v, 'a>,
     is_min: bool,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut item]| {
-            if !obj.next(strand, &mut out).await? {
-                if let Some(mut default) = default {
-                    out.store(default.take());
-                    return Ok(());
-                }
-                return Err(Error::iter_stop(strand));
+    with_slots!(strand, |mut item| {
+        if !obj.next(strand, &mut out).await? {
+            if let Some(mut default) = default {
+                out.store(default.take());
+                return Ok(());
             }
-            while obj.next(strand, &mut item).await? {
-                let replace = if is_min {
-                    item.op_lt(strand, &out)?.to_bool(strand)?
-                } else {
-                    out.op_lt(strand, &item)?.to_bool(strand)?
-                };
-                if replace {
-                    Slot::swap(Slot::reborrow(&mut out), &mut item);
-                }
-                strand.check_trap_gc()?;
+            return Err(Error::iter_stop(strand));
+        }
+        while obj.next(strand, &mut item).await? {
+            let replace = if is_min {
+                item.op_lt(strand, &out)?.to_bool(strand)?
+            } else {
+                out.op_lt(strand, &item)?.to_bool(strand)?
+            };
+            if replace {
+                Slot::swap(Slot::reborrow(&mut out), &mut item);
             }
-            Ok(())
-        })
-        .await
+            strand.check_trap_gc()?;
+        }
+        Ok(())
+    })
 }
 
 async fn iter_all_any<'v, 'a, 's>(
@@ -285,32 +282,30 @@ async fn iter_all_any<'v, 'a, 's>(
     want_all: bool,
 ) -> Result<'v, 's, ()> {
     let has_pred = pred.is_some();
-    strand
-        .with_slots(async move |strand, [mut item, mut pred_fn, mut pred_out]| {
-            if let Some(mut pred) = pred {
-                pred_fn.store(pred.take());
+    with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
+        if let Some(mut pred) = pred {
+            pred_fn.store(pred.take());
+        }
+        while obj.next(strand, &mut item).await? {
+            let passed = if has_pred {
+                call!(strand, &pred_fn, &mut pred_out, &item).await?;
+                pred_out.to_bool(strand)?
+            } else {
+                item.to_bool(strand)?
+            };
+            if want_all && !passed {
+                out.store(Value::FALSE);
+                return Ok(());
             }
-            while obj.next(strand, &mut item).await? {
-                let passed = if has_pred {
-                    call!(strand, &pred_fn, &mut pred_out, &item).await?;
-                    pred_out.to_bool(strand)?
-                } else {
-                    item.to_bool(strand)?
-                };
-                if want_all && !passed {
-                    out.store(Value::FALSE);
-                    return Ok(());
-                }
-                if !want_all && passed {
-                    out.store(Value::TRUE);
-                    return Ok(());
-                }
-                strand.check_trap_gc()?;
+            if !want_all && passed {
+                out.store(Value::TRUE);
+                return Ok(());
             }
-            out.store(Value::from_bool(want_all));
-            Ok(())
-        })
-        .await
+            strand.check_trap_gc()?;
+        }
+        out.store(Value::from_bool(want_all));
+        Ok(())
+    })
 }
 
 async fn iter_count<'v, 'a, 's>(
@@ -318,20 +313,18 @@ async fn iter_count<'v, 'a, 's>(
     obj: &Value<'v>,
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut item]| {
-            let mut count = 0usize;
-            while obj.next(strand, &mut item).await? {
-                count += 1;
-                if count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                    strand.check_trap_gc()?;
-                }
+    with_slots!(strand, |mut item| {
+        let mut count = 0usize;
+        while obj.next(strand, &mut item).await? {
+            count += 1;
+            if count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                strand.check_trap_gc()?;
             }
-            let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
-            out.store(Value::from_i64(strand, value));
-            Ok(())
-        })
-        .await
+        }
+        let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
+        out.store(Value::from_i64(strand, value));
+        Ok(())
+    })
 }
 
 async fn iter_fold<'v, 'a, 's>(
@@ -341,21 +334,17 @@ async fn iter_fold<'v, 'a, 's>(
     mut func: Slot<'v, 'a>,
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(
-            async move |strand, [mut acc, mut next_acc, mut item, mut func_slot]| {
-                acc.store(init.take());
-                func_slot.store(func.take());
-                while obj.next(strand, &mut item).await? {
-                    call!(strand, &func_slot, &mut next_acc, &acc, &item).await?;
-                    Slot::swap(Slot::reborrow(&mut acc), &mut next_acc);
-                    strand.check_trap_gc()?;
-                }
-                out.store(acc.take());
-                Ok(())
-            },
-        )
-        .await
+    with_slots!(strand, |mut acc, mut next_acc, mut item, mut func_slot| {
+        acc.store(init.take());
+        func_slot.store(func.take());
+        while obj.next(strand, &mut item).await? {
+            call!(strand, &func_slot, &mut next_acc, &acc, &item).await?;
+            Slot::swap(Slot::reborrow(&mut acc), &mut next_acc);
+            strand.check_trap_gc()?;
+        }
+        out.store(acc.take());
+        Ok(())
+    })
 }
 
 fn nonnegative_count<'v, 's>(
@@ -382,27 +371,25 @@ async fn iter_find<'v, 'a, 's>(
     if default.is_some() && or_else.is_some() {
         return Err(Error::unexpected_key(strand, Sym::well_known(sym::ELSE)));
     }
-    strand
-        .with_slots(async move |strand, [mut item, mut pred_fn, mut pred_out]| {
-            pred_fn.store(pred.take());
-            while obj.next(strand, &mut item).await? {
-                call!(strand, &pred_fn, &mut pred_out, &item).await?;
-                if pred_out.to_bool(strand)? {
-                    out.store(item.take());
-                    return Ok(());
-                }
-                strand.check_trap_gc()?;
-            }
-            if let Some(mut default) = default {
-                out.store(default.take());
+    with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
+        pred_fn.store(pred.take());
+        while obj.next(strand, &mut item).await? {
+            call!(strand, &pred_fn, &mut pred_out, &item).await?;
+            if pred_out.to_bool(strand)? {
+                out.store(item.take());
                 return Ok(());
             }
-            if let Some(or_else) = or_else {
-                return call!(strand, or_else, out).await;
-            }
-            Err(Error::runtime(strand, "find: no matching item"))
-        })
-        .await
+            strand.check_trap_gc()?;
+        }
+        if let Some(mut default) = default {
+            out.store(default.take());
+            return Ok(());
+        }
+        if let Some(or_else) = or_else {
+            return call!(strand, or_else, out).await;
+        }
+        Err(Error::runtime(strand, "find: no matching item"))
+    })
 }
 
 pub(crate) async fn iter_next<'v, 'a, 's>(
@@ -441,20 +428,18 @@ async fn collect_sources<'v, 'a, 's>(
         return Err(Error::type_error(strand, "expected receiver argument"));
     };
     let sources = vec![rcvr.dup()];
-    strand
-        .with_slots(async move |strand, [mut tmp]| {
-            let mut sources = sources;
-            for arg in args {
-                let slot = match arg {
-                    Arg::Pos(slot) => slot,
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-                };
-                slot.iter(strand, &mut tmp).await?;
-                sources.push(tmp.take());
-            }
-            Ok(sources)
-        })
-        .await
+    with_slots!(strand, |mut tmp| {
+        let mut sources = sources;
+        for arg in args {
+            let slot = match arg {
+                Arg::Pos(slot) => slot,
+                Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
+            };
+            slot.iter(strand, &mut tmp).await?;
+            sources.push(tmp.take());
+        }
+        Ok(sources)
+    })
 }
 
 pub(crate) struct Iter;
@@ -521,15 +506,13 @@ pub(crate) async fn iter_mcall<'v, 'a, 's>(
     if method.tag() == sym::ITER {
         iterable_mcall(strand, rcvr, method, args, out).await
     } else {
-        strand
-            .with_slots(async move |strand, [mut delegator]| {
-                Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
-                let receiver = &strand.vm().singletons().input_iter;
-                Delegated::new(receiver, &delegator)
-                    .op_mcall(strand, method, args, out)
-                    .await
-            })
-            .await
+        with_slots!(strand, |mut delegator| {
+            Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+            let receiver = &strand.vm().singletons().input_iter;
+            Delegated::new(receiver, &delegator)
+                .op_mcall(strand, method, args, out)
+                .await
+        })
     }
 }
 
@@ -731,15 +714,13 @@ pub(crate) async fn sink_mcall<'v, 'a, 's>(
     if method.tag() == sym::SINK {
         sinkable_mcall(strand, rcvr, method, args, out).await
     } else {
-        strand
-            .with_slots(async move |strand, [mut delegator]| {
-                Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
-                let receiver = &strand.vm().singletons().output_iter;
-                Delegated::new(receiver, &delegator)
-                    .op_mcall(strand, method, args, out)
-                    .await
-            })
-            .await
+        with_slots!(strand, |mut delegator| {
+            Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+            let receiver = &strand.vm().singletons().output_iter;
+            Delegated::new(receiver, &delegator)
+                .op_mcall(strand, method, args, out)
+                .await
+        })
     }
 }
 
@@ -775,15 +756,13 @@ pub(crate) async fn iterable_mcall<'v, 'a, 's>(
         return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
-    strand
-        .with_slots(async move |strand, [mut delegator]| {
-            Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
-            let receiver = &strand.vm().singletons().iterable;
-            Delegated::new(receiver, &delegator)
-                .op_mcall(strand, method, args, out)
-                .await
-        })
-        .await
+    with_slots!(strand, |mut delegator| {
+        Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+        let receiver = &strand.vm().singletons().iterable;
+        Delegated::new(receiver, &delegator)
+            .op_mcall(strand, method, args, out)
+            .await
+    })
 }
 
 /// Field access for the `Sinkable` surface.
@@ -814,15 +793,13 @@ pub(crate) async fn sinkable_mcall<'v, 'a, 's>(
         return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
-    strand
-        .with_slots(async move |strand, [mut delegator]| {
-            Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
-            let receiver = &strand.vm().singletons().sinkable;
-            Delegated::new(receiver, &delegator)
-                .op_mcall(strand, method, args, out)
-                .await
-        })
-        .await
+    with_slots!(strand, |mut delegator| {
+        Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+        let receiver = &strand.vm().singletons().sinkable;
+        Delegated::new(receiver, &delegator)
+            .op_mcall(strand, method, args, out)
+            .await
+    })
 }
 
 /// Forward an `Iterable`/`Sinkable` method onto a materialized `Iter`/`Sink`.
@@ -845,15 +822,13 @@ async fn forward<'v, 'a, 's>(
     let Some(Arg::Pos(obj)) = args.next() else {
         return Err(Error::type_error(strand, "expected receiver argument"));
     };
-    strand
-        .with_slots(async move |strand, [mut target]| {
-            match surface {
-                Surface::Iterable => obj.iter(strand, &mut target).await?,
-                Surface::Sinkable => obj.sink(strand, &mut target).await?,
-            }
-            target.op_mcall(strand, method, args, out).await
-        })
-        .await
+    with_slots!(strand, |mut target| {
+        match surface {
+            Surface::Iterable => obj.iter(strand, &mut target).await?,
+            Surface::Sinkable => obj.sink(strand, &mut target).await?,
+        }
+        target.op_mcall(strand, method, args, out).await
+    })
 }
 
 /// Field access for a type that is both `Iterable` and `Sinkable`.
@@ -1277,27 +1252,25 @@ impl<'v> Protocol<'v> for Skip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut item]| {
-                loop {
-                    let (source, skipping) = {
-                        let mut borrow = this.borrow_mut(strand)?;
-                        let skipping = borrow.remaining > 0;
-                        if skipping {
-                            borrow.remaining -= 1;
-                        }
-                        (borrow.source.dup(), skipping)
-                    };
-                    if !skipping {
-                        return source.next(strand, out).await;
+        with_slots!(strand, |mut item| {
+            loop {
+                let (source, skipping) = {
+                    let mut borrow = this.borrow_mut(strand)?;
+                    let skipping = borrow.remaining > 0;
+                    if skipping {
+                        borrow.remaining -= 1;
                     }
-                    if !source.next(strand, &mut item).await? {
-                        return Ok(false);
-                    }
-                    strand.check_trap_gc()?;
+                    (borrow.source.dup(), skipping)
+                };
+                if !skipping {
+                    return source.next(strand, out).await;
                 }
-            })
-            .await
+                if !source.next(strand, &mut item).await? {
+                    return Ok(false);
+                }
+                strand.check_trap_gc()?;
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1360,24 +1333,22 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut item]| {
-                let (source, index) = {
-                    let borrow = this.borrow(strand)?;
-                    (borrow.source.dup(), borrow.index)
-                };
-                if !source.next(strand, &mut item).await? {
-                    return Ok(false);
-                }
-                let next_index = index
-                    .checked_add(1)
-                    .ok_or_else(|| Error::overflow(strand))?;
-                let items = vec![Value::from_i64(strand, index), item.take()];
-                tuple::create(strand, items, out);
-                this.borrow_mut(strand)?.index = next_index;
-                Ok(true)
-            })
-            .await
+        with_slots!(strand, |mut item| {
+            let (source, index) = {
+                let borrow = this.borrow(strand)?;
+                (borrow.source.dup(), borrow.index)
+            };
+            if !source.next(strand, &mut item).await? {
+                return Ok(false);
+            }
+            let next_index = index
+                .checked_add(1)
+                .ok_or_else(|| Error::overflow(strand))?;
+            let items = vec![Value::from_i64(strand, index), item.take()];
+            tuple::create(strand, items, out);
+            this.borrow_mut(strand)?.index = next_index;
+            Ok(true)
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1439,23 +1410,19 @@ impl<'v> Protocol<'v> for Kv<'v> {
             sym_index: vec![],
             variadic: Variadic::NONE,
         };
-        strand
-            .with_slots(
-                async move |strand, [mut iter, mut item, mut key, mut value]| {
-                    let source = this.borrow(strand)?.source.dup();
-                    source.iter(strand, &mut iter).await?;
-                    while iter.next(strand, &mut item).await? {
-                        let cells = [ValueCell::default(), ValueCell::default()];
-                        item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
-                            .await?;
-                        Output::set(strand, &mut key, unsafe { cells[0].slot() });
-                        Output::set(strand, &mut value, unsafe { cells[1].slot() });
-                        sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
-                    }
-                    Ok(())
-                },
-            )
-            .await
+        with_slots!(strand, |mut iter, mut item, mut key, mut value| {
+            let source = this.borrow(strand)?.source.dup();
+            source.iter(strand, &mut iter).await?;
+            while iter.next(strand, &mut item).await? {
+                let cells = [ValueCell::default(), ValueCell::default()];
+                item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
+                    .await?;
+                Output::set(strand, &mut key, unsafe { cells[0].slot() });
+                Output::set(strand, &mut value, unsafe { cells[1].slot() });
+                sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1859,20 +1826,18 @@ impl<'v> Protocol<'v> for Map<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut input, mut func, mut item]| {
-                let borrow = this.borrow(strand)?;
-                input.store(borrow.obj.dup());
-                func.store(borrow.func.dup());
-                drop(borrow);
-                if input.next(strand, &mut item).await? {
-                    call!(strand, &func, out, &item).await?;
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            })
-            .await
+        with_slots!(strand, |mut input, mut func, mut item| {
+            let borrow = this.borrow(strand)?;
+            input.store(borrow.obj.dup());
+            func.store(borrow.func.dup());
+            drop(borrow);
+            if input.next(strand, &mut item).await? {
+                call!(strand, &func, out, &item).await?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1969,16 +1934,14 @@ impl<'v> Protocol<'v> for Premap<'v> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut output, mut func]| {
-                let borrow = this.borrow(strand)?;
-                func.store(borrow.func.dup());
-                output.store(borrow.obj.dup());
-                drop(borrow);
-                call!(strand, &func, &mut output, value).await?;
-                this.borrow(strand)?.obj.put(strand, output).await
-            })
-            .await
+        with_slots!(strand, |mut output, mut func| {
+            let borrow = this.borrow(strand)?;
+            func.store(borrow.func.dup());
+            output.store(borrow.obj.dup());
+            drop(borrow);
+            call!(strand, &func, &mut output, value).await?;
+            this.borrow(strand)?.obj.put(strand, output).await
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2068,23 +2031,21 @@ impl<'v> Protocol<'v> for Filter<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut input, mut pred, mut res]| {
-                let borrow = this.borrow(strand)?;
-                pred.store(borrow.pred.dup());
-                input.store(borrow.obj.dup());
-                drop(borrow);
-                loop {
-                    if !input.next(strand, &mut out).await? {
-                        return Ok(false);
-                    }
-                    call!(strand, &pred, &mut res, &out).await?;
-                    if res.to_bool(strand)? {
-                        return Ok(true);
-                    }
+        with_slots!(strand, |mut input, mut pred, mut res| {
+            let borrow = this.borrow(strand)?;
+            pred.store(borrow.pred.dup());
+            input.store(borrow.obj.dup());
+            drop(borrow);
+            loop {
+                if !input.next(strand, &mut out).await? {
+                    return Ok(false);
                 }
-            })
-            .await
+                call!(strand, &pred, &mut res, &out).await?;
+                if res.to_bool(strand)? {
+                    return Ok(true);
+                }
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2181,20 +2142,18 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut output, mut pred]| {
-                let borrow = this.borrow(strand)?;
-                pred.store(borrow.pred.dup());
-                output.store(borrow.obj.dup());
-                drop(borrow);
-                call!(strand, &pred, &mut output, &value).await?;
-                if output.to_bool(strand)? {
-                    this.borrow(strand)?.obj.put(strand, value).await
-                } else {
-                    Ok(())
-                }
-            })
-            .await
+        with_slots!(strand, |mut output, mut pred| {
+            let borrow = this.borrow(strand)?;
+            pred.store(borrow.pred.dup());
+            output.store(borrow.obj.dup());
+            drop(borrow);
+            call!(strand, &pred, &mut output, &value).await?;
+            if output.to_bool(strand)? {
+                this.borrow(strand)?.obj.put(strand, value).await
+            } else {
+                Ok(())
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2375,19 +2334,17 @@ impl<'v> Protocol<'v> for Chomp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut input, mut item]| {
-                let borrow = this.borrow(strand)?;
-                input.store(borrow.obj.dup());
-                drop(borrow);
-                if input.next(strand, &mut item).await? {
-                    chomp_value(strand, &item, out, "iter.chomp")?;
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            })
-            .await
+        with_slots!(strand, |mut input, mut item| {
+            let borrow = this.borrow(strand)?;
+            input.store(borrow.obj.dup());
+            drop(borrow);
+            if input.next(strand, &mut item).await? {
+                chomp_value(strand, &item, out, "iter.chomp")?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2481,15 +2438,13 @@ impl<'v> Protocol<'v> for Prechomp<'v> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut output, mut chomped]| {
-                let borrow = this.borrow(strand)?;
-                output.store(borrow.obj.dup());
-                drop(borrow);
-                chomp_value(strand, &value, &mut chomped, "sink.prechomp")?;
-                output.put(strand, chomped).await
-            })
-            .await
+        with_slots!(strand, |mut output, mut chomped| {
+            let borrow = this.borrow(strand)?;
+            output.store(borrow.obj.dup());
+            drop(borrow);
+            chomp_value(strand, &value, &mut chomped, "sink.prechomp")?;
+            output.put(strand, chomped).await
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2583,27 +2538,25 @@ impl<'v> Protocol<'v> for Crimp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        strand
-            .with_slots(async move |strand, [mut input, mut item, mut term]| {
-                let borrow = this.borrow(strand)?;
-                input.store(borrow.obj.dup());
-                let has_term = match &borrow.terminator {
-                    Some(terminator) => {
-                        term.store(terminator.dup());
-                        true
-                    }
-                    None => false,
-                };
-                drop(borrow);
-                if input.next(strand, &mut item).await? {
-                    let term = has_term.then(|| &*term);
-                    crimp_value(strand, &item, term, out, "iter.crimp")?;
-                    Ok(true)
-                } else {
-                    Ok(false)
+        with_slots!(strand, |mut input, mut item, mut term| {
+            let borrow = this.borrow(strand)?;
+            input.store(borrow.obj.dup());
+            let has_term = match &borrow.terminator {
+                Some(terminator) => {
+                    term.store(terminator.dup());
+                    true
                 }
-            })
-            .await
+                None => false,
+            };
+            drop(borrow);
+            if input.next(strand, &mut item).await? {
+                let term = has_term.then(|| &*term);
+                crimp_value(strand, &item, term, out, "iter.crimp")?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -2704,23 +2657,21 @@ impl<'v> Protocol<'v> for Precrimp<'v> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut output, mut crimped, mut term]| {
-                let borrow = this.borrow(strand)?;
-                output.store(borrow.obj.dup());
-                let has_term = match &borrow.terminator {
-                    Some(terminator) => {
-                        term.store(terminator.dup());
-                        true
-                    }
-                    None => false,
-                };
-                drop(borrow);
-                let term = has_term.then(|| &*term);
-                crimp_value(strand, &value, term, &mut crimped, "sink.precrimp")?;
-                output.put(strand, crimped).await
-            })
-            .await
+        with_slots!(strand, |mut output, mut crimped, mut term| {
+            let borrow = this.borrow(strand)?;
+            output.store(borrow.obj.dup());
+            let has_term = match &borrow.terminator {
+                Some(terminator) => {
+                    term.store(terminator.dup());
+                    true
+                }
+                None => false,
+            };
+            drop(borrow);
+            let term = has_term.then(|| &*term);
+            crimp_value(strand, &value, term, &mut crimped, "sink.precrimp")?;
+            output.put(strand, crimped).await
+        })
     }
 
     fn op_get<'a, 's>(

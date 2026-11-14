@@ -40,6 +40,61 @@ use crate::{
     vm::{Alloc, Vm},
 };
 
+/// Run a block with scratch [`Slot`](crate::value::Slot)s rooted for its duration.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_slots, strand::Strand, value::{Output, Slot}};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// with_slots!(strand, |mut a, mut b| {
+///     Output::set(strand, Slot::reborrow(&mut a), 1i64);
+///     Output::set(strand, Slot::reborrow(&mut b), 2i64);
+///     Ok(())
+/// })
+/// # }
+/// ```
+///
+/// The closure-like parameters bind the slots, and their count gives the number of
+/// slots. `strand` must be the name of the current [`Strand`]; the body sees the same name
+/// rebound to the scoped strand. The macro awaits the body and evaluates to its value.
+/// Don't use `return` in the body; end it with a tail expression instead.
+///
+/// Prefer this to calling [`Strand::with_slots`] directly.
+#[macro_export]
+macro_rules! with_slots {
+    ($strand:ident, |$($slot:pat_param),+ $(,)?| $body:expr) => {
+        $strand
+            .with_slots(async |$strand, [$($slot),+]| $body)
+            .await
+    };
+}
+
+/// Run a block with the strand's interrupt mask replaced.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_interrupt_mask, strand::{InterruptMask, Strand}};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) {
+/// with_interrupt_mask!(strand, InterruptMask::all(), {
+///     // Cleanup that must finish even if the strand is interrupted
+/// })
+/// # }
+/// ```
+///
+/// See [`Strand::with_interrupt_mask`] for the semantics. `strand` is rebound inside the
+/// body as for [`with_slots!`](crate::with_slots), and the body likewise shouldn't use
+/// `return`.
+#[macro_export]
+macro_rules! with_interrupt_mask {
+    ($strand:ident, $mask:expr, $body:expr) => {
+        $strand
+            .with_interrupt_mask($mask, async |$strand| $body)
+            .await
+    };
+}
+
 pub(crate) type InterruptId = u64;
 
 struct InterruptInner {
@@ -1195,6 +1250,8 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Call an async function with the requested number of scratch [`Slot`]s, usually inferred
     /// from the passed function.
+    ///
+    /// Prefer [`with_slots!`](crate::with_slots) for an inline closure.
     #[inline]
     pub async fn with_slots<const N: usize, R>(
         &mut self,
@@ -1286,6 +1343,8 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Run function with interrupt mask changed.
     ///
+    /// Prefer [`with_interrupt_mask!`](crate::with_interrupt_mask) for an inline closure.
+    ///
     /// ## Interrupt Semantics
     ///
     /// By default, when a strand is interrupted, all Do-related futures will return
@@ -1316,11 +1375,11 @@ impl<'v, 's> Strand<'v, 's> {
     ///
     /// ```ignore
     /// // In a cleanup handler
-    /// strand.with_interrupt_mask(InterruptMask::all(), async |strand| {
+    /// with_interrupt_mask!(strand, InterruptMask::all(), {
     ///     // This will complete even if the strand is interrupted
     ///     file.delete().await?;
-    ///     conn.rollback().await?;
-    /// }).await?;
+    ///     conn.rollback().await
+    /// })?;
     /// ```
     #[inline]
     pub async fn with_interrupt_mask<R>(
@@ -1557,70 +1616,62 @@ impl<'v, 's> Strand<'v, 's> {
             // Safety: native outlives strand
             let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
 
-            strand
-                .with_slots(
-                    async |strand, [mut out, mut tmp, mut poison_err, mut poison_bt]| {
-                        let result = strand
-                            .pin_future_call(async |strand| {
-                                f(strand, &inner.start, Slot::reborrow(&mut out)).await
-                            })
-                            .await;
-                        let result = match result {
-                            Ok(()) => Completion::Ok(out.take()),
-                            Err(e) => Completion::Err(e.into_pair(strand)),
-                        };
-                        // Rooted in slots across the close calls below
-                        let poisoned = match &result {
-                            Completion::Err((value, backtrace_entries)) => {
-                                backtrace::create(
-                                    strand,
-                                    backtrace_entries.clone(),
-                                    &mut poison_bt,
-                                );
-                                poison_err.store(value.dup());
-                                true
-                            }
-                            Completion::Ok(_) => false,
-                        };
+            with_slots!(strand, |mut out, mut tmp, mut poison_err, mut poison_bt| {
+                let result = strand
+                    .pin_future_call(async |strand| {
+                        f(strand, &inner.start, Slot::reborrow(&mut out)).await
+                    })
+                    .await;
+                let result = match result {
+                    Ok(()) => Completion::Ok(out.take()),
+                    Err(e) => Completion::Err(e.into_pair(strand)),
+                };
+                // Rooted in slots across the close calls below
+                let poisoned = match &result {
+                    Completion::Err((value, backtrace_entries)) => {
+                        backtrace::create(strand, backtrace_entries.clone(), &mut poison_bt);
+                        poison_err.store(value.dup());
+                        true
+                    }
+                    Completion::Ok(_) => false,
+                };
 
-                        // Store result in Handle via weak reference
-                        if let Some(handle) = weak_handle.upgrade() {
-                            // SAFETY: a transient pin; completing cannot collect
-                            unsafe { handle.pin_unchecked() }
-                                .borrow_mut()
-                                .expect("strand handle had outstanding borrow")
-                                .complete(result);
+                // Store result in Handle via weak reference
+                if let Some(handle) = weak_handle.upgrade() {
+                    // SAFETY: a transient pin; completing cannot collect
+                    unsafe { handle.pin_unchecked() }
+                        .borrow_mut()
+                        .expect("strand handle had outstanding borrow")
+                        .complete(result);
+                } else {
+                    drop(result)
+                }
+
+                if close_on_exit {
+                    let close = Sym::well_known(sym::CLOSE);
+                    let backtrace_key = Sym::well_known(sym::BACKTRACE);
+                    tmp.store(strand.inner.replace_input(Value::NIL));
+                    if !tmp.is_nil() {
+                        let _ = method!(strand, &tmp, close, &mut out).await;
+                    }
+                    tmp.store(strand.inner.replace_output(Value::NIL));
+                    if !tmp.is_nil() {
+                        let _ = if poisoned {
+                            method!(
+                                strand,
+                                &tmp,
+                                close,
+                                &mut out,
+                                &poison_err,
+                                backtrace_key: &poison_bt
+                            )
+                            .await
                         } else {
-                            drop(result)
-                        }
-
-                        if close_on_exit {
-                            let close = Sym::well_known(sym::CLOSE);
-                            let backtrace_key = Sym::well_known(sym::BACKTRACE);
-                            tmp.store(strand.inner.replace_input(Value::NIL));
-                            if !tmp.is_nil() {
-                                let _ = method!(strand, &tmp, close, &mut out).await;
-                            }
-                            tmp.store(strand.inner.replace_output(Value::NIL));
-                            if !tmp.is_nil() {
-                                let _ = if poisoned {
-                                    method!(
-                                        strand,
-                                        &tmp,
-                                        close,
-                                        &mut out,
-                                        &poison_err,
-                                        backtrace_key: &poison_bt
-                                    )
-                                    .await
-                                } else {
-                                    method!(strand, &tmp, close, &mut out).await
-                                };
-                            }
-                        }
-                    },
-                )
-                .await
+                            method!(strand, &tmp, close, &mut out).await
+                        };
+                    }
+                }
+            })
         });
 
         // Send future through spawn channel
@@ -1750,6 +1801,29 @@ impl<'v, 'a> Alloc<'v> for Strand<'v, 'a> {
     }
 }
 
+/// Run a block with the strand-local iterator and sink redirected by a [`Redirect`].
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{redirect, strand::{Redirect, Strand}, value::Singleton};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// redirect!(strand, Redirect::new(strand).input(Singleton::Null), {
+///     Ok(())
+/// })
+/// # }
+/// ```
+///
+/// The body's value must be a [`Result`]. `strand` names both the strand the
+/// [`Redirect`] was built from and, inside the body, the redirected one, as for
+/// [`with_slots!`](crate::with_slots). The body shouldn't use `return`.
+#[macro_export]
+macro_rules! redirect {
+    ($strand:ident, $redirect:expr, $body:expr) => {
+        ($redirect).enter(async |$strand| $body).await
+    };
+}
+
 /// Input/output redirect configuration
 pub struct Redirect<'v, 'a, 's> {
     strand: &'a mut Strand<'v, 's>,
@@ -1805,6 +1879,8 @@ impl<'v, 'a, 's> Redirect<'v, 'a, 's> {
     }
 
     /// Call function with strand-local iterator/sink redirected
+    ///
+    /// Prefer [`redirect!`](crate::redirect) for an inline closure.
     pub async fn enter<R>(
         self,
         f: impl for<'b> AsyncFnOnce(&'b mut Strand<'v, 's>) -> Result<'v, 's, R>,
@@ -1967,17 +2043,15 @@ mod scan_tests {
             // Safety: `held` owns one reference, which `visit` visits
             unsafe {
                 strand.with_scan(visit, async |strand| {
-                    strand
-                        .with_slots(async |strand, [mut inner]| {
-                            let item = Value::from_i64(strand, 2);
-                            tuple::create(strand, [item], Slot::reborrow(&mut inner));
-                            let slot_target = header(&inner);
-                            futures::future::ready(()).await;
-                            let seen = scanned(strand);
-                            assert!(seen.contains(&target));
-                            assert!(seen.contains(&slot_target));
-                        })
-                        .await
+                    with_slots!(strand, |mut inner| {
+                        let item = Value::from_i64(strand, 2);
+                        tuple::create(strand, [item], Slot::reborrow(&mut inner));
+                        let slot_target = header(&inner);
+                        futures::future::ready(()).await;
+                        let seen = scanned(strand);
+                        assert!(seen.contains(&target));
+                        assert!(seen.contains(&slot_target));
+                    })
                 })
             }
             .await;

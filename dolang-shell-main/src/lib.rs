@@ -3,6 +3,7 @@
 // Boot uses load.import_handler even in binaries that only link this crate.
 extern crate dolang_ext_load;
 
+use dolang::runtime::with_slots;
 use std::error::Error;
 
 use tokio::runtime::Builder;
@@ -149,18 +150,16 @@ fn run() -> Outcome {
                                         )
                                     },
                                 )?;
-                                strand
-                                    .with_slots(async |strand, [out]| {
-                                        let boot = runtime::Bytecode::new(boot.as_bytes())
-                                            .map_err(|e| {
-                                                runtime::Error::runtime(
-                                                    strand,
-                                                    format!("invalid bundled boot entrypoint: {e}"),
-                                                )
-                                            })?;
-                                        boot.run(strand, out).await
-                                    })
-                                    .await
+                                with_slots!(strand, |out| {
+                                    let boot =
+                                        runtime::Bytecode::new(boot.as_bytes()).map_err(|e| {
+                                            runtime::Error::runtime(
+                                                strand,
+                                                format!("invalid bundled boot entrypoint: {e}"),
+                                            )
+                                        })?;
+                                    boot.run(strand, out).await
+                                })
                             });
 
                     let res = {

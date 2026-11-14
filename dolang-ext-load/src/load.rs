@@ -9,6 +9,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject, fmt::Format},
     vm::{self, Builder, Register},
+    with_instance, with_slots,
 };
 
 use crate::global::Global;
@@ -27,43 +28,36 @@ pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
         // Appended handlers participate in the next resolution. Existing
         // indices cannot move until every executor has finished.
         let end = handlers.len(strand)?;
-        strand
-            .with_slots(async move |strand, [mut key, mut callback]| {
-                for index in 0..end {
-                    handlers.get(strand, index, &mut key)?;
-                    if key.is_nil() {
-                        continue;
-                    }
-                    let handler = global.types.import_handler.cast(&key).unwrap();
-                    let result = handler
-                        .enter(strand, async |strand, inst| {
-                            Output::set(
-                                strand,
-                                &mut callback,
-                                Ref::slot::<0>(&inst.borrow_unwrap()),
-                            );
-                            let result = call!(strand, &callback, &mut out, name).await;
-                            if inst.annex().unregistered.get() {
-                                // Unregistration raced this callback. Decline even
-                                // success so the VM cannot cache its result.
-                                return Err(Error::import(strand, name));
-                            }
-                            if result.is_ok() {
-                                inst.borrow_mut_unwrap().loaded.insert(name.to_owned());
-                            }
-                            result
-                        })
-                        .await;
-                    match result {
-                        Ok(()) => return Ok(()),
-                        Err(e) if e.kind() == ErrorKind::Import => (),
-                        Err(e) => return Err(e),
-                    }
+        with_slots!(strand, |mut key, mut callback| {
+            for index in 0..end {
+                handlers.get(strand, index, &mut key)?;
+                if key.is_nil() {
+                    continue;
                 }
+                let handler = global.types.import_handler.cast(&key).unwrap();
+                let result = with_instance!(strand, handler, |inst| {
+                    Output::set(strand, &mut callback, Ref::slot::<0>(&inst.borrow_unwrap()));
+                    let result = call!(strand, &callback, &mut out, name).await;
+                    if inst.annex().unregistered.get() {
+                        // Unregistration raced this callback. Decline even
+                        // success so the VM cannot cache its result.
+                        Err(Error::import(strand, name))
+                    } else {
+                        if result.is_ok() {
+                            inst.borrow_mut_unwrap().loaded.insert(name.to_owned());
+                        }
+                        result
+                    }
+                });
+                match result {
+                    Ok(()) => return Ok(()),
+                    Err(e) if e.kind() == ErrorKind::Import => (),
+                    Err(e) => return Err(e),
+                }
+            }
 
-                Err(Error::import(strand, name))
-            })
-            .await
+            Err(Error::import(strand, name))
+        })
     });
 }
 
