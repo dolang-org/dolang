@@ -1902,7 +1902,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             .await
         } else {
             if is_special_mcall(method.tag()) {
-                instance_mcall_fallback(strand, &this, method, args, out).await
+                instance_mcall_fallback(strand, &this, method, args, out)
             } else {
                 T::method(Instance::from_recv(&this), strand, method, args, out).await
             }
@@ -3942,7 +3942,7 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
         } else if method.tag() == sym::CALL_METHOD {
             Self::op_call(this, strand, args, out).await
         } else if is_special_mcall(method.tag()) {
-            instance_mcall_fallback(strand, &this, method, args, out).await
+            instance_mcall_fallback(strand, &this, method, args, out)
         } else {
             Strand::async_for_native_frame(
                 strand,

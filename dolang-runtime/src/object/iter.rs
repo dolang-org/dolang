@@ -515,7 +515,7 @@ pub(crate) async fn iter_mcall<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+        return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
     if method.tag() == sym::ITER {
@@ -725,7 +725,7 @@ pub(crate) async fn sink_mcall<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+        return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
     if method.tag() == sym::SINK {
@@ -772,7 +772,7 @@ pub(crate) async fn iterable_mcall<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+        return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
     strand
@@ -811,7 +811,7 @@ pub(crate) async fn sinkable_mcall<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+        return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
     strand
@@ -884,7 +884,7 @@ pub(crate) async fn iterable_sinkable_mcall<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out).await;
+        return instance_mcall_fallback(strand, rcvr, method, args, out);
     }
 
     match classify(method.tag()) {

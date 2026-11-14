@@ -72,7 +72,7 @@ impl<'v> Protocol<'v> for FloatObj {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::num::float_mcall(strand, &this, *this.get(), method, args, out).await
+        super::num::float_mcall(strand, &this, *this.get(), method, args, out)
     }
 
     fn op_fmt<'a, 's>(
@@ -284,7 +284,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::num::float_mcall(strand, &this, this.get().value, method, args, out).await
+        super::num::float_mcall(strand, &this, this.get().value, method, args, out)
     }
 
     fn op_fmt<'a, 's>(

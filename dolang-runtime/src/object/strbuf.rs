@@ -438,7 +438,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 "StrBuf.len is a field, not a method",
             )),
             _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out).await
+                instance_mcall_fallback(strand, &this, method, args, out)
             }
             _ => iter::sink_mcall(strand, &this, method, args, out).await,
         }

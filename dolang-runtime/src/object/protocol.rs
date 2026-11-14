@@ -2480,43 +2480,49 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
     args: Args<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let ([this], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
-    let (receiver, delegator) = if ty
-        .op_inspect(strand)
-        .is_some_and(|inspect| inspect.is_abstract)
-    {
-        if !this.is_instance_of(strand, ty) {
-            return Err(Error::type_error(strand, "invalid type for unbound method"));
-        }
-        (&*this, None)
-    } else if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
-        (
-            get_native_slot(inst, ty)
-                .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?,
-            Some(&*this),
-        )
-    } else {
-        strand.with_slots_sync(|strand, [mut tmp]| {
-            this.op_type(strand, Slot::reborrow(&mut tmp));
-            if !tmp.repr_eq(ty) {
-                return Err(Error::type_error(strand, "invalid native object type"));
-            }
-            Ok((&*this, None))
-        })?
-    };
+    // Pinned out of line in the strand: callers await this inline, and the
+    // delegated and direct method calls below would grow their futures
+    strand
+        .pin_future_call(async |strand| {
+            let ([this], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+            let (receiver, delegator) = if ty
+                .op_inspect(strand)
+                .is_some_and(|inspect| inspect.is_abstract)
+            {
+                if !this.is_instance_of(strand, ty) {
+                    return Err(Error::type_error(strand, "invalid type for unbound method"));
+                }
+                (&*this, None)
+            } else if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
+                (
+                    get_native_slot(inst, ty)
+                        .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?,
+                    Some(&*this),
+                )
+            } else {
+                strand.with_slots_sync(|strand, [mut tmp]| {
+                    this.op_type(strand, Slot::reborrow(&mut tmp));
+                    if !tmp.repr_eq(ty) {
+                        return Err(Error::type_error(strand, "invalid native object type"));
+                    }
+                    Ok((&*this, None))
+                })?
+            };
 
-    if is_special_mcall(method.tag()) {
-        special_mcall(strand, receiver, delegator, method, trailing, out).await
-    } else {
-        match delegator {
-            Some(delegator) => {
-                Delegated::new(receiver, delegator)
-                    .op_mcall(strand, method, trailing, out)
-                    .await
+            if is_special_mcall(method.tag()) {
+                special_mcall(strand, receiver, delegator, method, trailing, out)
+            } else {
+                match delegator {
+                    Some(delegator) => {
+                        Delegated::new(receiver, delegator)
+                            .op_mcall(strand, method, trailing, out)
+                            .await
+                    }
+                    None => receiver.op_mcall(strand, method, trailing, out).await,
+                }
             }
-            None => receiver.op_mcall(strand, method, trailing, out).await,
-        }
-    }
+        })
+        .await
 }
 
 /// The members every value has, which `Value` advertises. Any value can be
@@ -2558,7 +2564,7 @@ pub(crate) fn instance_get_fallback<'v, 'a, 's>(
 
 /// Handle the special methods supported by qualified native method calls.
 /// Any other symbol is a missing field.
-pub(crate) async fn instance_mcall_fallback<'v, 'a, 's>(
+pub(crate) fn instance_mcall_fallback<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     receiver: impl Input<'v>,
     method: Sym<'v, 'a>,
@@ -2569,7 +2575,7 @@ pub(crate) async fn instance_mcall_fallback<'v, 'a, 's>(
         return Err(Error::field(strand, method));
     }
     let receiver = Value::from_input(strand, receiver);
-    special_mcall(strand, &receiver, None, method, args, out).await
+    special_mcall(strand, &receiver, None, method, args, out)
 }
 
 /// Handle a special method called through `this`, which may be delegated to. A
@@ -2588,7 +2594,7 @@ pub(crate) async fn recv_special_mcall<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
             return type_mcall_fallback(strand, &receiver, method, args, out).await;
         }
     }
-    instance_mcall_fallback(strand, this, method, args, out).await
+    instance_mcall_fallback(strand, this, method, args, out)
 }
 
 pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
@@ -2634,7 +2640,7 @@ pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
     )
 }
 
-async fn special_mcall<'v, 'a, 's>(
+fn special_mcall<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     receiver: &Value<'v>,
     delegator: Option<&Value<'v>>,

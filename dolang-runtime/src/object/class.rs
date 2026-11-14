@@ -2639,7 +2639,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         }
 
         if is_special_mcall(method.tag()) {
-            return instance_mcall_fallback(strand, &this, method, args, out).await;
+            return instance_mcall_fallback(strand, &this, method, args, out);
         }
 
         match class.entry_by_tag(sym::GET_METHOD) {
