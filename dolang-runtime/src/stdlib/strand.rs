@@ -950,65 +950,59 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             )
             .function("spawn", async move |strand, args, out| {
                 unpack!(strand, args => mut callable);
-                let handle = strand.spawn_background_raw(
-                    callable.take(),
+                strand.spawn_background_raw(
+                    &mut callable,
                     InterruptToken::new(),
                     None,
+                    out,
                     async move |strand, arg, out| call!(strand, arg, out),
-                )?;
-                Output::set(strand, out, Value::from_object(handle));
-                Ok(())
+                )
             })
             .function("stream", async move |strand, args, mut out| {
                 unpack!(strand, args => mut callable);
 
                 // Channel A: handle writes → strand reads
                 // Channel B: strand writes → handle reads
-                let (input_sender, input_receiver, output_sender, output_receiver) = with_slots!(
-                    strand,
-                    |mut in_send, mut in_recv, mut out_send, mut out_recv| {
-                        pipe_pair(strand, &mut in_send, &mut in_recv);
-                        pipe_pair(strand, &mut out_send, &mut out_recv);
-                        (
-                            in_send.take(),
-                            in_recv.take(),
-                            out_send.take(),
-                            out_recv.take(),
-                        )
-                    }
-                );
+                with_slots!(strand, |mut in_send,
+                                     mut in_recv,
+                                     mut out_send,
+                                     mut out_recv,
+                                     mut handle,
+                                     mut input,
+                                     mut output| {
+                    pipe_pair(strand, &mut in_send, &mut in_recv);
+                    pipe_pair(strand, &mut out_send, &mut out_recv);
+                    strand.spawn_background_raw(
+                        &mut callable,
+                        InterruptToken::new(),
+                        Some((&in_recv, &out_send)),
+                        &mut handle,
+                        async move |strand, arg, out| call!(strand, arg, out),
+                    )?;
 
-                let handle = strand.spawn_background_raw(
-                    callable.take(),
-                    InterruptToken::new(),
-                    Some((input_receiver, output_sender)),
-                    async move |strand, arg, out| call!(strand, arg, out),
-                )?;
-
-                // Wrap the endpoints up front so they keep `handle` GC-reachable
-                // for as long as they're reachable themselves, even once the
-                // `Stream` returned below is not.
-                with_slots!(strand, |mut input, mut output| {
+                    // Wrap the endpoints up front so they keep `handle` GC-reachable
+                    // for as long as they're reachable themselves, even once the
+                    // `Stream` returned below is not.
                     let builtin_types = strand.builtin_types();
-                    // SAFETY: TODO(#1707): `handle` and the channel endpoints are
-                    // loose across these allocations
+                    let ty = builtin_types.strand_handle;
+                    let task = handle.downcast_ref(ty).expect("strand handle");
+                    // SAFETY (here and below): the handle moves straight into the
+                    // allocated object
                     let embryo = builtin_types.stream_sink.embryo(strand);
-                    let sink = StreamSink::new(input_sender, unsafe { handle.dup() });
+                    let sink = StreamSink::new(in_send.take(), unsafe { task.dup() });
                     embryo.finish(strand, sink, &mut input);
                     let embryo = builtin_types.stream_iter.embryo(strand);
-                    let iter = StreamIter::new(output_receiver, unsafe { handle.dup() });
+                    let iter = StreamIter::new(out_recv.take(), unsafe { task.dup() });
                     embryo.finish(strand, iter, &mut output);
-                    builtin_types.stream.create_imm(
-                        strand,
-                        Stream {
-                            handle,
-                            input: input.take(),
-                            output: output.take(),
-                        },
-                        &mut out,
-                    );
-                });
-                Ok(())
+                    let embryo = builtin_types.stream.embryo(strand);
+                    let stream = Stream {
+                        handle: unsafe { task.dup() },
+                        input: input.take(),
+                        output: output.take(),
+                    };
+                    embryo.finish_imm(strand, stream, &mut out);
+                    Ok(())
+                })
             })
             .function_with_slots(
                 "map",
@@ -1082,53 +1076,51 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let thunks: Vec<_> = thunks.collect();
 
                 let count = thunks.len();
-                // We must avoid being dropped until we've awaited all strands we create
-                with_interrupt_mask!(strand, InterruptMask::all(), {
-                    let result = async {
-                        let results =
-                            RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
-                        let mut strands = Vec::with_capacity(count);
-                        let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                        for (i, thunk) in thunks.into_iter().enumerate() {
-                            let results = &results;
-                            strands.push(strand.spawn_scoped(
-                                Some(interrupt.clone()),
-                                async move |strand| {
-                                    let result = async {
-                                        with_slots!(strand, |mut tmp| {
-                                            call!(strand, thunk, &mut tmp)?;
-                                            results.borrow_mut()[i] = tmp.take();
-                                            Ok(())
-                                        })
-                                    }
-                                    .await;
-                                    if result.is_err() {
-                                        strand.interrupt_token().cancel();
-                                    }
-                                    result
-                                },
-                            ));
-                        }
-                        let mut first_err: Option<Error<'v, '_>> = None;
-                        for res in join_all(strands).await {
-                            if let Err(e) = res
-                                && first_err.as_ref().is_none_or(|prev| {
-                                    prev.kind() == ErrorKind::Canceled
-                                        && e.kind() != ErrorKind::Canceled
-                                })
-                            {
-                                first_err = Some(e);
+                // Each child writes its result into its own slot
+                with_slots_dynamic!(strand, count, |mut results| {
+                    // We must avoid being dropped until we've awaited all strands we create
+                    with_interrupt_mask!(strand, InterruptMask::all(), {
+                        let result = async {
+                            let mut strands = Vec::with_capacity(count);
+                            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                            for (i, thunk) in thunks.into_iter().enumerate() {
+                                // Safety: each child gets a distinct index, and every child
+                                // is joined before the slots are read again
+                                let mut result_slot = unsafe { results.unchecked_at(i) };
+                                strands.push(strand.spawn_scoped(
+                                    Some(interrupt.clone()),
+                                    async move |strand| {
+                                        let result =
+                                            async { call!(strand, thunk, &mut result_slot) }.await;
+                                        if result.is_err() {
+                                            strand.interrupt_token().cancel();
+                                        }
+                                        result
+                                    },
+                                ));
                             }
+                            let mut first_err: Option<Error<'v, '_>> = None;
+                            for res in join_all(strands).await {
+                                if let Err(e) = res
+                                    && first_err.as_ref().is_none_or(|prev| {
+                                        prev.kind() == ErrorKind::Canceled
+                                            && e.kind() != ErrorKind::Canceled
+                                    })
+                                {
+                                    first_err = Some(e);
+                                }
+                            }
+                            if let Some(e) = first_err {
+                                return Err(e);
+                            }
+                            Ok(())
                         }
-                        if let Some(e) = first_err {
-                            return Err(e);
-                        }
-                        Ok(results.into_inner())
-                    }
-                    .await;
-                    let results = result?;
-                    tuple::create(strand, results, out);
-                    Ok(())
+                        .await;
+                        result?;
+                        let embryo = tuple::embryo(strand, count);
+                        embryo.finish(strand, (0..count).map(|i| results.at(i).take()), out);
+                        Ok(())
+                    })
                 })
             })
             .commit();

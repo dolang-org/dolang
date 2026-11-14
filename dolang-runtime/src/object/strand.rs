@@ -4,7 +4,6 @@ use std::{
     hash::{DefaultHasher, Hash},
     mem,
     ops::ControlFlow,
-    ptr::NonNull,
     rc::Rc,
     task::Poll,
     task::Waker,
@@ -17,7 +16,9 @@ use crate::{
     error::{Error, Result, UnwindEntry},
     gc::{Collect, arena::Visit, with_pin},
     method,
-    strand::{CellState, InterruptToken, RawInfo, Strand, StrandCell, StrandInner},
+    strand::{
+        CellState, InterruptToken, RawInfo, Strand, StrandCell, StrandInner, with_slots_dynamic,
+    },
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
@@ -906,17 +907,14 @@ fn observe_mcall<'v, 's>(
                 _ => return Err(exited(strand)),
             };
             let ty = strand.builtin_types().strand_ref;
-            let values: Vec<_> = cells
-                .into_iter()
-                .map(|cell| {
-                    let mut value = Value::NIL;
-                    // Safety: written by the last allocation; see `Slot::new`.
-                    let slot = unsafe { Slot::new(NonNull::from(&mut value)) };
-                    ty.create_imm(strand, StrandRef::new(cell), slot);
-                    value
-                })
-                .collect();
-            tuple::create(strand, values, out);
+            with_slots_dynamic!(strand, cells.len(), |mut refs| {
+                for (i, cell) in cells.into_iter().enumerate() {
+                    ty.create_imm(strand, StrandRef::new(cell), refs.at(i));
+                }
+                let len = refs.len();
+                let embryo = tuple::embryo(strand, len);
+                embryo.finish(strand, (0..len).map(|i| refs.at(i).take()), out);
+            });
             Ok(())
         }
         sym::INFO => {

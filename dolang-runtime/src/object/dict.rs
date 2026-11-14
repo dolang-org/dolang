@@ -2154,16 +2154,9 @@ impl<'v> Dict<'v> {
                 break if let Some(bucket) = dict.index.get(index.get()) {
                     index.update(|i| i + 1);
                     if let Some((bucket, subindex)) = bucket {
-                        tuple::create(
-                            strand,
-                            unsafe {
-                                [
-                                    bucket.as_ref().key.dup(),
-                                    bucket.as_ref().value.at(*subindex).dup(),
-                                ]
-                            },
-                            out,
-                        );
+                        // Safety: the bucket stays live while the dict is borrowed
+                        let bucket = unsafe { bucket.as_ref() };
+                        tuple::create_pair(strand, &bucket.key, bucket.value.at(*subindex), out);
                         Ok(true)
                     } else {
                         continue;

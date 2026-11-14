@@ -1,7 +1,6 @@
 use std::{
     borrow::Cow,
     cell::{Cell, UnsafeCell},
-    collections::VecDeque,
     marker::PhantomData,
     ops::ControlFlow,
     ptr::{self, NonNull},
@@ -95,11 +94,9 @@ impl<'v> CallFrame<'v> {
             let mut pos = 0;
             let offset = func.locals;
             let pos_count = unpack.required + unpack.optional.len();
-            let mut rest = if unpack.variadic == Variadic::Capture {
-                Some(VecDeque::new())
-            } else {
-                None
-            };
+            // Leftovers stay in their argument slots, which root them, until the rest's
+            // object is allocated
+            let mut rest = (unpack.variadic == Variadic::Capture).then(Vec::new);
             // Leftovers for split rests (`*name` and `**name`)
             let mut pos_rest = (unpack.variadic.positional() == Rest::Capture
                 && unpack.variadic != Variadic::Capture)
@@ -127,9 +124,7 @@ impl<'v> CallFrame<'v> {
                             match unpack.variadic {
                                 Variadic::Capture => {
                                     // Capture extra positional arguments in rest
-                                    rest.as_mut()
-                                        .unwrap()
-                                        .push_back(Some((None, Value::from_input(strand, value))));
+                                    rest.as_mut().unwrap().push((None, value));
                                 }
                                 variadic => match variadic.positional() {
                                     Rest::None => {
@@ -138,10 +133,7 @@ impl<'v> CallFrame<'v> {
                                     // Allow but discard extra positional arguments
                                     Rest::Discard => {}
                                     // Capture extra positional arguments in `*name`
-                                    Rest::Capture => pos_rest
-                                        .as_mut()
-                                        .unwrap()
-                                        .push(Value::from_input(strand, value)),
+                                    Rest::Capture => pos_rest.as_mut().unwrap().push(value),
                                 },
                             }
                         } else {
@@ -162,10 +154,7 @@ impl<'v> CallFrame<'v> {
                         match unpack.variadic {
                             Variadic::Capture => {
                                 // Capture extra key arguments in rest
-                                rest.as_mut().unwrap().push_back(Some((
-                                    Some(strand.sym_obj(sym)),
-                                    Value::from_input(strand, value),
-                                )));
+                                rest.as_mut().unwrap().push((Some(sym), value));
                             }
                             variadic => match variadic.keyed() {
                                 Rest::None => {
@@ -174,10 +163,7 @@ impl<'v> CallFrame<'v> {
                                 // Allow but discard extra key arguments
                                 Rest::Discard => {}
                                 // Capture extra key arguments in `**name`
-                                Rest::Capture => key_rest
-                                    .as_mut()
-                                    .unwrap()
-                                    .push((strand.sym_obj(sym), Value::from_input(strand, value))),
+                                Rest::Capture => key_rest.as_mut().unwrap().push((sym, value)),
                             },
                         }
                     }
@@ -216,28 +202,29 @@ impl<'v> CallFrame<'v> {
                     });
                 }
             }
-            if let Some(rest) = rest {
-                let record = pack::Pack::new(rest.into_iter().flatten().collect());
-                strand.builtin_types().pack.create_imm(
-                    strand,
-                    record,
-                    slots
-                        .get_unchecked(offset + pos_count + unpack.keys.len())
-                        .slot(),
-                );
-            }
             let mut rest_slot = offset + pos_count + unpack.keys.len();
+            if let Some(rest) = rest {
+                let embryo = strand.builtin_types().pack.embryo(strand);
+                let items = rest
+                    .into_iter()
+                    .map(|(sym, mut value)| (sym.map(|sym| strand.sym_obj(sym)), value.take()))
+                    .collect();
+                let record = pack::Pack::new(items);
+                embryo.finish_imm(strand, record, slots.get_unchecked(rest_slot).slot());
+            }
             if let Some(values) = pos_rest {
-                tuple::create(strand, values, slots.get_unchecked(rest_slot).slot());
+                let embryo = tuple::embryo(strand, values.len());
+                let values = values.into_iter().map(|mut value| value.take());
+                embryo.finish(strand, values, slots.get_unchecked(rest_slot).slot());
                 rest_slot += 1;
             }
             if let Some(entries) = key_rest {
+                let embryo = strand.builtin_types().pack.embryo(strand);
+                let entries = entries
+                    .into_iter()
+                    .map(|(sym, mut value)| (strand.sym_obj(sym), value.take()));
                 let record = pack::Pack::from_sym_entries(entries);
-                strand.builtin_types().pack.create_imm(
-                    strand,
-                    record,
-                    slots.get_unchecked(rest_slot).slot(),
-                );
+                embryo.finish_imm(strand, record, slots.get_unchecked(rest_slot).slot());
             }
             self.sp.set(offset + unpack.len());
             Ok(())

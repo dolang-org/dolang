@@ -643,18 +643,14 @@ impl<'v> Protocol<'v> for Type {
         } else if pos1.is_some() {
             return Err(Error::unexpected_positional(strand, 0));
         }
-        let end = end
-            .ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?
-            .take();
-        strand.builtin_types().range.create_imm(
-            strand,
-            Range::new(
-                start.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),
-                end,
-                step.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),
-            ),
-            out,
+        let mut end = end.ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?;
+        let embryo = strand.builtin_types().range.embryo(strand);
+        let range = Range::new(
+            start.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),
+            end.take(),
+            step.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),
         );
+        embryo.finish_imm(strand, range, out);
         Ok(())
     }
 }

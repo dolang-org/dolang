@@ -550,16 +550,16 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
             }
             sym::PUSH => {
+                // The values stay in their argument slots until stored
                 let mut values = Vec::new();
                 for arg in args {
                     match arg {
-                        Arg::Pos(mut value) => values.push(value.take()),
+                        Arg::Pos(value) => values.push(value),
                         Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
                     }
                 }
-                // The argument slots no longer root the values, so nothing
-                // may collect before they are stored
-                this.borrow_mut(strand)?.push(values);
+                let mut record = this.borrow_mut(strand)?;
+                record.push(values.into_iter().map(|mut value| value.take()));
                 Ok(())
             }
             sym::GET => {
@@ -621,9 +621,12 @@ impl<'v> Protocol<'v> for Record<'v> {
                     Some(Key::Sym(key)) => Mode::KeyValues(key.tag()),
                     Some(key @ Key::Pos(_)) => {
                         // A position has at most one value
-                        let found = this.borrow(strand)?.get(&key, None).map(Value::dup);
                         return with_slots!(strand, |mut values| {
-                            tuple::create(strand, found, &mut values);
+                            let record = this.borrow(strand)?;
+                            let found = record.get(&key, None);
+                            let embryo = tuple::embryo(strand, found.is_some() as usize);
+                            embryo.finish(strand, found.map(Value::dup), &mut values);
+                            drop(record);
                             values.op_iter(strand, out).await
                         });
                     }

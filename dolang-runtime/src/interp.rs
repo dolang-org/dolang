@@ -347,11 +347,9 @@ impl<'v> Vm<'v> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => mut start, mut end, mut step);
-        strand.builtin_types().range.create_imm(
-            strand,
-            range::Range::new(start.take(), end.take(), step.take()),
-            out,
-        );
+        let embryo = strand.builtin_types().range.embryo(strand);
+        let range = range::Range::new(start.take(), end.take(), step.take());
+        embryo.finish_imm(strand, range, out);
         Ok(())
     }
 
