@@ -223,16 +223,18 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_native(strand, strand.builtin_types().strbuf) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Ok(Value::from_bool(
+            out.store(Value::from_bool(
                 this_borrow.as_str() == other_borrow.as_str(),
-            ))
+            ));
+            Ok(())
         })
     }
 
@@ -240,16 +242,18 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_native(strand, strand.builtin_types().strbuf) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Ok(Value::from_bool(
+            out.store(Value::from_bool(
                 this_borrow.as_str() < other_borrow.as_str(),
-            ))
+            ));
+            Ok(())
         })
     }
 

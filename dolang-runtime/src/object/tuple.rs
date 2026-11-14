@@ -280,23 +280,27 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
             with_pin!(strand, other, |other| {
                 let left = this.items();
                 let right = other.items();
                 if left.len() != right.len() {
-                    return Ok(Value::from_bool(false));
+                    out.store(Value::from_bool(false));
+                    return Ok(());
                 }
                 for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                         strand.check_trap()?;
                     }
-                    if !l.op_eq(strand, r)?.to_bool(strand)? {
-                        return Ok(Value::from_bool(false));
+                    if !l.eq(strand, r)? {
+                        out.store(Value::from_bool(false));
+                        return Ok(());
                     }
                 }
-                Ok(Value::from_bool(true))
+                out.store(Value::from_bool(true));
+                Ok(())
             })
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -307,7 +311,8 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
             with_pin!(strand, other, |other| {
                 let left = this.items();
@@ -316,11 +321,13 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                         strand.check_trap()?;
                     }
-                    if !l.op_eq(strand, r)?.to_bool(strand)? {
-                        return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                    if !l.eq(strand, r)? {
+                        out.store(Value::from_bool(l.lt(strand, r)?));
+                        return Ok(());
                     }
                 }
-                Ok(Value::from_bool(right.len() > left.len()))
+                out.store(Value::from_bool(right.len() > left.len()));
+                Ok(())
             })
         } else {
             Err(Error::unsupported(strand, "`<`"))
@@ -461,7 +468,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                     if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                         strand.check_trap()?;
                     }
-                    if elem.op_eq(strand, &needle)?.to_bool(strand)? {
+                    if elem.eq(strand, &needle)? {
                         found = true;
                         break;
                     }

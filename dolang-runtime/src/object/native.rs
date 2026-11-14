@@ -1536,10 +1536,10 @@ pub trait Object<'v>: Sized + 'v {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        with_slots!(strand, |mut receiver| {
+        with_slots!(strand, |mut receiver, mut result| {
             Output::set(strand, &mut receiver, this);
-            match other.op_lt_direct(strand, &receiver) {
-                Ok(value) => value.op_bool(strand),
+            match other.op_lt_direct(strand, &receiver, Slot::reborrow(&mut result)) {
+                Ok(()) => result.op_bool(strand),
                 Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
                     strand,
                     format!("comparison not supported: {}", Self::NAME),
@@ -1557,10 +1557,10 @@ pub trait Object<'v>: Sized + 'v {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        with_slots!(strand, |mut receiver| {
+        with_slots!(strand, |mut receiver, mut result| {
             Output::set(strand, &mut receiver, this);
-            match other.op_lte_direct(strand, &receiver) {
-                Ok(value) => value.op_bool(strand),
+            match other.op_lte_direct(strand, &receiver, Slot::reborrow(&mut result)) {
+                Ok(()) => result.op_bool(strand),
                 Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
                     strand,
                     format!("comparison not supported: {}", Self::NAME),
@@ -2083,7 +2083,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2091,14 +2092,16 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(eq)")),
             T::eq(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_req<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2106,14 +2109,16 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(req)")),
             T::req(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_ne<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2121,13 +2126,15 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(ne)")),
             T::ne(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
     fn op_rne<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2135,567 +2142,367 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(rne)")),
             T::rne(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_neg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(neg)")),
-                T::neg(Instance::from_recv(&this), strand, Slot::reborrow(&mut out))
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(neg)")),
+            T::neg(Instance::from_recv(&this), strand, out)
+        )
     }
 
     fn op_bnot<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(bnot)")),
-                T::bnot(Instance::from_recv(&this), strand, Slot::reborrow(&mut out))
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(bnot)")),
+            T::bnot(Instance::from_recv(&this), strand, out)
+        )
     }
 
     fn op_band<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(band)")),
-                {
-                    T::band(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(band)")),
+            { T::band(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_rband<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rband)")),
-                {
-                    T::rband(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rband)")),
+            { T::rband(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_bor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(bor)")),
-                {
-                    T::bor(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(bor)")),
+            { T::bor(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_rbor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rbor)")),
-                {
-                    T::rbor(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rbor)")),
+            { T::rbor(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_bxor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(bxor)")),
-                {
-                    T::bxor(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(bxor)")),
+            { T::bxor(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_rbxor<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rbxor)")),
-                {
-                    T::rbxor(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rbxor)")),
+            { T::rbxor(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_shl<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(shl)")),
-                {
-                    T::shl(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(shl)")),
+            { T::shl(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_rshl<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rshl)")),
-                {
-                    T::rshl(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rshl)")),
+            { T::rshl(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_shr<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(shr)")),
-                {
-                    T::shr(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(shr)")),
+            { T::shr(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_rshr<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rshr)")),
-                {
-                    T::rshr(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rshr)")),
+            { T::rshr(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_add<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(add)")),
-                {
-                    T::add(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(add)")),
+            { T::add(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(radd)")),
-                {
-                    T::radd(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(radd)")),
+            { T::radd(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_sub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(sub)")),
-                {
-                    T::sub(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(sub)")),
+            { T::sub(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_rsub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rsub)")),
-                {
-                    T::rsub(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rsub)")),
+            { T::rsub(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_mul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(mul)")),
-                {
-                    T::mul(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(mul)")),
+            { T::mul(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rmul)")),
-                {
-                    T::rmul(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rmul)")),
+            { T::rmul(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_div<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(div)")),
-                {
-                    T::div(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(div)")),
+            { T::div(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_rdiv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rdiv)")),
-                {
-                    T::rdiv(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rdiv)")),
+            { T::rdiv(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_ediv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(ediv)")),
-                {
-                    T::ediv(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(ediv)")),
+            { T::ediv(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_rediv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rediv)")),
-                {
-                    T::redv(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rediv)")),
+            { T::redv(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_mod<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(mod)")),
-                {
-                    T::rem(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(mod)")),
+            { T::rem(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_rmod<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        with_slots!(strand, |mut out| {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(rmod)")),
-                {
-                    T::rrem(
-                        Instance::from_recv(&this),
-                        strand,
-                        other,
-                        Slot::reborrow(&mut out),
-                    )
-                }
-            )?;
-            Ok(out.take())
-        })
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        in_native_frame!(
+            strand,
+            Cow::Borrowed(T::MODULE),
+            Cow::Borrowed(T::NAME),
+            Some(Cow::Borrowed("(rmod)")),
+            { T::rrem(Instance::from_recv(&this), strand, other, out,) }
+        )
     }
 
     fn op_lt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2703,14 +2510,16 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(lt)")),
             T::lt(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_lte<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2718,14 +2527,16 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(lte)")),
             T::lte(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_gt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2733,14 +2544,16 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(gt)")),
             T::gt(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     fn op_gte<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
@@ -2748,7 +2561,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(gte)")),
             T::gte(Instance::from_recv(&this), strand, other)
         )?;
-        Ok(Value::from_bool(result))
+        out.store(Value::from_bool(result));
+        Ok(())
     }
 
     async fn op_unpack<'a, 's>(
@@ -4258,9 +4072,11 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if this.is(other) {
-            Ok(Value::TRUE)
+            out.store(Value::TRUE);
+            Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -4386,7 +4202,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let proxy_type = this.get().native().annex().proxy;
         let Some(other) = other.downcast_ref(proxy_type) else {
             return Err(Error::unsupported(strand, "`==`"));
@@ -4396,7 +4213,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
             .get()
             .native
             .repr_eq(&this.get().native);
-        Ok(Value::from_bool(same))
+        out.store(Value::from_bool(same));
+        Ok(())
     }
 
     fn op_hash<'a, 's>(
@@ -5728,7 +5546,7 @@ mod tests {
 
     #[test]
     fn type_object_op_hash_op_eq_op_subtype() {
-        with_fixture_vm(async |strand, [mut ty_slot, mut other_ty_slot]| {
+        with_fixture_vm(async |strand, [mut ty_slot, mut other_ty_slot, mut eq]| {
             let state = strand.vm().state::<FixtureStateTag>();
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             type_value(strand, state.fixture_ty, Slot::reborrow(&mut other_ty_slot));
@@ -5746,13 +5564,21 @@ mod tests {
                     TypeObjectWrap::<SlotFixture>::op_hash(recv.clone(), strand, &mut h2).unwrap();
                     assert_eq!(h1.finish(), h2.finish());
 
-                    let eq = TypeObjectWrap::<SlotFixture>::op_eq(recv.clone(), strand, ty_value)
-                        .unwrap();
+                    TypeObjectWrap::<SlotFixture>::op_eq(
+                        recv.clone(),
+                        strand,
+                        ty_value,
+                        Slot::reborrow(&mut eq),
+                    )
+                    .unwrap();
                     assert!(eq.to_bool(strand).unwrap());
                     // A different type object declines, so the right operand can reflect.
-                    let Err(ne) =
-                        TypeObjectWrap::<SlotFixture>::op_eq(recv.clone(), strand, other_ty_value)
-                    else {
+                    let Err(ne) = TypeObjectWrap::<SlotFixture>::op_eq(
+                        recv.clone(),
+                        strand,
+                        other_ty_value,
+                        Slot::reborrow(&mut eq),
+                    ) else {
                         panic!("a different type object should decline `==`");
                     };
                     assert_eq!(ne.kind(), ErrorKind::Unsupported);

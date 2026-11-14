@@ -40,20 +40,22 @@ impl<'v> Protocol<'v> for Value {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &DoValue<'v>,
-    ) -> Result<'v, 's, DoValue<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         this.delegator()
             .ok_or_else(|| Error::unsupported(strand, "reflected `==`"))?
-            .op_eq_direct(strand, other)
+            .op_eq_direct(strand, other, out)
     }
 
     fn op_rne<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &DoValue<'v>,
-    ) -> Result<'v, 's, DoValue<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         this.delegator()
             .ok_or_else(|| Error::unsupported(strand, "reflected `!=`"))?
-            .op_ne_direct(strand, other)
+            .op_ne_direct(strand, other, out)
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

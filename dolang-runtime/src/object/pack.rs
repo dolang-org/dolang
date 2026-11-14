@@ -205,7 +205,7 @@ pub(crate) fn eq_items<'v, 's>(
         }
         // Positions line up when every key before them does
         if lkey.as_ref().map(|key| key.tag()) != rkey.as_ref().map(|key| key.tag())
-            || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
+            || !lvalue.eq(strand, rvalue)?
         {
             return Ok(false);
         }
@@ -229,8 +229,8 @@ pub(crate) fn lt_items<'v, 's>(
             lint += i64::from(lkey.is_none());
             rint += i64::from(rkey.is_none());
             for (l, r) in [(&*lk, &*rk), (lvalue, rvalue)] {
-                if !l.op_eq(strand, r)?.to_bool(strand)? {
-                    return l.op_lt(strand, r)?.to_bool(strand);
+                if !l.eq(strand, r)? {
+                    return l.lt(strand, r);
                 }
             }
         }
@@ -861,26 +861,30 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().pack) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.get();
         let right = other.items();
-        Ok(Value::from_bool(eq_items(strand, &left.items, right)?))
+        out.store(Value::from_bool(eq_items(strand, &left.items, right)?));
+        Ok(())
     }
 
     fn op_lt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().pack) else {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.get();
         let right = other.items();
-        Ok(Value::from_bool(lt_items(strand, &left.items, right)?))
+        out.store(Value::from_bool(lt_items(strand, &left.items, right)?));
+        Ok(())
     }
 
     fn op_index<'a, 's>(

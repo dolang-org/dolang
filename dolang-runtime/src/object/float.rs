@@ -39,10 +39,12 @@ fn binop<'v, 's>(
     left: f64,
     right: &Value<'v>,
     op: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
-) -> Result<'v, 's, Value<'v>> {
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
     let prim = right.to_prim(strand)?;
     let value = op(&Prim::from(left), strand, &prim)?;
-    Ok(Value::from_input(strand, value))
+    Output::set(strand, out, value);
+    Ok(())
 }
 
 fn rbinop<'v, 's>(
@@ -50,10 +52,12 @@ fn rbinop<'v, 's>(
     left: f64,
     right: &Value<'v>,
     op: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
-) -> Result<'v, 's, Value<'v>> {
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
     let prim = right.to_prim(strand)?;
     let value = op(&prim, strand, &Prim::from(left))?;
-    Ok(Value::from_input(strand, value))
+    Output::set(strand, out, value);
+    Ok(())
 }
 
 impl<'v> Protocol<'v> for FloatObj {
@@ -112,125 +116,142 @@ impl<'v> Protocol<'v> for FloatObj {
     fn op_neg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_input(strand, Prim::F64(-*this.get())))
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, Prim::F64(-*this.get()));
+        Ok(())
     }
 
     fn op_add<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_add)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_add, out)
     }
 
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_add)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_add, out)
     }
 
     fn op_sub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_sub)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_sub, out)
     }
 
     fn op_rsub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, *this.get(), other, Prim::op_sub)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, *this.get(), other, Prim::op_sub, out)
     }
 
     fn op_mul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_mul)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_mul, out)
     }
 
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_mul)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_mul, out)
     }
 
     fn op_div<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_div)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_div, out)
     }
 
     fn op_rdiv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, *this.get(), other, Prim::op_div)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, *this.get(), other, Prim::op_div, out)
     }
 
     fn op_ediv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_ediv)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_ediv, out)
     }
 
     fn op_rediv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, *this.get(), other, Prim::op_ediv)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, *this.get(), other, Prim::op_ediv, out)
     }
 
     fn op_mod<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_mod)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_mod, out)
     }
 
     fn op_rmod<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, *this.get(), other, Prim::op_mod)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, *this.get(), other, Prim::op_mod, out)
     }
 
     fn op_eq<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let prim = other
             .to_prim(strand)
             .map_err(|_| Error::unsupported(strand, "`==`"))?;
-        Ok(Value::from_bool(
+        out.store(Value::from_bool(
             Prim::from(*this.get()).op_eq(strand, &prim),
-        ))
+        ));
+        Ok(())
     }
 
     fn op_lt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, *this.get(), other, Prim::op_lt)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, *this.get(), other, Prim::op_lt, out)
     }
 
     fn op_type<'a, 's>(
@@ -366,125 +387,142 @@ impl<'v> Protocol<'v> for VerbatimObj {
     fn op_neg<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Value<'v>> {
-        Ok(Value::from_input(strand, Prim::F64(-this.get().value)))
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        Output::set(strand, out, Prim::F64(-this.get().value));
+        Ok(())
     }
 
     fn op_add<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_add)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_add, out)
     }
 
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_add)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_add, out)
     }
 
     fn op_sub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_sub)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_sub, out)
     }
 
     fn op_rsub<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, this.get().value, other, Prim::op_sub)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, this.get().value, other, Prim::op_sub, out)
     }
 
     fn op_mul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_mul)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_mul, out)
     }
 
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_mul)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_mul, out)
     }
 
     fn op_div<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_div)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_div, out)
     }
 
     fn op_rdiv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, this.get().value, other, Prim::op_div)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, this.get().value, other, Prim::op_div, out)
     }
 
     fn op_ediv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_ediv)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_ediv, out)
     }
 
     fn op_rediv<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, this.get().value, other, Prim::op_ediv)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, this.get().value, other, Prim::op_ediv, out)
     }
 
     fn op_mod<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_mod)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_mod, out)
     }
 
     fn op_rmod<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        rbinop(strand, this.get().value, other, Prim::op_mod)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        rbinop(strand, this.get().value, other, Prim::op_mod, out)
     }
 
     fn op_eq<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let prim = other
             .to_prim(strand)
             .map_err(|_| Error::unsupported(strand, "`==`"))?;
-        Ok(Value::from_bool(
+        out.store(Value::from_bool(
             Prim::from(this.get().value).op_eq(strand, &prim),
-        ))
+        ));
+        Ok(())
     }
 
     fn op_lt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
-        binop(strand, this.get().value, other, Prim::op_lt)
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
+        binop(strand, this.get().value, other, Prim::op_lt, out)
     }
 }
 

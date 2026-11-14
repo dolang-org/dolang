@@ -1656,7 +1656,8 @@ impl<'v> Protocol<'v> for Dict<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().dict) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
@@ -1665,7 +1666,8 @@ impl<'v> Protocol<'v> for Dict<'v> {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             // Equal pair counts make both walks end together
             if left.total_pairs != right.total_pairs {
-                return Ok(Value::FALSE);
+                out.store(Value::FALSE);
+                return Ok(());
             }
             let pairs = left
                 .index
@@ -1678,17 +1680,15 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 }
                 let (l, r) = unsafe { (l.as_ref(), r.as_ref()) };
                 if l.hash != r.hash
-                    || !l.key.op_eq(strand, &r.key)?.to_bool(strand)?
-                    || !l
-                        .value
-                        .at(*subl)
-                        .op_eq(strand, r.value.at(*subr))?
-                        .to_bool(strand)?
+                    || !l.key.eq(strand, &r.key)?
+                    || !l.value.at(*subl).eq(strand, r.value.at(*subr))?
                 {
-                    return Ok(Value::FALSE);
+                    out.store(Value::FALSE);
+                    return Ok(());
                 }
             }
-            Ok(Value::TRUE)
+            out.store(Value::TRUE);
+            Ok(())
         })
     }
 
@@ -1696,7 +1696,8 @@ impl<'v> Protocol<'v> for Dict<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let other = if let Some(other) = other.downcast_ref(strand.builtin_types().dict) {
             other
         } else {
@@ -1728,14 +1729,16 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     let (l, subl) = (l.0.as_ref(), l.1);
                     let (r, subr) = (r.0.as_ref(), r.1);
                     for (l, r) in [(&l.key, &r.key), (l.value.at(subl), r.value.at(subr))] {
-                        if !l.op_eq(strand, r)?.to_bool(strand)? {
-                            return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                        if !l.eq(strand, r)? {
+                            out.store(Value::from_bool(l.lt(strand, r)?));
+                            return Ok(());
                         }
                     }
                     i += 1;
                     j += 1;
                 }
-                Ok(Value::from_bool(right.table.len() > left.table.len()))
+                out.store(Value::from_bool(right.table.len() > left.table.len()));
+                Ok(())
             }
         })
     }
@@ -2339,9 +2342,7 @@ impl<'v> Dict<'v> {
                 if let Some(expected_value) = value {
                     let bucket_ref = unsafe { bucket.as_ref() };
                     match &bucket_ref.value {
-                        EntryValue::Single { value, .. } => {
-                            value.op_eq(strand, &expected_value)?.to_bool(strand)?
-                        }
+                        EntryValue::Single { value, .. } => value.eq(strand, &expected_value)?,
                         EntryValue::Multi(_) => {
                             let mut found = false;
                             let bucket_ref = unsafe { bucket.as_ref() };
@@ -2353,7 +2354,7 @@ impl<'v> Dict<'v> {
                                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                                     strand.check_trap()?;
                                 }
-                                if v.op_eq(strand, &expected_value)?.to_bool(strand)? {
+                                if v.eq(strand, &expected_value)? {
                                     found = true;
                                     break;
                                 }

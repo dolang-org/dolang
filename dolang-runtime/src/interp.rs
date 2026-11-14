@@ -973,7 +973,7 @@ impl<'v> Vm<'v> {
                         builtin::ARG_ACC => self.arg_acc(strand, args, Slot::reborrow(&mut res)),
                         builtin::VALUE_ASSERT => {
                             unpack!(strand, args => value, expected);
-                            if !value.op_eq(strand, &expected)?.to_bool(strand)? {
+                            if !value.eq(strand, &expected)? {
                                 // Report the mismatch even if a value can't be formatted
                                 let msg = match (expected.to_debug(strand), value.to_debug(strand))
                                 {
@@ -1036,14 +1036,16 @@ impl<'v> Vm<'v> {
                     frame.pc.set(reader.offset());
                     let mut slot = frame.scratch1();
                     slot.store(frame.pop());
-                    let res = match inst {
-                        Neg => slot.op_neg(strand),
-                        Not => slot.op_not(strand),
-                        BitNot => slot.op_bnot(strand),
+                    let mut res = frame.scratch2();
+                    let out = Slot::reborrow(&mut res);
+                    match inst {
+                        Neg => slot.op_neg(strand, out),
+                        Not => slot.op_not(strand, out),
+                        BitNot => slot.op_bnot(strand, out),
                         _ => unreachable_unchecked(),
                     }?;
                     slot.store(Value::NIL);
-                    frame.push(res);
+                    frame.push(res.take());
                 }
                 Close => {
                     let index = reader.usize();
@@ -1060,29 +1062,31 @@ impl<'v> Vm<'v> {
                     let mut right = frame.scratch2();
                     right.store(frame.pop());
                     left.store(frame.pop());
-                    let res = match inst {
-                        BitAnd => left.op_band(strand, &right),
-                        BitOr => left.op_bor(strand, &right),
-                        BitXor => left.op_bxor(strand, &right),
-                        Shl => left.op_shl(strand, &right),
-                        Shr => left.op_shr(strand, &right),
-                        Add => left.op_add(strand, &right),
-                        Div => left.op_div(strand, &right),
-                        Ediv => left.op_ediv(strand, &right),
-                        Mod => left.op_mod(strand, &right),
-                        Mul => left.op_mul(strand, &right),
-                        Sub => left.op_sub(strand, &right),
-                        Eq => left.op_eq(strand, &right),
-                        Ne => left.op_ne(strand, &right),
-                        Lt => left.op_lt(strand, &right),
-                        Gt => left.op_gt(strand, &right),
-                        Lte => left.op_lte(strand, &right),
-                        Gte => left.op_gte(strand, &right),
+                    let mut res = frame.scratch3();
+                    let out = Slot::reborrow(&mut res);
+                    match inst {
+                        BitAnd => left.op_band(strand, &right, out),
+                        BitOr => left.op_bor(strand, &right, out),
+                        BitXor => left.op_bxor(strand, &right, out),
+                        Shl => left.op_shl(strand, &right, out),
+                        Shr => left.op_shr(strand, &right, out),
+                        Add => left.op_add(strand, &right, out),
+                        Div => left.op_div(strand, &right, out),
+                        Ediv => left.op_ediv(strand, &right, out),
+                        Mod => left.op_mod(strand, &right, out),
+                        Mul => left.op_mul(strand, &right, out),
+                        Sub => left.op_sub(strand, &right, out),
+                        Eq => left.op_eq(strand, &right, out),
+                        Ne => left.op_ne(strand, &right, out),
+                        Lt => left.op_lt(strand, &right, out),
+                        Gt => left.op_gt(strand, &right, out),
+                        Lte => left.op_lte(strand, &right, out),
+                        Gte => left.op_gte(strand, &right, out),
                         _ => unreachable_unchecked(),
                     }?;
                     right.store(Value::NIL);
                     left.store(Value::NIL);
-                    frame.push(res)
+                    frame.push(res.take())
                 }
                 Ret => return Ok(Status::Ret(frame.pop())),
                 Branch => {

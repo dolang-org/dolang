@@ -138,10 +138,12 @@ impl<'v> Protocol<'v> for StrObj {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
             let eq = with_pin!(strand, ostr, |ostr| ostr.str() == this.str());
-            Ok(Value::from_bool(eq))
+            out.store(Value::from_bool(eq));
+            Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -151,10 +153,12 @@ impl<'v> Protocol<'v> for StrObj {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
             let lt = with_pin!(strand, ostr, |ostr| this.str() < ostr.str());
-            Ok(Value::from_bool(lt))
+            out.store(Value::from_bool(lt));
+            Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }

@@ -582,13 +582,15 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().array_view) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        Ok(Value::from_bool(
+        out.store(Value::from_bool(
             this.as_header() == gc::Base::as_ptr(other).cast(),
-        ))
+        ));
+        Ok(())
     }
 
     fn op_index<'a, 's>(

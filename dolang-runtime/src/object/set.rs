@@ -478,7 +478,8 @@ impl<'v> Protocol<'v> for Set<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        mut out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         let Some(other) = other.downcast_ref(strand.builtin_types().set) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
@@ -486,7 +487,8 @@ impl<'v> Protocol<'v> for Set<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
-                return Ok(Value::FALSE);
+                out.store(Value::FALSE);
+                return Ok(());
             }
             unsafe {
                 for bucket in left.inner.iter() {
@@ -496,11 +498,13 @@ impl<'v> Protocol<'v> for Set<'v> {
                     })?
                     .is_none()
                     {
-                        return Ok(Value::FALSE);
+                        out.store(Value::FALSE);
+                        return Ok(());
                     }
                 }
             }
-            Ok(Value::TRUE)
+            out.store(Value::TRUE);
+            Ok(())
         })
     }
 

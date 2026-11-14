@@ -108,9 +108,9 @@ fn extrema<'v, 'a, 's>(
     out.store(first.take());
     for mut value in rest {
         let replace = if is_min {
-            value.op_lt(strand, &out)?.to_bool(strand)?
+            value.lt(strand, &out)?
         } else {
-            out.op_lt(strand, &value)?.to_bool(strand)?
+            out.lt(strand, &value)?
         };
         if replace {
             out.store(value.take());
@@ -133,15 +133,15 @@ fn default_mcall<'v, 'a, 's>(
         sym::MAX => extrema(strand, args, out, false),
         sym::CLAMP => {
             unpack!(strand, args => mut value, mut lower, mut upper);
-            if upper.op_lt(strand, &lower)?.to_bool(strand)? {
+            if upper.lt(strand, &lower)? {
                 return Err(Error::value(
                     strand,
                     "clamp: lower bound exceeds upper bound",
                 ));
             }
-            if value.op_lt(strand, &lower)?.to_bool(strand)? {
+            if value.lt(strand, &lower)? {
                 out.store(lower.take());
-            } else if upper.op_lt(strand, &value)?.to_bool(strand)? {
+            } else if upper.lt(strand, &value)? {
                 out.store(upper.take());
             } else {
                 out.store(value.take());
@@ -241,20 +241,22 @@ impl<'v> Protocol<'v> for Num {
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         this.delegator()
             .ok_or_else(|| Error::unsupported(strand, "reflected `+`"))?
-            .op_add_direct(strand, other)
+            .op_add_direct(strand, other, out)
     }
 
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
-    ) -> Result<'v, 's, Value<'v>> {
+        out: Slot<'v, '_>,
+    ) -> Result<'v, 's, ()> {
         this.delegator()
             .ok_or_else(|| Error::unsupported(strand, "reflected `*`"))?
-            .op_mul_direct(strand, other)
+            .op_mul_direct(strand, other, out)
     }
 
     fn op_type<'a, 's>(
