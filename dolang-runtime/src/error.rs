@@ -21,12 +21,12 @@ use crate::{
         backtrace,
         error::Boxed,
         native::{Object, Type},
-        protocol::GcObj,
     },
     strand::{Strand, StrandInner},
     sym::Sym,
     value::{Case, Input, Output, Slot, Value, view::View},
     vm::Vm,
+    with_slots,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -123,7 +123,6 @@ impl ErrorKind {
     }
 }
 
-#[derive(Clone)]
 pub(crate) enum UnwindEntry<'v> {
     Do {
         program: Gc<'v, Program<'v>>,
@@ -138,6 +137,33 @@ pub(crate) enum UnwindEntry<'v> {
 }
 
 impl<'v> UnwindEntry<'v> {
+    /// Duplicate the entry.
+    ///
+    /// # Safety
+    /// The result is loose, as for [`gc::Base::dup`].
+    pub(crate) unsafe fn dup(&self) -> Self {
+        match self {
+            UnwindEntry::Do {
+                program,
+                function_index,
+                pc,
+            } => UnwindEntry::Do {
+                program: unsafe { program.dup() },
+                function_index: *function_index,
+                pc: *pc,
+            },
+            UnwindEntry::Native {
+                module,
+                receiver,
+                method,
+            } => UnwindEntry::Native {
+                module: module.clone(),
+                receiver: receiver.clone(),
+                method: method.clone(),
+            },
+        }
+    }
+
     pub(crate) fn accept(&self, visit: &mut dyn gc::arena::Visit) -> ControlFlow<()> {
         match self {
             UnwindEntry::Do { program, .. } => program.accept(visit),
@@ -158,7 +184,10 @@ impl<'v> UnwindEntry<'v> {
             } => {
                 if let Some(debug) = program.funcdebugs().get(*function_index as usize) {
                     let file = &program.debug_strtab()[debug.file.clone()];
-                    Some((Cow::Owned(file.to_owned()), debug.locate(*pc as usize - 1)))
+                    Some((
+                        Cow::Owned(file.to_owned()),
+                        debug.locate_frame(*pc as usize),
+                    ))
                 } else {
                     None
                 }
@@ -296,6 +325,13 @@ impl<'v, 's> ErrorRoot<'v, 's> {
         }
     }
 
+    /// A slot over the error's value, to fill once the root is registered.
+    fn slot(&mut self) -> Slot<'v, '_> {
+        // Safety: the value lives in the strand's error table, which the collector scans
+        // and which never moves its entries; `&mut self` excludes other accesses.
+        unsafe { Slot::new(NonNull::from(&mut self.data_mut().value)) }
+    }
+
     fn data(&self) -> &SlotData<'v> {
         // Safety: the slot lives for 's, and only this root writes it
         unsafe { &*self.slot.as_ref().0.get() }
@@ -346,6 +382,8 @@ enum Variant<'v, 's> {
     Canceled,
     TimedOut,
     Concurrency,
+    Runtime(&'static str),
+    Type(&'static str),
     NonLocalJump(u8, gc::Weak<'v, frame::Upvars<'v>>),
     Boxed(ErrorRoot<'v, 's>),
 }
@@ -471,6 +509,8 @@ impl<'v, 's> fmt::Display for Error<'v, 's> {
             Variant::Canceled => write!(f, "strand canceled"),
             Variant::TimedOut => write!(f, "strand timed out"),
             Variant::Concurrency => write!(f, "conflicting concurrent operation"),
+            Variant::Runtime(msg) => write!(f, "{msg}"),
+            Variant::Type(msg) => write!(f, "type error: {msg}"),
             Variant::NonLocalJump(..) => write!(f, "non-local jump"),
             Variant::Boxed(root) => {
                 let val = root.get();
@@ -525,15 +565,31 @@ impl<'v, 's, 'a> fmt::Display for Display<'v, 's, 'a> {
     }
 }
 
+/// Describes a key for an error message.
+fn key_text<'v>(strand: &mut Strand<'v, '_>, key: impl Input<'v>) -> String {
+    with_slots!(strand, |mut value| {
+        Output::set(strand, Slot::reborrow(&mut value), key);
+        match value.view(strand.vm()) {
+            View::Sym(sym) => sym.as_str(strand).to_string(),
+            View::Str(str) => strand.access(|access| format!("{:?}", str.as_str(access))),
+            _ => {
+                if let Case::Prim(prim) = value.case() {
+                    format!("{prim}")
+                } else {
+                    "<unknown>".to_string()
+                }
+            }
+        }
+    })
+}
+
 impl<'v, 's> Error<'v, 's> {
-    fn new_info(inner: &'s StrandInner<'v>, kind: Boxed<'v>) -> Self {
-        let value = Value::from_object(GcObj::new_imm(
-            inner.vm().arena(),
-            inner.vm().builtin_types().error,
-            alias::Box::new(kind),
-        ));
+    fn new_info(strand: &mut Strand<'v, 's>, kind: Boxed<'v>) -> Self {
+        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
+        let error = strand.builtin_types().error;
+        error.create_imm(strand, alias::Box::new(kind), root.slot());
         Self {
-            inner: Variant::Boxed(ErrorRoot::new(inner, value, Vec::new())),
+            inner: Variant::Boxed(root),
             phantom: PhantomData,
         }
     }
@@ -545,19 +601,21 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    fn expand(&mut self, inner: &'s StrandInner<'v>) {
+    fn expand(&mut self, strand: &mut Strand<'v, 's>) {
         self.inner = match mem::replace(&mut self.inner, Variant::Immutable) {
             Variant::Unsupported(msg) => {
-                Self::new_info(inner, Boxed::Unsupported(Some(msg.into()))).inner
+                Self::new_info(strand, Boxed::Unsupported(Some(msg.into()))).inner
             }
-            Variant::Immutable => Self::new_info(inner, Boxed::Immutable).inner,
-            Variant::Overflow => Self::new_info(inner, Boxed::Overflow).inner,
-            Variant::ZeroDiv => Self::new_info(inner, Boxed::ZeroDiv).inner,
-            Variant::SinkStop => Self::new_info(inner, Boxed::SinkStop).inner,
-            Variant::IterStop => Self::new_info(inner, Boxed::IterStop).inner,
-            Variant::Canceled => Self::new_info(inner, Boxed::Canceled).inner,
-            Variant::TimedOut => Self::new_info(inner, Boxed::TimedOut).inner,
-            Variant::Concurrency => Self::new_info(inner, Boxed::Concurrency(None)).inner,
+            Variant::Immutable => Self::new_info(strand, Boxed::Immutable).inner,
+            Variant::Overflow => Self::new_info(strand, Boxed::Overflow).inner,
+            Variant::ZeroDiv => Self::new_info(strand, Boxed::ZeroDiv).inner,
+            Variant::SinkStop => Self::new_info(strand, Boxed::SinkStop).inner,
+            Variant::IterStop => Self::new_info(strand, Boxed::IterStop).inner,
+            Variant::Canceled => Self::new_info(strand, Boxed::Canceled).inner,
+            Variant::TimedOut => Self::new_info(strand, Boxed::TimedOut).inner,
+            Variant::Concurrency => Self::new_info(strand, Boxed::Concurrency(None)).inner,
+            Variant::Runtime(msg) => Self::new_info(strand, Boxed::Runtime(msg.into())).inner,
+            Variant::Type(msg) => Self::new_info(strand, Boxed::Type(msg.into())).inner,
             Variant::NonLocalJump(..) => unreachable!("non-local jump should never be boxed"),
             Variant::Boxed(..) => return,
         }
@@ -573,7 +631,7 @@ impl<'v, 's> Error<'v, 's> {
                     Output::as_slot(&mut output, crate::value::private::Sealed).store(val.dup());
                     break;
                 }
-                _ => self.expand(strand.inner),
+                _ => self.expand(strand),
             }
         }
     }
@@ -586,7 +644,7 @@ impl<'v, 's> Error<'v, 's> {
     pub fn unsupported(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'static, str>>) -> Self {
         match msg.into() {
             Cow::Borrowed(msg) => Self::new_variant(Variant::Unsupported(msg)),
-            Cow::Owned(msg) => Self::new_info(strand.inner, Boxed::Unsupported(Some(msg.into()))),
+            Cow::Owned(msg) => Self::new_info(strand, Boxed::Unsupported(Some(msg.into()))),
         }
     }
 
@@ -594,7 +652,7 @@ impl<'v, 's> Error<'v, 's> {
         strand: &mut Strand<'v, 's>,
         msg: Option<Cow<'v, str>>,
     ) -> Self {
-        Self::new_info(strand.inner, Boxed::Unsupported(msg))
+        Self::new_info(strand, Boxed::Unsupported(msg))
     }
 
     /// Create error: immutable structure
@@ -612,73 +670,49 @@ impl<'v, 's> Error<'v, 's> {
         #[allow(unused_variables)] strand: &mut Strand<'v, 's>,
         msg: impl Into<Cow<'v, str>>,
     ) -> Self {
-        Self::new_info(strand.inner, Boxed::Concurrency(Some(msg.into())))
+        Self::new_info(strand, Boxed::Concurrency(Some(msg.into())))
     }
 
     pub(crate) fn concurrency_raw(#[allow(unused_variables)] strand: &'s StrandInner<'v>) -> Self {
-        Self::new_info(strand, Boxed::Concurrency(None))
+        Self::new_variant(Variant::Concurrency)
     }
 
     /// Create error: field does not exist
     pub fn field(strand: &mut Strand<'v, 's>, key: Sym<'v, '_>) -> Self {
-        Self::new_info(strand.inner, Boxed::Field(key.as_str(strand).into()))
+        Self::new_info(strand, Boxed::Field(key.as_str(strand).into()))
     }
 
     /// Create error: absent or invalid index
     pub fn index(strand: &mut Strand<'v, 's>) -> Self {
-        Self::new_info(strand.inner, Boxed::Index)
+        Self::new_info(strand, Boxed::Index)
     }
 
     /// Create error: unexpected positional item.
     pub fn unexpected_positional(strand: &mut Strand<'v, 's>, index: usize) -> Self {
-        Self::new_info(strand.inner, Boxed::UnexpectedPos(index))
+        Self::new_info(strand, Boxed::UnexpectedPos(index))
     }
 
     /// Create error: unexpected key item.
     pub fn unexpected_key(strand: &mut Strand<'v, 's>, key: impl Input<'v>) -> Self {
-        let value = Value::from_input(strand, key);
-        let str = match value.view(strand.vm()) {
-            View::Sym(sym) => sym.as_str(strand).to_string(),
-            View::Str(str) => strand.access(|access| format!("{:?}", str.as_str(access))),
-            _ => {
-                if let Case::Prim(prim) = value.case() {
-                    format!("{prim}")
-                } else {
-                    "<unknown>".to_string()
-                }
-            }
-        };
-        Self::new_info(strand.inner, Boxed::UnexpectedKey(str.into()))
+        let str = key_text(strand, key);
+        Self::new_info(strand, Boxed::UnexpectedKey(str.into()))
     }
 
     /// Create error: a named keyword parameter was supplied more than once.
     pub fn duplicate_key(strand: &mut Strand<'v, 's>, key: Sym<'v, '_>) -> Self {
-        Self::new_info(
-            strand.inner,
-            Boxed::DuplicateKey(key.as_str(strand.vm()).into()),
-        )
+        let name = key.as_str(strand.vm()).into();
+        Self::new_info(strand, Boxed::DuplicateKey(name))
     }
 
     /// Create error: missing positional item.
     pub fn missing_positional(strand: &mut Strand<'v, 's>, index: usize) -> Self {
-        Self::new_info(strand.inner, Boxed::MissingPos(index))
+        Self::new_info(strand, Boxed::MissingPos(index))
     }
 
     /// Create error: missing key argument.
     pub fn missing_key(strand: &mut Strand<'v, 's>, key: impl Input<'v>) -> Self {
-        let value = Value::from_input(strand, key);
-        let str = match value.view(strand.vm()) {
-            View::Sym(sym) => sym.as_str(strand).to_string(),
-            View::Str(str) => strand.access(|access| format!("{:?}", str.as_str(access))),
-            _ => {
-                if let Case::Prim(prim) = value.case() {
-                    format!("{prim}")
-                } else {
-                    "<unknown>".to_string()
-                }
-            }
-        };
-        Self::new_info(strand.inner, Boxed::MissingKey(str.into()))
+        let str = key_text(strand, key);
+        Self::new_info(strand, Boxed::MissingKey(str.into()))
     }
 
     /// Create error: numeric overflow
@@ -707,56 +741,57 @@ impl<'v, 's> Error<'v, 's> {
 
     /// Create error: misuse of value according to type
     pub fn type_error(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Type(msg.into()))
+        Self::new_info(strand, Boxed::Type(msg.into()))
     }
 
     pub(crate) fn type_error_raw(
-        strand: &'s StrandInner<'v>,
-        msg: impl Into<Cow<'v, str>>,
+        #[allow(unused_variables)] strand: &'s StrandInner<'v>,
+        msg: &'static str,
     ) -> Self {
-        Self::new_info(strand, Boxed::Type(msg.into()))
+        Self::new_variant(Variant::Type(msg))
     }
 
     /// Create error: invalid value with otherwise acceptable type
     pub fn value(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Value(msg.into()))
+        Self::new_info(strand, Boxed::Value(msg.into()))
     }
 
     /// Create error: invalid external document or stream contents
     pub fn data(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Data(msg.into()))
+        Self::new_info(strand, Boxed::Data(msg.into()))
     }
 
     /// Create error: invalid operation for the current state
     pub fn state_error(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
-        Self::new_info(strand.inner, Boxed::State(msg.into()))
+        Self::new_info(strand, Boxed::State(msg.into()))
     }
 
     /// Create error: compilation failed
     pub fn compile(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Compile(err.into()))
+        Self::new_info(strand, Boxed::Compile(err.into()))
     }
 
     /// Create error: module could not be imported
     pub fn import(strand: &mut Strand<'v, 's>, name: &str) -> Self {
-        Self::new_info(strand.inner, Boxed::Import(name.into()))
+        Self::new_info(strand, Boxed::Import(name.into()))
     }
 
     /// Create error: cyclic module import detected
     pub fn cyclic_import(strand: &mut Strand<'v, 's>, name: &str) -> Self {
-        Self::new_info(strand.inner, Boxed::CyclicImport(name.into()))
+        Self::new_info(strand, Boxed::CyclicImport(name.into()))
     }
 
     /// Create error: generic runtime error
     pub fn runtime(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Runtime(err.into()))
+        Self::new_info(strand, Boxed::Runtime(err.into()))
     }
 
     /// Create error: generic value
     pub fn from_value(strand: &mut Strand<'v, 's>, err: impl Input<'v>) -> Self {
-        let val = Value::from_input(strand, err);
+        let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
+        Output::set(strand, root.slot(), err);
         Self {
-            inner: Variant::Boxed(ErrorRoot::new(strand.inner, val, Vec::new())),
+            inner: Variant::Boxed(root),
             phantom: PhantomData,
         }
     }
@@ -790,9 +825,7 @@ impl<'v, 's> Error<'v, 's> {
         T::Annex: Default,
     {
         let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        // Safety: the value lives in the strand's error table, which the collector scans
-        // and which never moves its entries.
-        let slot = unsafe { Slot::new(NonNull::from(&mut root.data_mut().value)) };
+        let slot = root.slot();
         ty.create(strand, value, slot);
         Self {
             inner: Variant::Boxed(root),
@@ -808,9 +841,7 @@ impl<'v, 's> Error<'v, 's> {
         annex: T::Annex,
     ) -> Self {
         let mut root = ErrorRoot::new(strand.inner, Value::NIL, Vec::new());
-        // Safety: the value lives in the strand's error table, which the collector scans
-        // and which never moves its entries.
-        let slot = unsafe { Slot::new(NonNull::from(&mut root.data_mut().value)) };
+        let slot = root.slot();
         ty.create_with_annex(strand, value, annex, slot);
         Self {
             inner: Variant::Boxed(root),
@@ -819,10 +850,10 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     pub(crate) fn runtime_raw(
-        strand: &'s StrandInner<'v>,
-        err: impl Into<Box<dyn error::Error>>,
+        #[allow(unused_variables)] strand: &'s StrandInner<'v>,
+        msg: &'static str,
     ) -> Self {
-        Self::new_info(strand, Boxed::Runtime(err.into()))
+        Self::new_variant(Variant::Runtime(msg))
     }
 
     pub(crate) fn call_depth_raw(strand: &'s StrandInner<'v>) -> Self {
@@ -832,7 +863,7 @@ impl<'v, 's> Error<'v, 's> {
     /// Create error: abort. Abort errors are usually not catchable by
     /// Do programs.
     pub fn abort(strand: &mut Strand<'v, 's>, err: impl Into<Box<dyn error::Error>>) -> Self {
-        Self::new_info(strand.inner, Boxed::Abort(err.into()))
+        Self::new_info(strand, Boxed::Abort(err.into()))
     }
 
     /// Create error: canceled.
@@ -876,6 +907,8 @@ impl<'v, 's> Error<'v, 's> {
             Variant::Canceled => ErrorKind::Canceled,
             Variant::TimedOut => ErrorKind::TimedOut,
             Variant::Concurrency => ErrorKind::Concurrency,
+            Variant::Runtime(_) => ErrorKind::Runtime,
+            Variant::Type(_) => ErrorKind::Type,
             Variant::NonLocalJump(..) => ErrorKind::Runtime,
             Variant::Boxed(root) => {
                 let val = root.get();
@@ -899,7 +932,7 @@ impl<'v, 's> Error<'v, 's> {
         loop {
             match &self.inner {
                 Variant::Boxed(root) => return Some(root.get()),
-                _ => self.expand(strand.inner),
+                _ => self.expand(strand),
             }
         }
     }
@@ -990,7 +1023,7 @@ impl<'v, 's> Error<'v, 's> {
         loop {
             match &self.inner {
                 Variant::Boxed(root) => return Some(root.slot),
-                _ => self.expand(strand.inner),
+                _ => self.expand(strand),
             }
         }
     }
@@ -1001,7 +1034,7 @@ impl<'v, 's> Error<'v, 's> {
             "non-local jumps cannot be paired"
         );
         while !matches!(self.inner, Variant::Boxed(..)) {
-            self.expand(strand.inner);
+            self.expand(strand);
         }
         match self.inner {
             Variant::Boxed(root) => root.take(),
@@ -1021,7 +1054,9 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     pub(crate) fn from_pair_ref(strand: &mut Strand<'v, 's>, pair: &ErrorPair<'v>) -> Self {
-        Self::from_pair(strand, pair.0.dup(), pair.1.clone())
+        // SAFETY: the entries move straight into the new error's root
+        let backtrace = pair.1.iter().map(|entry| unsafe { entry.dup() }).collect();
+        Self::from_pair(strand, pair.0.dup(), backtrace)
     }
 
     pub fn from_value_backtrace(
@@ -1029,12 +1064,17 @@ impl<'v, 's> Error<'v, 's> {
         err: impl Input<'v>,
         backtrace: impl Input<'v>,
     ) -> Result<'v, 's, Self> {
-        let backtrace = Value::from_input(strand, backtrace);
-        let Some(backtrace) = backtrace::entries_from_value(strand, &backtrace) else {
-            return Err(Error::type_error(strand, "expected inspect.Backtrace"));
-        };
-        let err = Value::from_input(strand, err);
-        Ok(Self::from_pair(strand, err, backtrace))
+        with_slots!(strand, |mut err_slot, mut backtrace_slot| {
+            Output::set(strand, Slot::reborrow(&mut backtrace_slot), backtrace);
+            Output::set(strand, Slot::reborrow(&mut err_slot), err);
+            // SAFETY: the entries move straight into the new error's root
+            let Some(backtrace) =
+                (unsafe { backtrace::entries_from_value(strand, &backtrace_slot) })
+            else {
+                return Err(Error::type_error(strand, "expected inspect.Backtrace"));
+            };
+            Ok(Self::from_pair(strand, err_slot.take(), backtrace))
+        })
     }
 
     pub(crate) fn from_value_backtrace_raw(
@@ -1043,7 +1083,8 @@ impl<'v, 's> Error<'v, 's> {
         backtrace: Value<'v>,
     ) -> Result<'v, 's, Self> {
         let backtrace = if !backtrace.is_nil() {
-            backtrace::entries_from_value(strand.vm(), &backtrace)
+            // SAFETY: the entries move straight into the new error's root
+            unsafe { backtrace::entries_from_value(strand.vm(), &backtrace) }
                 .ok_or_else(|| Error::type_error_raw(strand, "expected inspect.Backtrace"))?
         } else {
             Vec::new()
@@ -1054,7 +1095,7 @@ impl<'v, 's> Error<'v, 's> {
         })
     }
 
-    pub(crate) fn push_backtrace(&mut self, inner: &'s StrandInner<'v>, entry: UnwindEntry<'v>) {
+    pub(crate) fn push_backtrace(&mut self, strand: &mut Strand<'v, 's>, entry: UnwindEntry<'v>) {
         if self.as_nl_branch().is_some() {
             return;
         }
@@ -1064,7 +1105,7 @@ impl<'v, 's> Error<'v, 's> {
                     root.data_mut().backtrace.push(entry);
                     break;
                 }
-                _ => self.expand(inner),
+                _ => self.expand(strand),
             }
         }
     }
@@ -1085,6 +1126,8 @@ impl<'v, 's> Error<'v, 's> {
                 Variant::Canceled => Variant::Canceled,
                 Variant::TimedOut => Variant::TimedOut,
                 Variant::Concurrency => Variant::Concurrency,
+                Variant::Runtime(msg) => Variant::Runtime(msg),
+                Variant::Type(msg) => Variant::Type(msg),
                 Variant::NonLocalJump(i, w) => Variant::NonLocalJump(i, w),
             },
             phantom: PhantomData,
@@ -1181,7 +1224,7 @@ mod tests {
                 receiver: "r".into(),
                 method: None,
             };
-            errors[3].push_backtrace(strand.inner, entry);
+            errors[3].push_backtrace(strand, entry);
             assert_eq!(errors[3].backtrace(strand).len(), 1);
             assert_eq!(unsafe { ErrorSlot::backtrace(slots[3]) }.len(), 1);
 

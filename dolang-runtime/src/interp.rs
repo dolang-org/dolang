@@ -185,6 +185,8 @@ impl<'v> Vm<'v> {
                     );
                 }
                 for importer in self.importers.iter() {
+                    // Safety: each importer is written once, when it is registered.
+                    let importer = unsafe { importer.as_ref() };
                     if let Err(e) = call!(strand, importer, name, Slot::reborrow(&mut out)) {
                         if e.kind() == ErrorKind::Import {
                             err = e;
@@ -390,7 +392,7 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let mut acc: Vec<u8> = Vec::new();
         for arg in args {
@@ -402,7 +404,7 @@ impl<'v> Vm<'v> {
                 || Error::type_error(strand, "expected binary or string value in binary concat"),
             )?;
         }
-        out.store(Value::from_u8_slice(strand, &acc));
+        Output::set(strand, out, &acc[..]);
         Ok(())
     }
 
@@ -634,8 +636,8 @@ impl<'v> Vm<'v> {
                         key: Sym<'v, '_>,
                         value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
-                        self.items
-                            .push((Some(strand.sym_obj(key)), ValueCell::new(strand, value)));
+                        let value = ValueCell::new(strand, value);
+                        self.items.push((Some(strand.sym_obj(key)), value));
                         Ok(())
                     }
 
@@ -646,8 +648,8 @@ impl<'v> Vm<'v> {
                         value: Slot<'v, '_>,
                     ) -> Result<'v, 's, ()> {
                         if let Some(sym) = key.as_sym(strand) {
-                            self.items
-                                .push((Some(strand.sym_obj(sym)), ValueCell::new(strand, value)));
+                            let value = ValueCell::new(strand, value);
+                            self.items.push((Some(strand.sym_obj(sym)), value));
                             Ok(())
                         } else {
                             Err(Error::unexpected_key(strand, key))
@@ -1045,11 +1047,11 @@ impl<'v> Vm<'v> {
                 }
                 Close => {
                     let index = reader.usize();
-                    strand.builtin_types().function.create_imm(
-                        strand,
-                        Function::new(frame.program.clone(), frame.upvars(), index),
-                        frame.push_slot(),
-                    );
+                    let embryo = strand.builtin_types().function.embryo(strand);
+                    // SAFETY: the program and upvar chain move straight into the
+                    // allocated function
+                    let func = Function::new(frame.program.dup(), frame.upvars(), index);
+                    embryo.finish_imm(strand, func, frame.push_slot());
                 }
                 inst @ (BitAnd | BitOr | BitXor | Shl | Shr | Add | Sub | Mul | Div | Ediv
                 | Mod | Eq | Ne | Lt | Gt | Lte | Gte) => {
@@ -1108,18 +1110,19 @@ impl<'v> Vm<'v> {
                 Reify => {
                     let index = reader.usize();
                     let sig = program.packtab().get_unchecked(index);
+                    let embryo = self.builtin_types().module.embryo(strand);
+                    // SAFETY: the program and the popped upvar frame move straight
+                    // into the allocated module
                     let upvars = frame.pop_upvars();
                     let value = Module::from_upvars_syms(
-                        frame.program.clone(),
+                        frame.program.dup(),
                         upvars,
                         match sig {
                             Pack::Fixed(syms) => syms.iter().cloned(),
                             Pack::Var(_) => unreachable!(),
                         },
                     );
-                    self.builtin_types()
-                        .module
-                        .create_imm(strand, value, frame.push_slot());
+                    embryo.finish_imm(strand, value, frame.push_slot());
                 }
                 Next => {
                     frame.pc.set(reader.offset());
@@ -1215,11 +1218,11 @@ impl<'v> Vm<'v> {
                     let mut func = frame.scratch1();
                     let mut res = frame.scratch2();
                     // Create and call the closure that will execute the guarded code
-                    strand.builtin_types().function.create_imm(
-                        strand,
-                        Function::new(frame.program.clone(), frame.upvars(), index),
-                        &mut func,
-                    );
+                    let embryo = strand.builtin_types().function.embryo(strand);
+                    // SAFETY: the program and upvar chain move straight into the
+                    // allocated function
+                    let closure = Function::new(frame.program.dup(), frame.upvars(), index);
+                    embryo.finish_imm(strand, closure, &mut func);
                     let call_result = func
                         .op_call(strand, Args::new(&[], &[], 0), Slot::reborrow(&mut res))
                         .await;
@@ -1241,7 +1244,7 @@ impl<'v> Vm<'v> {
                                 && weak.ptr_eq_strong(&guard)
                             {
                                 frame.push(Value::NIL);
-                                frame.push(Value::from_int(strand.vm(), indicator as i128));
+                                frame.push(Value::from_i16(indicator.into()));
                                 Ok(())
                             } else {
                                 Err(err)
@@ -1256,19 +1259,33 @@ impl<'v> Vm<'v> {
         Ok(Status::Running)
     }
 
-    pub(crate) async fn run<'s>(
+    /// Run `frame`, first unpacking `args` into it, if given.
+    ///
+    /// The frame is entered before unpacking, so the collector scans its slots
+    /// while they fill, and an unpack error is attributed to the called function.
+    ///
+    /// # Safety
+    /// With `args`, as for [`CallFrame::unpack_unchecked`].
+    pub(crate) async unsafe fn run<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
         frame: &CallFrame<'v>,
+        args: Option<Args<'v, '_>>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let loaded = frame.program.clone();
+        let loaded = &frame.program;
         let mut reader = UnsafeInstDecoder::new(
             &loaded.bytecode()[loaded.funcs()[frame.func].0.bytecode.clone()],
         );
         // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame, and the scope
         // is a local that is dropped before `frame`
         let mut scope = unsafe { strand.enter_do_frame(frame) }?;
+        if let Some(args) = args {
+            // SAFETY: as for this function
+            if let Err(e) = unsafe { frame.unpack_unchecked(&mut scope, args) } {
+                return scope.finish(Err(e));
+            }
+        }
         let res = loop {
             // SAFETY: `frame` is live and verified, and `reader` decodes its function from
             // the start, one instruction per step

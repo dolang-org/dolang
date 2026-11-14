@@ -1,4 +1,4 @@
-use std::{borrow::Cow, hash::Hasher, ops::ControlFlow};
+use std::{borrow::Cow, hash::Hasher, mem, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -19,6 +19,7 @@ use crate::{
     sym::Sym,
     value::{Output, Slot, TypeObject, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::dict::Dict;
@@ -215,19 +216,26 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut this_borrow = this.borrow_mut(strand)?;
         let index = this_borrow.index;
-        let entry = with_pin!(strand, this_borrow.module, |module| {
-            let module = module.get();
-            // Safety: nothing borrows across a write to an upvar
-            module
-                .map
-                .get(index)
-                .map(|&(sym, var)| (sym, unsafe { module.upvars.var(var) }))
-        });
-        let Some((sym, value)) = entry else {
+        let entry = with_pin!(strand, this_borrow.module, |module| module
+            .get()
+            .map
+            .get(index)
+            .copied());
+        let Some((sym, var)) = entry else {
             return Ok(false);
         };
-        let key = Value::from_object(strand.sym_obj(sym));
-        tuple::create(strand, [key, value], out);
+        let embryo = tuple::embryo(strand, 2);
+        with_pin!(strand, this_borrow.module, |module| {
+            // SAFETY: the references move straight into the allocated tuple, and nothing
+            // borrows across a write to an upvar.
+            let items = unsafe {
+                [
+                    Value::from_object(strand.sym_obj(sym)),
+                    module.get().upvars.var(var),
+                ]
+            };
+            embryo.finish(strand, items, out);
+        });
         this_borrow.index += 1;
         Ok(true)
     }
@@ -409,8 +417,9 @@ impl<'v> Namespace<'v> {
         mut slot: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         match components.split_first() {
-            Some((&first, rest)) => {
-                let sym = Value::from_object(strand.sym_register_obj(first));
+            Some((&first, rest)) => with_slots!(strand, |mut sym, mut ns_slot| {
+                let obj = Value::from_object(strand.sym_register_obj(first));
+                sym.store(obj);
                 let inserted = with_pin!(strand, self.dict, |dict| 'body: {
                     let dict = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     let Some(value) = dict.get(strand, &sym, Some(0))? else {
@@ -436,28 +445,33 @@ impl<'v> Namespace<'v> {
                 let mut hasher = strand.vm().hasher();
                 sym.op_hash(strand, &mut hasher)?;
                 let hv = hasher.finish();
-                let ns = Value::from_object(GcObj::new(
-                    strand.arena(),
-                    strand.builtin_types().namespace,
-                    ns,
-                ));
+                let namespace = strand.builtin_types().namespace;
+                namespace.create(strand, ns, Slot::reborrow(&mut ns_slot));
                 with_pin!(strand, self.dict, |dict| {
                     dict.borrow_mut()
                         .ok_or_else(|| Error::concurrency(strand))?
-                        .insert(strand, sym, ns, hv, true)
+                        .insert(strand, sym.take(), ns_slot.take(), hv, true)
                 })?;
                 Ok(())
-            }
+            }),
             None => {
                 if let Some(module) = slot.downcast_ref(strand.builtin_types().module) {
-                    self.inner = NamespaceInner::Normal(module.read(|module| {
+                    let module = module.read(|module| {
                         let module = module.get();
-                        Module {
-                            loaded: module.loaded.clone(),
-                            upvars: module.upvars.clone(),
-                            map: module.map.clone(),
+                        // SAFETY: the references move straight into the namespace,
+                        // which is written before the old contents drop
+                        unsafe {
+                            Module {
+                                loaded: module.loaded.dup(),
+                                upvars: module.upvars.dup(),
+                                map: module.map.clone(),
+                            }
                         }
-                    }));
+                    });
+                    drop(mem::replace(
+                        &mut self.inner,
+                        NamespaceInner::Normal(module),
+                    ));
                 } else {
                     self.inner = NamespaceInner::Custom(slot.take());
                 }
@@ -532,19 +546,21 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             }
             NamespaceInner::Empty => (),
         };
-        let key = Value::from_object(strand.sym_obj(field));
-        with_pin!(strand, re.dict, |dict| {
-            match dict
-                .borrow()
-                .ok_or_else(|| Error::concurrency(strand))?
-                .get(strand, &key, Some(0))?
-            {
-                Some(value) => {
-                    out.store(value.dup());
-                    Ok(())
+        with_slots!(strand, |mut key| {
+            Output::set(strand, Slot::reborrow(&mut key), field);
+            with_pin!(strand, re.dict, |dict| {
+                match dict
+                    .borrow()
+                    .ok_or_else(|| Error::concurrency(strand))?
+                    .get(strand, &key, Some(0))?
+                {
+                    Some(value) => {
+                        out.store(value.dup());
+                        Ok(())
+                    }
+                    None => Err(Error::field(strand, field)),
                 }
-                None => Err(Error::field(strand, field)),
-            }
+            })
         })
     }
 
@@ -570,14 +586,16 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Custom(module) => return module.op_set(strand, field, value),
             NamespaceInner::Empty => (),
         }
-        let key = Value::from_object(strand.sym_obj(field));
-        let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher).unwrap();
-        let hv = hasher.finish();
-        with_pin!(strand, re.dict, |dict| {
-            dict.borrow_mut()
-                .ok_or_else(|| Error::concurrency(strand))?
-                .insert(strand, key, value.take(), hv, true)
+        with_slots!(strand, |mut key| {
+            Output::set(strand, Slot::reborrow(&mut key), field);
+            let mut hasher = strand.vm().hasher();
+            key.op_hash(strand, &mut hasher).unwrap();
+            let hv = hasher.finish();
+            with_pin!(strand, re.dict, |dict| {
+                dict.borrow_mut()
+                    .ok_or_else(|| Error::concurrency(strand))?
+                    .insert(strand, key.take(), value.take(), hv, true)
+            })
         })?;
         Ok(())
     }

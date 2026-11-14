@@ -321,47 +321,50 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             sym::CONTAINS => {
                 unpack!(strand, args => value);
                 let borrow = this.get();
-                let start = if borrow.start.is_nil() {
-                    Value::from_i64(strand, 0)
-                } else {
-                    borrow.start.dup()
-                };
-                let (ascending, direction) = direction(strand, &start, &borrow.end, borrow.step())?;
-                let in_bounds = match direction {
-                    Direction::Empty => false,
-                    Direction::Increasing => {
-                        start.op_lte(strand, &value)?.to_bool(strand)?
-                            && value.op_lt(strand, &borrow.end)?.to_bool(strand)?
+                with_slots!(strand, |mut start| {
+                    if borrow.start.is_nil() {
+                        Output::set(strand, Slot::reborrow(&mut start), 0_i64);
+                    } else {
+                        Output::set(strand, Slot::reborrow(&mut start), &borrow.start);
                     }
-                    Direction::Decreasing => {
-                        borrow.end.op_lt(strand, &value)?.to_bool(strand)?
-                            && value.op_lte(strand, &start)?.to_bool(strand)?
-                    }
-                    Direction::Unbounded => {
-                        if ascending {
+                    let (ascending, direction) =
+                        direction(strand, &start, &borrow.end, borrow.step())?;
+                    let in_bounds = match direction {
+                        Direction::Empty => false,
+                        Direction::Increasing => {
                             start.op_lte(strand, &value)?.to_bool(strand)?
-                        } else {
-                            value.op_lte(strand, &start)?.to_bool(strand)?
+                                && value.op_lt(strand, &borrow.end)?.to_bool(strand)?
                         }
-                    }
-                };
-                // Without a step, membership is the interval alone, so any
-                // ordered type works. With one, only values a whole number of
-                // steps from the start are members; `step - step` stands in for
-                // zero in the step's type.
-                let contained = match borrow.step() {
-                    Some(step) if in_bounds => {
-                        let zero = step.op_sub(strand, step)?;
-                        value
-                            .op_sub(strand, &start)?
-                            .op_mod(strand, step)?
-                            .op_eq(strand, &zero)?
-                            .to_bool(strand)?
-                    }
-                    _ => in_bounds,
-                };
-                Output::set(strand, out, contained);
-                Ok(())
+                        Direction::Decreasing => {
+                            borrow.end.op_lt(strand, &value)?.to_bool(strand)?
+                                && value.op_lte(strand, &start)?.to_bool(strand)?
+                        }
+                        Direction::Unbounded => {
+                            if ascending {
+                                start.op_lte(strand, &value)?.to_bool(strand)?
+                            } else {
+                                value.op_lte(strand, &start)?.to_bool(strand)?
+                            }
+                        }
+                    };
+                    // Without a step, membership is the interval alone, so any
+                    // ordered type works. With one, only values a whole number of
+                    // steps from the start are members; `step - step` stands in for
+                    // zero in the step's type.
+                    let contained = match borrow.step() {
+                        Some(step) if in_bounds => {
+                            let zero = step.op_sub(strand, step)?;
+                            value
+                                .op_sub(strand, &start)?
+                                .op_mod(strand, step)?
+                                .op_eq(strand, &zero)?
+                                .to_bool(strand)?
+                        }
+                        _ => in_bounds,
+                    };
+                    Output::set(strand, out, contained);
+                    Ok(())
+                })
             }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }

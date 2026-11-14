@@ -2011,12 +2011,15 @@ mod tests {
     #[test]
     fn concat_handle_reads_items() {
         with_vm(async |strand, [mut items]| {
-            let inner = vec![
-                Value::from_input(strand, "ab"),
-                Value::from_input(strand, 7_i64),
-            ];
             let array = strand.builtin_types().array;
-            array.create(strand, Array { inner }, Slot::reborrow(&mut items));
+            array.create(
+                strand,
+                Array { inner: Vec::new() },
+                Slot::reborrow(&mut items),
+            );
+            let view = items.as_array(strand.vm()).unwrap();
+            view.push(strand, "ab").unwrap();
+            view.push(strand, 7_i64).unwrap();
             let handle = io::concat(strand, &items, b"\n").unwrap();
             let mut reader = handle.into_read().unwrap();
             let mut got = Vec::new();

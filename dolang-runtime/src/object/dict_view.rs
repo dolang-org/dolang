@@ -40,9 +40,11 @@ impl<'v> DictViewSink<'v, '_> {
         key: impl Input<'v>,
         value: impl Input<'v>,
     ) {
-        let key = Value::from_input(strand, key);
-        let value = Value::from_input(strand, value);
-        self.pairs.push((key, value));
+        let pair = (
+            Value::from_input(strand, key),
+            Value::from_input(strand, value),
+        );
+        self.pairs.push(pair);
     }
 }
 
@@ -250,9 +252,9 @@ pub(crate) fn create<'v, I: DictLike<'v>>(
 ) {
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
     let ty = owner.ty(vm);
-    // A duplicate of a rooted owner, which stays rooted where it is.
+    let embryo = vm.builtin_types().dict_view.embryo(alloc);
     let owner = Value::from_input(alloc, owner);
-    vm.builtin_types().dict_view.create_imm(
+    embryo.finish_imm(
         alloc,
         View {
             owner,
@@ -561,38 +563,53 @@ fn unpack_pairs<'v, 's>(
     let mut consumed = bitbox![0; pairs.len()];
     let mut position = 0usize;
     let mut rests = Vec::new();
-    for item in unpack.iter() {
-        let (key, slot, default) = match item {
-            UnpackItem::Pos { slot, default } => {
-                match default {
-                    Some(default) => Output::set(strand, slot, default),
-                    None => return Err(Error::missing_positional(strand, position)),
+    with_slots!(strand, |mut key| {
+        for item in unpack.iter() {
+            let (slot, default) = match item {
+                UnpackItem::Pos { slot, default } => {
+                    match default {
+                        Some(default) => Output::set(strand, slot, default),
+                        None => return Err(Error::missing_positional(strand, position)),
+                    }
+                    position += 1;
+                    continue;
                 }
-                position += 1;
-                continue;
-            }
-            UnpackItem::SymKey { key, slot, default } => {
-                (Value::from_input(strand, key), slot, default)
-            }
-            UnpackItem::ConstKey { key, slot, default } => (key.dup(), slot, default),
-            rest => {
-                rests.push(rest);
-                continue;
-            }
-        };
+                UnpackItem::SymKey {
+                    key: sym,
+                    slot,
+                    default,
+                } => {
+                    Output::set(strand, Slot::reborrow(&mut key), sym);
+                    (slot, default)
+                }
+                UnpackItem::ConstKey {
+                    key: value,
+                    slot,
+                    default,
+                } => {
+                    Output::set(strand, Slot::reborrow(&mut key), value);
+                    (slot, default)
+                }
+                rest => {
+                    rests.push(rest);
+                    continue;
+                }
+            };
 
-        let found = find_pair(strand, &pairs, &consumed, &key)?;
-        if let Some((index, (_, value))) = found {
-            consumed.set(index, true);
-            Output::set(strand, slot, value);
-        } else if let Some(default) = default {
-            Output::set(strand, slot, default);
-        } else if let Some(sym) = key.as_sym(strand) {
-            return Err(Error::missing_key(strand, sym));
-        } else {
-            return Err(Error::missing_key(strand, &key));
+            let found = find_pair(strand, &pairs, &consumed, &key)?;
+            if let Some((index, (_, value))) = found {
+                consumed.set(index, true);
+                Output::set(strand, slot, value);
+            } else if let Some(default) = default {
+                Output::set(strand, slot, default);
+            } else if let Some(sym) = key.as_sym(strand) {
+                return Err(Error::missing_key(strand, sym));
+            } else {
+                return Err(Error::missing_key(strand, &key));
+            }
         }
-    }
+        Ok(())
+    })?;
     settle_leftovers(strand, &pairs, &consumed, key_rest, mixed)?;
     for rest in rests {
         match rest {
@@ -603,10 +620,7 @@ fn unpack_pairs<'v, 's>(
                     .dict_view_rest
                     .create(strand, Rest { pairs }, slot);
             }
-            UnpackItem::PosRest { slot } => {
-                let tuple = empty_tuple(strand);
-                Output::set(strand, slot, &tuple);
-            }
+            UnpackItem::PosRest { slot } => super::tuple::create(strand, [], slot),
             _ => unreachable!(),
         }
     }
@@ -653,10 +667,6 @@ fn unconsumed<'v>(
         .collect()
 }
 
-fn empty_tuple<'v>(strand: &mut Strand<'v, '_>) -> Value<'v> {
-    Value::from_object(super::tuple::tuple(strand, []))
-}
-
 /// Stores a `*name` rest's tuple, which is empty, and a `**name` rest's
 /// view.
 fn store_split_rests<'v>(
@@ -670,7 +680,7 @@ fn store_split_rests<'v>(
         return;
     }
     if let Some(i) = sig.pos_rest_slot() {
-        out.at(i).store(empty_tuple(strand));
+        super::tuple::create(strand, [], out.at(i));
     }
     if let Some(i) = sig.key_rest_slot() {
         let pairs = unconsumed(pairs, consumed);
@@ -717,8 +727,11 @@ fn unpack_sig_pairs<'v, 's>(
         out.at(index).store(default.dup());
     }
     for (offset, spec) in sig.keys.iter().enumerate() {
-        let key = Value::from_input(strand, &spec.kind);
-        if let Some((found, (_, value))) = find_pair(strand, pairs, &consumed, &key)? {
+        let found = with_slots!(strand, |mut key| {
+            Output::set(strand, Slot::reborrow(&mut key), &spec.kind);
+            find_pair(strand, pairs, &consumed, &key)?
+        });
+        if let Some((found, (_, value))) = found {
             consumed.set(found, true);
             out.at(pos_count + offset).store(value.dup());
         } else if let Some(default) = &spec.default {
@@ -906,7 +919,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 return Err(Error::unexpected_positional(strand, 1));
             }
             let key = match args.next() {
-                Some(Arg::Pos(slot)) => Value::from_input(strand, slot),
+                Some(Arg::Pos(slot)) => slot,
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
                 None => unreachable!(),
             };
@@ -998,7 +1011,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         let Some((key, value)) = iter.pairs.get(iter.index) else {
             return Ok(false);
         };
-        super::tuple::create(strand, [key.dup(), value.dup()], out);
+        super::tuple::create_pair(strand, key, value, out);
         iter.index += 1;
         Ok(true)
     }
@@ -1009,11 +1022,12 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        let next = super::iter::unpack_cursor(strand, sig, &mut out, iter.index, |strand, i| {
-            let (key, value) = iter.pairs.get(i)?;
-            let pair = super::tuple::tuple(strand, [key.dup(), value.dup()]);
-            Some((i + 1, Value::from_object(pair)))
-        })?;
+        let next =
+            super::iter::unpack_cursor(strand, sig, &mut out, iter.index, |strand, i, out| {
+                let (key, value) = iter.pairs.get(i)?;
+                super::tuple::create_pair(strand, key, value, out);
+                Some(i + 1)
+            })?;
         if let Some(i) = sig.pos_rest_slot() {
             let pairs = iter.pairs[next..]
                 .iter()

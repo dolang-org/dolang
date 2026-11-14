@@ -281,6 +281,17 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
         }
     }
 
+    /// Creates another owned reference to the same object.
+    ///
+    /// # Safety
+    /// The result is an owned reference the collector cannot see until it is moved
+    /// into a scanned location.  It must get there before any possible collection:
+    /// no allocation and no code reached with a `Strand` in between.
+    pub(crate) unsafe fn dup(&self) -> Self {
+        self.base_ref().retain();
+        unsafe { Self::from_raw(self.ptr) }
+    }
+
     pub(crate) unsafe fn from_weak(weak: &BaseWeak<'v, T>) -> Self {
         debug_assert_ne!(weak.strong_count(), 0);
         Self {
@@ -428,13 +439,14 @@ impl<'v, T: Upcast<Header>> GcCell<'v, T> {
         }
     }
 
-    /// Clone the stored reference.
+    /// Duplicate the stored reference.
     ///
     /// # Safety
-    /// No `&mut` into the cell may be alive.
+    /// No `&mut` into the cell may be alive, and the result is loose, as for
+    /// [`Base::dup`].
     #[inline]
     pub(crate) unsafe fn get(&self) -> Option<Base<'v, T>> {
-        unsafe { (*self.0.get()).clone() }
+        unsafe { (*self.0.get()).as_ref().map(|base| base.dup()) }
     }
 
     /// Borrow the stored reference as a location.
@@ -513,13 +525,6 @@ unsafe impl<T> OutOfLine for Vec<T> {}
 unsafe impl OutOfLine for String {}
 unsafe impl<T: Clone> OutOfLine for std::borrow::Cow<'static, [T]> {}
 unsafe impl OutOfLine for std::borrow::Cow<'static, str> {}
-
-impl<'v, T: Upcast<Header>> Clone for Base<'v, T> {
-    fn clone(&self) -> Self {
-        self.base_ref().retain();
-        unsafe { Self::from_raw(self.ptr) }
-    }
-}
 
 impl<'v, T: Upcast<Header>> Drop for Base<'v, T> {
     fn drop(&mut self) {
@@ -692,14 +697,6 @@ impl<'v, 'a, T: Upcast<Header>> BaseRef<'v, 'a, T> {
             ptr,
             phantom: PhantomData,
         })
-    }
-
-    #[expect(dead_code)]
-    pub(crate) fn to_strong(this: &Self) -> Base<'v, T> {
-        unsafe {
-            this.ptr.cast::<Header>().as_ref().retain();
-            Base::from_raw(this.ptr)
-        }
     }
 }
 
@@ -1318,17 +1315,6 @@ impl<'v, T: Collect<Annex: Sized> + Boxable<Header>> Gc<'v, T> {
             )
         }
     }
-
-    pub(crate) fn new_with_annex(arena: &Arena<'v>, value: T, annex: T::Annex) -> Self {
-        unsafe {
-            Gc::from_parts_annex(
-                arena,
-                Header::new(arena, NonNull::from_ref(<T as Boxable<Header>>::VTBL)),
-                value,
-                annex,
-            )
-        }
-    }
 }
 
 impl<'v, T, P, E> Gc<'v, T>
@@ -1338,6 +1324,7 @@ where
     BoxedSized<Header, T>: Upcast<Header>,
 {
     /// Creates an object whose annex holds `prefix` and the elements of `iter`.
+    #[cfg(test)]
     pub(crate) fn new_tail(
         arena: &Arena<'v>,
         value: T,
@@ -1629,7 +1616,7 @@ mod tests {
             .get()
             .children
             .borrow_mut()
-            .push(node.clone());
+            .push(unsafe { node.dup() });
         drop(node);
         assert_eq!(drops.get(), 0);
         arena.collect_full();
@@ -1774,8 +1761,8 @@ mod tests {
         };
         let a = ring(&drops);
         let b = ring(&drops);
-        *unsafe { a.pin_unchecked() }.annex().tail[0].borrow_mut() = Some(b.clone());
-        *unsafe { b.pin_unchecked() }.annex().tail[1].borrow_mut() = Some(a.clone());
+        *unsafe { a.pin_unchecked() }.annex().tail[0].borrow_mut() = Some(unsafe { b.dup() });
+        *unsafe { b.pin_unchecked() }.annex().tail[1].borrow_mut() = Some(unsafe { a.dup() });
         drop((a, b));
         assert_eq!(drops.get(), 0);
         arena.collect_full();

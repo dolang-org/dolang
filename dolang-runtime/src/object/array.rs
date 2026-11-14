@@ -116,10 +116,12 @@ impl<'v> Protocol<'v> for Iter<'v> {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, false)?;
             if let Some(i) = sig.pos_rest_slot() {
-                strand.builtin_types().array_iter.create(
+                let embryo = strand.builtin_types().array_iter.embryo(strand);
+                // SAFETY: the reference moves straight into the allocated iterator
+                embryo.finish(
                     strand,
                     Iter {
-                        array: borrow.array.clone(),
+                        array: unsafe { borrow.array.dup() },
                         index: borrow.index + count,
                     },
                     out.at(i),
@@ -238,11 +240,13 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
+        let embryo = strand.builtin_types().array_iter.embryo(strand);
+        // SAFETY: the reference moves straight into the allocated iterator
         let iter = Iter {
-            array: rest.array.clone(),
+            array: unsafe { rest.array.dup() },
             index: rest.start,
         };
-        strand.builtin_types().array_iter.create(strand, iter, out);
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 
@@ -277,7 +281,13 @@ impl<'v> Protocol<'v> for RestObj<'v> {
             let borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let count = unpack_from(strand, sig, &mut out, &borrow, rest.start, false)?;
             if let Some(i) = sig.pos_rest_slot() {
-                make_rest(strand, rest.array.clone(), rest.start + count, out.at(i));
+                // SAFETY: `make_rest` calls it after allocating
+                make_rest(
+                    strand,
+                    || unsafe { rest.array.dup() },
+                    rest.start + count,
+                    out.at(i),
+                );
             }
             sig.fill_empty_key_rest(strand, &mut out);
             Ok(())
@@ -285,16 +295,17 @@ impl<'v> Protocol<'v> for RestObj<'v> {
     }
 }
 
+/// Stores a rest of `array` from `start`.  `array` runs after the rest is
+/// allocated, so the reference it returns moves straight into the rest.
 fn make_rest<'v>(
     strand: &mut Strand<'v, '_>,
-    array: GcObj<'v, Array<'v>>,
+    array: impl FnOnce() -> GcObj<'v, Array<'v>>,
     start: usize,
     out: Slot<'v, '_>,
 ) {
-    strand
-        .builtin_types()
-        .array_rest
-        .create_imm(strand, Rest { array, start }, out);
+    let embryo = strand.builtin_types().array_rest.embryo(strand);
+    let array = array();
+    embryo.finish_imm(strand, Rest { array, start }, out);
 }
 
 pub(crate) struct Sink<'v> {
@@ -446,10 +457,12 @@ impl<'v> Protocol<'v> for Pairs<'v> {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, true)?;
             if let Some(i) = sig.pos_rest_slot() {
-                strand.builtin_types().array_pairs.create(
+                let embryo = strand.builtin_types().array_pairs.embryo(strand);
+                // SAFETY: the reference moves straight into the allocated iterator
+                embryo.finish(
                     strand,
                     Pairs {
-                        array: borrow.array.clone(),
+                        array: unsafe { borrow.array.dup() },
                         index: borrow.index + count,
                     },
                     out.at(i),
@@ -469,11 +482,10 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         let index = borrow.index;
         let found = with_pin!(strand, borrow.array, |array| 'body: {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            let Some(value) = array_borrow.inner.get(index).map(Value::dup) else {
+            let Some(value) = array_borrow.inner.get(index) else {
                 break 'body false;
             };
-            drop(array_borrow);
-            tuple::create(strand, [Value::from_i64(strand, index as i64), value], out);
+            tuple::create_pair(strand, index as i64, value, out);
             true
         });
         borrow.index += usize::from(found);
@@ -1185,7 +1197,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         let borrow = this.borrow(strand)?;
         let index = unpack_from(strand, sig, &mut out, &borrow, 0, false)?;
         if let Some(i) = sig.pos_rest_slot() {
-            make_rest(strand, this.to_strong(), index, out.at(i));
+            make_rest(strand, || this.to_strong(), index, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -1234,9 +1246,8 @@ fn unpack_from<'v, 's>(
     let min = pos_count.min(len);
     for (i, elem) in borrow.inner[start..(start + min)].iter().enumerate() {
         if pair {
-            let value = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
-            let items = [Value::from_i64(strand, value), elem.dup()];
-            tuple::create(strand, items, out.at(i))
+            let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
+            tuple::create_pair(strand, index, elem, out.at(i))
         } else {
             out.at(i).store(elem.dup())
         }

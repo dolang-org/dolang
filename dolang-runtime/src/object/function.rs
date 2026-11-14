@@ -284,14 +284,17 @@ impl<'v> Function<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unsafe {
+            // SAFETY: `self` holds the same references for the whole call, so they
+            // stay reachable until `run` links the frame into the scanned chain,
+            // before anything allocates
             let frame = CallFrame::new(
-                self.module.clone(),
+                self.module.dup(),
                 self.id,
-                self.upvars.clone(),
+                self.upvars.as_ref().map(|upvars| upvars.dup()),
                 Some(strand.fp),
             );
-            frame.unpack_unchecked(strand, args)?;
-            strand.vm().run(strand, &frame, out).await
+            // SAFETY: the frame is fresh, and the function's signature is its own
+            strand.vm().run(strand, &frame, Some(args), out).await
         }
     }
 }

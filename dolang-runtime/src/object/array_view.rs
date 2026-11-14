@@ -23,7 +23,7 @@ use crate::{
     sym,
     sym::Sym,
     unpack,
-    value::{Output, Slot, Slots, TypeObject, Value, with_u8_slice},
+    value::{Input, Output, Slot, Slots, TypeObject, Value, with_u8_slice},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -124,8 +124,10 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let ty = owner.ty(strand.vm());
-        let owner = Value::from_input(strand, owner);
-        index_from(&owner, &Glue { view, ty }, strand, index, out)
+        with_slots!(strand, |mut owner_slot| {
+            Output::set(strand, Slot::reborrow(&mut owner_slot), owner);
+            index_from(&owner_slot, &Glue { view, ty }, strand, index, out)
+        })
     }
 
     /// Implements [`Object::iter`] directly without exposing a view object.
@@ -156,8 +158,10 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let ty = owner.ty(strand.vm());
-        let owner = Value::from_input(strand, owner);
-        spread_from(&owner, &Glue { view, ty }, strand, 0, context, sink)
+        with_slots!(strand, |mut owner_slot| {
+            Output::set(strand, Slot::reborrow(&mut owner_slot), owner);
+            spread_from(&owner_slot, &Glue { view, ty }, strand, 0, context, sink)
+        })
     }
 
     /// Implements [`Object::unpack`] directly without exposing a view object.
@@ -213,9 +217,9 @@ pub(crate) fn create<'v, I: ArrayLike<'v>>(
 ) {
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
     let ty = owner.ty(vm);
-    // A duplicate of a rooted owner, which stays rooted where it is.
+    let embryo = vm.builtin_types().array_view.embryo(alloc);
     let owner = Value::from_input(alloc, owner);
-    vm.builtin_types().array_view.create_imm(
+    embryo.finish_imm(
         alloc,
         alias::Box::new(View {
             owner,
@@ -286,8 +290,14 @@ trait ArrayViewGlue<'v>: 'v {
 }
 
 /// Creates a byte projection whose owner is the original binary, not a copy.
-pub(super) fn unpack_bin<'v>(strand: &mut Strand<'v, '_>, owner: Value<'v>, out: Slot<'v, '_>) {
-    strand.builtin_types().array_view.create_imm(
+pub(super) fn unpack_bin<'v>(
+    strand: &mut Strand<'v, '_>,
+    owner: impl Input<'v>,
+    out: Slot<'v, '_>,
+) {
+    let embryo = strand.builtin_types().array_view.embryo(strand);
+    let owner = Value::from_input(strand, owner);
+    embryo.finish_imm(
         strand,
         alias::Box::new(View {
             owner,
@@ -497,27 +507,29 @@ pub(crate) type RestObj<'v> = gc::Imm<Rest<'v>>;
 
 /// Stores the rest of `parent` from `start`: an iterator if the view's owner
 /// is one, otherwise a reusable [`Rest`].
+/// Stores an iterator or rest of `parent` from `start`.  `parent` runs after the
+/// object is allocated, so the reference it returns moves straight into it.
 fn store_rest<'v>(
     strand: &mut Strand<'v, '_>,
-    parent: GcObj<'v, ViewObj<'v>>,
+    parent: impl FnOnce() -> GcObj<'v, ViewObj<'v>>,
     start: usize,
     iterator: bool,
     out: impl Output<'v>,
 ) {
     if iterator {
-        strand.builtin_types().array_view_iter.create_imm(
-            strand,
-            Iter {
-                parent,
-                index: start.into(),
-            },
-            out,
-        );
+        let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+        let iter = Iter {
+            parent: parent(),
+            index: start.into(),
+        };
+        embryo.finish_imm(strand, iter, out);
     } else {
-        strand
-            .builtin_types()
-            .array_view_rest
-            .create_imm(strand, Rest { parent, start }, out);
+        let embryo = strand.builtin_types().array_view_rest.embryo(strand);
+        let rest = Rest {
+            parent: parent(),
+            start,
+        };
+        embryo.finish_imm(strand, rest, out);
     }
 }
 
@@ -741,7 +753,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let view = this.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, 0)?;
         if let Some(i) = sig.pos_rest_slot() {
-            store_rest(strand, this.to_strong(), consumed, false, out.at(i));
+            store_rest(strand, || this.to_strong(), consumed, false, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -813,10 +825,12 @@ impl<'v> Protocol<'v> for IterObj<'v> {
             iter.index.get(),
         )?;
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().array_view_iter.create_imm(
+            let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish_imm(
                 strand,
                 Iter {
-                    parent: iter.parent.clone(),
+                    parent: unsafe { iter.parent.dup() },
                     index: Cell::new(iter.index.get() + consumed),
                 },
                 out.at(i),
@@ -872,7 +886,14 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        store_rest(strand, rest.parent.clone(), rest.start, true, out);
+        // SAFETY: `store_rest` calls it after allocating
+        store_rest(
+            strand,
+            || unsafe { rest.parent.dup() },
+            rest.start,
+            true,
+            out,
+        );
         Ok(())
     }
     async fn op_spread<'a, 's>(
@@ -895,9 +916,10 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         let view = rest.parent.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, rest.start)?;
         if let Some(i) = sig.pos_rest_slot() {
+            // SAFETY: `store_rest` calls it after allocating
             store_rest(
                 strand,
-                rest.parent.clone(),
+                || unsafe { rest.parent.dup() },
                 rest.start + consumed,
                 false,
                 out.at(i),
@@ -1014,7 +1036,9 @@ fn unpack_native<'v, 's>(
                 }
             }
             UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
-                store_rest(strand, parent.clone(), position, iterator, slot);
+                // SAFETY: TODO(#1707): `parent` is itself loose, fresh from
+                // `create_view`
+                store_rest(strand, || unsafe { parent.dup() }, position, iterator, slot);
             }
             UnpackItem::KeyRest { slot } => NativeUnpack::empty_key_rest(strand, slot),
         }
@@ -1217,9 +1241,9 @@ mod tests {
     /// `with_slots_dynamic!`) with a `FixtureArray` containing `items`. Values are
     /// never returned as bare, unrooted locals — every call site roots the owner for as
     /// long as it's needed before this function returns.
-    fn make_owner<'v>(strand: &mut Strand<'v, '_>, items: &[i64], out: Slot<'v, '_>) {
+    fn make_owner<'v>(strand: &mut Strand<'v, '_>, items: &[i16], out: Slot<'v, '_>) {
         let ty = strand.vm().state::<FixtureStateTag>().ty;
-        let values = items.iter().map(|&i| Value::from_i64(strand, i)).collect();
+        let values = items.iter().map(|&i| Value::from_i16(i)).collect();
         ty.create_with_annex(strand, FixtureArray(values), (), out);
     }
 
@@ -1340,7 +1364,7 @@ mod tests {
                 vec![],
                 vec![sig::UnpackKey {
                     kind: sig::UnpackKeyKind::Sym(key_sym),
-                    default: Some(Value::from_i64(strand, 42)),
+                    default: Some(Value::from_i16(42)),
                 }],
                 Variadic::NONE,
             );
@@ -1367,11 +1391,7 @@ mod tests {
             // same expression, immediately embedded (by value) into the `Range`,
             // which becomes GC-scanned as soon as it's rooted in `range_slot` below.
             with_slots!(strand, |mut range_slot, mut out_slot| {
-                let range = range::Range::new(
-                    Value::from_i64(strand, 5),
-                    Value::from_i64(strand, 2),
-                    Value::NIL,
-                );
+                let range = range::Range::new(Value::from_i16(5), Value::from_i16(2), Value::NIL);
                 strand.builtin_types().range.create_imm(
                     strand,
                     range,

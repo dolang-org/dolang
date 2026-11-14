@@ -246,6 +246,11 @@ impl<T> MonoVec<T> {
         unsafe { self.push_internal(value) };
     }
 
+    /// Appends `value`, returning it in place; elements never move.
+    pub fn push_ref(&self, value: T) -> &T {
+        unsafe { &*self.push_internal(value) }
+    }
+
     pub fn push_mut(&mut self, value: T) -> &mut T {
         unsafe { &mut *self.push_internal(value) }
     }

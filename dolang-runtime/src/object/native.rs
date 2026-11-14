@@ -207,16 +207,15 @@ impl<'v, 'a> Unpack<'v, 'a> {
     ///
     /// A source without positional items uses this to fill an [`UnpackItem::PosRest`].
     pub fn empty_pos_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-        let tuple = Value::from_object(tuple::tuple(strand, []));
-        Output::set(strand, out, &tuple);
+        tuple::create(strand, [], out);
     }
 
     /// Stores an empty [`Pack`](crate::object::pack::Pack) in `out`.
     ///
     /// A source without keyed items uses this to fill an [`UnpackItem::KeyRest`].
     pub fn empty_key_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-        let empty = Value::from_object(pack::empty(strand));
-        Output::set(strand, out, &empty);
+        let pack = strand.builtin_types().pack;
+        pack.create_imm(strand, pack::Pack::new(Vec::new()), out);
     }
 
     /// Returns an iterator over the unpack specification.
@@ -726,7 +725,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
                 .as_ref()
                 .vtbl_downcast_unchecked::<ObjectVtbl<'v>>()
         };
-        let Case::Object(singleton) = vm.type_singletons[vtbl.singleton_idx].case() else {
+        let Case::Object(singleton) = vm.type_singleton(vtbl.singleton_idx).case() else {
             unreachable!("type singleton is always an object");
         };
         // SAFETY: `type_singletons[idx]` is always a `TypeObjectWrap<'v,T>` for this `T`.
@@ -1755,7 +1754,7 @@ impl<'v, 'a, T: Object<'v>> Recv<'v, 'a, ObjectWrap<'v, T>> {
 
     /// Returns a reference to the type singleton [`Value`] for this type.
     fn singleton<'b>(&self, vm: &'b Vm<'v>) -> &'b Value<'v> {
-        &vm.type_singletons[self.vtbl().singleton_idx]
+        vm.type_singleton(self.vtbl().singleton_idx)
     }
 }
 
@@ -2844,7 +2843,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
     /// Unlike [`Input::input_take`], the returned reference borrows only from `vm`, so this
     /// may be called on a temporary handle (e.g. one just fetched from VM state).
     pub(crate) fn singleton<'b>(&self, vm: &'b Vm<'v>) -> &'b Value<'v> {
-        &vm.type_singletons[self.singleton_idx]
+        vm.type_singleton(self.singleton_idx)
     }
 
     /// Instantiates a native object and places it into the provided output
@@ -2918,7 +2917,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
     ) -> gc::Pin<'v, 'v, protocol::Header, TypeObjectWrap<'v, T>> {
         // SAFETY: type_singletons[singleton_idx] is always a TypeObjectWrap<T>.
         let obj = unsafe {
-            vm.type_singletons[self.singleton_idx]
+            vm.type_singleton(self.singleton_idx)
                 .downcast_ref(self.type_vtbl)
                 .unwrap_unchecked()
         };
@@ -3718,19 +3717,20 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             class_instance: result.vm.inner.builtin_types().class_instance,
         };
 
-        let singleton = Value::from_object(protocol::GcObj::new_annex(
-            result.vm.inner.arena(),
-            ty.type_vtbl,
+        let annex = alias::Box::new(TypeAnnexInner {
+            proxy: result.vm.inner.types.register_type_handle(),
+            scope: result.vm.inner.types.register_type_handle(),
+            inner: self.type_annex,
+            supertypes: result.supertypes.into(),
+            nominal_supertypes: result.nominal_supertypes.into(),
+        });
+        let vm: &'v Vm<'v> = result.vm.inner;
+        ty.type_vtbl.create_with_annex(
+            result.vm,
             TypeObjectWrap(self.type_value, PhantomData),
-            alias::Box::new(TypeAnnexInner {
-                proxy: result.vm.inner.types.register_type_handle(),
-                scope: result.vm.inner.types.register_type_handle(),
-                inner: self.type_annex,
-                supertypes: result.supertypes.into(),
-                nominal_supertypes: result.nominal_supertypes.into(),
-            }),
-        ));
-        result.vm.inner.type_singletons.push(singleton);
+            annex,
+            crate::vm::root_slot(&vm.type_singletons),
+        );
 
         ty
     }
@@ -3919,7 +3919,7 @@ impl<'v, 'a, T: Object<'v>> Recv<'v, 'a, TypeObjectWrap<'v, T>> {
 
     /// Returns a reference to the type singleton [`Value`] for this type.
     fn singleton<'b>(&self, vm: &'b Vm<'v>) -> &'b Value<'v> {
-        &vm.type_singletons[self.inst_vtbl().singleton_idx]
+        vm.type_singleton(self.inst_vtbl().singleton_idx)
     }
 
     fn ty(&self, vm: &Vm<'v>) -> Type<'v, T> {
@@ -4043,15 +4043,14 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
             BoundMethod::create(strand, &this, field, out);
             return;
         };
-        let scope = NativeTypeScope {
-            native: Value::from_object(this.to_strong()),
-            ty: this.ty(strand.vm()),
-            receiver: receiver.dup(),
-        };
         with_slots!(strand, |mut namespace| {
-            this.annex()
-                .scope
-                .create_imm(strand, scope, Slot::reborrow(&mut namespace));
+            let embryo = this.annex().scope.embryo(strand);
+            let scope = NativeTypeScope {
+                native: Value::from_object(this.to_strong()),
+                ty: this.ty(strand.vm()),
+                receiver: receiver.dup(),
+            };
+            embryo.finish_imm(strand, scope, Slot::reborrow(&mut namespace));
             BoundMethod::create(strand, &namespace, field, out);
         });
     }
@@ -4063,11 +4062,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
+        let embryo = this.annex().proxy.embryo(strand);
         let proxy = NativeTypeProxy {
             native: Value::from_object(this.to_strong()),
             ty: this.ty(strand.vm()),
         };
-        this.annex().proxy.create_imm(strand, proxy, out);
+        embryo.finish_imm(strand, proxy, out);
     }
 
     fn op_debug<'a, 's>(
@@ -4904,9 +4904,9 @@ mod tests {
     #[test]
     fn unpack_iter_yields_required_optional_key_and_rest_items_in_order() {
         with_fixture_vm(async |strand, []| {
-            let const_key = Value::from_i64(strand, 99);
-            let opt_default = Value::from_i64(strand, 7);
-            let key_default = Value::from_i64(strand, 8);
+            let const_key = Value::from_i16(99);
+            let opt_default = Value::from_i16(7);
+            let key_default = Value::from_i16(8);
             let sym_key = strand.vm().state::<FixtureStateTag>().counter_sym;
             let sig = sig::Unpack::new(
                 1,
@@ -5121,7 +5121,7 @@ mod tests {
                 vec![],
                 vec![sig::UnpackKey {
                     kind: sig::UnpackKeyKind::Sym(state.absent_sym),
-                    default: Some(Value::from_i64(strand, 17)),
+                    default: Some(Value::from_i16(17)),
                 }],
                 Variadic::Capture,
             );
@@ -5147,7 +5147,7 @@ mod tests {
                 Variadic::Capture,
             );
             with_slots_dynamic!(strand, 2, |mut out| {
-                out.at(0).store(Value::from_i64(strand, 99));
+                out.at(0).store(Value::from_i16(99));
                 let err = tail
                     .op_unpack(strand, &bad_sig, unsafe { Slots::new(out.as_inner()) })
                     .await
@@ -5180,8 +5180,8 @@ mod tests {
                 Variadic::NONE,
             );
             with_slots_dynamic!(strand, 2, |mut out| {
-                out.at(0).store(Value::from_i64(strand, 90));
-                out.at(1).store(Value::from_i64(strand, 91));
+                out.at(0).store(Value::from_i16(90));
+                out.at(1).store(Value::from_i16(91));
                 let err = proxy
                     .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
                     .await
@@ -5762,11 +5762,11 @@ mod tests {
                         strand,
                         ty_value
                     ));
-                    let universal = Value::from_input(strand, TypeObject::Value);
+                    let universal = TypeObject::Value.value(strand.vm());
                     assert!(TypeObjectWrap::<SlotFixture>::op_subtype(
                         recv.clone(),
                         strand,
-                        &universal
+                        universal
                     ));
                     assert!(!TypeObjectWrap::<SlotFixture>::op_subtype(
                         recv,

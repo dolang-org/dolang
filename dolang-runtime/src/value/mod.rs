@@ -134,7 +134,9 @@ impl<'v> Value<'v> {
 
     pub(crate) fn dup(&self) -> Self {
         match self.case() {
-            Case::Object(base) => mem::forget(base.clone()),
+            // SAFETY: the handle is forgotten at once; its count backs the returned
+            // value, which is as loose as any other `Value::dup` result
+            Case::Object(base) => mem::forget(unsafe { base.dup() }),
             Case::Prim(_) => (),
         }
         Self(self.0.clone(), PhantomData)
@@ -145,56 +147,23 @@ impl<'v> Value<'v> {
         Weak::from_value(self)
     }
 
-    pub(crate) fn from_prim(vm: &Vm<'v>, value: Prim) -> Self {
-        match value {
-            Prim::Nil => Value::NIL,
-            Prim::Int(v) => Value::from_int(vm, v),
-            Prim::F64(v) => Value::from_f64(vm, v),
-            Prim::Bool(v) => Value::from_bool(v),
-        }
-    }
-
     pub(crate) fn from_bool(value: bool) -> Self {
         if value { Value::TRUE } else { Value::FALSE }
     }
 
-    pub(crate) fn from_int(vm: &Vm<'v>, value: i128) -> Self {
-        if let Ok(value) = i64::try_from(value)
-            && let Some(repr) = Repr::from_i64(value)
-        {
-            Self(repr, PhantomData)
-        } else {
-            Value::from_object(GcObj::new_imm(vm.arena(), vm.builtin_types().int, value))
-        }
-    }
-
+    /// An `int` small enough to be immediate on every target, so nothing is allocated.
     #[inline]
-    pub(crate) fn from_i64(vm: &Vm<'v>, value: i64) -> Self {
-        Self::from_int(vm, value.into())
-    }
-
-    pub(crate) fn from_f64(vm: &Vm<'v>, value: f64) -> Self {
-        if let Some(repr) = Repr::from_f64(value) {
-            Self(repr, PhantomData)
-        } else {
-            Value::from_object(GcObj::new_imm(vm.arena(), vm.builtin_types().f64, value))
-        }
-    }
-
-    pub(crate) fn from_int_verbatim(vm: &Vm<'v>, value: i128, text: &str) -> Self {
-        Value::from_object(GcObj::new_imm(
-            vm.arena(),
-            vm.builtin_types().verbatim_int,
-            object::int::Verbatim::new(value, text),
-        ))
-    }
-
-    pub(crate) fn from_f64_verbatim(vm: &Vm<'v>, value: f64, text: &str) -> Self {
-        Value::from_object(GcObj::new_imm(
-            vm.arena(),
-            vm.builtin_types().verbatim_f64,
-            object::float::Verbatim::new(value, text),
-        ))
+    pub(crate) fn from_i16(value: i16) -> Self {
+        const {
+            assert!(
+                i16::MIN as i64 >= repr::IMIN && i16::MAX as i64 <= repr::IMAX,
+                "every i16 is immediate"
+            )
+        };
+        Self(
+            Repr::from_i64(value.into()).expect("immediate"),
+            PhantomData,
+        )
     }
 
     pub(crate) fn from_str(vm: &Vm<'v>, value: &str) -> Self {
@@ -547,7 +516,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
         match &self.case() {
-            Case::Prim(prim) => prim.op_neg(strand).map(|p| Value::from_prim(strand, p)),
+            Case::Prim(prim) => prim.op_neg(strand).map(|p| Value::from_input(strand, p)),
             Case::Object(object) => object.op_neg(strand),
         }
     }
@@ -566,7 +535,7 @@ impl<'v> Value<'v> {
         match &self.case() {
             Case::Prim(prim) => {
                 let value = prim.op_bnot(strand)?;
-                Ok(Value::from_prim(strand, value))
+                Ok(Value::from_input(strand, value))
             }
             Case::Object(object) => object.op_bnot(strand),
         }
@@ -591,7 +560,7 @@ impl<'v> Value<'v> {
         match match (self.case(), other.case()) {
             // Both primitives: dispatch to primitive handler
             (Case::Prim(left), Case::Prim(right)) => {
-                prim(&left, strand, &right).map(|v| Value::from_prim(strand, v))
+                prim(&left, strand, &right).map(|v| Value::from_input(strand, v))
             }
             // Object only on left: dispatch to left object handler
             (Case::Object(left), Case::Prim(_)) => lobj(left, strand, other),
@@ -1087,7 +1056,7 @@ impl<'v> Value<'v> {
             Case::Prim(this) => {
                 let other = other.to_prim(strand)?;
                 this.op_lt(strand, &other)
-                    .map(|v| Value::from_prim(strand, v))
+                    .map(|v| Value::from_input(strand, v))
             }
         }
     }
@@ -1102,7 +1071,7 @@ impl<'v> Value<'v> {
             Case::Prim(this) => {
                 let other = other.to_prim(strand)?;
                 this.op_lte(strand, &other)
-                    .map(|v| Value::from_prim(strand, v))
+                    .map(|v| Value::from_input(strand, v))
             }
         }
     }
@@ -3156,15 +3125,36 @@ impl<'v> Input<'v> for &Value<'v> {
     }
 }
 
+/// Stores an `int`, immediate when it fits.
+fn int_into<'v>(mut alloc: &mut dyn Alloc<'v>, value: i128, mut out: Slot<'v, '_>) {
+    match i64::try_from(value).ok().and_then(Repr::from_i64) {
+        Some(repr) => out.store(Value(repr, PhantomData)),
+        None => {
+            let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+            vm.builtin_types().int.create_imm(&mut alloc, value, out);
+        }
+    }
+}
+
+/// Stores a `float`, immediate when it fits.
+fn f64_into<'v>(mut alloc: &mut dyn Alloc<'v>, value: f64, mut out: Slot<'v, '_>) {
+    match Repr::from_f64(value) {
+        Some(repr) => out.store(Value(repr, PhantomData)),
+        None => {
+            let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+            vm.builtin_types().f64.create_imm(&mut alloc, value, out);
+        }
+    }
+}
+
 impl<'v> Input<'v> for i128 {
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_int(vm, *self));
+        int_into(alloc, *self, out);
         None
     }
 }
@@ -3175,11 +3165,10 @@ macro_rules! int_input {
             fn input_take<'b>(
                 &'b mut self,
                 alloc: &mut dyn Alloc<'v>,
-                mut out: Slot<'v, '_>,
+                out: Slot<'v, '_>,
                 _: private::Sealed,
             ) -> Option<Slot<'v, 'b>> {
-                let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-                out.store(Value::from_int(vm, *self as i128));
+                int_into(alloc, *self as i128, out);
                 None
             }
         }
@@ -3192,11 +3181,10 @@ impl<'v> Input<'v> for f64 {
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_f64(vm, *self));
+        f64_into(alloc, *self, out);
         None
     }
 }
@@ -3205,11 +3193,27 @@ impl<'v> Input<'v> for f32 {
     fn input_take<'b>(
         &'b mut self,
         alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
+        _: private::Sealed,
+    ) -> Option<Slot<'v, 'b>> {
+        f64_into(alloc, *self as f64, out);
+        None
+    }
+}
+
+impl<'v> Input<'v> for Prim {
+    fn input_take<'b>(
+        &'b mut self,
+        alloc: &mut dyn Alloc<'v>,
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_f64(vm, *self as f64));
+        match *self {
+            Prim::Nil => out.store(Value::NIL),
+            Prim::Int(v) => int_into(alloc, v, out),
+            Prim::F64(v) => f64_into(alloc, v, out),
+            Prim::Bool(v) => out.store(Value::from_bool(v)),
+        }
         None
     }
 }

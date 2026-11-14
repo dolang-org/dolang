@@ -95,7 +95,9 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
             for (key, value) in &pack.inner {
                 Output::set(strand, &mut value_slot, value);
                 if let Some(key) = key {
-                    Output::set(strand, &mut key_slot, Value::from_object(key.clone()));
+                    // SAFETY: the reference moves straight into `key_slot`
+                    let key = unsafe { Value::from_object(key.dup()) };
+                    Output::set(strand, &mut key_slot, key);
                     sink.keyed(
                         strand,
                         Slot::reborrow(&mut key_slot),

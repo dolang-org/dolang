@@ -5,7 +5,8 @@ use crate::{
     object::{protocol::GcObj, sym::SymObj},
     strand::Strand,
     sym::Sym,
-    value::{self, Input, Slot, Value, ValueCell},
+    value::{self, Input, Slot, ValueCell},
+    vm::Alloc,
 };
 
 pub(crate) type OwnedItem<'v> = (Option<GcObj<'v, SymObj>>, ValueCell<'v>);
@@ -130,15 +131,11 @@ impl<'v, 'a> ArgContent<'v, 'a> {
         }
     }
 
-    unsafe fn write_unchecked(&self, index: usize, value: Value<'v>) {
+    unsafe fn slot_unchecked(&self, index: usize) -> Slot<'v, '_> {
         unsafe {
             match self {
-                ArgContent::Borrowed { slots, .. } => {
-                    slots.get_unchecked(index).slot().store(value);
-                }
-                ArgContent::Owned(items) => {
-                    items.get_unchecked(index).1.slot().store(value);
-                }
+                ArgContent::Borrowed { slots, .. } => slots.get_unchecked(index).slot(),
+                ArgContent::Owned(items) => items.get_unchecked(index).1.slot(),
             }
         }
     }
@@ -270,13 +267,16 @@ impl<'v, 'a> Args<'v, 'a> {
     ///
     /// Panics if no leading slot remains. Consumed leading arguments can be
     /// reused as headroom, including arguments skipped by a trailing pack.
-    pub(crate) fn prepend_self(&mut self, value: Value<'v>) {
+    pub(crate) fn prepend_self(&mut self, alloc: &mut dyn Alloc<'v>, mut input: impl Input<'v>) {
         assert!(
             self.index > 0,
             "prepend_self called with no available headroom"
         );
         self.index -= 1;
-        unsafe { self.content.write_unchecked(self.index, value) };
+        // Safety: the index is in bounds, and the headroom slot is not handed out
+        // elsewhere while the input writes it.
+        let out = unsafe { self.content.slot_unchecked(self.index) };
+        input.input_take(alloc, out, value::private::Sealed);
         if !self.mask.is_empty() {
             self.mask[self.index] = false;
         }
@@ -707,20 +707,24 @@ macro_rules! method {
 #[cfg(test)]
 mod tests {
     use super::{Arg, Args};
-    use crate::Value;
-    use crate::value::ValueCell;
+    use crate::{
+        test_support::with_vm,
+        value::{Nil, ValueCell},
+    };
 
     #[test]
     fn prepend_self_reuses_a_consumed_leading_argument() {
-        let slots = [ValueCell::default(), ValueCell::default()];
-        let sig = [None];
-        let mut args = unsafe { Args::new(&slots, &sig, 1) };
+        with_vm::<0, _>(async |strand, []| {
+            let slots = [ValueCell::default(), ValueCell::default()];
+            let sig = [None];
+            let mut args = unsafe { Args::new(&slots, &sig, 1) };
 
-        assert!(matches!(args.next(), Some(Arg::Pos(_))));
-        assert!(args.next().is_none());
+            assert!(matches!(args.next(), Some(Arg::Pos(_))));
+            assert!(args.next().is_none());
 
-        args.prepend_self(Value::NIL);
-        assert!(matches!(args.next(), Some(Arg::Pos(_))));
-        assert!(args.next().is_none());
+            args.prepend_self(strand, Nil);
+            assert!(matches!(args.next(), Some(Arg::Pos(_))));
+            assert!(args.next().is_none());
+        });
     }
 }

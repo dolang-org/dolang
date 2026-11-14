@@ -63,6 +63,15 @@ pub(crate) struct FuncDebug {
 }
 
 impl FuncDebug {
+    /// The span of a frame resuming at `pc`: the instruction before it, or the
+    /// function's header while it is still unpacking its arguments.
+    pub(crate) fn locate_frame(&self, pc: usize) -> Span {
+        match pc.checked_sub(1) {
+            Some(pc) => self.locate(pc),
+            None => self.definition,
+        }
+    }
+
     /// The span of the instruction at `pc`
     pub(crate) fn locate(&self, pc: usize) -> Span {
         let index = match self.sourcemap.binary_search_by_key(&pc, |e| e.0) {

@@ -73,6 +73,18 @@ collector would miss it. Count every GC allocation, and any code reached with a
 only at explicit safepoints. `Slot::new` is `unsafe` for this reason: creating a
 slot over a location claims the collector can see it.
 
+An owned reference outside a scanned location is _loose_. GC handles are not
+`Clone`: duplicating one is `gc::Base::dup`, which is `unsafe`, as are functions
+whose results hold loose handles, such as `UnwindEntry::dup` and the backtrace
+walkers. The usual justification is that the reference moves straight into a
+scanned location, with no allocation or strand access in between. Allocating
+an embryo first (below) and duplicating into its payload is the common way to
+arrange that; helpers that create an object from a reference take a closure
+that they call after allocating. `PinStr` and `PinBin` own their references as
+roots by design. Code with a value to place writes it through an `Output`
+rather than holding it: `Output::set` with an `Input`, or a `TypeHandle` create
+method, into a `with_slots!` slot when it is only needed for a while.
+
 Creating an object moves references from wherever they are rooted into its
 payload. To keep them visible across the allocation, allocate first with an
 embryo (`gc::Embryo`, through `TypeHandle::embryo` or `tuple::embryo`), then

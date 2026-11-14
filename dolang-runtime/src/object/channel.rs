@@ -450,8 +450,9 @@ pub(crate) fn pair<'v>(
         limit,
     };
     let receiver = GcObj::new(vm.arena(), vm.builtin_types().channel_recv, receiver);
+    // SAFETY: TODO(#1707): the pair is loose, fresh from `GcObj::new`
     let sender = Sender {
-        receiver: receiver.clone(),
+        receiver: unsafe { receiver.dup() },
     };
     let sender = GcObj::new_imm(vm.arena(), vm.builtin_types().channel_send, sender);
     (sender, receiver)

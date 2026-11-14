@@ -149,7 +149,8 @@ impl<'v> Record<'v> {
 
     fn snapshot(&self) -> Vec<ArgItem<'v>> {
         self.items()
-            .map(|(key, value)| (key.clone(), value.dup()))
+            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+            .map(|(key, value)| (key.as_ref().map(|key| unsafe { key.dup() }), value.dup()))
             .collect()
     }
 
@@ -844,14 +845,14 @@ impl<'v> Protocol<'v> for Iter<'v> {
                 let Some((key, value)) = item else {
                     continue;
                 };
-                let key = match key {
+                let int = match key {
                     Some(key) => {
                         match iter.mode {
                             Mode::Keys if !iter.seen.borrow_mut().insert(key.tag()) => continue,
                             Mode::KeyValues(tag) if key.tag() != tag => continue,
                             _ => {}
                         }
-                        Value::from_object(key.clone())
+                        0
                     }
                     None => {
                         let int = iter.int.get();
@@ -859,16 +860,19 @@ impl<'v> Protocol<'v> for Iter<'v> {
                         if let Mode::KeyValues(_) = iter.mode {
                             continue;
                         }
-                        Value::from_i64(strand, int)
+                        int
                     }
                 };
-                out.store(match iter.mode {
-                    Mode::Pairs => {
-                        Value::from_object(tuple::tuple(strand.vm(), [key, value.dup()]))
-                    }
-                    Mode::Keys => key,
-                    Mode::Values | Mode::KeyValues(_) => value.dup(),
-                });
+                // Safety: the record holds the symbol for the whole call.
+                let sym = key.as_ref().map(|key| unsafe { Sym::from_obj(key) });
+                let out = Slot::reborrow(&mut out);
+                match (iter.mode, sym) {
+                    (Mode::Pairs, Some(sym)) => tuple::create_pair(strand, sym, value, out),
+                    (Mode::Pairs, None) => tuple::create_pair(strand, int, value, out),
+                    (Mode::Keys, Some(sym)) => Output::set(strand, out, sym),
+                    (Mode::Keys, None) => Output::set(strand, out, int),
+                    (Mode::Values | Mode::KeyValues(_), _) => Output::set(strand, out, value),
+                }
                 return Ok(true);
             }
             Ok(false)
