@@ -131,7 +131,7 @@ pub(crate) fn configure_module<'v, 'a>(
     module
         .value("JoinStatus", global.types.join_status)
         .function("join_status", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let status = domain::status(&dolang_ext_shell::vfs(strand))
                 .await
                 .into_sys(strand)?;
@@ -139,61 +139,24 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("join_domain", async move |strand, args, out| {
-            let ou_sym = global.syms.ou;
-            let account_sym = global.syms.account;
-            let password_sym = global.syms.password;
-            let machine_password_sym = global.syms.machine_password;
-            let create_account_sym = global.syms.create_account;
-            let join_if_joined_sym = global.syms.join_if_joined;
-            let unsecure_sym = global.syms.unsecure;
-            let defer_spn_sym = global.syms.defer_spn;
-            let force_spn_sym = global.syms.force_spn;
-            let dc_account_sym = global.syms.dc_account;
-            let with_new_name_sym = global.syms.with_new_name;
-            let readonly_sym = global.syms.readonly;
-            let ambiguous_dc_sym = global.syms.ambiguous_dc;
-            let no_netlogon_cache_sym = global.syms.no_netlogon_cache;
-            let no_account_reuse_sym = global.syms.no_account_reuse;
-            let (
-                [name],
-                [
-                    ou,
-                    account,
-                    password,
-                    machine_password,
-                    create_account,
-                    join_if_joined,
-                    unsecure,
-                    defer_spn,
-                    force_spn,
-                    dc_account,
-                    with_new_name,
-                    readonly,
-                    ambiguous_dc,
-                    no_netlogon_cache,
-                    no_account_reuse,
-                ],
-            ) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                ou_sym = None,
-                account_sym = None,
-                password_sym = None,
-                machine_password_sym = None,
-                create_account_sym = None,
-                join_if_joined_sym = None,
-                unsecure_sym = None,
-                defer_spn_sym = None,
-                force_spn_sym = None,
-                dc_account_sym = None,
-                with_new_name_sym = None,
-                readonly_sym = None,
-                ambiguous_dc_sym = None,
-                no_netlogon_cache_sym = None,
-                no_account_reuse_sym = None
-            )?;
+            unpack!(strand, args =>
+                name,
+                ?(global.syms.ou): ou,
+                ?(global.syms.account): account,
+                ?(global.syms.password): password,
+                ?(global.syms.machine_password): machine_password,
+                ?(global.syms.create_account): create_account,
+                ?(global.syms.join_if_joined): join_if_joined,
+                ?(global.syms.unsecure): unsecure,
+                ?(global.syms.defer_spn): defer_spn,
+                ?(global.syms.force_spn): force_spn,
+                ?(global.syms.dc_account): dc_account,
+                ?(global.syms.with_new_name): with_new_name,
+                ?(global.syms.readonly): readonly,
+                ?(global.syms.ambiguous_dc): ambiguous_dc,
+                ?(global.syms.no_netlogon_cache): no_netlogon_cache,
+                ?(global.syms.no_account_reuse): no_account_reuse
+            );
             let mut request = domain::Join::new(string(strand, &name, "domain")?);
             if let Some(value) = ou {
                 request = request.ou(optional_string(strand, &value, "ou")?);
@@ -239,18 +202,11 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("unjoin_domain", async move |strand, args, out| {
-            let account_sym = global.syms.account;
-            let password_sym = global.syms.password;
-            let delete_account_sym = global.syms.delete_account;
-            let ([], [account, password, delete_account]) = unpack!(
-                strand,
-                args,
-                0,
-                0,
-                account_sym = None,
-                password_sym = None,
-                delete_account_sym = None
-            )?;
+            unpack!(strand, args =>
+                ?(global.syms.account): account,
+                ?(global.syms.password): password,
+                ?(global.syms.delete_account): delete_account
+            );
             let mut request = domain::Unjoin::default();
             if let Some((account, password)) =
                 credentials(strand, account.as_deref(), password.as_deref())?
@@ -267,18 +223,12 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("rename_machine", async move |strand, args, out| {
-            let account_sym = global.syms.account;
-            let password_sym = global.syms.password;
-            let create_account_sym = global.syms.create_account;
-            let ([name], [account, password, create_account]) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                account_sym = None,
-                password_sym = None,
-                create_account_sym = None
-            )?;
+            unpack!(strand, args =>
+                name,
+                ?(global.syms.account): account,
+                ?(global.syms.password): password,
+                ?(global.syms.create_account): create_account
+            );
             let mut request = domain::Rename::new(string(strand, &name, "name")?);
             if let Some((account, password)) =
                 credentials(strand, account.as_deref(), password.as_deref())?
@@ -295,39 +245,17 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("provision_computer", async move |strand, args, out| {
-            let machine_sym = global.syms.machine;
-            let ou_sym = global.syms.ou;
-            let dc_sym = global.syms.dc;
-            let reuse_sym = global.syms.reuse;
-            let default_password_sym = global.syms.default_password;
-            let skip_account_search_sym = global.syms.skip_account_search;
-            let root_ca_certs_sym = global.syms.root_ca_certs;
-            let downlevel_priv_support_sym = global.syms.downlevel_priv_support;
-            let (
-                [domain_name, machine],
-                [
-                    ou,
-                    dc,
-                    reuse,
-                    default_password,
-                    skip_account_search,
-                    root_ca_certs,
-                    downlevel_priv_support,
-                ],
-            ) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                machine_sym,
-                ou_sym = None,
-                dc_sym = None,
-                reuse_sym = None,
-                default_password_sym = None,
-                skip_account_search_sym = None,
-                root_ca_certs_sym = None,
-                downlevel_priv_support_sym = None
-            )?;
+            unpack!(strand, args =>
+                domain_name,
+                (global.syms.machine): machine,
+                ?(global.syms.ou): ou,
+                ?(global.syms.dc): dc,
+                ?(global.syms.reuse): reuse,
+                ?(global.syms.default_password): default_password,
+                ?(global.syms.skip_account_search): skip_account_search,
+                ?(global.syms.root_ca_certs): root_ca_certs,
+                ?(global.syms.downlevel_priv_support): downlevel_priv_support
+            );
             let mut request = domain::Provision::new(
                 string(strand, &domain_name, "domain")?,
                 string(strand, &machine, "machine")?,
@@ -354,10 +282,11 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("apply_offline_join", async move |strand, args, out| {
-            let windows_path_sym = global.syms.windows_path;
-            let online_sym = global.syms.online;
-            let ([blob, path], [online]) =
-                unpack!(strand, args, 1, 0, windows_path_sym, online_sym = None)?;
+            unpack!(strand, args =>
+                blob,
+                (global.syms.windows_path): path,
+                ?(global.syms.online): online
+            );
             let bytes = blob
                 .as_bin(strand)
                 .ok_or_else(|| Error::type_error(strand, "blob must be a Bin"))?

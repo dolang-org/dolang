@@ -858,7 +858,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("DecodeError", global.types.decode_error)
         .value("EncodeError", global.types.encode_error)
         .function("encode", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             with_slots!(strand, |path, mut tuple, mut error| {
                 let mut buf = StrEmbryo::new();
                 let mut encoder = Encoder {
@@ -899,7 +899,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             })
         })
         .function("decode", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             let src = arg
                 .as_str(strand.vm())
                 .ok_or_else(|| Error::type_error(strand, "expected Str"))?

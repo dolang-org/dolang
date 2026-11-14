@@ -247,7 +247,7 @@ impl<'v> Object<'v> for Statement {
             )
             .method("close", async move |this, strand, args, _out| {
                 let annex = this.annex();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
 
                 let mut borrow = this.borrow_mut(strand)?;
                 if borrow.is_query_active() {

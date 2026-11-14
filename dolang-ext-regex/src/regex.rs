@@ -125,7 +125,7 @@ impl<'v> Object<'v> for Regex {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([pattern], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => pattern);
         let pattern = pattern
             .as_str(strand.vm())
             .ok_or_else(|| Error::type_error(strand, "pattern: expected Str"))?
@@ -137,11 +137,11 @@ impl<'v> Object<'v> for Regex {
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let limit_sym = builder.sym("limit");
+        let limit = builder.sym("limit");
         builder
             .method("match", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack_value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => haystack_value);
                 let haystack = haystack_value
                     .as_str(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?.pin();
@@ -181,7 +181,7 @@ impl<'v> Object<'v> for Regex {
             })
             .method("find", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack_value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => haystack_value);
                 let haystack = haystack_value
                     .as_str(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?.pin();
@@ -223,8 +223,7 @@ impl<'v> Object<'v> for Regex {
                 async move |this, strand, args, out, [mut caps_slot, mut cb_out]| {
                     let annex = this.annex();
 
-                    let ([haystack_value, replacement], [limit]) =
-                        unpack!(strand, args, 2, 0, limit_sym = None)?;
+                    unpack!(strand, args => haystack_value, replacement, ?:limit);
                     let haystack = haystack_value
                         .as_str(strand.vm())
                         .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?;
@@ -315,7 +314,7 @@ impl<'v> Object<'v> for Regex {
                                 });
 
                             // Call the replacement function with the Captures
-                            call!(strand, &replacement, &mut cb_out, &caps_slot)?;
+                            call!(strand, &replacement, &caps_slot, &mut cb_out)?;
 
                             let rep = cb_out
                                 .as_str(strand)
@@ -337,7 +336,7 @@ impl<'v> Object<'v> for Regex {
             )
             .method("split", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack_value], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
+                unpack!(strand, args => haystack_value, ?:limit);
                 let haystack = haystack_value
                     .as_str(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?;
@@ -433,7 +432,7 @@ impl<'v> Object<'v> for Regex {
             })
             .method("rsplit", async move |this, strand, args, mut out| {
                 let annex = this.annex();
-                let ([haystack_value], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
+                unpack!(strand, args => haystack_value, ?:limit);
                 let haystack = haystack_value
                     .as_str(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?;

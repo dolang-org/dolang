@@ -197,7 +197,7 @@ impl<'v> Protocol<'v> for StrObj {
 
         match method.tag() {
             sym::SCALARS | sym::GRAPHEMES | sym::SCALAR_BOUNDS | sym::GRAPHEME_BOUNDS => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 strand.builtin_types().str_unicode_iter.create(
                     strand,
                     UnicodeIter::new(
@@ -214,7 +214,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::SCALAR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut scalars = me.chars();
                 let scalar = scalars.next().ok_or_else(|| {
                     Error::value(strand, "str.scalar: expected exactly one Unicode scalar")
@@ -229,7 +229,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::STARTS_WITH => {
-                let ([prefix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => prefix);
                 let prefix = prefix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
@@ -238,7 +238,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
-                let ([prefix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => prefix);
                 let borrow = this.str();
                 let prefix = prefix
                     .as_str(strand)
@@ -249,7 +249,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::ENDS_WITH => {
-                let ([suffix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => suffix);
                 let suffix = suffix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
@@ -258,7 +258,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
-                let ([suffix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => suffix);
                 let borrow = this.str();
                 let suffix = suffix
                     .as_str(strand)
@@ -271,7 +271,7 @@ impl<'v> Protocol<'v> for StrObj {
             sym::SPLIT | sym::RSPLIT => {
                 let method_sym = method.tag();
                 let limit = Sym::well_known(sym::LIMIT);
-                let ([delim], [limit]) = unpack!(strand, args, 1, 0, limit = None)?;
+                unpack!(strand, args => delim, ?:limit);
                 let limit_i64 = limit
                     .map(|l| {
                         l.to_i64(strand)
@@ -349,7 +349,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::JOIN => {
-                let ([], [arg]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?arg);
                 with_slots!(strand, |mut input, mut value| {
                     if let Some(arg) = arg {
                         arg.iter(strand, &mut input).await?
@@ -370,13 +370,13 @@ impl<'v> Protocol<'v> for StrObj {
                 })
             }
             sym::CHOMP => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let end = me.len() - iter::line_terminator_len(me.as_bytes());
                 Output::set(strand, out, &me[..end]);
                 Ok(())
             }
             sym::TRIM => {
-                let ([], [chars]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?chars);
                 let trimmed = match chars {
                     None => me.trim(),
                     Some(chars) => {
@@ -388,7 +388,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::TRIM_START => {
-                let ([], [chars]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?chars);
                 let trimmed = match chars {
                     None => me.trim_start(),
                     Some(chars) => {
@@ -400,7 +400,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::TRIM_END => {
-                let ([], [chars]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?chars);
                 let trimmed = match chars {
                     None => me.trim_end(),
                     Some(chars) => {
@@ -421,7 +421,7 @@ impl<'v> Protocol<'v> for StrObj {
             }
             sym::FIND | sym::RFIND => {
                 let range = Sym::well_known(sym::RANGE);
-                let ([needle], [range]) = unpack!(strand, args, 1, 0, range = None)?;
+                unpack!(strand, args => needle, ?:range);
                 let needle = needle
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
@@ -444,7 +444,7 @@ impl<'v> Protocol<'v> for StrObj {
             }
             sym::REPLACE => {
                 let range = Sym::well_known(sym::RANGE);
-                let ([from, to], [range]) = unpack!(strand, args, 2, 0, range = None)?;
+                unpack!(strand, args => from, to, ?:range);
                 let from = from
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "old value is not a string"))?;
@@ -473,7 +473,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::REPEAT => {
-                let ([count], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => count);
                 let count = count.to_index(strand)?;
                 let len = me
                     .len()
@@ -490,7 +490,7 @@ impl<'v> Protocol<'v> for StrObj {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([needle], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => needle);
                 let needle = needle
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
@@ -1045,7 +1045,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         if let Some(value) = value.as_str(strand) {
             with_str!(strand, value, |value| Output::set(strand, out, value));
             Ok(())
@@ -1163,7 +1163,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, value);
                 if let Some(value) = value.as_str(strand) {
                     with_str!(strand, value, |value| Output::set(strand, &mut out, value));
                 } else if let Some(value) = value.as_bin(strand) {

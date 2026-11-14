@@ -528,19 +528,13 @@ impl<'v> Object<'v> for Element {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
-        let namespace_sym = global.syms.namespace;
-        let namespaces_sym = global.syms.namespaces;
-        let attrs_sym = global.syms.attrs;
-        let ([tag], [namespace, namespaces, attrs], items) = unpack!(
-            strand,
-            args,
-            1,
-            0,
-            namespace_sym = None,
-            namespaces_sym = None,
-            attrs_sym = None,
-            *
-        )?;
+        unpack!(strand, args =>
+            tag,
+            ?(global.syms.namespace): namespace,
+            ?(global.syms.namespaces): namespaces,
+            ?(global.syms.attrs): attrs,
+            *items
+        );
         let name = Name {
             local: required_string(strand, &tag, "tag")?,
             namespace: optional_string(strand, namespace.as_deref(), "namespace")?,
@@ -680,7 +674,7 @@ impl<'v> Object<'v> for Element {
                 Ok(())
             })
             .method("push", async move |this, strand, args, out| {
-                let ([child], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => child);
                 check_child(strand, &child)?;
                 let borrow = this.borrow(strand)?;
                 let arr = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
@@ -689,7 +683,7 @@ impl<'v> Object<'v> for Element {
                 Ok(())
             })
             .method("traverse", async move |this, strand, args, mut out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 global
                     .traverse_iter_type

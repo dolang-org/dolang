@@ -153,7 +153,7 @@ async fn finish_open_manager<'v, 's>(
                 .types
                 .manager
                 .create(strand, ScManager(Some(inner)), &mut handle);
-            let result = call!(strand, block, out, &handle);
+            let result = call!(strand, block, &handle, out);
             let _ = method!(strand, &handle, global.syms.close, &mut tmp);
             result
         })
@@ -173,8 +173,7 @@ async fn open<'v, 's>(
     args: Args<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let access_sym = global.syms.access;
-    let ([], [block, access]) = unpack!(strand, args, 0, 1, access_sym = None)?;
+    unpack!(strand, args => ?block, ?(global.syms.access): access);
     let access = manager_access_from_value(strand, global, access).await?;
     let vfs = dolang_ext_shell::vfs(strand);
     let inner = dolang_vfs_winscm::ScManager::open(&vfs, access.into())
@@ -194,8 +193,7 @@ impl<'v> Object<'v> for ScManager {
         builder
             .method("open_service", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let access_sym = global.syms.access;
-                let ([name], [block, access]) = unpack!(strand, args, 1, 1, access_sym = None)?;
+                unpack!(strand, args => name, ?block, ?(global.syms.access): access);
                 let name = expect_str(strand, name, "name")?;
                 let access = service_access_from_value(strand, global, access).await?;
                 let inner = {
@@ -213,47 +211,20 @@ impl<'v> Object<'v> for ScManager {
             })
             .method("create_service", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let service_type_sym = global.syms.service_type;
-                let start_type_sym = global.syms.start_type;
-                let error_control_sym = global.syms.error_control;
-                let access_sym = global.syms.access;
-                let display_name_sym = global.syms.display_name;
-                let binary_path_sym = global.syms.binary_path;
-                let load_order_group_sym = global.syms.load_order_group;
-                let dependencies_sym = global.syms.dependencies;
-                let service_start_name_sym = global.syms.service_start_name;
-                let password_sym = global.syms.password;
-                let (
-                    [name],
-                    [
-                        block,
-                        display_name,
-                        binary_path,
-                        service_type,
-                        start_type,
-                        error_control,
-                        access,
-                        load_order_group,
-                        dependencies,
-                        service_start_name,
-                        password,
-                    ],
-                ) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    1,
-                    display_name_sym = None,
-                    binary_path_sym = None,
-                    service_type_sym = None,
-                    start_type_sym = None,
-                    error_control_sym = None,
-                    access_sym = None,
-                    load_order_group_sym = None,
-                    dependencies_sym = None,
-                    service_start_name_sym = None,
-                    password_sym = None
-                )?;
+                unpack!(strand, args =>
+                    name,
+                    ?block,
+                    ?(global.syms.display_name): display_name,
+                    ?(global.syms.binary_path): binary_path,
+                    ?(global.syms.service_type): service_type,
+                    ?(global.syms.start_type): start_type,
+                    ?(global.syms.error_control): error_control,
+                    ?(global.syms.access): access,
+                    ?(global.syms.load_order_group): load_order_group,
+                    ?(global.syms.dependencies): dependencies,
+                    ?(global.syms.service_start_name): service_start_name,
+                    ?(global.syms.password): password
+                );
                 let name = expect_str(strand, name, "name")?;
                 let display_name = display_name
                     .map(|value| expect_str(strand, value, "display_name"))
@@ -324,16 +295,10 @@ impl<'v> Object<'v> for ScManager {
                 "enumerate_services",
                 async move |this, strand, args, out| {
                     let global = strand.state::<Tag>();
-                    let service_type_sym = global.syms.service_type;
-                    let state_filter_sym = global.syms.state_filter;
-                    let ([], [service_type, state_filter]) = unpack!(
-                        strand,
-                        args,
-                        0,
-                        0,
-                        service_type_sym = None,
-                        state_filter_sym = None
-                    )?;
+                    unpack!(strand, args =>
+                        ?(global.syms.service_type): service_type,
+                        ?(global.syms.state_filter): state_filter
+                    );
                     let service_type =
                         service_type_from_value(strand, global, service_type, ServiceType::WIN32)
                             .await?;
@@ -364,7 +329,7 @@ impl<'v> Object<'v> for ScManager {
                 },
             )
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let inner = this.borrow_mut(strand)?.0.take();
                 match inner {
                     Some(inner) => inner.close().await.into_sys(strand),

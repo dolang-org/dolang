@@ -300,7 +300,7 @@ impl<'v> Object<'v> for Path {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<FsTag>();
-        let ([path], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => path);
         let path = any_path_from_value(strand, global, &path)?;
         let target = target_path_type(strand, global);
         let path = convert_path_kind(strand, path, target)?;
@@ -310,7 +310,7 @@ impl<'v> Object<'v> for Path {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.type_method("join", async move |_this, strand, args, out| {
             let global = strand.state::<FsTag>();
-            let ([], [], paths) = unpack!(strand, args, 0, 0, *)?;
+            unpack!(strand, args => *paths);
             let mut target = None;
             let mut buf = None;
             for slot in paths {
@@ -345,7 +345,7 @@ macro_rules! impl_concrete_path {
                 out: Slot<'v, 'a>,
             ) -> Result<'v, 's, ()> {
                 let global = strand.state::<FsTag>();
-                let ([path], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => path);
                 let path = concrete_path_from_value(strand, global, &path, $style)?;
                 let annex = PathAnnex::try_new(strand, path, global)?;
                 this.create_with_annex(strand, $path, annex, out);
@@ -470,29 +470,19 @@ macro_rules! impl_concrete_path {
                         file::open_file(strand, global, path, opt1, opt2, buffer, keys, out).await
                     })
                     .method("metadata", async move |this, strand, args, out| {
-                        let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
+                        unpack!(strand, args => ?:resolve);
                         let annex = this.annex();
                         let resolve = super::resolve_sym(strand, annex.global, resolve, Resolve::Target)?;
                         super::metadata(strand, annex.global, annex.as_path(), resolve, out).await
                     })
                     .method("fs_metadata", async move |this, strand, args, out| {
-                        let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
+                        unpack!(strand, args => ?:resolve);
                         let annex = this.annex();
                         let resolve = super::resolve_sym(strand, annex.global, resolve, Resolve::Target)?;
                         super::fs_metadata(strand, annex.global, annex.as_path(), resolve, out).await
                     })
                     .method("sec_desc", async move |this, strand, args, out| {
-                        let ([], [owner, group, dacl, sacl, resolve]) = unpack!(
-                            strand,
-                            args,
-                            0,
-                            0,
-                            owner = None,
-                            group = None,
-                            dacl = None,
-                            sacl = None,
-                            resolve = None
-                        )?;
+                        unpack!(strand, args => ?:owner, ?:group, ?:dacl, ?:sacl, ?:resolve);
                         let mask = super::sec_desc_mask(strand, owner, group, dacl, sacl)?;
                         let annex = this.annex();
                         let resolve = super::resolve_sym(strand, annex.global, resolve, Resolve::Target)?;
@@ -500,15 +490,7 @@ macro_rules! impl_concrete_path {
                             .await
                     })
                     .method("acl", async move |this, strand, args, out| {
-                        let ([], [kind, default, resolve]) = unpack!(
-                            strand,
-                            args,
-                            0,
-                            0,
-                            kind_acl = None,
-                            default_acl = None,
-                            resolve = None
-                        )?;
+                        unpack!(strand, args => ?kind_acl: kind, ?default_acl: default, ?:resolve);
                         let annex = this.annex();
                         let kind = crate::security::acl_kind_sym(strand, kind)?;
                         let default = super::acl_default(strand, default.as_deref())?;
@@ -525,15 +507,12 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("set_acl", async move |this, strand, args, _out| {
-                        let ([acl_value], [kind, default, resolve]) = unpack!(
-                            strand,
-                            args,
-                            1,
-                            0,
-                            kind_acl = None,
-                            default_acl = None,
-                            resolve = None
-                        )?;
+                        unpack!(strand, args =>
+                            acl_value,
+                            ?kind_acl: kind,
+                            ?default_acl: default,
+                            ?:resolve
+                        );
                         let annex = this.annex();
                         let (kind, acl) = crate::security::resolve_acl_input(
                             strand,
@@ -556,8 +535,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("update_sec_desc", async move |this, strand, args, _out| {
-                        let ([], [resolve], rest) =
-                            unpack!(strand, args, 0, 0, resolve = None, ...)?;
+                        unpack!(strand, args => ?:resolve, ...rest);
                         let annex = this.annex();
                         let windows = strand.force_state::<WindowsSecurityTag>();
                         let descriptor = crate::security::sec_desc_from_args(
@@ -578,8 +556,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("xattrs", async move |this, strand, args, out| {
-                        let ([], [namespace, resolve]) =
-                            unpack!(strand, args, 0, 0, namespace = None, resolve = None)?;
+                        unpack!(strand, args => ?:namespace, ?:resolve);
                         let annex = this.annex();
                         super::xattr::path_list(
                             strand,
@@ -592,7 +569,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("streams", async move |this, strand, args, out| {
-                        let ([], [resolve]) = unpack!(strand, args, 0, 0, resolve = None)?;
+                        unpack!(strand, args => ?:resolve);
                         let annex = this.annex();
                         super::stream::path_list(
                             strand,
@@ -604,8 +581,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("xattr", async move |this, strand, args, out| {
-                        let ([name], [namespace, resolve]) =
-                            unpack!(strand, args, 1, 0, namespace = None, resolve = None)?;
+                        unpack!(strand, args => name, ?:namespace, ?:resolve);
                         let annex = this.annex();
                         super::xattr::path_get(
                             strand,
@@ -619,8 +595,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("set_xattr", async move |this, strand, args, _out| {
-                        let ([name, value], [namespace, resolve]) =
-                            unpack!(strand, args, 2, 0, namespace = None, resolve = None)?;
+                        unpack!(strand, args => name, value, ?:namespace, ?:resolve);
                         let annex = this.annex();
                         super::xattr::path_set(
                             strand,
@@ -634,8 +609,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("remove_xattr", async move |this, strand, args, _out| {
-                        let ([name], [namespace, resolve]) =
-                            unpack!(strand, args, 1, 0, namespace = None, resolve = None)?;
+                        unpack!(strand, args => name, ?:namespace, ?:resolve);
                         let annex = this.annex();
                         super::xattr::path_remove(
                             strand,
@@ -648,32 +622,32 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("exists", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         super::exists(strand, annex.global, annex.as_path(), out).await
                     })
                     .method("read", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         super::read(strand, annex.global, annex.as_path(), false, out).await
                     })
                     .method("read_str", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         super::read(strand, annex.global, annex.as_path(), true, out).await
                     })
                     .method("write", async move |this, strand, args, out| {
-                        let ([data], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => data);
                         let annex = this.annex();
                         super::write(strand, annex.global, annex.as_path(), data, out).await
                     })
                     .method("append", async move |this, strand, args, out| {
-                        let ([data], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => data);
                         let annex = this.annex();
                         super::append(strand, annex.global, annex.as_path(), data, out).await
                     })
                     .method("set_size", async move |this, strand, args, _out| {
-                        let ([size], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => size);
                         let size = size.to_i64(strand).map_err(|_| {
                             Error::type_error(strand, "size must be a non-negative integer")
                         })?;
@@ -684,7 +658,7 @@ macro_rules! impl_concrete_path {
                         super::set_size(strand, annex.global, annex.as_path(), size).await
                     })
                     .method("sync", async move |this, strand, args, _out| {
-                        let ([], [data]) = unpack!(strand, args, 0, 0, data_kw = None)?;
+                        unpack!(strand, args => ?data_kw: data);
                         let data = data
                             .map(|data| crate::util::bool(strand, data, "data"))
                             .transpose()?
@@ -693,8 +667,7 @@ macro_rules! impl_concrete_path {
                         super::sync_file(strand, annex.global, annex.as_path(), data).await
                     })
                     .method("copy", async move |this, strand, args, _out| {
-                        let ([to], [all, stop, follow]) =
-                            unpack!(strand, args, 1, 0, all = None, stop = None, follow = None)?;
+                        unpack!(strand, args => to, ?:all, ?:stop, ?:follow);
                         let all = match all {
                             Some(v) => v
                                 .as_bool(strand)
@@ -717,7 +690,7 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("rename", async move |this, strand, args, _out| {
-                        let ([to], [replace]) = unpack!(strand, args, 1, 0, replace = None)?;
+                        unpack!(strand, args => to, ?:replace);
                         let to = path_from_value(strand, &to)?;
                         let replace = replace
                             .map(|value| crate::util::bool(strand, value, "replace"))
@@ -728,8 +701,7 @@ macro_rules! impl_concrete_path {
                             .await
                     })
                     .method("move", async move |this, strand, args, _out| {
-                        let ([to], [all, stop]) =
-                            unpack!(strand, args, 1, 0, all = None, stop = None)?;
+                        unpack!(strand, args => to, ?:all, ?:stop);
                         let all = match all {
                             Some(v) => v
                                 .as_bool(strand)
@@ -743,24 +715,24 @@ macro_rules! impl_concrete_path {
                             .await
                     })
                     .method("hard_link", async move |this, strand, args, _out| {
-                        let ([to], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => to);
                         let to = path_from_value(strand, &to)?;
                         let annex = this.annex();
                         super::hard_link(strand, annex.global, annex.as_path(), to.to_path()).await
                     })
                     .method("entries", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         super::entries(strand, annex.global, annex.as_path().to_path_buf(), out)
                             .await
                     })
                     .method("canonical", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         super::path_canonical(strand, annex.global, annex.as_path(), out).await
                     })
                     .method("read_link", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         let global = annex.global;
                         let path = super::prepend_cwd(strand, global, annex.as_path())?;
@@ -772,8 +744,7 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("remove", async move |this, strand, args, _out| {
-                        let ([], [all, ignore, stop]) =
-                            unpack!(strand, args, 0, 0, all = None, ignore = None, stop = None)?;
+                        unpack!(strand, args => ?:all, ?:ignore, ?:stop);
                         let all = match all {
                             Some(v) => v
                                 .as_bool(strand)
@@ -792,7 +763,7 @@ macro_rules! impl_concrete_path {
                             .await
                     })
                     .method("create_dir", async move |this, strand, args, _out| {
-                        let ([], [all]) = unpack!(strand, args, 0, 0, all = None)?;
+                        unpack!(strand, args => ?:all);
                         let all = match all {
                             Some(v) => v
                                 .as_bool(strand)
@@ -803,8 +774,7 @@ macro_rules! impl_concrete_path {
                         super::create_dir(strand, annex.global, annex.as_path(), all).await
                     })
                     .method("remove_dir", async move |this, strand, args, _out| {
-                        let ([], [all, ignore]) =
-                            unpack!(strand, args, 0, 0, all = None, ignore = None)?;
+                        unpack!(strand, args => ?:all, ?:ignore);
                         let all = match all {
                             Some(v) => v
                                 .as_bool(strand)
@@ -821,84 +791,42 @@ macro_rules! impl_concrete_path {
                         super::remove_dir(strand, annex.global, annex.as_path(), all, ignore).await
                     })
                     .method("update_metadata", async move |this, strand, args, _out| {
-                        let (
-                            [],
-                            [
-                                mode,
-                                owner,
-                                group,
-                                modified,
-                                accessed,
-                                created,
-                                resolve,
-                                readonly,
-                                hidden,
-                                system,
-                                archive,
-                                compressed,
-                                sparse,
-                                temporary,
-                                offline,
-                                not_content_indexed,
-                                immutable,
-                                append_only,
-                                no_dump,
-                                no_atime,
-                                no_copy_on_write,
-                                dir_sync,
-                                casefold,
-                                data_journaling,
-                                no_compress,
-                                project_inherit,
-                                secure_delete,
-                                sync,
-                                no_tail_merge,
-                                top_dir,
-                                undelete,
-                                direct_access,
-                                extent_format,
-                                opaque,
-                            ],
-                        ) = unpack!(
-                            strand,
-                            args,
-                            0,
-                            0,
-                            mode = None,
-                            owner = None,
-                            group = None,
-                            modified = None,
-                            accessed = None,
-                            created = None,
-                            resolve = None,
-                            readonly = None,
-                            hidden = None,
-                            system = None,
-                            archive = None,
-                            compressed = None,
-                            sparse = None,
-                            temporary = None,
-                            offline = None,
-                            not_content_indexed = None,
-                            immutable = None,
-                            append_only = None,
-                            no_dump = None,
-                            no_atime = None,
-                            no_copy_on_write = None,
-                            dir_sync = None,
-                            casefold = None,
-                            data_journaling = None,
-                            no_compress = None,
-                            project_inherit = None,
-                            secure_delete = None,
-                            sync = None,
-                            no_tail_merge = None,
-                            top_dir = None,
-                            undelete = None,
-                            direct_access = None,
-                            extent_format = None,
-                            opaque = None
-                        )?;
+                        unpack!(strand, args =>
+                            ?:mode,
+                            ?:owner,
+                            ?:group,
+                            ?:modified,
+                            ?:accessed,
+                            ?:created,
+                            ?:resolve,
+                            ?:readonly,
+                            ?:hidden,
+                            ?:system,
+                            ?:archive,
+                            ?:compressed,
+                            ?:sparse,
+                            ?:temporary,
+                            ?:offline,
+                            ?:not_content_indexed,
+                            ?:immutable,
+                            ?:append_only,
+                            ?:no_dump,
+                            ?:no_atime,
+                            ?:no_copy_on_write,
+                            ?:dir_sync,
+                            ?:casefold,
+                            ?:data_journaling,
+                            ?:no_compress,
+                            ?:project_inherit,
+                            ?:secure_delete,
+                            ?:sync,
+                            ?:no_tail_merge,
+                            ?:top_dir,
+                            ?:undelete,
+                            ?:direct_access,
+                            ?:extent_format,
+                            ?:opaque
+                        );
                         let attrs = super::attrs_patch(
                             strand,
                             [
@@ -952,12 +880,12 @@ macro_rules! impl_concrete_path {
                 let builder = if matches!($style, vfs_path::Kind::Windows) {
                     builder
                         .method("read_junction", async move |this, strand, args, out| {
-                            let ([], []) = unpack!(strand, args, 0, 0)?;
+                            unpack!(strand, args =>);
                             let annex = this.annex();
                             super::read_junction(strand, annex.global, annex.as_path(), out).await
                         })
                         .method("set_junction", async move |this, strand, args, _out| {
-                            let ([target], []) = unpack!(strand, args, 1, 0)?;
+                            unpack!(strand, args => target);
                             let annex = this.annex();
                             super::set_junction(strand, annex.global, annex.as_path(), &target)
                                 .await
@@ -1049,15 +977,7 @@ macro_rules! impl_concrete_path {
                         Ok(())
                     })
                     .method("glob", async move |this, strand, args, out| {
-                        let ([pattern], [max_depth, stop, follow]) = unpack!(
-                            strand,
-                            args,
-                            1,
-                            0,
-                            max_depth = None,
-                            stop = None,
-                            follow = None
-                        )?;
+                        unpack!(strand, args => pattern, ?:max_depth, ?:stop, ?:follow);
                         let annex = this.annex();
                         super::glob(
                             strand,
@@ -1072,29 +992,29 @@ macro_rules! impl_concrete_path {
                         .await
                     })
                     .method("normalize", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         let normalized = annex.as_path().normalize();
                         create_path(strand, annex.global, normalized, out)?;
                         Ok(())
                     })
                     .method("absolute", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         path_absolute(strand, annex.global, annex.as_path(), out)
                     })
                     .method("relative", async move |this, strand, args, out| {
-                        let ([], [base]) = unpack!(strand, args, 0, 1)?;
+                        unpack!(strand, args => ?base);
                         let annex = this.annex();
                         path_relative(strand, annex.global, annex.as_path(), base, out)
                     })
                     .method("shorten", async move |this, strand, args, out| {
-                        let ([], [base]) = unpack!(strand, args, 0, 1)?;
+                        unpack!(strand, args => ?base);
                         let annex = this.annex();
                         path_shorten(strand, annex.global, annex.as_path(), base, out)
                     })
                     .method("add_ext", async move |this, strand, args, out| {
-                        let ([ext], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => ext);
                         let ext = expect_str(strand, &ext)?;
                         let annex = this.annex();
                         rewrite_path(strand, &annex, out, |path| {
@@ -1110,14 +1030,14 @@ macro_rules! impl_concrete_path {
                         })
                     })
                     .method("without_ext", async move |this, strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         let annex = this.annex();
                         rewrite_path(strand, &annex, out, |path| {
                             let _ = path.set_extension("");
                         })
                     })
                     .method("with_ext", async move |this, strand, args, out| {
-                        let ([ext], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => ext);
                         let ext = expect_str(strand, &ext)?;
                         let annex = this.annex();
                         rewrite_path(strand, &annex, out, |path| {
@@ -1125,13 +1045,13 @@ macro_rules! impl_concrete_path {
                         })
                     })
                     .method("with_name", async move |this, strand, args, out| {
-                        let ([name], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => name);
                         let name = expect_str(strand, &name)?;
                         let annex = this.annex();
                         rewrite_path(strand, &annex, out, |path| path.set_file_name(name))
                     })
                     .method("with_stem", async move |this, strand, args, out| {
-                        let ([stem], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => stem);
                         let stem = expect_str(strand, &stem)?;
                         let annex = this.annex();
                         rewrite_path(strand, &annex, out, |path| {
@@ -1148,7 +1068,7 @@ macro_rules! impl_concrete_path {
                             vfs_path::Kind::Unix => vfs_path::PathBuf::from_unix(""),
                             vfs_path::Kind::Windows => vfs_path::PathBuf::from_windows(""),
                         };
-                        let ([], [], paths) = unpack!(strand, args, 0, 0, *)?;
+                        unpack!(strand, args => *paths);
                         for slot in paths {
                             let path = concrete_path_from_value(strand, global, &slot, $style)?;
                             buf.push(path.as_str());

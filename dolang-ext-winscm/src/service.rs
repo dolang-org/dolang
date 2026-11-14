@@ -39,7 +39,7 @@ pub(crate) async fn finish_open_service<'v, 's>(
                 .types
                 .service
                 .create(strand, Service(Some(inner)), &mut handle);
-            let result = call!(strand, block, out, &handle);
+            let result = call!(strand, block, &handle, out);
             let _ = method!(strand, &handle, global.syms.close, &mut tmp);
             result
         })
@@ -108,7 +108,7 @@ impl<'v> Object<'v> for Service {
         let sacl = builder.sym("sacl");
         builder
             .method("delete", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let service = borrow
                     .0
@@ -117,7 +117,7 @@ impl<'v> Object<'v> for Service {
                 service.delete().await.into_sys(strand)
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let inner = this.borrow_mut(strand)?.0.take();
                 match inner {
                     Some(inner) => inner.close().await.into_sys(strand),
@@ -125,7 +125,7 @@ impl<'v> Object<'v> for Service {
                 }
             })
             .method("start", async move |this, strand, args, _out| {
-                let ([], [], rest) = unpack!(strand, args, 0, 0, *)?;
+                unpack!(strand, args => *rest);
                 let mut start_args = Vec::with_capacity(rest.len());
                 for value in rest {
                     start_args.push(expect_str(strand, value, "start argument")?);
@@ -139,7 +139,7 @@ impl<'v> Object<'v> for Service {
             })
             .method("control", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let ([control], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => control);
                 let control = convert::service_control_from_sym(strand, global, control)?;
                 let status = {
                     let borrow = this.borrow(strand)?;
@@ -154,7 +154,7 @@ impl<'v> Object<'v> for Service {
             })
             .method("query_status", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let status = {
                     let borrow = this.borrow(strand)?;
                     let service = borrow
@@ -168,7 +168,7 @@ impl<'v> Object<'v> for Service {
             })
             .method("config", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let config = {
                     let borrow = this.borrow(strand)?;
                     let service = borrow
@@ -187,43 +187,17 @@ impl<'v> Object<'v> for Service {
             })
             .method("update_config", async move |this, strand, args, _out| {
                 let global = strand.state::<Tag>();
-                let service_type = global.syms.service_type;
-                let start_type = global.syms.start_type;
-                let error_control = global.syms.error_control;
-                let binary_path = global.syms.binary_path;
-                let load_order_group = global.syms.load_order_group;
-                let dependencies = global.syms.dependencies;
-                let service_start_name = global.syms.service_start_name;
-                let password = global.syms.password;
-                let display_name = global.syms.display_name;
-                let (
-                    [],
-                    [
-                        service_type,
-                        start_type,
-                        error_control,
-                        binary_path,
-                        load_order_group,
-                        dependencies,
-                        service_start_name,
-                        password,
-                        display_name,
-                    ],
-                ) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    service_type = None,
-                    start_type = None,
-                    error_control = None,
-                    binary_path = None,
-                    load_order_group = None,
-                    dependencies = None,
-                    service_start_name = None,
-                    password = None,
-                    display_name = None
-                )?;
+                unpack!(strand, args =>
+                    ?(global.syms.service_type): service_type,
+                    ?(global.syms.start_type): start_type,
+                    ?(global.syms.error_control): error_control,
+                    ?(global.syms.binary_path): binary_path,
+                    ?(global.syms.load_order_group): load_order_group,
+                    ?(global.syms.dependencies): dependencies,
+                    ?(global.syms.service_start_name): service_start_name,
+                    ?(global.syms.password): password,
+                    ?(global.syms.display_name): display_name
+                );
                 let service_type = match service_type {
                     Some(value) => Some(global.types.service_type.coerce(strand, &value).await?),
                     None => None,
@@ -283,7 +257,7 @@ impl<'v> Object<'v> for Service {
                 "wait_for_status_change",
                 async move |this, strand, args, out| {
                     let global = strand.state::<Tag>();
-                    let ([mask], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => mask);
                     let mask = global.types.notify_mask.coerce(strand, &mask).await?;
                     let status = {
                         let borrow = this.borrow(strand)?;
@@ -301,17 +275,8 @@ impl<'v> Object<'v> for Service {
                 },
             )
             .method("sec_desc", async move |this, strand, args, out| {
-                let ([], [owner_arg, group_arg, dacl_arg, sacl_arg]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    owner = None,
-                    group = None,
-                    dacl = None,
-                    sacl = None
-                )?;
-                let mask = sec_desc_mask(strand, owner_arg, group_arg, dacl_arg, sacl_arg)?;
+                unpack!(strand, args => ?:owner, ?:group, ?:dacl, ?:sacl);
+                let mask = sec_desc_mask(strand, owner, group, dacl, sacl)?;
                 let descriptor = {
                     let borrow = this.borrow(strand)?;
                     let service = borrow

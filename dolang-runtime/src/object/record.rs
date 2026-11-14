@@ -527,16 +527,16 @@ impl<'v> Protocol<'v> for Record<'v> {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let default_key = Sym::well_known(sym::DEFAULT);
+        let default = Sym::well_known(sym::DEFAULT);
         let else_key = Sym::well_known(sym::ELSE);
         match method.tag() {
             sym::CLEAR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.borrow_mut(strand)?.clear_items();
                 Ok(())
             }
             sym::INSERT => {
-                let ([key, mut value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => key, mut value);
                 let key = Key::new(strand, &key)?;
                 if this.borrow_mut(strand)?.insert(key, value.take()) {
                     Ok(())
@@ -558,8 +558,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 Ok(())
             }
             sym::GET => {
-                let ([key], [instance_arg, default, or_else]) =
-                    unpack!(strand, args, 1, 1, default_key = None, else_key = None)?;
+                unpack!(strand, args => key, ?instance_arg, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -575,8 +574,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
             }
             sym::POP => {
-                let ([key], [instance_arg, default, or_else]) =
-                    unpack!(strand, args, 1, 1, default_key = None, else_key = None)?;
+                unpack!(strand, args => key, ?instance_arg, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -597,22 +595,22 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
             }
             sym::DELETE => {
-                let ([key], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => key);
                 let key = Key::new(strand, &key)?;
                 let deleted = this.borrow_mut(strand)?.delete(&key);
                 Output::set(strand, out, deleted);
                 Ok(())
             }
             sym::PAIRS => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Iter::create(strand, &this, Mode::Pairs, out)
             }
             sym::KEYS => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Iter::create(strand, &this, Mode::Keys, out)
             }
             sym::VALUES => {
-                let ([], [key]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?key);
                 let mode = match key.map(|key| Key::new(strand, &key)).transpose()? {
                     None => Mode::Values,
                     Some(Key::Sym(key)) => Mode::KeyValues(key.tag()),
@@ -628,7 +626,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 Iter::create(strand, &this, mode, out)
             }
             sym::COUNT => {
-                let ([], [key]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?key);
                 let key = key.map(|key| Key::new(strand, &key)).transpose()?;
                 let count = this.borrow(strand)?.count(key.as_ref());
                 let count = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
@@ -636,7 +634,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([key], [expected]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => key, ?expected);
                 let key = Key::new(strand, &key)?;
                 let borrow = this.borrow(strand)?;
                 let found = match (&key, expected) {
@@ -670,12 +668,12 @@ impl<'v> Protocol<'v> for Record<'v> {
                 Ok(())
             }
             sym::COPY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver)
+                        call!(strand, &ty, &receiver, out)
                     });
                 }
                 let copy = Record::from_items(this.borrow(strand)?.snapshot());
@@ -998,9 +996,9 @@ impl<'v> Protocol<'v> for Class {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().record, &mut native, items)?;
+                    call!(strand, &strand.singletons().record, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().record, native.take())?;
                     Ok(())
                 })
@@ -1056,7 +1054,7 @@ impl<'v> Protocol<'v> for Class {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([source], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => source);
         let items = pack::source_items(strand, &source).await?;
         strand
             .builtin_types()

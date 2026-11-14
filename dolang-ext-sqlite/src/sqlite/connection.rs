@@ -248,7 +248,7 @@ impl<'v> Object<'v> for Connection {
             .method_with_slots(
                 "prepare",
                 async move |this, strand, args, out, [mut wrapper, mut tmp]| {
-                    let ([sql], [block]) = unpack!(strand, args, 1, 1)?;
+                    unpack!(strand, args => sql, ?block);
                     let template = compile_template(strand, &sql)?;
 
                     let stmt = create_statement(strand, &this.annex(), &template.sql).await?;
@@ -257,7 +257,7 @@ impl<'v> Object<'v> for Connection {
 
                     if let Some(block) = block {
                         // Call the block with the statement handle
-                        let result = call!(strand, block, out, &wrapper);
+                        let result = call!(strand, block, &wrapper, out);
 
                         // Always close the statement, even on error
                         with_interrupt_mask!(strand, InterruptMask::all(), {
@@ -274,7 +274,7 @@ impl<'v> Object<'v> for Connection {
             .method_with_slots(
                 "execute",
                 async move |this, strand, args, out, [mut wrapper, tmp]| {
-                    let ([sql], [], args) = unpack!(strand, args, 1, 0, ...)?;
+                    unpack!(strand, args => sql, ...args);
                     let template = compile_template(strand, &sql)?;
 
                     let stmt = create_statement(strand, &this.annex(), &template.sql).await?;
@@ -292,7 +292,7 @@ impl<'v> Object<'v> for Connection {
                 async move |this, strand, args, mut out, [mut tmp]| {
                     let annex = this.annex();
                     let global = annex.global;
-                    let ([block], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => block);
 
                     let mut retries = annex.busy_retries;
                     let mut wait = annex.busy_min_wait;
@@ -340,7 +340,7 @@ impl<'v> Object<'v> for Connection {
             )
             .method("close", async move |this, strand, args, _out| {
                 let annex = this.annex();
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 annex.pending_close.set(true);
                 annex.with_raw(strand, move |_| Ok(())).await
             })
@@ -467,7 +467,7 @@ async fn transact<'v, 's, 'a>(
         );
 
         // Call the block with the transaction handle
-        call!(strand, &block, out, &wrapper)
+        call!(strand, &block, &wrapper, out)
     })
 }
 
@@ -504,7 +504,7 @@ impl<'v> Object<'v> for Transaction {
                             return Err(Error::concurrency_msg(strand, "stale transaction"));
                         }
 
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
 
                         conn.annex().in_transaction.set(false);
                         conn.annex().bump_epoch();
@@ -529,7 +529,7 @@ impl<'v> Object<'v> for Transaction {
                             return Err(Error::concurrency_msg(strand, "stale transaction"));
                         }
 
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
 
                         conn.annex().in_transaction.set(false);
                         conn.annex().bump_epoch();

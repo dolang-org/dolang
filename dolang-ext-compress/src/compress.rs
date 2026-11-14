@@ -352,7 +352,7 @@ impl<'v> Object<'v> for Decompressor {
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let size: Option<usize> = size
                     .map(|size| {
                         size.to_i64(strand)
@@ -390,7 +390,7 @@ impl<'v> Object<'v> for Decompressor {
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let reader = this.borrow_mut(strand)?.reader.take();
                 if let Some(mut reader) = reader {
                     // Closes it for the handles lent out too.
@@ -480,7 +480,7 @@ impl<'v> Object<'v> for Compressor {
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let writer = this.borrow_mut(strand)?.writer.take();
                 let Some(mut writer) = writer else {
                     return Ok(());
@@ -508,13 +508,13 @@ fn format_and_block<'v, 'a>(
 
 pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     let close = builder.sym("close");
-    let level_sym = builder.sym("level");
+    let level = builder.sym("level");
     builder
         .module("compress")
         .value("Compressor", global.types.compressor)
         .value("Decompressor", global.types.decompressor)
         .function("decompress", async move |strand, args, out| {
-            let ([source], [opt1, opt2]) = unpack!(strand, args, 1, 2)?;
+            unpack!(strand, args => source, ?opt1, ?opt2);
             let (format, block) = format_and_block(strand, opt1, opt2);
             let format = match format {
                 Some(format) => parse_format(strand, global, &format, true)?,
@@ -557,7 +557,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             if let Some(block) = block {
                 with_slots!(strand, |mut wrapper, mut tmp| {
                     ty.create_with_annex(strand, state, annex, &mut wrapper);
-                    let result = call!(strand, block, out, &wrapper);
+                    let result = call!(strand, block, &wrapper, out);
                     let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
                         method!(strand, &wrapper, close, &mut tmp)
                     });
@@ -569,7 +569,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             }
         })
         .function("compress", async move |strand, args, out| {
-            let ([sink, format], [block, level]) = unpack!(strand, args, 2, 1, level_sym = None)?;
+            unpack!(strand, args => sink, format, ?block, ?:level);
             let format = parse_format(strand, global, &format, false)?
                 .expect("`:AUTO:` is rejected for compression");
             let level = parse_level(strand, global, level)?;
@@ -584,7 +584,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             if let Some(block) = block {
                 with_slots!(strand, |mut wrapper, mut tmp| {
                     ty.create_with_annex(strand, state, annex, &mut wrapper);
-                    let result = call!(strand, block, out, &wrapper);
+                    let result = call!(strand, block, &wrapper, out);
                     let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
                         method!(strand, &wrapper, close, &mut tmp)
                     });

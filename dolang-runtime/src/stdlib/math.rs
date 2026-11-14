@@ -40,7 +40,7 @@ async fn unary<'v, 'a, 's>(
     name: &'static str,
     op: fn(f64) -> f64,
 ) -> Result<'v, 's, ()> {
-    let ([value], []) = unpack!(strand, args, 1, 0)?;
+    unpack!(strand, args => value);
     let value = as_float(strand, &value, name)?;
     Output::set(strand, out, op(value));
     Ok(())
@@ -53,7 +53,7 @@ async fn binary<'v, 'a, 's>(
     name: &'static str,
     op: fn(f64, f64) -> f64,
 ) -> Result<'v, 's, ()> {
-    let ([left, right], []) = unpack!(strand, args, 2, 0)?;
+    unpack!(strand, args => left, right);
     let left = as_float(strand, &left, name)?;
     let right = as_float(strand, &right, name)?;
     Output::set(strand, out, op(left, right));
@@ -72,7 +72,7 @@ async fn gcd<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([first], [], rest) = unpack!(strand, args, 1, 0, *)?;
+    unpack!(strand, args => first, *rest);
     let mut result = as_int(strand, &first, "gcd")?.unsigned_abs();
     for value in rest {
         result = gcd_pair(result, as_int(strand, &value, "gcd")?.unsigned_abs());
@@ -87,7 +87,7 @@ async fn lcm<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([first], [], rest) = unpack!(strand, args, 1, 0, *)?;
+    unpack!(strand, args => first, *rest);
     let mut result = as_int(strand, &first, "lcm")?.unsigned_abs();
     if result > i128::MAX as u128 {
         return Err(Error::overflow(strand));
@@ -137,7 +137,7 @@ async fn pow<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([base, exponent], []) = unpack!(strand, args, 2, 0)?;
+    unpack!(strand, args => base, exponent);
     let base_prim = base.to_prim(strand)?;
     let exponent_prim = exponent.to_prim(strand)?;
     match (base_prim, exponent_prim) {
@@ -167,7 +167,7 @@ async fn hypot<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let ([first, second], [], rest) = unpack!(strand, args, 2, 0, *)?;
+    unpack!(strand, args => first, second, *rest);
     let mut result = as_float(strand, &first, "hypot")?.hypot(as_float(strand, &second, "hypot")?);
     for value in rest {
         result = result.hypot(as_float(strand, &value, "hypot")?);
@@ -227,10 +227,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 binary(strand, args, out, "copysign", f64::copysign).await
             })
             .function("log", async move |strand, args, out| {
-                let ([value, base_value], []) = unpack!(strand, args, 1, 0, base)?;
+                unpack!(strand, args => value, :base);
                 let value = as_float(strand, &value, "log")?;
-                let base_value = as_float(strand, &base_value, "log")?;
-                Output::set(strand, out, value.log(base_value));
+                let base = as_float(strand, &base, "log")?;
+                Output::set(strand, out, value.log(base));
                 Ok(())
             })
             .function("pow", pow)

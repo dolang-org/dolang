@@ -820,7 +820,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ///
     /// ```ignore
     /// .function("add", async |strand, args, out| {
-    ///     let ([a, b], []) = unpack!(strand, args, 2, 0)?;
+    ///     unpack!(strand, args => a, b);
     ///     let a = a.as_i64(strand).ok_or_else(|| Error::type_error(strand, "expected Int"))?;
     ///     let b = b.as_i64(strand).ok_or_else(|| Error::type_error(strand, "expected Int"))?;
     ///     Output::set(strand, out, a + b);
@@ -1441,7 +1441,7 @@ impl<'v> Builder<'v> {
                 vtbl,
                 NativeFunction::new(
                     async move |strand, args, out| {
-                        let ([name], _) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => name);
                         let name = name.to_string(strand)?;
                         import(strand, &name, out).await
                     },

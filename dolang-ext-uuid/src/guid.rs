@@ -100,7 +100,7 @@ impl<'v> Object<'v> for Guid {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let id = value_to_guid(strand, &value)?;
         create_guid(strand, id, out);
         Ok(())
@@ -156,7 +156,7 @@ impl<'v> Object<'v> for Guid {
                 Ok(())
             })
             .type_method("generate", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 create_guid_with_global(global, strand, dolang_winterop::guid::Guid::new_v4(), out);
                 Ok(())

@@ -39,7 +39,7 @@ impl<'v> Object<'v> for HostConsole {
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 global
                     .terminal
@@ -73,7 +73,7 @@ impl<'v> Object<'v> for HostConsole {
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let ov = &global.terminal.console_override;
                 // The real terminal is queried even under takeover (a

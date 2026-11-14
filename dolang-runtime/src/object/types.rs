@@ -107,7 +107,7 @@ impl<'v> Protocol<'v> for Value {
             // Unbound `Value.(eq)` and `Value.(ne)` skip the operands' own
             // comparisons and test for the same value.
             tag @ (sym::EQ_METHOD | sym::NE_METHOD) if this.delegator().is_none() => {
-                let ([left, right], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => left, right);
                 let same = left.repr_eq(&right);
                 Output::set(strand, out, same == (tag == sym::EQ_METHOD));
                 Ok(())
@@ -193,7 +193,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CALL_METHOD => {
-                let ([receiver], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                unpack!(strand, args => receiver, ...trailing);
                 if !receiver.is_instance_of(strand, &strand.singletons().type_obj) {
                     return Err(Error::type_error(
                         strand,
@@ -301,7 +301,7 @@ impl<'v> Protocol<'v> for Bool {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let value = value
             .as_bool(strand)
             .ok_or_else(|| Error::type_error(strand, "Bool: expected Bool"))?;

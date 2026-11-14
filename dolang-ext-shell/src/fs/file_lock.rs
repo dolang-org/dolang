@@ -43,7 +43,7 @@ impl<'v> Object<'v> for FileLock {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.method("release", async move |this, strand, args, _out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             with_interrupt_mask!(strand, InterruptMask::all(), {
                 FileLock::release(this, strand).await
             })

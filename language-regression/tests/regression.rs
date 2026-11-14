@@ -116,7 +116,7 @@ mod detail {
             args: Args<'v, 'a>,
             out: Slot<'v, 'a>,
         ) -> runtime::Result<'v, 's, ()> {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             if method.as_str(strand) != "dynamic_method" {
                 return Err(Error::field(strand, method));
             }
@@ -227,7 +227,7 @@ mod detail {
             args: Args<'v, 'a>,
             out: Slot<'v, 'a>,
         ) -> runtime::Result<'v, 's, ()> {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             this.create(
                 strand,
                 Counter {
@@ -248,13 +248,13 @@ mod detail {
                 })
                 // Stops providing `BumpTag`
                 .method("close", async move |this, strand, args, _out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     this.borrow_mut(strand)?.closed = true;
                     Ok(())
                 })
                 // Calls `f` while holding a mutable borrow of the counter
                 .method("while_borrowed", async move |this, strand, args, out| {
-                    let ([f], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => f);
                     let _guard = this.borrow_mut(strand)?;
                     call!(strand, f, out)
                 })
@@ -421,7 +421,7 @@ mod detail {
             args: Args<'v, 'a>,
             out: Slot<'v, 'a>,
         ) -> runtime::Result<'v, 's, ()> {
-            let ([data, ahead, modes], []) = unpack!(strand, args, 3, 0)?;
+            unpack!(strand, args => data, ahead, modes);
             let data = bin_arg(strand, &data)?;
             let ahead = ahead
                 .as_int(strand)
@@ -486,7 +486,7 @@ mod detail {
 
         fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
             builder.method("written", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let written = this.borrow(strand)?.written.clone();
                 let written = written.ok_or_else(|| Error::value(strand, "not duplex"))?;
                 let bytes = written.lock().unwrap().clone();
@@ -727,13 +727,13 @@ mod detail {
         ) -> TypeBuilder<'v, 'a, Flags<Self>> {
             builder
                 .method("is_exec", async move |this, strand, args, out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     Output::set(strand, out, this.flags().0 & 4 != 0);
                     Ok(())
                 })
                 // Exercises type-method forwarding through Do subclasses.
                 .type_method("from_raw", async move |this, strand, args, out| {
-                    let ([value], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => value);
                     let value = value.to_i64(strand)?;
                     let value = u8::try_from(value)
                         .map_err(|_| Error::value(strand, "flags integer out of range"))?;
@@ -762,7 +762,7 @@ mod detail {
                     Ok(())
                 })
                 .method("hidden_property", async move |_this, strand, args, out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     Output::set(strand, out, "instance method");
                     Ok(())
                 })
@@ -869,14 +869,14 @@ mod detail {
                     .value("Counter", counter_ty)
                     .value("ByteBuf", byte_buf_ty)
                     .function("async", async |strand, args, mut out| {
-                        let ([mut value], _) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => mut value);
                         DummyAsync::new(()).await;
                         Output::swap(&mut out, &mut value);
                         Ok(())
                     })
                     .function("callme", async move |strand, args, out| {
-                        let ([func, input], _) = unpack!(strand, args, 1, 0, msg)?;
-                        call!(strand, func, out, msg: input)
+                        unpack!(strand, args => func, msg: input);
+                        call!(strand, func, msg: input, out)
                     })
                     .function("keyword_rest", async move |strand, args, out| {
                         let ([func, _required], [_optional], rest) = args
@@ -884,31 +884,35 @@ mod detail {
                         func.call(strand, rest.unwrap(), out).await
                     })
                     .function("mixed_rest", async move |strand, args, out| {
-                        let ([func, _required], [_optional], rest) =
-                            unpack!(strand, args, 1, 0, msg, optional = None, ...)?;
+                        unpack!(strand, args =>
+                            func,
+                            msg: _required,
+                            ?optional: _optional,
+                            ...rest
+                        );
                         func.call(strand, rest, out).await
                     })
                     .function("makefoo", async move |strand, args, out| {
-                        let _ = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         footy.create(strand, Foo, out);
                         Ok(())
                     })
                     .function("noop", async move |_strand, _args, _out| Ok(()))
                     .function("key_view", async move |strand, args, out| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         key_view_ty.create(strand, KeyView, out);
                         Ok(())
                     })
                     .function("bump", async move |strand, args, out| {
-                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => value);
                         bump(strand, &value, out, false)
                     })
                     .function("bump_fail", async move |strand, args, out| {
-                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => value);
                         bump(strand, &value, out, true)
                     })
                     .function("byte_read", async move |strand, args, out| {
-                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => value);
                         let handle = byte_handle(strand, &value, IoCaps::READ)?;
                         let mut io = handle.into_read().unwrap();
                         let mut buf = Vec::new();
@@ -918,7 +922,7 @@ mod detail {
                         Ok(())
                     })
                     .function("byte_tell", async move |strand, args, out| {
-                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => value);
                         let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
                         let mut io = handle.into_read_seek().unwrap();
                         let res = io.stream_position().await;
@@ -927,7 +931,7 @@ mod detail {
                         Ok(())
                     })
                     .function("byte_seek", async move |strand, args, out| {
-                        let ([value, offset], []) = unpack!(strand, args, 2, 0)?;
+                        unpack!(strand, args => value, offset);
                         let offset = offset
                             .as_int(strand)
                             .and_then(|n| u64::try_from(n).ok())
@@ -946,7 +950,7 @@ mod detail {
                     })
                     // Reads a fork of `value` from `offset` to the end.
                     .function("byte_fork", async move |strand, args, out| {
-                        let ([value, offset], []) = unpack!(strand, args, 2, 0)?;
+                        unpack!(strand, args => value, offset);
                         let offset = offset
                             .as_int(strand)
                             .and_then(|n| u64::try_from(n).ok())
@@ -961,7 +965,7 @@ mod detail {
                         Ok(())
                     })
                     .function("byte_overwrite", async move |strand, args, out| {
-                        let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
+                        unpack!(strand, args => value, bytes);
                         let bytes = bin_arg(strand, &bytes)?;
                         let need = IoCaps::READ | IoCaps::WRITE | IoCaps::SEEK;
                         let handle = byte_handle(strand, &value, need)?;
@@ -979,7 +983,7 @@ mod detail {
                         Ok(())
                     })
                     .function("byte_write", async move |strand, args, _out| {
-                        let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
+                        unpack!(strand, args => value, bytes);
                         let bytes = bin_arg(strand, &bytes)?;
                         let handle = byte_handle(strand, &value, IoCaps::WRITE)?;
                         let mut io = handle.into_write().unwrap();
@@ -992,7 +996,7 @@ mod detail {
                     })
                     // Reads while writing `bytes`, returning what the read got.
                     .function("byte_duplex", async move |strand, args, out| {
-                        let ([value, bytes], []) = unpack!(strand, args, 2, 0)?;
+                        unpack!(strand, args => value, bytes);
                         let bytes = bin_arg(strand, &bytes)?;
                         let need = IoCaps::READ | IoCaps::WRITE;
                         let handle = byte_handle(strand, &value, need)?;
@@ -1008,7 +1012,7 @@ mod detail {
                         Ok(())
                     })
                     .function("coerce_flags", async move |strand, args, out| {
-                        let ([value], []) = unpack!(strand, args, 1, 0)?;
+                        unpack!(strand, args => value);
                         let bits = test_flags_ty.coerce(strand, &value).await?;
                         test_flags_ty.create_flags(strand, bits, out);
                         Ok(())

@@ -137,7 +137,7 @@ impl<'v> Object<'v> for PosixAclObject {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([mut iterable], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => mut iterable);
         let global = strand.state::<UnixSecurityTag>();
         iterable.iter(strand, &mut out).await?;
         let mut entries = Vec::new();
@@ -253,7 +253,7 @@ impl<'v> Object<'v> for PosixAceObject {
         macro_rules! constructor {
             ($builder:expr, $name:literal, $qualifier:expr) => {
                 $builder.type_method($name, async move |this, strand, args, out| {
-                    let ([], [permissions]) = unpack!(strand, args, 0, 1)?;
+                    unpack!(strand, args => ?permissions);
                     let global = strand.state::<UnixSecurityTag>();
                     let permissions =
                         posix_permissions(strand, global, permissions.as_deref()).await?;
@@ -275,7 +275,7 @@ impl<'v> Object<'v> for PosixAceObject {
 
         builder
             .type_method("user", async move |this, strand, args, out| {
-                let ([id], [permissions]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => id, ?permissions);
                 let global = strand.state::<UnixSecurityTag>();
                 let permissions = posix_permissions(strand, global, permissions.as_deref()).await?;
                 let id = posix_id(strand, &id, "uid")?;
@@ -288,7 +288,7 @@ impl<'v> Object<'v> for PosixAceObject {
                 Ok(())
             })
             .type_method("group", async move |this, strand, args, out| {
-                let ([id], [permissions]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => id, ?permissions);
                 let global = strand.state::<UnixSecurityTag>();
                 let permissions = posix_permissions(strand, global, permissions.as_deref()).await?;
                 let id = posix_id(strand, &id, "gid")?;
@@ -458,26 +458,15 @@ async fn ace_from_args<'v, 's>(
     global: State<'v, UnixSecurityGlobal<'v>>,
     args: Args<'v, '_>,
 ) -> Result<'v, 's, VfsPosixAce> {
-    let user_obj = global.syms.user_obj;
-    let group_obj = global.syms.group_obj;
-    let mask = global.syms.mask;
-    let other = global.syms.other;
-    let user = global.syms.user;
-    let group = global.syms.group;
-    let permissions = global.syms.permissions;
-    let ([], [user_obj, group_obj, mask, other, user, group, permissions]) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        user_obj = None,
-        group_obj = None,
-        mask = None,
-        other = None,
-        user = None,
-        group = None,
-        permissions = None
-    )?;
+    unpack!(strand, args =>
+        ?(global.syms.user_obj): user_obj,
+        ?(global.syms.group_obj): group_obj,
+        ?(global.syms.mask): mask,
+        ?(global.syms.other): other,
+        ?(global.syms.user): user,
+        ?(global.syms.group): group,
+        ?(global.syms.permissions): permissions
+    );
     let mut found = Vec::new();
     for (qualifier, value) in [
         (VfsPosixAclQualifier::UserObj, user_obj),
@@ -553,7 +542,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("acl", async move |strand, args, out| {
-            let ([], [], entries) = unpack!(strand, args, 0, 0, *)?;
+            unpack!(strand, args => *entries);
             let mut aces = Vec::new();
             for (index, value) in entries.enumerate() {
                 aces.push(
@@ -569,7 +558,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("id", async move |strand, args, mut out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let security = security_info(strand, global.local)?;
             let Some(info) = security.unix() else {
                 return Err(Error::unsupported(
@@ -581,7 +570,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("user_name", async move |strand, args, out| {
-            let ([uid], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => uid);
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
                 return Err(Error::unsupported(
                     strand,
@@ -596,7 +585,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("user_id", async move |strand, args, out| {
-            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => name);
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
                 return Err(Error::unsupported(
                     strand,
@@ -613,7 +602,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("group_name", async move |strand, args, out| {
-            let ([gid], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => gid);
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
                 return Err(Error::unsupported(
                     strand,
@@ -628,7 +617,7 @@ pub(crate) fn configure_vm<'v>(
             Ok(())
         })
         .function("group_id", async move |strand, args, out| {
-            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => name);
             if global.local.get(strand).target().os().family() != OperatingSystemFamily::Unix {
                 return Err(Error::unsupported(
                     strand,

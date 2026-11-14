@@ -770,7 +770,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         })
         .function("assert", {
             async move |strand, args, _| {
-                let ([cond], [msg]) = unpack!(strand, args, 1, 0, msg = None)?;
+                unpack!(strand, args => cond, ?:msg);
                 if !cond.to_bool(strand)? {
                     if let Some(msg) = msg {
                         assertion_failed!(strand, "assertion failed: {}", msg.to_string(strand)?);
@@ -783,7 +783,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         })
         .function("assert_not", {
             async move |strand, args, _| {
-                let ([cond], [msg]) = unpack!(strand, args, 1, 0, msg = None)?;
+                unpack!(strand, args => cond, ?:msg);
                 if cond.to_bool(strand)? {
                     if let Some(msg) = msg {
                         assertion_failed!(strand, "assertion failed: {}", msg.to_string(strand)?);
@@ -796,7 +796,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         })
         .function("assert_eq", {
             async move |strand, args, _| {
-                let ([left, right], [msg]) = unpack!(strand, args, 2, 0, msg = None)?;
+                unpack!(strand, args => left, right, ?:msg);
                 if !left.eq(strand, &right)? {
                     if let Some(msg) = msg {
                         assertion_failed!(
@@ -820,7 +820,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         })
         .function("assert_ne", {
             async move |strand, args, _| {
-                let ([left, right], [msg]) = unpack!(strand, args, 2, 0, msg = None)?;
+                unpack!(strand, args => left, right, ?:msg);
                 if !left.ne(strand, &right)? {
                     if let Some(msg) = msg {
                         assertion_failed!(
@@ -844,8 +844,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
         })
         .function("assert_throws", {
             async move |strand, args, mut out| {
-                let ([ty, block], [expected_str, msg]) =
-                    unpack!(strand, args, 2, 0, str_sym = None, msg = None)?;
+                unpack!(strand, args => ty, block, ?str_sym: expected_str, ?:msg);
                 match call!(strand, &block, &mut out) {
                     Ok(()) => {
                         if let Some(msg) = msg {
@@ -892,7 +891,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
             }
         })
         .function("assert_type", async move |strand, args, _| {
-            let ([expected, value], [msg]) = unpack!(strand, args, 2, 1)?;
+            unpack!(strand, args => expected, value, ?msg);
             if !value.is_instance_of(strand, &expected) {
                 if let Some(msg) = msg {
                     assertion_failed!(

@@ -295,7 +295,7 @@ impl<'v> Object<'v> for Blake3State {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], []) = unpack!(strand, args, 0, 0)?;
+        unpack!(strand, args =>);
         this.create(strand, Self(blake3::Hasher::new()), out);
         Ok(())
     }
@@ -304,13 +304,13 @@ impl<'v> Object<'v> for Blake3State {
         builder
             .supertype(TypeObject::Sink)
             .method("update", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 blake3_update(strand, this, value).await?;
                 Output::set(strand, out, this);
                 Ok(())
             })
             .method("digest", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let digest = this.borrow(strand)?.0.clone().finalize();
                 Output::set(strand, out, digest.as_slice());
                 Ok(())
@@ -348,7 +348,7 @@ impl<'v, T: Algorithm> Object<'v> for Digestible<T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], []) = unpack!(strand, args, 0, 0)?;
+        unpack!(strand, args =>);
         this.create(strand, Self(T::default()), out);
         Ok(())
     }
@@ -357,13 +357,13 @@ impl<'v, T: Algorithm> Object<'v> for Digestible<T> {
         builder
             .supertype(TypeObject::Sink)
             .method("update", async move |this, strand, args, out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 digest_update(strand, this, value).await?;
                 Output::set(strand, out, this);
                 Ok(())
             })
             .method("digest", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let digest = this.borrow(strand)?.0.clone().finalize();
                 Output::set(strand, out, digest.as_slice());
                 Ok(())
@@ -420,23 +420,23 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
         .value("Sha256", sha256)
         .value("Sha512", sha512)
         .function("blake3", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             blake3_single(strand, value, out).await
         })
         .function("md5", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             digest_single::<md5::Md5>(strand, value, out).await
         })
         .function("sha1", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             digest_single::<sha1::Sha1>(strand, value, out).await
         })
         .function("sha256", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             digest_single::<sha2::Sha256>(strand, value, out).await
         })
         .function("sha512", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             digest_single::<sha2::Sha512>(strand, value, out).await
         })
         .commit();

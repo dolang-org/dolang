@@ -32,7 +32,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
     builder
         .module("test")
         .function("assert", async move |strand, args, _| {
-            let ([cond], [msg]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => cond, ?msg);
             if !cond.to_bool(strand)? {
                 let msg = message!(strand, msg);
                 return Err(fail(strand, None, msg));
@@ -40,7 +40,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
             Ok(())
         })
         .function("assert_not", async move |strand, args, _| {
-            let ([cond], [msg]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => cond, ?msg);
             if cond.to_bool(strand)? {
                 let msg = message!(strand, msg);
                 return Err(fail(strand, None, msg));
@@ -48,7 +48,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
             Ok(())
         })
         .function("assert_eq", async move |strand, args, _| {
-            let ([left, right], [msg]) = unpack!(strand, args, 2, 1)?;
+            unpack!(strand, args => left, right, ?msg);
             if !left.eq(strand, &right)? {
                 let detail = format!("{} == {}", left.to_debug(strand)?, right.to_debug(strand)?);
                 let msg = message!(strand, msg);
@@ -57,7 +57,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
             Ok(())
         })
         .function("assert_ne", async move |strand, args, _| {
-            let ([left, right], [msg]) = unpack!(strand, args, 2, 1)?;
+            unpack!(strand, args => left, right, ?msg);
             if !left.ne(strand, &right)? {
                 let detail = format!("{} != {}", left.to_debug(strand)?, right.to_debug(strand)?);
                 let msg = message!(strand, msg);
@@ -66,8 +66,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
             Ok(())
         })
         .function("assert_throws", async move |strand, args, mut out| {
-            let ([ty, block], [expected, msg]) =
-                unpack!(strand, args, 2, 0, str_sym = None, msg_sym = None)?;
+            unpack!(strand, args => ty, block, ?str_sym: expected, ?msg_sym: msg);
             let msg = message!(strand, msg);
             match call!(strand, &block, &mut out) {
                 Ok(()) => {
@@ -94,7 +93,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
             }
         })
         .function("assert_type", async move |strand, args, _| {
-            let ([expected, value], [msg]) = unpack!(strand, args, 2, 1)?;
+            unpack!(strand, args => expected, value, ?msg);
             if !value.is_instance_of(strand, &expected) {
                 let detail = format!(
                     "{} is not an instance of {}",

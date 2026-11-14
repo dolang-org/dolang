@@ -590,7 +590,7 @@ impl<'v> Array<'v> {
     ) -> Result<'v, 's, ()> {
         let key = Sym::well_known(sym::KEY);
         let reverse = Sym::well_known(sym::REVERSE);
-        let ([], [key, reverse]) = unpack!(strand, args, 0, 0, key = None, reverse = None)?;
+        unpack!(strand, args => ?:key, ?:reverse);
         let reverse = reverse
             .map(|r| {
                 r.as_bool(strand)
@@ -609,7 +609,7 @@ impl<'v> Array<'v> {
                             strand.check_trap_gc()?;
                         }
                         let out = slots.at(i);
-                        call!(strand, &key_fn, out, value)?;
+                        call!(strand, &key_fn, value, out)?;
                     }
                 }
 
@@ -987,8 +987,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([index], [default, or_else]) =
-                    unpack!(strand, args, 1, 0, default = None, else_key = None)?;
+                unpack!(strand, args => index, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -1011,8 +1010,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             sym::POP => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([], [index, default, or_else]) =
-                    unpack!(strand, args, 0, 1, default = None, else_key = None)?;
+                unpack!(strand, args => ?index, ?:default, ?else_key: or_else);
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
@@ -1042,7 +1040,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 Ok(())
             }
             sym::DELETE => {
-                let ([index], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => index);
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let mut borrow = this.borrow_mut(strand)?;
                 let deleted = index::element(borrow.inner.len(), index).is_some();
@@ -1053,17 +1051,17 @@ impl<'v> Protocol<'v> for Array<'v> {
                 Ok(())
             }
             sym::CLEAR => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.borrow_mut(strand)?.inner.clear();
                 Ok(())
             }
             sym::COPY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver)
+                        call!(strand, &ty, &receiver, out)
                     });
                 }
                 let borrow = this.borrow(strand)?;
@@ -1075,7 +1073,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             }
             sym::SORT => Self::sort(this, strand, args).await,
             sym::PAIRS => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 strand.builtin_types().array_pairs.create(
                     strand,
                     Pairs {
@@ -1087,7 +1085,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([needle], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => needle);
                 let borrow = this.borrow(strand)?;
                 let len = borrow.inner.len();
                 let mut found = false;
@@ -1283,7 +1281,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([items], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => items);
         let mut array = Array::new();
         let mut sink = ArraySpread(&mut array.inner);
         // FIXME: `Array` is not GC-scannable, but then again if it were it would also
@@ -1409,9 +1407,9 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().array, &mut native, items)?;
+                    call!(strand, &strand.singletons().array, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().array, native.take())?;
                     Ok(())
                 })

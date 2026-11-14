@@ -1742,37 +1742,35 @@ impl<'v> Protocol<'v> for Dict<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::CLEAR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Self::mcall_clear(this, strand)
             }
             sym::INSERT => {
-                let ([key, value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => key, value);
                 Self::mcall_insert(this, strand, key, value)
             }
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([key], [subindex, default, or_else]) =
-                    unpack!(strand, args, 1, 1, default = None, else_key = None)?;
+                unpack!(strand, args => key, ?subindex, ?:default, ?else_key: or_else);
                 Self::mcall_get(this, strand, key, subindex, default, or_else, out).await
             }
             sym::POP => {
                 let default = Sym::well_known(sym::DEFAULT);
                 let else_key = Sym::well_known(sym::ELSE);
-                let ([key], [subindex, default, or_else]) =
-                    unpack!(strand, args, 1, 1, default = None, else_key = None)?;
+                unpack!(strand, args => key, ?subindex, ?:default, ?else_key: or_else);
                 Self::mcall_pop(this, strand, key, subindex, default, or_else, out).await
             }
             sym::DELETE => {
-                let ([key], _) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => key);
                 Self::mcall_delete(this, strand, key, out)
             }
             sym::PAIRS => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Self::op_iter(this, strand, out).await
             }
             sym::KEYS => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let epoch = borrow.epoch;
                 let dict = this.to_strong();
@@ -1789,7 +1787,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 Ok(())
             }
             sym::VALUES => {
-                let ([], [key]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?key);
                 let epoch = this.borrow(strand)?.epoch;
                 let dict = this.to_strong();
                 if let Some(key) = key {
@@ -1821,16 +1819,16 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 Ok(())
             }
             sym::COUNT => {
-                let ([], [key]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?key);
                 Self::mcall_count(this, strand, key, out)
             }
             sym::COPY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
                         Output::set(strand, Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
-                        call!(strand, &ty, out, &receiver)
+                        call!(strand, &ty, &receiver, out)
                     });
                 }
                 let borrow = this.borrow(strand)?;
@@ -1850,7 +1848,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([key], [value]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => key, ?value);
                 Self::mcall_contains(this, strand, key, value, out)
             }
             sym::LEN => Err(Error::type_error(
@@ -2375,7 +2373,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([items], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => items);
         let mut dict = Dict::new();
 
         // FIXME: `Dict` is not GC-scannable, but then again if it were it would also
@@ -2502,9 +2500,9 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
-                    call!(strand, &strand.singletons().dict, &mut native, items)?;
+                    call!(strand, &strand.singletons().dict, items, &mut native)?;
                     self_val.op_fill(strand, &strand.singletons().dict, native.take())?;
                     Ok(())
                 })

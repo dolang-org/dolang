@@ -104,7 +104,7 @@ impl<'v> Object<'v> for Uuid {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let id = value_to_uuid(strand, &value)?;
         create_uuid(strand, id, out);
         Ok(())
@@ -167,8 +167,7 @@ impl<'v> Object<'v> for Uuid {
                 Ok(())
             })
             .type_method("generate", async move |_this, strand, args, out| {
-                let ([], [version, variant]) =
-                    unpack!(strand, args, 0, 0, version_sym = None, variant_sym_kw = None)?;
+                unpack!(strand, args => ?version_sym: version, ?variant_sym_kw: variant);
                 if version.is_some() || variant.is_some() {
                     return Err(Error::value(
                         strand,

@@ -356,7 +356,7 @@ impl<'v> Protocol<'v> for VariantTypeObj {
                         format!("{} cannot be subclassed", variant_name(kind)),
                     ));
                 }
-                let ([self_val], [], rest) = unpack!(strand, args, 1, 0, ...)?;
+                unpack!(strand, args => self_val, ...rest);
                 let mut error = construct(kind, strand, rest)?;
                 error.get_value(strand, Slot::reborrow(&mut out));
                 let native = out.take();
@@ -384,7 +384,7 @@ fn construct<'v, 's>(
 ) -> Result<'v, 's, Error<'v, 's>> {
     Ok(match kind {
         ErrorKind::Unsupported => {
-            let ([], [msg]) = unpack!(strand, args, 0, 1)?;
+            unpack!(strand, args => ?msg);
             let msg = match msg {
                 Some(msg) => Some(expect_string(strand, &msg)?.into()),
                 None => None,
@@ -392,11 +392,11 @@ fn construct<'v, 's>(
             Error::unsupported_boxed(strand, msg)
         }
         ErrorKind::Immutable => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::immutable(strand)
         }
         ErrorKind::Concurrency => {
-            let ([], [msg]) = unpack!(strand, args, 0, 1)?;
+            unpack!(strand, args => ?msg);
             match msg {
                 Some(msg) => {
                     let msg = expect_string(strand, &msg)?;
@@ -406,82 +406,82 @@ fn construct<'v, 's>(
             }
         }
         ErrorKind::Type => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::type_error(strand, msg)
         }
         ErrorKind::Value => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::value(strand, msg)
         }
         ErrorKind::Data => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::data(strand, msg)
         }
         ErrorKind::State => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::state_error(strand, msg)
         }
         ErrorKind::Index => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::index(strand)
         }
         ErrorKind::Field => {
-            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => name);
             let name = name
                 .as_sym(strand)
                 .ok_or_else(|| Error::type_error(strand, "expected `Sym`"))?;
             Error::field(strand, name)
         }
         ErrorKind::UnexpectedPos => {
-            let ([index], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => index);
             let index = expect_index(strand, &index)?;
             Error::unexpected_positional(strand, index)
         }
         ErrorKind::UnexpectedKey => {
-            let ([key], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => key);
             Error::unexpected_key(strand, key)
         }
         ErrorKind::MissingPos => {
-            let ([index], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => index);
             let index = expect_index(strand, &index)?;
             Error::missing_positional(strand, index)
         }
         ErrorKind::MissingKey => {
-            let ([key], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => key);
             Error::missing_key(strand, key)
         }
         ErrorKind::Overflow => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::overflow(strand)
         }
         ErrorKind::ZeroDiv => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::zero_div(strand)
         }
         ErrorKind::SinkStop => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::sink_stop(strand)
         }
         ErrorKind::IterStop => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::iter_stop(strand)
         }
         ErrorKind::CyclicImport => {
-            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => name);
             let name = expect_string(strand, &name)?;
             Error::cyclic_import(strand, name.as_ref())
         }
         ErrorKind::Import => {
-            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => name);
             let name = expect_string(strand, &name)?;
             Error::import(strand, name.as_ref())
         }
         ErrorKind::Compile => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::compile(strand, msg)
         }
@@ -495,16 +495,16 @@ fn construct<'v, 's>(
             ));
         }
         ErrorKind::Runtime => {
-            let ([msg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::runtime(strand, msg)
         }
         ErrorKind::Canceled => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::canceled(strand)
         }
         ErrorKind::TimedOut => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Error::timed_out(strand)
         }
     })

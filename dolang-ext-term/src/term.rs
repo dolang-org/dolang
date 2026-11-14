@@ -11,7 +11,6 @@ use dolang::{
         error::ErrorKind,
         method,
         object::{Mut, Ref, TypeBuilder},
-        strand::Redirect,
         unpack,
         value::{Singleton, StrEmbryo, TypeObject, View},
         vm::Builder,
@@ -289,10 +288,10 @@ impl<'v> Object<'v> for Text {
     }
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let suffix_sym = builder.sym("suffix");
+        let suffix = builder.sym("suffix");
         builder
             .method("encode", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let text = Ref::slot::<0>(&borrow).as_str(strand).unwrap().pin();
                 let mut encoded = StrEmbryo::new();
@@ -303,7 +302,7 @@ impl<'v> Object<'v> for Text {
                 Ok(())
             })
             .method("width", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let text = Ref::slot::<0>(&borrow).as_str(strand).unwrap().pin();
                 let width = TextLayout::new(&text).width();
@@ -313,7 +312,7 @@ impl<'v> Object<'v> for Text {
                 Ok(())
             })
             .method("clip", async move |this, strand, args, out| {
-                let ([width], [suffix]) = unpack!(strand, args, 1, 0, suffix_sym = None)?;
+                unpack!(strand, args => width, ?:suffix);
                 let width = width.to_usize(strand)?;
 
                 let borrow = this.borrow(strand)?;
@@ -344,7 +343,7 @@ impl<'v> Object<'v> for Text {
                 Ok(())
             })
             .method("indent", async move |this, strand, args, out| {
-                let ([spaces], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => spaces);
                 let spaces = spaces.to_usize(strand)?;
                 if spaces == 0 {
                     Output::set(strand, out, this);
@@ -372,7 +371,7 @@ impl<'v> Object<'v> for Text {
             .method_with_slots(
                 "join",
                 async move |this, strand, args, out, [mut items, mut item]| {
-                    let ([], [source]) = unpack!(strand, args, 0, 1)?;
+                    unpack!(strand, args => ?source);
                     match source {
                         Some(source) => source.iter(strand, &mut items).await?,
                         None => strand.input(&mut items),
@@ -1318,64 +1317,39 @@ where
         colors,
         inherit,
     } = keys;
-    let (
-        [],
-        [
-            fg_value,
-            bg_value,
-            bold_value,
-            dim_value,
-            italic_value,
-            underline_value,
-            blink_value,
-            reverse_value,
-            hidden_value,
-            strikethrough_value,
-        ],
-        args,
-    ) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        fg = None,
-        bg = None,
-        bold = None,
-        dim = None,
-        italic = None,
-        underline = None,
-        blink = None,
-        reverse = None,
-        hidden = None,
-        strikethrough = None,
-        ...
-    )?;
+    unpack!(strand, args =>
+        ?fg: fg_value,
+        ?bg: bg_value,
+        ?:bold,
+        ?:dim,
+        ?:italic,
+        ?:underline,
+        ?:blink,
+        ?:reverse,
+        ?:hidden,
+        ?:strikethrough,
+        ...args
+    );
     let style = Style {
         fg: color(strand, fg_value, "fg", colors, inherit, base.fg)?,
         bg: color(strand, bg_value, "bg", colors, inherit, base.bg)?,
         attrs: [
-            attr(strand, bold_value, "bold", inherit, base.attrs[BOLD])?,
-            attr(strand, dim_value, "dim", inherit, base.attrs[DIM])?,
-            attr(strand, italic_value, "italic", inherit, base.attrs[ITALIC])?,
+            attr(strand, bold, "bold", inherit, base.attrs[BOLD])?,
+            attr(strand, dim, "dim", inherit, base.attrs[DIM])?,
+            attr(strand, italic, "italic", inherit, base.attrs[ITALIC])?,
             attr(
                 strand,
-                underline_value,
+                underline,
                 "underline",
                 inherit,
                 base.attrs[UNDERLINE],
             )?,
-            attr(strand, blink_value, "blink", inherit, base.attrs[BLINK])?,
+            attr(strand, blink, "blink", inherit, base.attrs[BLINK])?,
+            attr(strand, reverse, "reverse", inherit, base.attrs[REVERSE])?,
+            attr(strand, hidden, "hidden", inherit, base.attrs[HIDDEN])?,
             attr(
                 strand,
-                reverse_value,
-                "reverse",
-                inherit,
-                base.attrs[REVERSE],
-            )?,
-            attr(strand, hidden_value, "hidden", inherit, base.attrs[HIDDEN])?,
-            attr(
-                strand,
-                strikethrough_value,
+                strikethrough,
                 "strikethrough",
                 inherit,
                 base.attrs[STRIKETHROUGH],
@@ -1522,7 +1496,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         colors,
         inherit,
     } = keys;
-    let chomp_sym = builder.sym("chomp");
+    let chomp = builder.sym("chomp");
     let can_style = global.syms.can_style;
 
     builder
@@ -1540,7 +1514,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         })
         .object("default", global.types.default, DefaultOutput)
         .function_with_slots("output", async move |strand, args, out, [mut console]| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             // The *ambient* console: whatever an enclosing `capture` installed,
             // else the host. `term.console` is a name, so it pins instead.
             console::ambient(strand, &mut console)?;
@@ -1550,7 +1524,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "with",
             async move |strand, args, out, [mut input, mut output, mut shell]| {
-                let ([func], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => func);
                 // Until `term` has a notion of input, the block reads the
                 // process's standard input, or nothing where the application
                 // has no `shell` module.
@@ -1567,7 +1541,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .create(strand, DefaultOutput, &mut output);
                 redirect!(
                     strand,
-                    Redirect::new(strand).input(&input).output(&output),
+                    input: &input,
+                    output: &output,
                     call!(strand, func, out)
                 )
             },
@@ -1575,7 +1550,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "capture",
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
-                let ([target, func], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => target, func);
                 if target.is_instance_of(strand, global.types.console) {
                     Output::set(strand, &mut console, target);
                 } else if target.is_instance_of(strand, TypeObject::Io) {
@@ -1615,8 +1590,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "sub",
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
-                let ([func], [chomp, can_style]) =
-                    unpack!(strand, args, 1, 0, chomp_sym = None, can_style = None)?;
+                unpack!(strand, args => func, ?:chomp, ?:can_style);
                 let chomp = chomp
                     .map(|v| v.to_bool(strand))
                     .transpose()?
@@ -1657,7 +1631,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
         .function_with_slots(
             "mute",
             async move |strand, args, out, [mut console, mut scratch, mut line_ending]| {
-                let ([func], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => func);
                 // A console that discards everything written to it — the same
                 // mechanism `capture` uses, just throwing writes away.
                 global
@@ -1676,7 +1650,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 } else {
                     &scratch
                 };
-                redirect!(strand, Redirect::new(strand).output(target), {
+                redirect!(strand, output: target, {
                     with_capture(
                         strand,
                         global,
@@ -1729,50 +1703,31 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             console::write_line(strand, &line).await
         })
         .function_with_slots("print", async move |strand, args, _, [mut text]| {
-            let (
-                [],
-                [
-                    fg_value,
-                    bg_value,
-                    bold_value,
-                    dim_value,
-                    italic_value,
-                    underline_value,
-                    blink_value,
-                    reverse_value,
-                    hidden_value,
-                    strikethrough_value,
-                ],
-                args,
-            ) = unpack!(
-                strand,
-                args,
-                0,
-                0,
-                fg = None,
-                bg = None,
-                bold = None,
-                dim = None,
-                italic = None,
-                underline = None,
-                blink = None,
-                reverse = None,
-                hidden = None,
-                strikethrough = None,
-                ...
-            )?;
+            unpack!(strand, args =>
+                ?fg: fg_value,
+                ?bg: bg_value,
+                ?:bold,
+                ?:dim,
+                ?:italic,
+                ?:underline,
+                ?:blink,
+                ?:reverse,
+                ?:hidden,
+                ?:strikethrough,
+                ...args
+            );
             let style = Style {
                 fg: color(strand, fg_value, "fg", colors, inherit, None)?,
                 bg: color(strand, bg_value, "bg", colors, inherit, None)?,
                 attrs: [
-                    attr(strand, bold_value, "bold", inherit, false)?,
-                    attr(strand, dim_value, "dim", inherit, false)?,
-                    attr(strand, italic_value, "italic", inherit, false)?,
-                    attr(strand, underline_value, "underline", inherit, false)?,
-                    attr(strand, blink_value, "blink", inherit, false)?,
-                    attr(strand, reverse_value, "reverse", inherit, false)?,
-                    attr(strand, hidden_value, "hidden", inherit, false)?,
-                    attr(strand, strikethrough_value, "strikethrough", inherit, false)?,
+                    attr(strand, bold, "bold", inherit, false)?,
+                    attr(strand, dim, "dim", inherit, false)?,
+                    attr(strand, italic, "italic", inherit, false)?,
+                    attr(strand, underline, "underline", inherit, false)?,
+                    attr(strand, blink, "blink", inherit, false)?,
+                    attr(strand, reverse, "reverse", inherit, false)?,
+                    attr(strand, hidden, "hidden", inherit, false)?,
+                    attr(strand, strikethrough, "strikethrough", inherit, false)?,
                 ],
             };
             let mut output = StrEmbryo::new();
@@ -1791,7 +1746,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             make_text(strand, global, keys, Style::default(), args, out)
         })
         .function("preformat", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let value = value
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "preformat: expected Str"))?

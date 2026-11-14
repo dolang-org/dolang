@@ -207,17 +207,17 @@ impl<'v> Protocol<'v> for Handle<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::JOIN => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 join_handle(&this.to_strong(), strand, out).await
             }
             sym::CANCEL => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 borrow.interrupt.cancel();
                 Ok(())
             }
             sym::WAIT => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 wait_handle(&this.to_strong(), strand).await
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
@@ -533,7 +533,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::JOIN => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let (input, output, handle) = {
                     let borrow = this.get();
                     (
@@ -550,7 +550,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
                 join_handle(&handle, strand, out).await
             }
             sym::CANCEL => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let handle = this.get().handle.clone();
                 with_pin!(strand, handle, |handle| {
                     let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
@@ -559,7 +559,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
                 })
             }
             sym::WAIT => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let handle = this.get().handle.clone();
                 wait_handle(&handle, strand).await
             }
@@ -850,8 +850,8 @@ fn observe_mcall<'v, 's>(
 ) -> Result<'v, 's, ()> {
     match method.tag() {
         sym::BACKTRACE => {
-            let full_key = Sym::well_known(sym::FULL);
-            let ([], [full]) = unpack!(strand, args, 0, 0, full_key = None)?;
+            let full = Sym::well_known(sym::FULL);
+            unpack!(strand, args => ?:full);
             let full = match full {
                 Some(full) => full.op_bool(strand)?,
                 None => false,
@@ -867,7 +867,7 @@ fn observe_mcall<'v, 's>(
             Ok(())
         }
         sym::CHILDREN => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let cells: Vec<_> = match (cell.state(), cell.get()) {
                 (CellState::Live, Some(inner)) => unsafe { inner.as_ref() }
                     .children()
@@ -892,7 +892,7 @@ fn observe_mcall<'v, 's>(
             Ok(())
         }
         sym::INFO => {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let raw = match (cell.state(), cell.get()) {
                 (CellState::Live, Some(inner)) => unsafe { strand.observe(inner.as_ref()) },
                 (CellState::Pending, _) => RawInfo {
@@ -957,7 +957,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
         let cell = this.get().cell.clone();
         match method.tag() {
             sym::CANCEL => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if let (CellState::Live, Some(inner)) = (cell.state(), cell.get()) {
                     // Safety: synchronous use
                     unsafe { inner.as_ref() }.base_interrupt().cancel();

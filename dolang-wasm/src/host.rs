@@ -144,7 +144,7 @@ impl<'v> Object<'v> for PlaygroundConsole {
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Ok(())
             })
             .get("writable", |_this, strand, out| {
@@ -166,7 +166,7 @@ impl<'v> Object<'v> for PlaygroundConsole {
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 dolang_ext_term::create_geometry(strand, None, None, out);
                 Ok(())
             })

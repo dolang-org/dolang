@@ -37,7 +37,7 @@ pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
                 let handler = global.types.import_handler.cast(&key).unwrap();
                 let result = with_instance!(strand, handler, |inst| {
                     Output::set(strand, &mut callback, Ref::slot::<0>(&inst.borrow_unwrap()));
-                    let result = call!(strand, &callback, &mut out, name);
+                    let result = call!(strand, &callback, name, &mut out);
                     if inst.annex().unregistered.get() {
                         // Unregistration raced this callback. Decline even
                         // success so the VM cannot cache its result.
@@ -62,14 +62,14 @@ pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
 }
 
 pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
-    let importer_sym = builder.sym("importer");
+    let importer = builder.sym("importer");
     builder
         .module("load")
         .value("Bytecode", global.types.bytecode)
         .value("BytecodeError", global.types.bytecode_error)
         .value("ImportHandler", global.types.import_handler)
         .function("load", async move |strand, args, mut out| {
-            let ([bytes], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => bytes);
             let bytecode = decode(strand, &bytes)?;
             global.types.bytecode.create_with_annex(
                 strand,
@@ -80,7 +80,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             Ok(())
         })
         .function("run", async move |strand, args, out| {
-            let ([bytecode], [importer]) = unpack!(strand, args, 1, 0, importer_sym = None)?;
+            unpack!(strand, args => bytecode, ?:importer);
             let bytecode = match global.types.bytecode.cast(&bytecode) {
                 Some(cast) => with_instance!(strand, cast, |inst| take(strand, inst))?,
                 None => decode(strand, &bytecode)?,
@@ -88,7 +88,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             run(strand, bytecode, importer, out).await
         })
         .function("import", async move |strand, args, out| {
-            let ([name], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => name);
             let name = name
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "name: expected Str"))?;
@@ -96,7 +96,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             strand.import(&name, out).await
         })
         .function("import_handler", async move |strand, args, mut out| {
-            let ([callback], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => callback);
 
             let handlers = global.handlers.as_array(strand).unwrap();
             if global.executors.get() == 0 && global.gravestones.get() {
@@ -194,9 +194,9 @@ impl<'v> Object<'v> for Bytecode {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let importer_sym = builder.sym("importer");
+        let importer = builder.sym("importer");
         builder.method("run", async move |this, strand, args, out| {
-            let ([], [importer]) = unpack!(strand, args, 0, 0, importer_sym = None)?;
+            unpack!(strand, args => ?:importer);
             let bytecode = take(strand, this)?;
             run(strand, bytecode, importer, out).await
         })
@@ -260,7 +260,7 @@ impl<'v> Object<'v> for ImportHandler {
         builder.method_with_slots(
             "unregister",
             async move |this, strand, args, _out, [mut item]| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let annex = this.annex();
                 if annex.unregistered.replace(true) {
                     return Ok(());

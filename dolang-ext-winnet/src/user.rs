@@ -234,7 +234,7 @@ impl<'v> Object<'v> for User {
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let info = {
                     let mut b = this.borrow_mut(strand)?;
@@ -249,55 +249,21 @@ impl<'v> Object<'v> for User {
             })
             .method("update", async move |this, strand, args, out| {
                 let global = strand.state::<Tag>();
-                let name_sym = global.syms.name;
-                let password_sym = global.syms.password;
-                let full_name_sym = global.syms.full_name;
-                let comment_sym = global.syms.comment;
-                let user_comment_sym = global.syms.user_comment;
-                let home_dir_sym = global.syms.home_dir;
-                let home_dir_drive_sym = global.syms.home_dir_drive;
-                let profile_sym = global.syms.profile;
-                let script_path_sym = global.syms.script_path;
-                let account_expires_sym = global.syms.account_expires;
-                let disabled_sym = global.syms.disabled;
-                let password_never_expires_sym = global.syms.password_never_expires;
-                let password_cannot_change_sym = global.syms.password_cannot_change;
-                let (
-                    [],
-                    [
-                        name,
-                        password,
-                        full_name,
-                        comment,
-                        user_comment,
-                        home_dir,
-                        home_dir_drive,
-                        profile,
-                        script_path,
-                        account_expires,
-                        disabled,
-                        password_never_expires,
-                        password_cannot_change,
-                    ],
-                ) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    name_sym = None,
-                    password_sym = None,
-                    full_name_sym = None,
-                    comment_sym = None,
-                    user_comment_sym = None,
-                    home_dir_sym = None,
-                    home_dir_drive_sym = None,
-                    profile_sym = None,
-                    script_path_sym = None,
-                    account_expires_sym = None,
-                    disabled_sym = None,
-                    password_never_expires_sym = None,
-                    password_cannot_change_sym = None
-                )?;
+                unpack!(strand, args =>
+                    ?(global.syms.name): name,
+                    ?(global.syms.password): password,
+                    ?(global.syms.full_name): full_name,
+                    ?(global.syms.comment): comment,
+                    ?(global.syms.user_comment): user_comment,
+                    ?(global.syms.home_dir): home_dir,
+                    ?(global.syms.home_dir_drive): home_dir_drive,
+                    ?(global.syms.profile): profile,
+                    ?(global.syms.script_path): script_path,
+                    ?(global.syms.account_expires): account_expires,
+                    ?(global.syms.disabled): disabled,
+                    ?(global.syms.password_never_expires): password_never_expires,
+                    ?(global.syms.password_cannot_change): password_cannot_change
+                );
                 let update = update_from_slots(
                     strand,
                     name,
@@ -326,7 +292,7 @@ impl<'v> Object<'v> for User {
                 Ok(())
             })
             .method("delete", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let user = this
                     .borrow_mut(strand)?
                     .0
@@ -539,7 +505,7 @@ pub(crate) fn configure_module<'v, 'a>(
         .value("UserInfo", global.types.info)
         .value("UserFlags", global.types.flags)
         .function("user", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let vfs = dolang_ext_shell::vfs(strand);
             let user = match principal(strand, global, &value)? {
                 ResultPrincipal::Name(name) => user::by_name(&vfs, &name).await,
@@ -551,7 +517,7 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("users", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             global.types.users.create_with_annex(
                 strand,
                 Users(user::enumerate(&dolang_ext_shell::vfs(strand))),
@@ -561,51 +527,21 @@ pub(crate) fn configure_module<'v, 'a>(
             Ok(())
         })
         .function("create_user", async move |strand, args, out| {
-            let password_sym = global.syms.password;
-            let full_name_sym = global.syms.full_name;
-            let comment_sym = global.syms.comment;
-            let user_comment_sym = global.syms.user_comment;
-            let home_dir_sym = global.syms.home_dir;
-            let home_dir_drive_sym = global.syms.home_dir_drive;
-            let profile_sym = global.syms.profile;
-            let script_path_sym = global.syms.script_path;
-            let account_expires_sym = global.syms.account_expires;
-            let disabled_sym = global.syms.disabled;
-            let password_never_expires_sym = global.syms.password_never_expires;
-            let password_cannot_change_sym = global.syms.password_cannot_change;
-            let (
-                [name, password],
-                [
-                    full_name,
-                    comment,
-                    user_comment,
-                    home_dir,
-                    home_dir_drive,
-                    profile,
-                    script_path,
-                    account_expires,
-                    disabled,
-                    password_never_expires,
-                    password_cannot_change,
-                ],
-            ) = unpack!(
-                strand,
-                args,
-                1,
-                0,
-                password_sym,
-                full_name_sym = None,
-                comment_sym = None,
-                user_comment_sym = None,
-                home_dir_sym = None,
-                home_dir_drive_sym = None,
-                profile_sym = None,
-                script_path_sym = None,
-                account_expires_sym = None,
-                disabled_sym = None,
-                password_never_expires_sym = None,
-                password_cannot_change_sym = None
-            )?;
+            unpack!(strand, args =>
+                name,
+                (global.syms.password): password,
+                ?(global.syms.full_name): full_name,
+                ?(global.syms.comment): comment,
+                ?(global.syms.user_comment): user_comment,
+                ?(global.syms.home_dir): home_dir,
+                ?(global.syms.home_dir_drive): home_dir_drive,
+                ?(global.syms.profile): profile,
+                ?(global.syms.script_path): script_path,
+                ?(global.syms.account_expires): account_expires,
+                ?(global.syms.disabled): disabled,
+                ?(global.syms.password_never_expires): password_never_expires,
+                ?(global.syms.password_cannot_change): password_cannot_change
+            );
             let name = name
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "name must be a Str"))?

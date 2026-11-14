@@ -166,7 +166,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         value
             .as_sym(strand)
             .ok_or_else(|| Error::type_error(strand, "Sym: expected Sym"))?;

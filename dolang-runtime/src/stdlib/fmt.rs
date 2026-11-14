@@ -286,8 +286,7 @@ impl<'v> Object<'v> for FmtValue {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.vm().state::<Tag>();
-        let source_sym = global.symbols.source;
-        let ([value], [source], rest) = unpack!(strand, args, 1, 0, source_sym = None, ...)?;
+        unpack!(strand, args => value, ?(global.symbols.source): source, ...rest);
         let spec = merge_spec(strand, global, Spec::default(), rest)?;
         create_value(strand, global, spec, value, source.as_deref(), out);
         Ok(())
@@ -585,7 +584,7 @@ impl<'v> Object<'v> for Fmt {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.vm().state::<Tag>();
-        let ([items], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => items);
         with_slots!(strand, |mut segments, mut iter, mut item| {
             strand.new_array(&mut segments);
             items.iter(strand, &mut iter).await?;
@@ -1171,7 +1170,7 @@ where
             Ok(())
         })
         .method("pad", async |this, strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let value = value
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "FmtSpec.pad: expected Str"))?;
@@ -1233,8 +1232,7 @@ pub(crate) fn create<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let source_sym = global.symbols.source;
-    let ([], [value, source], rest) = unpack!(strand, args, 0, 1, source_sym = None, ...)?;
+    unpack!(strand, args => ?value, ?(global.symbols.source): source, ...rest);
     let spec = merge_spec(strand, global, base, rest)?;
     let Some(value) = value else {
         if source.is_some() {
@@ -1298,8 +1296,7 @@ pub(crate) fn create_fmt_param<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let source_sym = global.symbols.source;
-    let ([name], [source], rest) = unpack!(strand, args, 1, 0, source_sym = None, ...)?;
+    unpack!(strand, args => name, ?(global.symbols.source): source, ...rest);
     let spec = merge_spec(strand, global, Spec::default(), rest)?;
     create_param(strand, global, spec, &name, source.as_deref(), out)
 }
@@ -1370,19 +1367,7 @@ fn merge_spec<'v, 'a, 's>(
         kind,
         ..
     } = global.symbols;
-    let ([], [fill, align, sign, width, precision, alt, kind]) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        fill = None,
-        align = None,
-        sign = None,
-        width = None,
-        precision = None,
-        alt = None,
-        kind = None
-    )?;
+    unpack!(strand, args => ?:fill, ?:align, ?:sign, ?:width, ?:precision, ?:alt, ?:kind);
     let mut spec = base;
     if let Some(value) = fill {
         spec.fill = parse_fill(strand, global, &value)?;

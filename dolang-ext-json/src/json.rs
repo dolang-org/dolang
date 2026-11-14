@@ -691,14 +691,14 @@ impl<'v> Object<'v> for EncodeError {
 }
 
 pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
-    let indent_sym = builder.sym("indent");
+    let indent = builder.sym("indent");
 
     builder
         .module("json")
         .value("DecodeError", global.types.decode_error)
         .value("EncodeError", global.types.encode_error)
         .function("encode", async move |strand, args, out| {
-            let ([arg], [indent]) = unpack!(strand, args, 1, 0, indent_sym = None)?;
+            unpack!(strand, args => arg, ?:indent);
             let indent = match indent {
                 Some(indent) if !indent.is_nil() => Some(
                     indent
@@ -726,7 +726,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             Ok(())
         })
         .function("decode", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             let src = arg
                 .as_str(strand.vm())
                 .ok_or_else(|| Error::type_error(strand, "expected Str"))?

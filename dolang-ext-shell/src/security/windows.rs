@@ -477,7 +477,7 @@ impl<'v> Object<'v> for Sid {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         let sid = sid_from_value(strand, &value, &SpecPath::root("Sid"))?;
         this.create_with_annex(strand, Sid, sid, &mut out);
         with_instance!(strand, this.cast(&out).unwrap(), |this| {
@@ -544,13 +544,13 @@ impl<'v> Object<'v> for Sid {
                 Ok(())
             })
             .method("to_bin", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let bytes = this.annex().to_bytes();
                 Output::set(strand, out, bytes.as_slice());
                 Ok(())
             })
             .method("lookup", async move |this, strand, args, mut out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let sid = this.annex().clone();
                 let global = strand.state::<WindowsSecurityTag>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
@@ -723,8 +723,7 @@ impl<'v> Object<'v> for Acl {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<WindowsSecurityTag>();
-        let revision_sym = global.syms.revision;
-        let ([mut iterable], [revision]) = unpack!(strand, args, 1, 0, revision_sym = None)?;
+        unpack!(strand, args => mut iterable, ?(global.syms.revision): revision);
         let revision = revision
             .map(|value| acl_revision(strand, global, &value, &SpecPath::root("revision")))
             .transpose()?;
@@ -766,7 +765,7 @@ impl<'v> Object<'v> for Acl {
                 Ok(())
             })
             .method("to_bin", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let bytes = with_acl(this, strand, |acl| acl.as_bytes().to_vec())?;
                 Output::set(strand, out, bytes.as_slice());
                 Ok(())
@@ -1018,43 +1017,20 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
             ));
         }
         let global = strand.state::<WindowsSecurityTag>();
-        let mask_sym = global.syms.mask;
-        let flags_sym = global.syms.flags;
-        let callback_sym = global.syms.callback;
-        let application_data_sym = global.syms.application_data;
-        let successful_sym = global.syms.successful;
-        let failed_sym = global.syms.failed;
-        let object_type_sym = global.syms.object_type;
-        let inherited_object_type_sym = global.syms.inherited_object_type;
         let qualifier = global.syms.qualifier;
         let sid = global.syms.sid;
-        let (
-            [qualifier_value, sid_value, mask_value],
-            [
-                flags,
-                callback,
-                data,
-                successful,
-                failed,
-                object_type,
-                inherited_object_type,
-            ],
-        ) = unpack!(
-            strand,
-            args,
-            0,
-            0,
-            qualifier,
-            sid,
-            mask_sym,
-            flags_sym = None,
-            callback_sym = None,
-            application_data_sym = None,
-            successful_sym = None,
-            failed_sym = None,
-            object_type_sym = None,
-            inherited_object_type_sym = None
-        )?;
+        unpack!(strand, args =>
+            qualifier: qualifier_value,
+            sid: sid_value,
+            (global.syms.mask): mask_value,
+            ?(global.syms.flags): flags,
+            ?(global.syms.callback): callback,
+            ?(global.syms.application_data): data,
+            ?(global.syms.successful): successful,
+            ?(global.syms.failed): failed,
+            ?(global.syms.object_type): object_type,
+            ?(global.syms.inherited_object_type): inherited_object_type
+        );
         let qualifier = qualifier_value
             .as_sym(strand)
             .ok_or_else(|| Error::type_error(strand, "qualifier: expected AceQualifier"))?
@@ -1367,7 +1343,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
             });
         }
         builder = builder.method("to_bin", async move |this, strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let bytes = with_ace(this, strand, |ace| ace.as_bytes().to_vec())?;
             Output::set(strand, out, bytes.as_slice());
             Ok(())
@@ -1899,48 +1875,19 @@ async fn ace_from_args<'v, 's>(
     args: Args<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAceBuf> {
-    let allow_sym = global.syms.allow;
-    let deny_sym = global.syms.deny;
-    let audit_sym = global.syms.audit;
-    let mask_sym = global.syms.mask;
-    let flags_sym = global.syms.flags;
-    let object_type_sym = global.syms.object_type;
-    let inherited_object_type_sym = global.syms.inherited_object_type;
-    let callback_sym = global.syms.callback;
-    let application_data_sym = global.syms.application_data;
-    let successful_sym = global.syms.successful;
-    let failed_sym = global.syms.failed;
-    let (
-        [mask],
-        [
-            allow,
-            deny,
-            audit,
-            flags,
-            object_type,
-            inherited_object_type,
-            callback,
-            application_data,
-            successful,
-            failed,
-        ],
-    ) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        mask_sym,
-        allow_sym = None,
-        deny_sym = None,
-        audit_sym = None,
-        flags_sym = None,
-        object_type_sym = None,
-        inherited_object_type_sym = None,
-        callback_sym = None,
-        application_data_sym = None,
-        successful_sym = None,
-        failed_sym = None
-    )?;
+    unpack!(strand, args =>
+        (global.syms.mask): mask,
+        ?(global.syms.allow): allow,
+        ?(global.syms.deny): deny,
+        ?(global.syms.audit): audit,
+        ?(global.syms.flags): flags,
+        ?(global.syms.object_type): object_type,
+        ?(global.syms.inherited_object_type): inherited_object_type,
+        ?(global.syms.callback): callback,
+        ?(global.syms.application_data): application_data,
+        ?(global.syms.successful): successful,
+        ?(global.syms.failed): failed
+    );
 
     let components = AceComponents {
         allow: allow
@@ -2128,8 +2075,7 @@ async fn acl_from_args<'v, 's>(
     args: Args<'v, '_>,
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsAclBuf> {
-    let revision_sym = global.syms.revision;
-    let ([], [revision], entries) = unpack!(strand, args, 0, 0, revision_sym = None, ...)?;
+    unpack!(strand, args => ?(global.syms.revision): revision, ...entries);
     let revision = revision
         .as_deref()
         .map(|value| acl_revision(strand, global, value, &path.key("revision")))
@@ -2494,51 +2440,26 @@ pub(crate) async fn sec_desc_from_args<'v, 's>(
     let sacl_auto_inherited = global.syms.sacl_auto_inherited;
     let sacl_protected = global.syms.sacl_protected;
     let rm_control = global.syms.rm_control;
-    let (
-        [],
-        [
-            value,
-            owner_value,
-            group_value,
-            dacl_value,
-            sacl_value,
-            owner_defaulted_value,
-            group_defaulted_value,
-            dacl_present_value,
-            dacl_defaulted_value,
-            dacl_auto_inherit_required_value,
-            dacl_auto_inherited_value,
-            dacl_protected_value,
-            sacl_present_value,
-            sacl_defaulted_value,
-            sacl_auto_inherit_required_value,
-            sacl_auto_inherited_value,
-            sacl_protected_value,
-            rm_control_value,
-        ],
-    ) = unpack!(
-        strand,
-        args,
-        0,
-        1,
-        owner = None,
-        group = None,
-        dacl = None,
-        sacl = None,
-        owner_defaulted = None,
-        group_defaulted = None,
-        dacl_present = None,
-        dacl_defaulted = None,
-        dacl_auto_inherit_required = None,
-        dacl_auto_inherited = None,
-        dacl_protected = None,
-        sacl_present = None,
-        sacl_defaulted = None,
-        sacl_auto_inherit_required = None,
-        sacl_auto_inherited = None,
-        sacl_protected = None,
-        rm_control = None
-    )?;
+    unpack!(strand, args =>
+        ?value,
+        ?owner: owner_value,
+        ?group: group_value,
+        ?dacl: dacl_value,
+        ?sacl: sacl_value,
+        ?owner_defaulted: owner_defaulted_value,
+        ?group_defaulted: group_defaulted_value,
+        ?dacl_present: dacl_present_value,
+        ?dacl_defaulted: dacl_defaulted_value,
+        ?dacl_auto_inherit_required: dacl_auto_inherit_required_value,
+        ?dacl_auto_inherited: dacl_auto_inherited_value,
+        ?dacl_protected: dacl_protected_value,
+        ?sacl_present: sacl_present_value,
+        ?sacl_defaulted: sacl_defaulted_value,
+        ?sacl_auto_inherit_required: sacl_auto_inherit_required_value,
+        ?sacl_auto_inherited: sacl_auto_inherited_value,
+        ?sacl_protected: sacl_protected_value,
+        ?rm_control: rm_control_value
+    );
     let owner = match owner_value.as_deref() {
         Some(value) => NullableComponent::from_option(coerce_sid_option(
             strand,
@@ -2678,51 +2599,26 @@ impl<'v> Object<'v> for SecDesc {
         let sacl_auto_inherited = global.syms.sacl_auto_inherited;
         let sacl_protected = global.syms.sacl_protected;
         let rm_control = global.syms.rm_control;
-        let (
-            [],
-            [
-                value,
-                owner_value,
-                group_value,
-                dacl_value,
-                sacl_value,
-                owner_defaulted_value,
-                group_defaulted_value,
-                dacl_present_value,
-                dacl_defaulted_value,
-                dacl_auto_inherit_required_value,
-                dacl_auto_inherited_value,
-                dacl_protected_value,
-                sacl_present_value,
-                sacl_defaulted_value,
-                sacl_auto_inherit_required_value,
-                sacl_auto_inherited_value,
-                sacl_protected_value,
-                rm_control_value,
-            ],
-        ) = unpack!(
-            strand,
-            args,
-            0,
-            1,
-            owner = None,
-            group = None,
-            dacl = None,
-            sacl = None,
-            owner_defaulted = None,
-            group_defaulted = None,
-            dacl_present = None,
-            dacl_defaulted = None,
-            dacl_auto_inherit_required = None,
-            dacl_auto_inherited = None,
-            dacl_protected = None,
-            sacl_present = None,
-            sacl_defaulted = None,
-            sacl_auto_inherit_required = None,
-            sacl_auto_inherited = None,
-            sacl_protected = None,
-            rm_control = None
-        )?;
+        unpack!(strand, args =>
+            ?value,
+            ?owner: owner_value,
+            ?group: group_value,
+            ?dacl: dacl_value,
+            ?sacl: sacl_value,
+            ?owner_defaulted: owner_defaulted_value,
+            ?group_defaulted: group_defaulted_value,
+            ?dacl_present: dacl_present_value,
+            ?dacl_defaulted: dacl_defaulted_value,
+            ?dacl_auto_inherit_required: dacl_auto_inherit_required_value,
+            ?dacl_auto_inherited: dacl_auto_inherited_value,
+            ?dacl_protected: dacl_protected_value,
+            ?sacl_present: sacl_present_value,
+            ?sacl_defaulted: sacl_defaulted_value,
+            ?sacl_auto_inherit_required: sacl_auto_inherit_required_value,
+            ?sacl_auto_inherited: sacl_auto_inherited_value,
+            ?sacl_protected: sacl_protected_value,
+            ?rm_control: rm_control_value
+        );
         let components_supplied = owner_value.is_some()
             || group_value.is_some()
             || dacl_value.is_some()
@@ -3071,50 +2967,25 @@ impl<'v> Object<'v> for SecDesc {
                 )
             })
             .method("with", async move |this, strand, args, out| {
-                let (
-                    [],
-                    [
-                        owner_value,
-                        group_value,
-                        dacl_value,
-                        sacl_value,
-                        owner_defaulted_value,
-                        group_defaulted_value,
-                        dacl_present_value,
-                        dacl_defaulted_value,
-                        dacl_auto_inherit_required_value,
-                        dacl_auto_inherited_value,
-                        dacl_protected_value,
-                        sacl_present_value,
-                        sacl_defaulted_value,
-                        sacl_auto_inherit_required_value,
-                        sacl_auto_inherited_value,
-                        sacl_protected_value,
-                        rm_control_value,
-                    ],
-                ) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    owner = None,
-                    group = None,
-                    dacl = None,
-                    sacl = None,
-                    owner_defaulted = None,
-                    group_defaulted = None,
-                    dacl_present = None,
-                    dacl_defaulted = None,
-                    dacl_auto_inherit_required = None,
-                    dacl_auto_inherited = None,
-                    dacl_protected = None,
-                    sacl_present = None,
-                    sacl_defaulted = None,
-                    sacl_auto_inherit_required = None,
-                    sacl_auto_inherited = None,
-                    sacl_protected = None,
-                    rm_control = None
-                )?;
+                unpack!(strand, args =>
+                    ?owner: owner_value,
+                    ?group: group_value,
+                    ?dacl: dacl_value,
+                    ?sacl: sacl_value,
+                    ?owner_defaulted: owner_defaulted_value,
+                    ?group_defaulted: group_defaulted_value,
+                    ?dacl_present: dacl_present_value,
+                    ?dacl_defaulted: dacl_defaulted_value,
+                    ?dacl_auto_inherit_required: dacl_auto_inherit_required_value,
+                    ?dacl_auto_inherited: dacl_auto_inherited_value,
+                    ?dacl_protected: dacl_protected_value,
+                    ?sacl_present: sacl_present_value,
+                    ?sacl_defaulted: sacl_defaulted_value,
+                    ?sacl_auto_inherit_required: sacl_auto_inherit_required_value,
+                    ?sacl_auto_inherited: sacl_auto_inherited_value,
+                    ?sacl_protected: sacl_protected_value,
+                    ?rm_control: rm_control_value
+                );
                 let global = strand.state::<WindowsSecurityTag>();
                 let rm_control = match rm_control_value.as_deref() {
                     Some(value) if value.is_nil() => NullableComponent::Clear,
@@ -3203,7 +3074,7 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .method("to_bin", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let bytes = this.annex().to_bytes();
                 Output::set(strand, out, bytes.as_slice());
                 Ok(())
@@ -3286,7 +3157,7 @@ impl<'v> Object<'v> for SidName {
                 Ok(())
             })
             .type_method("lookup", async move |_this, strand, args, mut out| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let global = strand.state::<WindowsSecurityTag>();
                 if global.local.get(strand).target().os().family() != OperatingSystemFamily::Windows
                 {
@@ -3600,7 +3471,7 @@ pub(crate) fn configure_vm<'v>(
             },
         )
         .function("token_info", async move |strand, args, mut out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let security = security_info(strand, global.local)?;
             let Some(info) = security.windows() else {
                 return Err(Error::unsupported(

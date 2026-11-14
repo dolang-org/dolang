@@ -371,11 +371,11 @@ impl<'v> Object<'v> for StatusObject {
         #[cfg(feature = "json")]
         let builder =
             builder.method_with_slots("json", async move |this, strand, args, out, [mut json]| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let annex = this.annex();
                 let text = status_text(strand, &annex)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text)
+                method!(strand, json, decode, text, out)
             });
 
         builder
@@ -400,12 +400,12 @@ impl<'v> Object<'v> for StatusObject {
                 Ok(())
             })
             .method("body", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Output::set(strand, out, this.annex().body.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let annex = this.annex();
                 let input = status_text(strand, &annex)?;
                 Output::set(strand, out, input);
@@ -556,7 +556,7 @@ async fn multipart_part<'v, 's>(
             with_slots!(strand, |mut json_mod, mut json_text| {
                 strand.import("json", &mut json_mod).await?;
                 let encode = global.syms.encode;
-                method!(strand, json_mod, encode, &mut json_text, &mut body)?;
+                method!(strand, json_mod, encode, &mut body, &mut json_text)?;
                 Output::set(strand, &mut body, &json_text);
                 Ok(())
             })?;
@@ -702,7 +702,7 @@ async fn request<'v, 's>(
         if let Some(json) = json {
             st.import("json", &mut key).await?;
             let encode = global.syms.encode;
-            method!(st, key, encode, &mut value, json)?;
+            method!(st, key, encode, json, &mut value)?;
             builder = builder
                 .body(value.to_string(st)?)
                 .header("content-type", "application/json");
@@ -748,7 +748,7 @@ async fn request<'v, 's>(
             .response
             .create_with_annex(st, response, global, &mut value);
         if let Some(thunk) = thunk {
-            let res = call!(st, thunk, out, &value);
+            let res = call!(st, thunk, &value, out);
             let _ = with_interrupt_mask!(st, InterruptMask::all(), {
                 method!(st, value, global.syms.close, &mut tmp)
             });
@@ -774,38 +774,16 @@ impl<'v> Object<'v> for Client {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = strand.state::<Tag>();
-        let unix_socket = global.syms.unix_socket;
-        let proxy = global.syms.proxy;
-        let cookies = global.syms.cookies;
-        let ca_cert = global.syms.ca_cert;
-        let identity = global.syms.identity;
-        let password = global.syms.password;
-        let invalid_certs = global.syms.invalid_certs;
-        let (
-            [],
-            [
-                func,
-                unix_socket,
-                proxy,
-                cookies,
-                ca_cert,
-                identity,
-                password,
-                invalid_certs,
-            ],
-        ) = unpack!(
-            strand,
-            args,
-            0,
-            1,
-            unix_socket = None,
-            proxy = None,
-            cookies = None,
-            ca_cert = None,
-            identity = None,
-            password = None,
-            invalid_certs = None
-        )?;
+        unpack!(strand, args =>
+            ?func,
+            ?(global.syms.unix_socket): unix_socket,
+            ?(global.syms.proxy): proxy,
+            ?(global.syms.cookies): cookies,
+            ?(global.syms.ca_cert): ca_cert,
+            ?(global.syms.identity): identity,
+            ?(global.syms.password): password,
+            ?(global.syms.invalid_certs): invalid_certs
+        );
         // Fetch has no equivalent for these options.
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         let builder = {
@@ -923,7 +901,7 @@ impl<'v> Object<'v> for Client {
                     inner: Some(builder.build().into_http(strand)?),
                 };
                 this.create_with_annex(strand, value, ClientAnnex { global }, &mut client);
-                let res = call!(strand, func, out, &client);
+                let res = call!(strand, func, &client, out);
                 let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
                     method!(strand, client, global.syms.close, tmp)
                 });
@@ -942,7 +920,7 @@ impl<'v> Object<'v> for Client {
         builder.supertype(TypeObject::Func).method(
             "close",
             async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 drop(this.borrow_mut(strand)?.inner.take());
                 Ok(())
             },
@@ -1079,11 +1057,11 @@ impl<'v> Object<'v> for Response {
         #[cfg(feature = "json")]
         let builder =
             builder.method_with_slots("json", async move |this, strand, args, out, [mut json]| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let body = take_body(this, strand)?;
                 let text = text(body).await.into_http(strand)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text.as_str())
+                method!(strand, json, decode, text.as_str(), out)
             });
 
         builder
@@ -1109,21 +1087,21 @@ impl<'v> Object<'v> for Response {
                 Ok(())
             })
             .method("body", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let body = take_body(this, strand)?;
                 let res = bytes(body).await.into_http(strand)?;
                 Output::set(strand, out, res.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let body = take_body(this, strand)?;
                 let res = text(body).await.into_http(strand)?;
                 Output::set(strand, out, res.as_str());
                 Ok(())
             })
             .method("throw_for_status", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = *this.annex();
                 let mut borrow = this.borrow_mut(strand)?;
                 let Some(inner) = borrow.inner.take() else {
@@ -1139,11 +1117,11 @@ impl<'v> Object<'v> for Response {
                 }
             })
             .method("io", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 take_io(this, strand, out)
             })
             .method_with_slots("chunks", async move |this, strand, args, out, [mut io]| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = *this.annex();
                 take_io(this, strand, Slot::reborrow(&mut io))?;
                 method!(strand, io, global.syms.chunks, out)
@@ -1151,7 +1129,7 @@ impl<'v> Object<'v> for Response {
             .method_with_slots(
                 "events",
                 async move |this, strand, args, out, [mut iter]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let global = *this.annex();
                     let mut borrow = this.borrow_mut(strand)?;
                     match borrow.inner.as_mut() {
@@ -1185,18 +1163,18 @@ impl<'v> Object<'v> for Response {
             .method_with_slots(
                 "lines",
                 async move |this, strand, args, out, [mut io, mut module, mut buffered]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let global = *this.annex();
                     take_io(this, strand, Slot::reborrow(&mut io))?;
                     strand.import("io", &mut module).await?;
-                    method!(strand, module, global.syms.buffered, &mut buffered, &io)?;
+                    method!(strand, module, global.syms.buffered, &io, &mut buffered)?;
                     method!(strand, buffered, global.syms.chomp, out)
                 },
             )
             .method_with_slots(
                 "close",
                 async move |this, strand, args, _out, [mut io, tmp]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let global = *this.annex();
                     {
                         let mut borrow = this.borrow_mut(strand)?;

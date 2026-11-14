@@ -29,7 +29,7 @@ use crate::{
     },
     redirect,
     sig::Unpack,
-    strand::{Redirect, Strand},
+    strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
@@ -45,9 +45,8 @@ macro_rules! isolated {
     ($strand:ident, $body:expr) => {
         redirect!(
             $strand,
-            Redirect::new($strand)
-                .input(Singleton::Null)
-                .output(Singleton::Null),
+            input: Singleton::Null,
+            output: Singleton::Null,
             $body
         )
     };
@@ -799,7 +798,7 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let kind = this.get().0;
-        let ([mut func], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => mut func);
         let accessor = Accessor {
             kind,
             func: func.take(),
@@ -850,7 +849,7 @@ macro_rules! member_marker {
                 args: Args<'v, 'a>,
                 mut out: Slot<'v, 'a>,
             ) -> Result<'v, 's, ()> {
-                let ([member], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => member);
                 this.create(strand, $ty, &mut out);
                 with_instance!(strand, this.cast(&out).unwrap(), |inst| {
                     let mut borrow = inst.borrow_mut_unwrap();
@@ -1210,7 +1209,7 @@ impl<'v> ClassObject<'v> {
             }) => strand.sync(async |strand| {
                 isolated!(strand, {
                     if *inherited {
-                        call!(strand, getter, out, &this)
+                        call!(strand, getter, &this, out)
                     } else {
                         call!(strand, getter, out)
                     }
@@ -1313,9 +1312,9 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 strand.sync(async |strand| {
                     isolated!(strand, {
                         if *inherited {
-                            call!(strand, setter, &mut discard, &this, value)
+                            call!(strand, setter, &this, value, &mut discard)
                         } else {
-                            call!(strand, setter, &mut discard, value)
+                            call!(strand, setter, value, &mut discard)
                         }
                     })
                 })
@@ -1356,7 +1355,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         let me = this.annex();
         match method.tag() {
             sym::GET_METHOD => {
-                let ([obj, field], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => obj, field);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
@@ -1384,7 +1383,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         getter: Some(getter),
                         ..
                     })) => strand
-                        .sync(async |strand| isolated!(strand, call!(strand, getter, out, obj))),
+                        .sync(async |strand| isolated!(strand, call!(strand, getter, obj, out))),
                     Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, MemberKind::Method)) => {
                         BoundMethod::create(strand, obj, field, out);
                         Ok(())
@@ -1410,7 +1409,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     }
                     _ => match me.entry_by_tag(sym::GET_METHOD) {
                         Some(ClassEntry::Method(v)) => {
-                            strand.sync(async |strand| call!(strand, v, out, obj, field))
+                            strand.sync(async |strand| call!(strand, v, obj, field, out))
                         }
                         Some(ClassEntry::Delegate(slot, _)) => {
                             let recv = obj
@@ -1428,7 +1427,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 }
             }
             sym::SET_METHOD => {
-                let ([obj, field, mut value], []) = unpack!(strand, args, 3, 0)?;
+                unpack!(strand, args => obj, field, mut value);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
@@ -1454,7 +1453,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         ..
                     })) => with_slots!(strand, |mut tmp| {
                         strand.sync(async |strand| {
-                            isolated!(strand, call!(strand, setter, &mut tmp, obj, &value))
+                            isolated!(strand, call!(strand, setter, obj, &value, &mut tmp))
                         })
                     }),
                     Some(
@@ -1477,7 +1476,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         Some(ClassEntry::Method(v)) => {
                             with_slots!(strand, |mut tmp| {
                                 strand.sync(async |strand| {
-                                    call!(strand, v, &mut tmp, obj, field, &value)
+                                    call!(strand, v, obj, field, &value, &mut tmp)
                                 })
                             })
                         }
@@ -1511,7 +1510,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     _ => None,
                 };
                 if let Some((supertype, native)) = inherited {
-                    let ([instance], [], mut trailing) = unpack!(strand, args, 1, 0, ...)?;
+                    unpack!(strand, args => instance, ...mut trailing);
                     if !instance.is_instance_of(strand, &this) {
                         return Err(Error::type_error(strand, "invalid class object type"));
                     }
@@ -1669,7 +1668,7 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                 type_obj.op_mcall(strand, init, args, tmp).await?;
             }
             _ => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
             }
         }
 
@@ -1832,7 +1831,7 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method))
                     if supertype.repr_eq(TypeObject::Type.value(strand.vm())))
         {
-            let ([receiver, field], [], trailing) = unpack!(strand, args, 2, 0, ...)?;
+            unpack!(strand, args => receiver, field, ...trailing);
             let class = receiver
                 .downcast_ref(strand.builtin_types().class_object)
                 .ok_or_else(|| Error::type_error(strand, "invalid class object type"))?;
@@ -1843,12 +1842,12 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 .as_sym(strand)
                 .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
             if method.tag() == sym::GET_METHOD {
-                let ([], []) = unpack!(strand, trailing, 0, 0)?;
+                unpack!(strand, trailing =>);
                 return with_pin!(strand, class, |class| {
                     ClassObject::type_get(Recv::new(class), strand, field, out)
                 });
             }
-            let ([value], []) = unpack!(strand, trailing, 1, 0)?;
+            unpack!(strand, trailing => value);
             return with_slots!(strand, |mut slot| {
                 Output::set(strand, Slot::reborrow(&mut slot), value);
                 with_pin!(strand, class, |class| {
@@ -1859,7 +1858,7 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         match class.type_entry(method) {
             Some(ClassTypeEntry::Method { value, .. }) => value.op_call(strand, args, out).await,
             Some(ClassTypeEntry::Delegate(supertype, MemberKind::Method)) => {
-                let ([receiver], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                unpack!(strand, args => receiver, ...trailing);
                 if receiver
                     .downcast_ref(strand.builtin_types().class_object)
                     .is_none()
@@ -2090,7 +2089,7 @@ fn class_sync_binary_op_entry<'v, 'a, 's>(
     let annex = this.annex();
     match entry {
         ClassEntry::Method(v) => with_slots!(strand, |mut result| {
-            strand.sync(async |strand| call!(strand, v, &mut result, &this, other))?;
+            strand.sync(async |strand| call!(strand, v, &this, other, &mut result))?;
             Ok(result.take())
         }),
         ClassEntry::Delegate(slot, _) => {
@@ -2178,7 +2177,7 @@ fn class_sync_unary_op<'v, 'a, 's>(
     let annex = this.annex();
     match annex.prefix.class.annex().entry_by_tag(method_sym) {
         Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
-            strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+            strand.sync(async |strand| call!(strand, v, &this, &mut result))?;
             Ok(result.take())
         }),
         Some(ClassEntry::Delegate(slot, _)) => {
@@ -2244,7 +2243,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Method(v)) => {
                 with_slots!(strand, |mut result, mut reified| {
                     crate::stdlib::fmt::reify_spec(strand, *spec, Slot::reborrow(&mut reified));
-                    strand.sync(async |strand| call!(strand, v, &mut result, &this, &reified))?;
+                    strand.sync(async |strand| call!(strand, v, &this, &reified, &mut result))?;
                     let result = result
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
@@ -2346,7 +2345,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             let annex = this.annex();
             match annex.prefix.class.annex().entry_by_tag(sym::STR_METHOD) {
                 Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
-                    strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                    strand.sync(async |strand| call!(strand, v, &this, &mut result))?;
                     let result = result
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
@@ -2381,7 +2380,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::DBG_METHOD) {
             Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
-                strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                strand.sync(async |strand| call!(strand, v, &this, &mut result))?;
                 let result = result
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
@@ -2422,7 +2421,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 .entry_by_tag(sym::VERBATIM_METHOD)
             {
                 Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
-                    strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                    strand.sync(async |strand| call!(strand, v, &this, &mut result))?;
                     let result = result
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
@@ -2466,7 +2465,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Property(Property {
                 getter: Some(getter),
                 ..
-            })) => strand.sync(async |strand| isolated!(strand, call!(strand, getter, out, &this))),
+            })) => strand.sync(async |strand| isolated!(strand, call!(strand, getter, &this, out))),
             Some(ClassEntry::Method(_) | ClassEntry::Abstract(_, MemberKind::Method)) => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -2488,7 +2487,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             }
             _ => match annex.prefix.class.annex().entry_by_tag(sym::GET_METHOD) {
                 Some(ClassEntry::Method(v)) => {
-                    strand.sync(async |strand| call!(strand, v, out, &this, field))
+                    strand.sync(async |strand| call!(strand, v, &this, field, out))
                 }
                 Some(ClassEntry::Delegate(slot, _)) => {
                     let native = annex
@@ -2521,7 +2520,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 ..
             })) => with_slots!(strand, |mut tmp| {
                 strand.sync(async |strand| {
-                    isolated!(strand, call!(strand, setter, &mut tmp, &this, &value))
+                    isolated!(strand, call!(strand, setter, &this, &value, &mut tmp))
                 })
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
@@ -2535,7 +2534,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             }
             _ => match annex.prefix.class.annex().entry_by_tag(sym::SET_METHOD) {
                 Some(ClassEntry::Method(v)) => with_slots!(strand, |mut tmp| {
-                    strand.sync(async |strand| call!(strand, v, &mut tmp, &this, field, &value))
+                    strand.sync(async |strand| call!(strand, v, &this, field, &value, &mut tmp))
                 }),
                 Some(ClassEntry::Delegate(slot, _)) => {
                     let native = annex
@@ -2573,7 +2572,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 ..
             })) => {
                 return with_slots!(strand, |mut callable| {
-                    isolated!(strand, call!(strand, getter, &mut callable, &this))?;
+                    isolated!(strand, call!(strand, getter, &this, &mut callable))?;
                     callable.op_call(strand, args, out).await
                 });
             }
@@ -2608,7 +2607,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         match class.entry_by_tag(sym::GET_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 with_slots!(strand, |mut callable| {
-                    call!(strand, v, &mut callable, &this, method)?;
+                    call!(strand, v, &this, method, &mut callable)?;
                     callable.op_call(strand, args, out).await
                 })
             }
@@ -2665,7 +2664,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         match annex.prefix.class.annex().entry_by_tag(sym::UNPACK_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 with_slots!(strand, |mut proxy| {
-                    call!(strand, v, &mut proxy, &this)?;
+                    call!(strand, v, &this, &mut proxy)?;
                     proxy.op_unpack(strand, sig, out).await
                 })
             }
@@ -2691,7 +2690,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::ITER_METHOD) {
-            Some(ClassEntry::Method(v)) => call!(strand, v, out, &this),
+            Some(ClassEntry::Method(v)) => call!(strand, v, &this, out),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
                     .native(*slot)
@@ -2722,7 +2721,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::SINK_METHOD) {
-            Some(ClassEntry::Method(v)) => call!(strand, v, out, &this),
+            Some(ClassEntry::Method(v)) => call!(strand, v, &this, out),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
                     .native(*slot)
@@ -2756,7 +2755,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         match annex.prefix.class.annex().entry_by_tag(sym::SPREAD_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 let proxy = with_slots!(strand, |mut proxy| {
-                    call!(strand, v, &mut proxy, &this)?;
+                    call!(strand, v, &this, &mut proxy)?;
                     Ok(proxy.take())
                 })?;
                 proxy.op_spread(strand, context, sink).await
@@ -2791,7 +2790,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, bool> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::NEXT_METHOD) {
-            Some(ClassEntry::Method(v)) => match call!(strand, v, out, &this) {
+            Some(ClassEntry::Method(v)) => match call!(strand, v, &this, out) {
                 Ok(()) => Ok(true),
                 Err(err) if err.kind() == ErrorKind::IterStop => Ok(false),
                 Err(err) => Err(err),
@@ -2819,7 +2818,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::PUT_METHOD) {
             Some(ClassEntry::Method(v)) => {
-                with_slots!(strand, |tmp| call!(strand, v, tmp, &this, &item))
+                with_slots!(strand, |tmp| call!(strand, v, &this, &item, tmp))
             }
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
@@ -3107,7 +3106,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::BOOL_METHOD) {
             Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
-                strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                strand.sync(async |strand| call!(strand, v, &this, &mut result))?;
                 result.op_bool(strand)
             }),
             Some(ClassEntry::Delegate(slot, _)) => annex
@@ -3137,7 +3136,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             .entry(Sym::well_known(sym::INDEX_METHOD))
         {
             Some(ClassEntry::Method(v)) => {
-                strand.sync(async |strand| call!(strand, v, out, &this, index))
+                strand.sync(async |strand| call!(strand, v, &this, index, out))
             }
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
@@ -3166,7 +3165,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             .entry(Sym::well_known(sym::ASSIGN_METHOD))
         {
             Some(ClassEntry::Method(v)) => with_slots!(strand, |mut tmp| {
-                strand.sync(async |strand| call!(strand, v, &mut tmp, &this, &index, &value))
+                strand.sync(async |strand| call!(strand, v, &this, &index, &value, &mut tmp))
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
@@ -3198,7 +3197,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 .entry(Sym::well_known(sym::HASH_METHOD))
             {
                 Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
-                    strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                    strand.sync(async |strand| call!(strand, v, &this, &mut result))?;
                     let v = result.to_int(strand).map_err(|_| {
                         Error::type_error(strand, "expected Int result from (hash)")
                     })?;

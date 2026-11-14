@@ -11,7 +11,7 @@ use tokio::runtime::Builder;
 use dolang::{
     extension::VmExt,
     resource,
-    runtime::{self, error::ErrorKind, strand::Redirect, vm},
+    runtime::{self, error::ErrorKind, vm},
 };
 
 use dolang_ext_shell::{Exec, Exit};
@@ -137,7 +137,8 @@ fn run() -> Outcome {
                     let res = async {
                         redirect!(
                             strand,
-                            Redirect::new(strand).input(stdin).output(&stdout),
+                            input: stdin,
+                            output: &stdout,
                             {
                                 dolang_ext_shell::set_args(strand, argv.into_iter().skip(1))
                                     .await?;

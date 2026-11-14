@@ -14,12 +14,12 @@ fn require_i64<'v, 's>(
 }
 
 pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
-    let alphabet_key = builder.sym("alphabet");
+    let alphabet = builder.sym("alphabet");
 
     builder
         .module("rand")
         .function("int", async move |strand, args, out| {
-            let ([start], [end]) = unpack!(strand, args, 1, 1)?;
+            unpack!(strand, args => start, ?end);
             let start = require_i64(strand, &start, "expected `Int`")?;
             let (start, end) = match end {
                 Some(end) => (start, require_i64(strand, &end, "expected `Int`")?),
@@ -36,7 +36,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
             Ok(())
         })
         .function("string", async move |strand, args, out| {
-            let ([len], [alphabet]) = unpack!(strand, args, 1, 0, alphabet_key = None)?;
+            unpack!(strand, args => len, ?:alphabet);
             let len = require_i64(strand, &len, "expected `Int`")?;
             let len = usize::try_from(len)
                 .map_err(|_| Error::value(strand, "expected len to be non-negative"))?;
@@ -60,7 +60,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
             Ok(())
         })
         .function("pick", async move |strand, args, out| {
-            let ([value], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => value);
             let array = value
                 .as_array(strand.vm())
                 .ok_or_else(|| Error::type_error(strand, "expected Array"))?;
@@ -76,7 +76,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
         .function_with_slots(
             "shuffle",
             async move |strand, args, _out, [mut left, mut right]| {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let arr = value
                     .as_array(strand.vm())
                     .ok_or_else(|| Error::type_error(strand, "expected Array"))?;

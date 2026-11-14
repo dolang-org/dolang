@@ -834,24 +834,23 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             ));
         }
         if method.tag() == sym::DELETE {
-            let ([key], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => key);
             let view = this.get();
             let removed = view.glue.delete(&view.owner, strand, &key)?;
             Output::set(strand, out, removed);
             return Ok(());
         }
         if method.tag() == sym::CLEAR {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let view = this.get();
             return view.glue.clear(&view.owner, strand);
         }
         if matches!(method.tag(), sym::GET | sym::POP) {
             // Lookups stay lazy, and pops must change the owner rather than
             // the temporary snapshot used by read-only methods below.
-            let default_key = Sym::well_known(sym::DEFAULT);
+            let default = Sym::well_known(sym::DEFAULT);
             let else_key = Sym::well_known(sym::ELSE);
-            let ([key], [instance, default, or_else]) =
-                unpack!(strand, args, 1, 1, default_key = None, else_key = None)?;
+            unpack!(strand, args => key, ?instance, ?:default, ?else_key: or_else);
             if default.is_some() && or_else.is_some() {
                 return Err(Error::unexpected_key(strand, else_key));
             }
@@ -895,7 +894,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             };
         }
         if method.tag() == sym::KEYS {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let view = this.get();
             return view.glue.keys(&view.owner, strand, out);
         }
@@ -1363,29 +1362,29 @@ mod tests {
                     with_instance!(strand, cast, |native| {
                         strand.dict_view(native, Projection::<true>, &mut view);
                         let pop = Sym::well_known(sym::POP);
-                        method!(strand, &view, pop, &mut out, 1_i64).unwrap();
+                        method!(strand, &view, pop, 1_i64, &mut out).unwrap();
                         assert_eq!(out.as_int(strand), Some(10));
                         assert_eq!(native.borrow_unwrap().0.len(), 5);
-                        method!(strand, &view, pop, &mut out, 1_i64, -1_i64).unwrap();
+                        method!(strand, &view, pop, 1_i64, -1_i64, &mut out).unwrap();
                         assert_eq!(out.as_int(strand), Some(30));
                         view.get(strand, pop, &mut bound).unwrap();
-                        call!(strand, &bound, &mut out, 2_i64).unwrap();
+                        call!(strand, &bound, 2_i64, &mut out).unwrap();
                         assert!(out.is_nil());
                         let delete = Sym::well_known(sym::DELETE);
                         view.get(strand, delete, &mut bound).unwrap();
-                        call!(strand, &bound, &mut out, 3_i64).unwrap();
+                        call!(strand, &bound, 3_i64, &mut out).unwrap();
                         assert!(out.to_bool(strand).unwrap());
                         assert_eq!(native.borrow_unwrap().0, vec![(1, Some(20))]);
-                        method!(strand, &view, delete, &mut out, 3_i64).unwrap();
+                        method!(strand, &view, delete, 3_i64, &mut out).unwrap();
                         assert!(!out.to_bool(strand).unwrap());
                         let clear = Sym::well_known(sym::CLEAR);
                         view.get(strand, clear, &mut bound).unwrap();
                         call!(strand, &bound, &mut out).unwrap();
                         assert!(native.borrow_unwrap().0.is_empty());
-                        let err = method!(strand, &view, pop, &mut out, 1_i64).unwrap_err();
+                        let err = method!(strand, &view, pop, 1_i64, &mut out).unwrap_err();
                         assert_eq!(err.kind(), ErrorKind::Index);
                         let default = Sym::well_known(sym::DEFAULT);
-                        method!(strand, &view, pop, &mut out, 1_i64, default: 99_i64).unwrap();
+                        method!(strand, &view, pop, 1_i64, default: 99_i64, &mut out).unwrap();
                         assert_eq!(out.as_int(strand), Some(99));
                     });
                 },
@@ -1405,12 +1404,12 @@ mod tests {
                     strand.dict_view(native, Projection::<true>, &mut view);
                     let default = Sym::well_known(sym::DEFAULT);
                     let otherwise = Sym::well_known(sym::ELSE);
-                    let err = method!(strand, &view, Sym::well_known(sym::POP), &mut out, 1_i64, default: 5_i64, otherwise: 6_i64).unwrap_err();
+                    let err = method!(strand, &view, Sym::well_known(sym::POP), 1_i64, default: 5_i64, otherwise: 6_i64, &mut out).unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
                     assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
                     strand.dict_view(native, Projection::<false>, &mut view);
                     for method in [sym::DELETE, sym::POP] {
-                        let err = method!(strand, &view, Sym::well_known(method), &mut out, 1_i64).unwrap_err();
+                        let err = method!(strand, &view, Sym::well_known(method), 1_i64, &mut out).unwrap_err();
                         assert_eq!(err.kind(), ErrorKind::Immutable);
                     }
                     let err = method!(strand, &view, Sym::well_known(sym::CLEAR), &mut out).unwrap_err();

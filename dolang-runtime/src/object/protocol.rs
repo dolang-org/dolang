@@ -2441,7 +2441,7 @@ pub(crate) fn abstract_init<'v, 's, T: ?Sized + Protocol<'v>>(
     this: &Recv<'v, '_, T>,
     args: Args<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let ([instance], []) = unpack!(strand, args, 1, 0)?;
+    unpack!(strand, args => instance);
     let ty = Value::from_object(this.receiver.to_strong());
     if !instance.is_instance_of(strand, &ty) {
         return Err(Error::type_error(strand, "invalid type for unbound method"));
@@ -2474,7 +2474,7 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
     // delegated and direct method calls below would grow their futures
     strand
         .pin_future_call(async |strand| {
-            let ([this], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+            unpack!(strand, args => this, ...trailing);
             let (receiver, delegator) = if ty
                 .op_inspect(strand)
                 .is_some_and(|inspect| inspect.is_abstract)
@@ -2649,14 +2649,14 @@ fn special_mcall<'v, 'a, 's>(
 
     match method.tag() {
         sym::GET_METHOD => {
-            let ([field], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => field);
             let field = field
                 .as_sym(strand)
                 .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
             dispatch!(op_get, field, out)?;
         }
         sym::SET_METHOD => {
-            let ([field, value], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => field, value);
             let field = field
                 .as_sym(strand)
                 .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
@@ -2678,7 +2678,7 @@ fn special_mcall<'v, 'a, 's>(
             format.finish(strand, out);
         }
         sym::FMT_METHOD => {
-            let ([spec], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => spec);
             let spec = crate::stdlib::fmt::spec_of(strand, &spec)?;
             let mut format = StrEmbryo::new();
             dispatch!(op_fmt, &spec, &mut format)?;
@@ -2694,7 +2694,7 @@ fn special_mcall<'v, 'a, 's>(
             Output::set(strand, out, hasher.finish());
         }
         sym::EQ_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_eq(strand, &other)?,
                 None => receiver.op_eq(strand, &other)?,
@@ -2702,7 +2702,7 @@ fn special_mcall<'v, 'a, 's>(
             out.store(value);
         }
         sym::REQ_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_req(strand, &other)?,
                 None => receiver.op_req(strand, &other)?,
@@ -2710,7 +2710,7 @@ fn special_mcall<'v, 'a, 's>(
             out.store(value);
         }
         sym::NE_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_ne(strand, &other)?,
                 None => receiver.op_ne(strand, &other)?,
@@ -2718,7 +2718,7 @@ fn special_mcall<'v, 'a, 's>(
             out.store(value);
         }
         sym::RNE_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             let value = match delegator {
                 Some(delegator) => Delegated::new(receiver, delegator).op_rne(strand, &other)?,
                 None => receiver.op_rne(strand, &other)?,
@@ -2726,7 +2726,7 @@ fn special_mcall<'v, 'a, 's>(
             out.store(value);
         }
         sym::LT_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_lt, &other)?);
         }
         sym::NEG_METHOD => {
@@ -2736,91 +2736,91 @@ fn special_mcall<'v, 'a, 's>(
             out.store(dispatch!(op_bnot)?);
         }
         sym::ADD_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_add, &other)?);
         }
         sym::RADD_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_radd, &other)?);
         }
         sym::SUB_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_sub, &other)?);
         }
         sym::RSUB_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rsub, &other)?);
         }
         sym::MUL_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_mul, &other)?);
         }
         sym::RMUL_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rmul, &other)?);
         }
         sym::DIV_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_div, &other)?);
         }
         sym::RDIV_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rdiv, &other)?);
         }
         sym::EDIV_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_ediv, &other)?);
         }
         sym::REDIV_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rediv, &other)?);
         }
         sym::MOD_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_mod, &other)?);
         }
         sym::RMOD_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rmod, &other)?);
         }
         sym::BAND_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_band, &other)?);
         }
         sym::RBAND_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rband, &other)?);
         }
         sym::BOR_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_bor, &other)?);
         }
         sym::RBOR_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rbor, &other)?);
         }
         sym::BXOR_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_bxor, &other)?);
         }
         sym::RBXOR_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rbxor, &other)?);
         }
         sym::SHL_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_shl, &other)?);
         }
         sym::RSHL_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rshl, &other)?);
         }
         sym::SHR_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_shr, &other)?);
         }
         sym::RSHR_METHOD => {
-            let ([other], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => other);
             out.store(dispatch!(op_rshr, &other)?);
         }
         _ => unreachable!("special_mcall requires a supported symbol"),

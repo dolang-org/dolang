@@ -110,23 +110,14 @@ async fn resolve_io<'v, 's, 'a>(
     mut output: Slot<'v, '_>,
     mut stderr: Slot<'v, '_>,
 ) -> Result<'v, 's, ResolvedIo<'v, 'a>> {
-    let stdin_sym = global.syms.stdin;
-    let stdout_sym = global.syms.stdout;
-    let stderr_sym = global.syms.stderr;
-    let policy_sym = global.syms.policy;
-    let mode_sym = global.syms.mode;
-    let ([], [stdin_key, stdout_key, stderr_key, policy_key, mode_key], rest) = unpack!(
-        strand,
-        args,
-        0,
-        0,
-        stdin_sym = None,
-        stdout_sym = None,
-        stderr_sym = None,
-        policy_sym = None,
-        mode_sym = None,
-        ...
-    )?;
+    unpack!(strand, args =>
+        ?(global.syms.stdin): stdin_key,
+        ?(global.syms.stdout): stdout_key,
+        ?(global.syms.stderr): stderr_key,
+        ?(global.syms.policy): policy_key,
+        ?(global.syms.mode): mode_key,
+        ...rest
+    );
     // Framing for whichever output streams end up pumped into a sink. Applies
     // to both, since a redirect that splits them is already naming two sinks
     // and can chomp them independently.
@@ -965,7 +956,7 @@ impl<'v> Object<'v> for Program {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([name], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => name);
         let global = strand.state::<ProcTag>();
         let name = program_name_from_value(strand, global, &name)?;
         this.create_with_annex(strand, Program, ProgramAnnex { name, global }, out);
@@ -1078,7 +1069,7 @@ impl<'v> Object<'v> for Run<'v> {
         _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let global = this.borrow(strand)?.global;
-        let ([name], [], args) = unpack!(strand, args, 1, 0, ...)?;
+        unpack!(strand, args => name, ...args);
         let name = program_name_from_value(strand, global, &name)?;
         dispatch_run(strand, &name, args, global).await
     }

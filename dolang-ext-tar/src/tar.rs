@@ -699,7 +699,7 @@ impl<'v> Object<'v> for TarEntry {
                 })
             })
             .method("read", async move |this, strand, args, out| {
-                let ([size], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => size);
                 let size = usize::try_from(nonnegative_u64(strand, size, "size")?)
                     .map_err(|_| Error::overflow(strand))?;
                 let child = this.borrow(strand)?;
@@ -875,13 +875,13 @@ impl<'v> Object<'v> for TarWriter {
     type TypeAnnex = ();
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        let size_sym = builder.sym("size");
-        let mode_sym = builder.sym("mode");
-        let uid_sym = builder.sym("uid");
-        let gid_sym = builder.sym("gid");
-        let mtime_sym = builder.sym("mtime");
-        let owner_name_sym = builder.sym("owner_name");
-        let group_name_sym = builder.sym("group_name");
+        let size = builder.sym("size");
+        let mode = builder.sym("mode");
+        let uid = builder.sym("uid");
+        let gid = builder.sym("gid");
+        let mtime = builder.sym("mtime");
+        let owner_name = builder.sym("owner_name");
+        let group_name = builder.sym("group_name");
         builder
             .get("compression", |this, strand, out| {
                 let compression = this.borrow(strand)?.compression;
@@ -892,22 +892,17 @@ impl<'v> Object<'v> for TarWriter {
                 "entry",
                 async move |this, strand, args, out, [mut handle]| {
                     let global = *this.annex();
-                    let (
-                        [path, block],
-                        [size, mode, uid, gid, mtime, owner_name, group_name],
-                    ) = unpack!(
-                        strand,
-                        args,
-                        2,
-                        0,
-                        size_sym = None,
-                        mode_sym = None,
-                        uid_sym = None,
-                        gid_sym = None,
-                        mtime_sym = None,
-                        owner_name_sym = None,
-                        group_name_sym = None
-                    )?;
+                    unpack!(strand, args =>
+                        path,
+                        block,
+                        ?:size,
+                        ?:mode,
+                        ?:uid,
+                        ?:gid,
+                        ?:mtime,
+                        ?:owner_name,
+                        ?:group_name
+                    );
                     let path = entry_path(strand, path)?;
                     let size = size.ok_or_else(|| Error::value(strand, "size is required"))?;
                     let size = nonnegative_u64(strand, size, "size")?;
@@ -933,8 +928,7 @@ impl<'v> Object<'v> for TarWriter {
                         (native_builder, generation)
                     };
 
-                    let mut header =
-                        build_header(strand, EntryType::Regular, size, &opts, None)?;
+                    let mut header = build_header(strand, EntryType::Regular, size, &opts, None)?;
 
                     let (entry_stream, archive_stream) =
                         tokio::io::duplex(INTERNAL_BUFFER_SIZE * 2);
@@ -967,7 +961,7 @@ impl<'v> Object<'v> for TarWriter {
                         (native_builder, result)
                     };
                     let invoke = async {
-                        let result = call!(strand, block, out, &handle);
+                        let result = call!(strand, block, &handle, out);
                         let stream = with_instance!(strand, handle_cast, |handle_obj| {
                             Ok(handle_obj.borrow_mut(strand)?.stream.take())
                         })?;
@@ -1007,18 +1001,15 @@ impl<'v> Object<'v> for TarWriter {
                 },
             )
             .method("create_dir", async move |this, strand, args, _out| {
-                let ([path], [mode, uid, gid, mtime, owner_name, group_name]) = unpack!(
-                    strand,
-                    args,
-                    1,
-                    0,
-                    mode_sym = None,
-                    uid_sym = None,
-                    gid_sym = None,
-                    mtime_sym = None,
-                    owner_name_sym = None,
-                    group_name_sym = None
-                )?;
+                unpack!(strand, args =>
+                    path,
+                    ?:mode,
+                    ?:uid,
+                    ?:gid,
+                    ?:mtime,
+                    ?:owner_name,
+                    ?:group_name
+                );
                 let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
                     strand, 0o755, mode, uid, gid, mtime, owner_name, group_name,
@@ -1027,18 +1018,16 @@ impl<'v> Object<'v> for TarWriter {
                 append_metadata_only_entry(strand, this, &path, header).await
             })
             .method("symlink", async move |this, strand, args, _out| {
-                let ([target, path], [mode, uid, gid, mtime, owner_name, group_name]) = unpack!(
-                    strand,
-                    args,
-                    2,
-                    0,
-                    mode_sym = None,
-                    uid_sym = None,
-                    gid_sym = None,
-                    mtime_sym = None,
-                    owner_name_sym = None,
-                    group_name_sym = None
-                )?;
+                unpack!(strand, args =>
+                    target,
+                    path,
+                    ?:mode,
+                    ?:uid,
+                    ?:gid,
+                    ?:mtime,
+                    ?:owner_name,
+                    ?:group_name
+                );
                 let target = unix_path_string(strand, target, "target")?;
                 let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
@@ -1048,18 +1037,16 @@ impl<'v> Object<'v> for TarWriter {
                 append_metadata_only_entry(strand, this, &path, header).await
             })
             .method("hard_link", async move |this, strand, args, _out| {
-                let ([target, path], [mode, uid, gid, mtime, owner_name, group_name]) = unpack!(
-                    strand,
-                    args,
-                    2,
-                    0,
-                    mode_sym = None,
-                    uid_sym = None,
-                    gid_sym = None,
-                    mtime_sym = None,
-                    owner_name_sym = None,
-                    group_name_sym = None
-                )?;
+                unpack!(strand, args =>
+                    target,
+                    path,
+                    ?:mode,
+                    ?:uid,
+                    ?:gid,
+                    ?:mtime,
+                    ?:owner_name,
+                    ?:group_name
+                );
                 let target = unix_path_string(strand, target, "target")?;
                 let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
@@ -1195,7 +1182,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("Writer", global.types.writer)
         .value("EntryWriter", global.types.entry_writer)
         .function("read", async move |strand, args, out| {
-            let ([source, block], []) = unpack!(strand, args, 2, 0)?;
+            unpack!(strand, args => source, block);
             let handle = endpoint_handle(strand, &source, IoCaps::READ, "source").await?;
             let (entries, compression) = open_reader(strand, handle).await?;
             with_slots!(strand, |mut reader| {
@@ -1211,7 +1198,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     global,
                     &mut reader,
                 );
-                let result = call!(strand, block, out, &reader);
+                let result = call!(strand, block, &reader, out);
                 with_instance!(
                     strand,
                     global.types.reader.cast(&reader).unwrap(),
@@ -1227,8 +1214,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             })
         })
         .function("write", async move |strand, args, out| {
-            let ([sink, block], [compression]) =
-                unpack!(strand, args, 2, 0, compression_sym = None)?;
+            unpack!(strand, args => sink, block, ?compression_sym: compression);
             let path = dolang_ext_shell::as_path(strand, &sink);
             let compression = parse_compression(strand, global, compression, path.as_deref())?;
             let handle = endpoint_handle(strand, &sink, IoCaps::WRITE, "sink").await?;
@@ -1255,7 +1241,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     global,
                     &mut writer,
                 );
-                let result = call!(strand, block, out, &writer);
+                let result = call!(strand, block, &writer, out);
                 let (builder, poisoned, active) = with_instance!(
                     strand,
                     global.types.writer.cast(&writer).unwrap(),

@@ -19,7 +19,6 @@ use dolang::{
         io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
         method,
         object::{Mut, Ref, Request, TypeBuilder},
-        strand::Redirect,
         unpack,
         value::{Nil, TypeObject},
         vm::Register,
@@ -200,11 +199,11 @@ impl<'v> Object<'v> for Stdin {
                 Ok(())
             })
             .method("close", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Ok(())
             })
             .method("read", async move |_this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let size = size
                     .map(|size| {
                         size.to_i64(strand)
@@ -221,7 +220,7 @@ impl<'v> Object<'v> for Stdin {
                 read_raw(&mut *reader, size, strand, out).await
             })
             .method("lines", async move |_this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<ShellTag>();
                 global
                     .types
@@ -230,7 +229,7 @@ impl<'v> Object<'v> for Stdin {
                 Ok(())
             })
             .method("chunks", async move |_this, strand, args, out| {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let chunk = match size {
                     Some(size) => size
                         .to_i64(strand)
@@ -354,13 +353,13 @@ impl<'v> Object<'v> for Stdout {
                 write_pieces(&global.stdio.stdout, args, strand, out).await
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 flush_stream(&global.stdio.stdout, strand).await
             })
             // The process's own stream stays open.
             .method("close", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 flush_stream(&global.stdio.stdout, strand).await
             })
@@ -448,13 +447,13 @@ impl<'v> Object<'v> for Stderr {
                 write_pieces(&global.stdio.stderr, args, strand, out).await
             })
             .method("flush", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 flush_stream(&global.stdio.stderr, strand).await
             })
             // The process's own stream stays open.
             .method("close", async move |_this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 flush_stream(&global.stdio.stderr, strand).await
             })
@@ -580,7 +579,7 @@ impl<'v> Object<'v> for Vfs {
         args: dolang::runtime::Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([callable], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => callable);
         let global = strand.state::<ShellTag>();
         with_slots!(strand, |mut to_bg_send,
                              mut to_bg_recv,
@@ -624,7 +623,8 @@ impl<'v> Object<'v> for Vfs {
                         tuple.get(strand, 2, &mut output)?;
                         let res = redirect!(
                             strand,
-                            Redirect::new(strand).input(&input).output(&output),
+                            input: &input,
+                            output: &output,
                             call!(strand, &callable, out)
                         );
                         // Plain close, no poisoning: these pipe
@@ -679,13 +679,13 @@ impl<'v> Object<'v> for Vfs {
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let key_sym = builder.sym("key");
-        let elevate_sym = builder.sym("elevate");
-        let cd_sym = builder.sym("cd");
+        let elevate = builder.sym("elevate");
+        let cd = builder.sym("cd");
         let env_sym = builder.sym("env");
 
         builder
             .type_method("unix_socket", async move |_this, strand, args, out| {
-                let ([path], [key]) = unpack!(strand, args, 1, 0, key_sym = None)?;
+                unpack!(strand, args => path, ?key_sym: key);
                 let global = strand.vm().state::<ShellTag>();
                 let path = path_from_value(strand, &path)?;
                 let key = key
@@ -716,7 +716,7 @@ impl<'v> Object<'v> for Vfs {
                     Some(Arg::Pos(slot)) => slot,
                     Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
                 };
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.annex();
                 Local::with_vfs(
                     strand,
@@ -754,15 +754,7 @@ impl<'v> Object<'v> for Vfs {
                 }
             })
             .type_method("windows_admin", async move |_this, strand, args, out| {
-                let ([], [elevate, cd, env_value]) = unpack!(
-                    strand,
-                    args,
-                    0,
-                    0,
-                    elevate_sym = None,
-                    cd_sym = None,
-                    env_sym = None
-                )?;
+                unpack!(strand, args => ?:elevate, ?:cd, ?env_sym: env_value);
                 let elevate = match elevate {
                     Some(elevate) => util::bool(strand, elevate, "elevate")?,
                     None => true,
@@ -933,30 +925,30 @@ pub(crate) fn configure_vm<'v>(
     let args_sym = builder.sym("args");
     let program_sym = builder.sym("program");
     let capture_ty = core.types.capture;
-    let chomp_sym = builder.sym("chomp");
+    let chomp = builder.sym("chomp");
     let backtrace_sym = builder.sym("backtrace");
     let code_sym = builder.sym("code");
 
     builder
         .module("shell")
         .function("render_error", async move |strand, args, out| {
-            let ([error], [backtrace]) = unpack!(strand, args, 1, 0, backtrace_sym = None)?;
+            unpack!(strand, args => error, ?backtrace_sym: backtrace);
             let rendered = diagnostic::render_error_value(strand, &error, backtrace.as_deref())?;
             dolang_ext_term::preformatted_text(strand, &rendered, out)
         })
         .function("render_backtrace", async move |strand, args, out| {
-            let ([backtrace], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => backtrace);
             let rendered = diagnostic::render_backtrace_value(strand, &backtrace)?;
             dolang_ext_term::preformatted_text(strand, &rendered, out)
         })
         .function("render_frame", async move |strand, args, out| {
-            let ([frame], [code]) = unpack!(strand, args, 1, 0, code_sym = None)?;
+            unpack!(strand, args => frame, ?code_sym: code);
             let code = code.map(|v| v.to_bool(strand)).transpose()?.unwrap_or(true);
             let rendered = diagnostic::render_frame_value(strand, &frame, code)?;
             dolang_ext_term::preformatted_text(strand, &rendered, out)
         })
         .function("line_ending", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             // A function rather than a getter: the answer follows the VFS
             // target, so it is a question about the current context rather
             // than a constant of the module.
@@ -968,7 +960,7 @@ pub(crate) fn configure_vm<'v>(
         .function(
             "exit",
             async move |strand, args: dolang::runtime::Args<'v, '_>, _| {
-                let (_, [code]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?code);
                 let rc = match code {
                     Some(slot) => slot
                         .to_i64(strand)
@@ -980,7 +972,7 @@ pub(crate) fn configure_vm<'v>(
             },
         )
         .function("exec", async move |strand, args, _| {
-            let ([program], [], args) = unpack!(strand, args, 1, 0, *)?;
+            unpack!(strand, args => program, *args);
             let program = path_from_value(strand, &program)?;
 
             let (vfs, path, cwd, env) = {
@@ -1076,8 +1068,7 @@ pub(crate) fn configure_vm<'v>(
         .function_with_slots(
             "with_override",
             async move |strand, args, out, [mut iter, mut item]| {
-                let ([func], [args, program]) =
-                    unpack!(strand, args, 1, 0, args_sym = None, program_sym = None)?;
+                unpack!(strand, args => func, ?args_sym: args, ?program_sym: program);
 
                 let args = if let Some(args) = args {
                     let mut values = Vec::new();
@@ -1133,7 +1124,7 @@ pub(crate) fn configure_vm<'v>(
             create_path(strand, fs, exe, out)
         })
         .function("vfs_exe", async move |strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             match global.local.get(strand).vfs_exe() {
                 Some(path) => {
                     let fs = strand.force_state::<FsTag>();
@@ -1150,7 +1141,7 @@ pub(crate) fn configure_vm<'v>(
                 Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
             };
 
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let host_vfs = error::io_result(strand, VfsVfs::direct())?;
             Local::with_vfs(strand, global.local, host_vfs, async move |strand| {
                 call!(strand, func, out)
@@ -1158,7 +1149,7 @@ pub(crate) fn configure_vm<'v>(
             .await
         })
         .function_with_slots("sub", async move |strand, args, out, [mut cap, tmp]| {
-            let ([func], [chomp]) = unpack!(strand, args, 1, 0, chomp_sym = None)?;
+            unpack!(strand, args => func, ?:chomp);
             let chomp = chomp
                 .map(|v| v.to_bool(strand))
                 .transpose()?
@@ -1166,7 +1157,7 @@ pub(crate) fn configure_vm<'v>(
             capture_ty.create(strand, Capture::new(), &mut cap);
             redirect!(
                 strand,
-                Redirect::new(strand).output(&cap),
+                output: &cap,
                 call!(strand, func, tmp)
             )?;
             with_instance!(strand, capture_ty.cast(&cap).unwrap(), |inst| {
@@ -1195,7 +1186,7 @@ pub(crate) fn configure_vm<'v>(
                 Some(Arg::Pos(slot)) => Some(slot),
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
             };
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let dir = path_from_value(strand, &dir)?;
             let local = global.local.get(strand);
             let path = local.cwd().join(dir.as_str());

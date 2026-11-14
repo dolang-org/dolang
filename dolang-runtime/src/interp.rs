@@ -22,7 +22,7 @@ use crate::{
     },
     redirect,
     sig::{self, Pack},
-    strand::{InterruptMask, Redirect, Strand},
+    strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell, with_u8_slice},
@@ -130,9 +130,8 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         redirect!(
             strand,
-            Redirect::new(strand)
-                .input(Singleton::Null)
-                .output(Singleton::Null),
+            input: Singleton::Null,
+            output: Singleton::Null,
             {
                 let mut module = self.native_modules.borrow().get(name).map(Value::dup);
                 if module.is_none() {
@@ -186,7 +185,7 @@ impl<'v> Vm<'v> {
                     );
                 }
                 for importer in self.importers.iter() {
-                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name) {
+                    if let Err(e) = call!(strand, importer, name, Slot::reborrow(&mut out)) {
                         if e.kind() == ErrorKind::Import {
                             err = e;
                             continue;
@@ -215,9 +214,8 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         redirect!(
             strand,
-            Redirect::new(strand)
-                .input(Singleton::Null)
-                .output(Singleton::Null),
+            input: Singleton::Null,
+            output: Singleton::Null,
             {
                 enum Mode {
                     Get,
@@ -243,7 +241,7 @@ impl<'v> Vm<'v> {
                             self.import_raw(strand, name, Slot::reborrow(&mut raw))
                                 .await?
                         } else {
-                            call!(strand, importer, Slot::reborrow(&mut raw), name)?
+                            call!(strand, importer, name, Slot::reborrow(&mut raw))?
                         }
                         match mode {
                             Mode::Get => Slot::set(strand, out, raw),
@@ -346,7 +344,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let ([mut start, mut end, mut step], []) = unpack!(strand, args, 3, 0)?;
+        unpack!(strand, args => mut start, mut end, mut step);
         strand.builtin_types().range.create_imm(
             strand,
             range::Range::new(start.take(), end.take(), step.take()),
@@ -361,7 +359,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, 'a>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let (_, [obj]) = unpack!(strand, args, 0, 1)?;
+        unpack!(strand, args => ?obj);
         if let Some(obj) = obj {
             obj.op_iter(strand, out).await
         } else {
@@ -449,7 +447,7 @@ impl<'v> Vm<'v> {
         out: Slot<'v, '_>,
         assert: bool,
     ) -> Result<'v, 's, ()> {
-        let ([value, class], []) = unpack!(strand, args, 2, 0)?;
+        unpack!(strand, args => value, class);
         // The class is an ordinary runtime name, which may hold anything
         if !class.is_instance_of(strand, &strand.singletons().type_obj) {
             return with_slots!(strand, |mut actual| {
@@ -543,7 +541,7 @@ impl<'v> Vm<'v> {
                             (None, None) => {
                                 break if !catch_all.is_nil() {
                                     let _focus = strand.inner.focus_error(slot);
-                                    call!(strand, &catch_all, &mut out, &tmp)
+                                    call!(strand, &catch_all, &tmp, &mut out)
                                 } else {
                                     Err(cause.take().unwrap())
                                 };
@@ -558,7 +556,7 @@ impl<'v> Vm<'v> {
                         };
                         if tmp.is_instance_of(strand, &ty) {
                             let _focus = strand.inner.focus_error(slot);
-                            break call!(strand, &handler, &mut out, &tmp);
+                            break call!(strand, &handler, &tmp, &mut out);
                         }
                     };
 
@@ -670,7 +668,7 @@ impl<'v> Vm<'v> {
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([value], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => value);
         Err(Error::from_value(strand, value))
     }
 
@@ -679,7 +677,7 @@ impl<'v> Vm<'v> {
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], []) = unpack!(strand, args, 0, 0)?;
+        unpack!(strand, args =>);
         Err(Error::runtime(strand, "stub expression evaluated"))
     }
 
@@ -972,7 +970,7 @@ impl<'v> Vm<'v> {
                         }
                         builtin::ARG_ACC => self.arg_acc(strand, args, Slot::reborrow(&mut res)),
                         builtin::VALUE_ASSERT => {
-                            let ([value, expected], []) = unpack!(strand, args, 2, 0)?;
+                            unpack!(strand, args => value, expected);
                             if !value.op_eq(strand, &expected)?.to_bool(strand)? {
                                 // Report the mismatch even if a value can't be formatted
                                 let msg = match (expected.to_debug(strand), value.to_debug(strand))

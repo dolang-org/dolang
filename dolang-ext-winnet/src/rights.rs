@@ -29,7 +29,7 @@ fn sid<'v, 's, T: Object<'v> + Principal>(
 
 /// Coerces the single right-name argument.
 fn right_arg<'v, 's>(strand: &mut Strand<'v, 's>, args: Args<'v, '_>) -> Result<'v, 's, String> {
-    let ([right], []) = unpack!(strand, args, 1, 0)?;
+    unpack!(strand, args => right);
     Ok(right
         .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "right must be a Str"))?
@@ -62,7 +62,7 @@ pub(crate) fn build<'v, 'a, T: Object<'v> + Principal>(
 ) -> TypeBuilder<'v, 'a, T> {
     builder
         .method("rights", async move |this, strand, args, out| {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             let sid = sid(&this, strand)?;
             let vfs = dolang_ext_shell::vfs(strand);
             let rights = dolang_vfs_winnet::rights::list(&vfs, &sid)

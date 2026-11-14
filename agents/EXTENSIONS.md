@@ -130,7 +130,7 @@ pub fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>
         .module("my_ext")
         .value("Widget", global.types.widget) // export type object
         .function("helper", async move |strand, args, out| {
-            let ([arg], []) = unpack!(strand, args, 1, 0)?;
+            unpack!(strand, args => arg);
             // ...
             Ok(())
         })
@@ -229,14 +229,12 @@ returned `Sym` in a closure — symbols are `Copy`.
 
 ```rust
 fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-    let limit_sym = builder.sym("limit");
+    let limit = builder.sym("limit");
     builder
         .method("split", async move |this, strand, args, out| {
-            let ([haystack], [limit]) =
-                unpack!(strand, args, 1, 0, limit_sym = None)?;
-            //     positional: 1 required, 0 optional ^^
-            //     keyword: limit_sym with default None  ^^
-            // limit is Option<&Value<'v>> — None if not passed
+            unpack!(strand, args => haystack, ?:limit);
+            // limit: Option<Slot>, None if not passed. It shadows the Sym
+            // inside the closure, which is fine unless the Sym is needed later.
             ...
         })
 }
@@ -256,16 +254,20 @@ same way).
 
 ## Argument Unpacking (`unpack!`)
 
-The `unpack!` macro destructures `Args` into positional and keyword arguments.
+The `unpack!` statement binds `Args` to locals, using a parameter list modeled
+on Do's, and propagates unpacking errors with `?`.
 
 ```rust
-// 2 required positional, 1 optional positional, no keywords
-let ([a, b], [c]) = unpack!(strand, args, 2, 1)?;
-// c: Option<&Value>
+// 2 required positionals, 1 optional; c: Option<Slot>
+unpack!(strand, args => a, b, ?c);
 
-// 1 required positional, 0 optional, 1 keyword with default
-let ([haystack], [limit]) = unpack!(strand, args, 1, 0, limit_sym = None)?;
-// limit: Option<&Value>
+// Key arguments: `:limit` binds the argument keyed by the in-scope Sym `limit`
+// as `limit`; `key: x` binds it as `x`. A key that isn't a bare identifier goes
+// in parentheses. `?` makes a parameter optional.
+unpack!(strand, args => haystack, ?:limit, ?(global.syms.mode): mode);
+
+// Rests come last: `...rest` (Args), `*rest` (PosArgs) or `**rest` (KeyArgs)
+unpack!(strand, args => program, *rest);
 ```
 
 ## Creating Instances
@@ -321,7 +323,7 @@ enclosing future is dropped:
 with_slots!(strand, |mut key, mut value| { ... })
 with_instance!(strand, cast, |this| { ... })
 with_interrupt_mask!(strand, InterruptMask::all(), { ... })
-redirect!(strand, Redirect::new(strand).output(&sink), { ... })
+redirect!(strand, output: &sink, { ... })
 with_str!(strand, text, |s| { ... })  // also with_slice!
 ```
 

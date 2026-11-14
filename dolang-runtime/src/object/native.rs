@@ -4132,7 +4132,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                             // Downcast the explicit self argument to the precise native
                             // type (handling Do subclasses via native slots) and invoke
                             // the handler directly.
-                            let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                            unpack!(strand, args => inst, ...trailing);
                             let inst = inst
                                 .downcast_native(strand, unsafe {
                                     TypeHandle::<ObjectWrap<'v, T>>::new(
@@ -4150,7 +4150,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                             unsafe { handler.call(inst, None, strand, trailing, out).await }
                         }
                         Entry::Delegate(idx, MemberKind::Method) => {
-                            let ([instance], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                            unpack!(strand, args => instance, ...trailing);
                             if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
                                 return Err(Error::type_error(
                                     strand,
@@ -4177,7 +4177,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                 Some(Cow::Borrowed("(init)")),
                 async {
                     let mut out = out;
-                    let ([inst], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+                    unpack!(strand, args => inst, ...trailing);
                     let ty = this.ty(strand.vm());
                     T::new(ty, strand, trailing, Slot::reborrow(&mut out)).await?;
                     let native = out.take();
@@ -4438,7 +4438,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([receiver], [], trailing) = unpack!(strand, args, 1, 0, ...)?;
+        unpack!(strand, args => receiver, ...trailing);
         let proxy = this.get();
         if !receiver.is_instance_of(strand, TypeObject::Type)
             || !receiver.op_subtype(strand, &proxy.native)
@@ -4451,14 +4451,14 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
         }
         match method.tag() {
             sym::GET_METHOD => {
-                let ([field], []) = unpack!(strand, trailing, 1, 0)?;
+                unpack!(strand, trailing => field);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
                 TypeObjectWrap::type_get(native, strand, field, out)
             }
             sym::SET_METHOD => {
-                let ([field, value], []) = unpack!(strand, trailing, 2, 0)?;
+                unpack!(strand, trailing => field, value);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
@@ -4640,7 +4640,7 @@ mod tests {
             args: Args<'v, 'a>,
             out: Slot<'v, 'a>,
         ) -> Result<'v, 's, ()> {
-            let ([], []) = unpack!(strand, args, 0, 0)?;
+            unpack!(strand, args =>);
             Output::set(strand, out, this);
             Ok(())
         }
@@ -4672,12 +4672,12 @@ mod tests {
             let absent_sym = builder.sym("absent");
             builder
                 .method("receiver", async move |this, strand, args, out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     Output::set(strand, out, this);
                     Ok(())
                 })
                 .method("bump", async move |this, strand, args, out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let value = {
                         let mut m = this.borrow_mut(strand)?;
                         m.counter += 1;
@@ -4707,14 +4707,14 @@ mod tests {
                 .method_with_slots::<1, _>(
                     "with_slot",
                     async move |_this, strand, args, out, [mut scratch]| {
-                        let ([], []) = unpack!(strand, args, 0, 0)?;
+                        unpack!(strand, args =>);
                         Output::set(strand, Slot::reborrow(&mut scratch), 5_i64);
                         Output::set(strand, out, &scratch);
                         Ok(())
                     },
                 )
                 .type_method("make", async move |ty, strand, args, out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     ty.create_with_annex(
                         strand,
                         SlotFixture { counter: 0 },
@@ -4844,7 +4844,7 @@ mod tests {
             let ty = vm
                 .build_type::<Fixture>((), ())
                 .type_method("(get)", async |_ty, strand, args, out| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     Output::set(strand, out, 123_i64);
                     Ok(())
                 })
@@ -4856,8 +4856,8 @@ mod tests {
                     strand,
                     &proxy,
                     Sym::well_known(sym::GET_METHOD),
-                    &mut out,
-                    &singleton
+                    &singleton,
+                    &mut out
                 )
                 .unwrap();
                 assert_eq!(out.to_i64(strand).unwrap(), 123);
@@ -4877,7 +4877,7 @@ mod tests {
                 .unwrap();
             proxy.store(Value::NIL);
             strand.vm().collect_full();
-            call!(strand, &saved, &mut out, &ty).unwrap();
+            call!(strand, &saved, &ty, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
 
             // A bound method read through the type namespace keeps that
@@ -4887,9 +4887,9 @@ mod tests {
                 strand,
                 &proxy,
                 Sym::well_known(sym::GET_METHOD),
-                &mut saved,
                 &ty,
-                state.make_sym
+                state.make_sym,
+                &mut saved
             )
             .unwrap();
             proxy.store(Value::NIL);
@@ -5495,7 +5495,7 @@ mod tests {
                             .unwrap();
                         call!(strand, &bound, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
-                        method!(strand, &type_slot, method, &mut out, &object).unwrap();
+                        method!(strand, &type_slot, method, &object, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
                     },
                 )

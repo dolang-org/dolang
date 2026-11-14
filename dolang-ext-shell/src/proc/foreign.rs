@@ -290,7 +290,7 @@ impl<'v> Object<'v> for Proc {
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<ProcTag>();
                 let info = {
                     let borrow = this.borrow(strand)?;
@@ -301,26 +301,26 @@ impl<'v> Object<'v> for Proc {
                 Ok(())
             })
             .method("signal", async move |this, strand, args, _out| {
-                let ([signal], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => signal);
                 let signal = parse_signal(strand, &signal)?;
                 let borrow = this.borrow(strand)?;
                 let process = expect_open(strand, &borrow)?;
                 process.signal(signal).await.into_sys(strand)
             })
             .method("terminate", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let process = expect_open(strand, &borrow)?;
                 process.terminate().await.into_sys(strand)
             })
             .method("kill", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let process = expect_open(strand, &borrow)?;
                 process.kill().await.into_sys(strand)
             })
             .method("wait", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<ProcTag>();
                 let exit = {
                     let borrow = this.borrow(strand)?;
@@ -334,7 +334,7 @@ impl<'v> Object<'v> for Proc {
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let process = this.borrow_mut(strand)?.0.take();
                 match process {
                     Some(process) => process.close().await.into_sys(strand),
@@ -444,7 +444,7 @@ pub(crate) async fn open<'v, 's>(
             .types
             .proc_handle
             .create(strand, Proc(Some(process)), &mut handle);
-        let result = call!(strand, block, out, &handle);
+        let result = call!(strand, block, &handle, out);
         // Closing is best-effort here: the block's outcome is the call's
         // outcome, and a close failure must not displace an error it raised.
         let _ = method!(strand, &handle, global.syms.close, &mut tmp);

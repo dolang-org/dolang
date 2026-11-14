@@ -370,12 +370,12 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::APPEND => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.append(strand, &value)
             }
             sym::PUSH => {
-                let ([], [], values) = unpack!(strand, args, 0, 0, *)?;
+                unpack!(strand, args => *values);
                 let mut borrow = this.borrow_mut(strand)?;
                 for value in values {
                     let byte = value
@@ -388,12 +388,12 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::EXTEND => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.extend_method(strand, &value)
             }
             sym::INSERT => {
-                let ([index, value], []) = unpack!(strand, args, 2, 0)?;
+                unpack!(strand, args => index, value);
                 let index_i64 = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let len = this.borrow(strand)?.len();
                 let index = index::position(len, index_i64).ok_or_else(|| Error::index(strand))?;
@@ -429,7 +429,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 }
             }
             sym::REMOVE => {
-                let ([index_or_range], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => index_or_range);
                 let mut borrow = this.borrow_mut(strand)?;
                 let len = borrow.len();
                 if let Some(slice) = range::slice(&index_or_range, strand, len)? {
@@ -451,7 +451,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::TRUNCATE => {
-                let ([len], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => len);
                 let len = len.to_index(strand)?;
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.settle(strand);
@@ -459,23 +459,23 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::CLEAR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 this.borrow_mut(strand)?.clear();
                 Ok(())
             }
             sym::FREEZE => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.freeze(strand, out);
                 Ok(())
             }
             sym::FREEZE_STR => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.freeze_str(strand, out)
             }
             sym::WRITE => {
-                let ([], [], pieces) = unpack!(strand, args, 0, 0, *)?;
+                unpack!(strand, args => *pieces);
                 let pieces: Vec<_> = pieces.collect();
                 let mut total = 0;
                 for piece in &pieces {
@@ -490,11 +490,11 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::FLUSH => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Ok(())
             }
             sym::STARTS_WITH => {
-                let ([prefix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => prefix);
                 let borrow = this.borrow(strand)?;
                 let input = with_u8_slice!(strand, prefix, |prefix| borrow
                     .as_slice()
@@ -504,7 +504,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::ENDS_WITH => {
-                let ([suffix], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => suffix);
                 let borrow = this.borrow(strand)?;
                 let input =
                     with_u8_slice!(strand, suffix, |suffix| borrow.as_slice().ends_with(suffix))
@@ -514,7 +514,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             }
             sym::CONTAINS => {
                 use bstr::ByteSlice;
-                let ([needle], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => needle);
                 let borrow = this.borrow(strand)?;
                 let input = with_u8_slice!(strand, needle, |needle| borrow
                     .as_slice()
@@ -524,7 +524,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::DRAIN => {
-                let ([], [size]) = unpack!(strand, args, 0, 1)?;
+                unpack!(strand, args => ?size);
                 let chunk_size = match size {
                     Some(size) => size.to_index(strand)?,
                     None => crate::BYTE_STREAM_CHUNK_SIZE,
@@ -676,7 +676,7 @@ impl<'v> Protocol<'v> for Class {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], [initial]) = unpack!(strand, args, 0, 1)?;
+        unpack!(strand, args => ?initial);
         let mut buf = BinBuf::new();
         if let Some(initial) = &initial {
             buf.copy_from_value(strand, initial);
@@ -742,7 +742,7 @@ impl<'v> Protocol<'v> for Class {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val], [initial]) = unpack!(strand, args, 1, 1)?;
+                unpack!(strand, args => self_val, ?initial);
                 let mut buf = BinBuf::new();
                 if let Some(initial) = &initial {
                     buf.copy_from_value(strand, initial);

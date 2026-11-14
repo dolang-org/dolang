@@ -543,7 +543,7 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::ADD => {
-                let ([mut value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => mut value);
                 let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
@@ -552,7 +552,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 Ok(())
             }
             sym::DELETE => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
@@ -564,13 +564,13 @@ impl<'v> Protocol<'v> for Set<'v> {
                 Ok(())
             }
             sym::CLEAR => {
-                let _ = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.clear();
                 Ok(())
             }
             sym::COPY => {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 strand
                     .vm()
@@ -580,7 +580,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 Ok(())
             }
             sym::CONTAINS => {
-                let ([value], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => value);
                 let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
@@ -594,7 +594,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             | sym::SYM_DIFF
             | sym::IS_SUBSET
             | sym::IS_SUPERSET => {
-                let ([other], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => other);
                 let other = other
                     .downcast_ref(strand.builtin_types().set)
                     .ok_or_else(|| Error::type_error(strand, "expected set"))?;
@@ -790,7 +790,7 @@ impl<'v> Protocol<'v> for Type {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([], [items]) = unpack!(strand, args, 0, 1)?;
+        unpack!(strand, args => ?items);
         let set = if let Some(items) = items {
             let mut set = Set::new();
             let mut spread = SetSpread(&mut set);
@@ -912,7 +912,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => {
-                let ([self_val], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => self_val);
                 let native = Value::from_object(GcObj::new(
                     strand.arena(),
                     strand.builtin_types().set,

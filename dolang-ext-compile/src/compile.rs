@@ -1259,7 +1259,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .method("diagnostics", async move |this, strand, args, mut out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if this.borrow(strand)?.unit.is_none() {
                     return Err(Error::state_error(strand, "unit was emitted"));
                 }
@@ -1275,7 +1275,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Ok(())
             })
             .method("nodes", async move |this, strand, args, mut out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 if this.borrow(strand)?.unit.is_none() {
                     return Err(Error::state_error(strand, "unit was emitted"));
                 }
@@ -1305,7 +1305,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Ok(())
             })
             .method("node", async move |this, strand, args, mut out| {
-                let ([id], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => id);
                 let Some(id_obj) = strand.state::<Tag>().types.node_id.cast(&id) else {
                     return Err(Error::type_error(strand, "expected `compile.NodeId`"));
                 };
@@ -1321,7 +1321,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 create_node(strand, this, id_data.id, &mut out)
             })
             .method("tokens", async move |this, strand, args, mut out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
                 let mut tokens = {
                     let borrow = this.borrow(strand)?;
@@ -1354,7 +1354,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Ok(())
             })
             .method("emit", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let unit = this
                     .borrow_mut(strand)?
                     .unit
@@ -1367,7 +1367,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
-                let ([span], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => span);
                 let range = span_range(this, strand, &span)?;
                 let borrow = this.borrow(strand)?;
                 let text = {
@@ -1378,13 +1378,13 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Ok(())
             })
             .method("byte_range", async move |this, strand, args, out| {
-                let ([span], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => span);
                 let range = span_range(this, strand, &span)?;
                 strand.range(range.start, range.end, out);
                 Ok(())
             })
             .method("end", async move |this, strand, args, out| {
-                let ([span], []) = unpack!(strand, args, 1, 0)?;
+                unpack!(strand, args => span);
                 let span = span_arg(strand, &span)?;
                 let end = {
                     let borrow = this.borrow(strand)?;
@@ -1439,7 +1439,7 @@ impl<'v> Object<'v> for CheckObject {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let typelibs = strand.state::<Tag>().syms.typelibs;
-        let ([], [typelibs]) = unpack!(strand, args, 0, 0, typelibs = None)?;
+        unpack!(strand, args => ?:typelibs);
         let typelibs = typelibs
             .map(|value| value.to_bool(strand))
             .transpose()?
@@ -1466,7 +1466,7 @@ impl<'v> Object<'v> for CheckObject {
             .method_with_slots(
                 "add",
                 async move |this, strand, args, _out, [mut source, mut inputs]| {
-                    let ([input], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => input);
                     let global = strand.state::<Tag>();
                     let module = input_module(global, strand, &input)?;
                     if let Some(module) = &module
@@ -1490,7 +1490,7 @@ impl<'v> Object<'v> for CheckObject {
                 },
             )
             .method("missing", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 let missing: Vec<String> = {
                     let borrow = this.borrow(strand)?;
                     (borrow.depends.iter())
@@ -1505,7 +1505,7 @@ impl<'v> Object<'v> for CheckObject {
             .method_with_slots(
                 "run",
                 async move |this, strand, args, mut out, [mut inputs]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let typelibs = {
                         let borrow = this.borrow(strand)?;
                         Output::set(strand, &mut inputs, Ref::slot::<CHECK_INPUTS>(&borrow));
@@ -1533,14 +1533,14 @@ impl<'v> Object<'v> for CheckedObject {
                 Ok(())
             })
             .method("undecided", async move |this, strand, args, out| {
-                let ([], []) = unpack!(strand, args, 0, 0)?;
+                unpack!(strand, args =>);
                 Output::set(strand, out, this.annex().undecided.as_str());
                 Ok(())
             })
             .method_with_slots(
                 "typelib",
                 async move |this, strand, args, out, [mut item, mut inputs]| {
-                    let ([unit], []) = unpack!(strand, args, 1, 0)?;
+                    unpack!(strand, args => unit);
                     let Some((check, ids)) = &this.annex().check else {
                         return Err(Error::value(strand, "the check was not asked for typelibs"));
                     };
@@ -1605,7 +1605,7 @@ impl<'v> Object<'v> for TypelibObject<'v> {
         args: Args<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let ([bytes], []) = unpack!(strand, args, 1, 0)?;
+        unpack!(strand, args => bytes);
         let View::Bin(bin) = bytes.view(strand) else {
             return Err(Error::type_error(strand, "bytes: expected `Bin`"));
         };
@@ -2808,7 +2808,7 @@ impl<'v> Object<'v> for Diagnostic {
             builder.method_with_slots(
                 "render",
                 async move |this, strand, args, out, [mut term]| {
-                    let ([], []) = unpack!(strand, args, 0, 0)?;
+                    unpack!(strand, args =>);
                     let rendered = {
                         let borrow = this.borrow(strand)?;
                         let array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
@@ -2848,7 +2848,7 @@ impl<'v> Object<'v> for Diagnostic {
                     };
 
                     match strand.import("term", &mut term).await {
-                        Ok(()) => method!(strand, &term, preformat, out, rendered.as_str()),
+                        Ok(()) => method!(strand, &term, preformat, rendered.as_str(), out),
                         Err(error) if error.kind() == RuntimeErrorKind::Import => {
                             Output::set(strand, out, rendered.as_str());
                             Ok(())
@@ -3266,7 +3266,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .function_with_slots(
             "check",
             async move |strand, args, mut out, [mut iter, mut item, mut units]| {
-                let ([iterable], [typelibs]) = unpack!(strand, args, 1, 0, typelibs = None)?;
+                unpack!(strand, args => iterable, ?:typelibs);
                 let typelibs = typelibs
                     .map(|value| value.to_bool(strand))
                     .transpose()?
@@ -3280,18 +3280,16 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
             },
         )
         .function("compile", async move |strand, args, mut out| {
-            let ([path, source], [module, prelude, recover, document, typecheck, strict]) = unpack!(
-                strand,
-                args,
-                2,
-                0,
-                module = None,
-                prelude = None,
-                recover = None,
-                document = None,
-                typecheck = None,
-                strict = None
-            )?;
+            unpack!(strand, args =>
+                path,
+                source,
+                ?:module,
+                ?:prelude,
+                ?:recover,
+                ?:document,
+                ?:typecheck,
+                ?:strict
+            );
 
             let module = module
                 .as_ref()
