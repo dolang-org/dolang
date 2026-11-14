@@ -32,22 +32,17 @@ type ByteOperation = FileOperation<'static, [u8]>;
 
 #[derive(Clone)]
 enum Backing<'v> {
-    Str(PinStr<'v, 'static>),
-    Bin(PinBin<'v, 'static>),
+    Str(PinStr<'v>),
+    Bin(PinBin<'v>),
 }
 
 impl<'v> Backing<'v> {
-    /// SAFETY: The returned pinned view borrows from `value` and must only be
-    /// stored in an object that keeps `value` alive for at least as long as the
-    /// pinned view via GC roots such as object slots or stack slots.
-    unsafe fn from_value<'s>(
-        strand: &mut Strand<'v, 's>,
-        value: &Value<'v>,
-    ) -> Result<'v, 's, Self> {
+    /// Pins `value`, which keeps its text alive and in place.
+    fn from_value<'s>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, Self> {
         if let Some(value) = value.as_str(strand.vm()) {
-            Ok(Self::Str(unsafe { value.pin().into_static_unchecked() }))
+            Ok(Self::Str(value.pin()))
         } else if let Some(value) = value.as_bin(strand.vm()) {
-            Ok(Self::Bin(unsafe { value.pin().into_static_unchecked() }))
+            Ok(Self::Bin(value.pin()))
         } else {
             Err(Error::type_error(strand, "expected `Str` or `Bin`"))
         }
@@ -139,9 +134,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .value("PatchIter", global.types.patch_iter)
         .function("decode", async move |strand, args, mut out| {
             let ([input], []) = unpack!(strand, args, 1, 0)?;
-            // SAFETY: `input` is rooted on the stack here and is copied into
-            // slot 0 of the created iterator object before this function returns.
-            let backing = unsafe { Backing::from_value(strand, &input)? };
+            let backing = Backing::from_value(strand, &input)?;
             let bytes = unsafe { backing.as_static_bytes() };
             let is_git = is_git_diff(bytes);
             let iter = PatchSet::parse_bytes(
@@ -176,10 +169,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .function("diff", async move |strand, args, mut out| {
             let ([before, after], [source, target]) =
                 unpack!(strand, args, 2, 0, source_sym = None, target_sym = None)?;
-            // SAFETY: `before` and `after` are stack-rooted here and copied into
-            // the patch object's slots before this function returns.
-            let before_backing = unsafe { Backing::from_value(strand, &before)? };
-            let after_backing = unsafe { Backing::from_value(strand, &after)? };
+            let before_backing = Backing::from_value(strand, &before)?;
+            let after_backing = Backing::from_value(strand, &after)?;
             if before_backing.is_str() != after_backing.is_str() {
                 return Err(Error::type_error(
                     strand,
@@ -463,9 +454,7 @@ impl<'v> Object<'v> for PatchIter<'v> {
         let item = item.map_err(|err| parse_error(strand, err.to_string()))?;
         let payload = into_payload(item, borrow.is_git);
         let global = strand.state::<Tag>();
-        // SAFETY: slot 0 roots the original patch stream for as long as the
-        // produced patch object lives.
-        let primary = unsafe { Backing::from_value(strand, Mut::slot::<0>(&borrow))? };
+        let primary = Backing::from_value(strand, Mut::slot::<0>(&borrow))?;
         global.types.patch.create(
             strand,
             Patch {

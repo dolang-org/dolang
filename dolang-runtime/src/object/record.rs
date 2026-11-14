@@ -161,7 +161,7 @@ impl<'v> Record<'v> {
         match &item.0 {
             None => self.pos.push(slot),
             Some(key) => {
-                self.keys.entry(key.tag).or_default().push(slot);
+                self.keys.entry(key.tag()).or_default().push(slot);
                 self.keyed += 1;
             }
         }
@@ -178,7 +178,7 @@ impl<'v> Record<'v> {
         for (slot, item) in self.order.iter().enumerate() {
             match &item.as_ref().expect("retained slot").0 {
                 None => self.pos.push(slot),
-                Some(key) => self.keys.get_mut(&key.tag).expect("live key").push(slot),
+                Some(key) => self.keys.get_mut(&key.tag()).expect("live key").push(slot),
             }
         }
     }
@@ -198,7 +198,7 @@ impl<'v> Record<'v> {
                 Some(self.pos[index::element(self.pos.len(), *i)?])
             }
             Key::Sym(key) => {
-                let slots = self.keys.get(&key.tag)?;
+                let slots = self.keys.get(&key.tag())?;
                 match instance {
                     None => slots.last().copied(),
                     Some(instance) => Some(slots[index::element(slots.len(), instance)?]),
@@ -222,7 +222,7 @@ impl<'v> Record<'v> {
                 };
                 *self.value_mut(slot) = value;
             }
-            Key::Sym(key) => match self.keys.get_mut(&key.tag) {
+            Key::Sym(key) => match self.keys.get_mut(&key.tag()) {
                 Some(slots) => {
                     for &slot in &slots[1..] {
                         self.order[slot] = None;
@@ -286,11 +286,11 @@ impl<'v> Record<'v> {
                 self.pos.remove(at)
             }
             Key::Sym(key) => {
-                let slots = self.keys.get_mut(&key.tag)?;
+                let slots = self.keys.get_mut(&key.tag())?;
                 let at = index::element(slots.len(), instance.unwrap_or(0))?;
                 let slot = slots.remove(at);
                 if slots.is_empty() {
-                    self.keys.remove(&key.tag);
+                    self.keys.remove(&key.tag());
                 }
                 self.keyed -= 1;
                 slot
@@ -306,7 +306,7 @@ impl<'v> Record<'v> {
         match key {
             Key::Pos(_) => self.remove(key, None).is_some(),
             Key::Sym(key) => {
-                let Some(slots) = self.keys.remove(&key.tag) else {
+                let Some(slots) = self.keys.remove(&key.tag()) else {
                     return false;
                 };
                 self.keyed -= slots.len();
@@ -333,7 +333,7 @@ impl<'v> Record<'v> {
         match key {
             None => self.pos.len() + self.keys.len(),
             Some(key @ Key::Pos(_)) => usize::from(self.slot(key, None).is_some()),
-            Some(Key::Sym(key)) => self.keys.get(&key.tag).map_or(0, Vec::len),
+            Some(Key::Sym(key)) => self.keys.get(&key.tag()).map_or(0, Vec::len),
         }
     }
 }
@@ -420,7 +420,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
                 strand.check_trap()?;
             }
-            key.as_ref().map(|key| key.tag).hash(hasher);
+            key.as_ref().map(|key| key.tag()).hash(hasher);
             value.op_hash(strand, hasher)?;
         }
         Ok(())
@@ -435,22 +435,25 @@ impl<'v> Protocol<'v> for Record<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        if left.len() != right.len() {
-            return Ok(Value::FALSE);
-        }
-        for (index, ((lkey, lvalue), (rkey, rvalue))) in left.items().zip(right.items()).enumerate()
-        {
-            if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                strand.check_trap()?;
-            }
-            if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
-                || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
-            {
+        other.pin_sync(strand, |strand, other| {
+            let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            if left.len() != right.len() {
                 return Ok(Value::FALSE);
             }
-        }
-        Ok(Value::TRUE)
+            for (index, ((lkey, lvalue), (rkey, rvalue))) in
+                left.items().zip(right.items()).enumerate()
+            {
+                if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                    strand.check_trap()?;
+                }
+                if lkey.as_ref().map(|key| key.tag()) != rkey.as_ref().map(|key| key.tag())
+                    || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
+                {
+                    return Ok(Value::FALSE);
+                }
+            }
+            Ok(Value::TRUE)
+        })
     }
 
     fn op_index<'a, 's>(
@@ -611,7 +614,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 let ([], [key]) = unpack!(strand, args, 0, 1)?;
                 let mode = match key.map(|key| Key::new(strand, &key)).transpose()? {
                     None => Mode::Values,
-                    Some(Key::Sym(key)) => Mode::KeyValues(key.tag),
+                    Some(Key::Sym(key)) => Mode::KeyValues(key.tag()),
                     Some(key @ Key::Pos(_)) => {
                         // A position has at most one value
                         let found = this.borrow(strand)?.get(&key, None).map(Value::dup);
@@ -647,7 +650,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                         let mut found = false;
                         for (i, &slot) in borrow
                             .keys
-                            .get(&sym.tag)
+                            .get(&sym.tag())
                             .map_or(&[][..], Vec::as_slice)
                             .iter()
                             .enumerate()
@@ -833,47 +836,48 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let iter = this.borrow(strand)?;
-        let record = iter
-            .record
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if record.epoch != iter.epoch {
-            return Err(Error::concurrency_msg(
-                strand,
-                "collection was modified during iteration",
-            ));
-        }
-        while let Some(item) = record.order.get(iter.slot.get()) {
-            iter.slot.update(|slot| slot + 1);
-            let Some((key, value)) = item else {
-                continue;
-            };
-            let key = match key {
-                Some(key) => {
-                    match iter.mode {
-                        Mode::Keys if !iter.seen.borrow_mut().insert(key.tag) => continue,
-                        Mode::KeyValues(tag) if key.tag != tag => continue,
-                        _ => {}
+        iter.record.pin_sync(strand, |strand, record| {
+            let record = record.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            if record.epoch != iter.epoch {
+                return Err(Error::concurrency_msg(
+                    strand,
+                    "collection was modified during iteration",
+                ));
+            }
+            while let Some(item) = record.order.get(iter.slot.get()) {
+                iter.slot.update(|slot| slot + 1);
+                let Some((key, value)) = item else {
+                    continue;
+                };
+                let key = match key {
+                    Some(key) => {
+                        match iter.mode {
+                            Mode::Keys if !iter.seen.borrow_mut().insert(key.tag()) => continue,
+                            Mode::KeyValues(tag) if key.tag() != tag => continue,
+                            _ => {}
+                        }
+                        Value::from_object(key.clone())
                     }
-                    Value::from_object(key.clone())
-                }
-                None => {
-                    let int = iter.int.get();
-                    iter.int.set(int + 1);
-                    if let Mode::KeyValues(_) = iter.mode {
-                        continue;
+                    None => {
+                        let int = iter.int.get();
+                        iter.int.set(int + 1);
+                        if let Mode::KeyValues(_) = iter.mode {
+                            continue;
+                        }
+                        Value::from_i64(strand, int)
                     }
-                    Value::from_i64(strand, int)
-                }
-            };
-            out.store(match iter.mode {
-                Mode::Pairs => Value::from_object(tuple::tuple(strand.vm(), [key, value.dup()])),
-                Mode::Keys => key,
-                Mode::Values | Mode::KeyValues(_) => value.dup(),
-            });
-            return Ok(true);
-        }
-        Ok(false)
+                };
+                out.store(match iter.mode {
+                    Mode::Pairs => {
+                        Value::from_object(tuple::tuple(strand.vm(), [key, value.dup()]))
+                    }
+                    Mode::Keys => key,
+                    Mode::Values | Mode::KeyValues(_) => value.dup(),
+                });
+                return Ok(true);
+            }
+            Ok(false)
+        })
     }
 
     fn op_get<'a, 's>(

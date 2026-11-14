@@ -116,7 +116,7 @@ impl<'v> StrBuf<'v> {
     }
 
     /// Copies the raw bytes of `value` (which must be a `Str`) directly into the buffer
-    /// using a GC-algorithm-agnostic access path, rather than `Value::as_str_raw`. Returns
+    /// under a `Strand::access` pin. Returns
     /// `false` if `value` is not a `Str` (a `Bin` value is deliberately not raw-copied here
     /// either — it must go through `op_display`/UTF-8 validation like anything else, since
     /// `StrBuf` must maintain the UTF-8 invariant).
@@ -227,10 +227,12 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
-        let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(
-            this_borrow.as_str() == other_borrow.as_str(),
-        ))
+        other.pin_sync(strand, |strand, other| {
+            let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(Value::from_bool(
+                this_borrow.as_str() == other_borrow.as_str(),
+            ))
+        })
     }
 
     fn op_lt<'a, 's>(
@@ -242,10 +244,12 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
-        let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(
-            this_borrow.as_str() < other_borrow.as_str(),
-        ))
+        other.pin_sync(strand, |strand, other| {
+            let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(Value::from_bool(
+                this_borrow.as_str() < other_borrow.as_str(),
+            ))
+        })
     }
 
     fn op_hash<'a, 's>(
@@ -382,34 +386,31 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
+                let prefix = prefix
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
                 let input =
-                    borrow
-                        .as_str()
-                        .starts_with(prefix.as_str_raw(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.starts_with: not a string")
-                        })?);
+                    prefix.with_str(strand, |_, prefix| borrow.as_str().starts_with(prefix));
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = borrow.as_str().ends_with(
-                    suffix
-                        .as_str_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?,
-                );
+                let suffix = suffix
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
+                let input = suffix.with_str(strand, |_, suffix| borrow.as_str().ends_with(suffix));
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = borrow.as_str().contains(
-                    needle
-                        .as_str_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "not a string"))?,
-                );
+                let needle = needle
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "not a string"))?;
+                let input = needle.with_str(strand, |_, needle| borrow.as_str().contains(needle));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -709,30 +710,29 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
-        let mut buf = borrow
-            .buf
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let len = buf.len();
-        if len == 0 {
-            return Ok(false);
-        }
-        let want = borrow.chunk_size.min(len);
-        let s = buf.as_str();
-        let mut end = want;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        if end == 0 {
-            end = want;
-            while !s.is_char_boundary(end) {
-                end += 1;
+        borrow.buf.pin_sync(strand, |strand, buf| {
+            let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
+            let len = buf.len();
+            if len == 0 {
+                return Ok(false);
             }
-        }
-        let chunk = s[..end].to_owned();
-        buf.offset += end;
-        Output::set(strand, out, chunk.as_str());
-        Ok(true)
+            let want = borrow.chunk_size.min(len);
+            let s = buf.as_str();
+            let mut end = want;
+            while end > 0 && !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            if end == 0 {
+                end = want;
+                while !s.is_char_boundary(end) {
+                    end += 1;
+                }
+            }
+            let chunk = s[..end].to_owned();
+            buf.offset += end;
+            Output::set(strand, out, chunk.as_str());
+            Ok(true)
+        })
     }
 
     fn op_get<'a, 's>(

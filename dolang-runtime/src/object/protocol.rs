@@ -514,7 +514,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         _strand: &'a mut Strand<'v, 's>,
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
-        ptr::hash(gc::Borrow::into_raw(this.receiver).as_ptr(), hasher);
+        ptr::hash(gc::Pin::into_raw(this.receiver).as_ptr(), hasher);
         Ok(())
     }
 
@@ -1051,14 +1051,14 @@ impl<'v, T: ?Sized + Protocol<'v>> TypeHandle<'v, T> {
     // the dead-code allowance outside test builds.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn cast<'a>(&self, value: &'a Value<'v>) -> Option<RecvCast<'v, 'a, T>> {
-        value.downcast_ref(*self).map(|borrow| RecvCast { borrow })
+        value.downcast_ref(*self).map(|obj| RecvCast { obj })
     }
 }
 
 /// Scoped downcast of a [`Value`] to a [`Recv`], obtained via [`TypeHandle::cast`].
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct RecvCast<'v, 'a, T: ?Sized + Protocol<'v>> {
-    borrow: gc::Borrow<'v, 'a, Header, T>,
+    obj: &'a GcObj<'v, T>,
 }
 
 impl<'v, 'a, T: ?Sized + Protocol<'v>> RecvCast<'v, 'a, T> {
@@ -1069,7 +1069,8 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> RecvCast<'v, 'a, T> {
         strand: &mut Strand<'v, 's>,
         f: impl for<'x> AsyncFnOnce(&mut Strand<'v, 's>, Recv<'v, 'x, T>) -> R,
     ) -> R {
-        f(strand, Recv::new(self.borrow)).await
+        // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures shallow
+        f(strand, Recv::new(unsafe { self.obj.pin_unchecked() })).await
     }
 
     /// Synchronous counterpart to [`RecvCast::enter`], for call sites that don't need to
@@ -1080,7 +1081,8 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> RecvCast<'v, 'a, T> {
         strand: &mut Strand<'v, 's>,
         f: impl for<'x> FnOnce(&mut Strand<'v, 's>, Recv<'v, 'x, T>) -> R,
     ) -> R {
-        f(strand, Recv::new(self.borrow))
+        self.obj
+            .pin_sync(strand, |strand, pin| f(strand, Recv::new(pin)))
     }
 }
 
@@ -1115,8 +1117,12 @@ pub(crate) type Mut<'v, 'a, T> = gc::Mut<'v, 'a, Header, T>;
 
 /// `this` type received by object protocol methods.
 /// Allows borrowing the underlying `T` or obtaining a strong reference.
+///
+/// Built on a [`gc::Pin`], so the receiver's contents stay put for `'a`.  Dispatch
+/// mints that pin unchecked: the caller of a protocol method holds the receiver
+/// in place for the call.
 pub(crate) struct Recv<'v, 'a, T: ?Sized + Boxable<Header>> {
-    pub(crate) receiver: GcObjBorrow<'v, 'a, T>,
+    pub(crate) receiver: GcObjPin<'v, 'a, T>,
     delegator: Option<&'a Value<'v>>,
 }
 
@@ -1130,7 +1136,7 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Clone for Recv<'v, 'a, T> {
 }
 
 impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
-    pub(crate) fn new(receiver: gc::Borrow<'v, 'a, Header, T>) -> Self {
+    pub(crate) fn new(receiver: gc::Pin<'v, 'a, Header, T>) -> Self {
         Self {
             receiver,
             delegator: None,
@@ -1140,7 +1146,7 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
     unsafe fn from_erased(receiver: ErasedRecv<'v, 'a>) -> Self {
         unsafe {
             Self {
-                receiver: gc::Borrow::from_raw(receiver.header.cast()),
+                receiver: gc::Pin::from_raw(receiver.header.cast()),
                 delegator: receiver.delegator,
             }
         }
@@ -1154,7 +1160,7 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
     pub(crate) fn is(&self, value: &Value<'v>) -> bool {
         match self.delegator {
             Some(delegator) => value.repr_eq(delegator),
-            None => value.repr_eq_obj(self.receiver),
+            None => value.repr_eq_obj(self.receiver.into_raw()),
         }
     }
 
@@ -1567,19 +1573,32 @@ fn op_unpack_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 }
 
 pub(crate) type GcObj<'v, T> = gc::Box<'v, Header, T>;
-pub(crate) type GcObjBorrow<'v, 'a, T> = gc::Borrow<'v, 'a, Header, T>;
+pub(crate) type GcObjPin<'v, 'p, T> = gc::Pin<'v, 'p, Header, T>;
 #[expect(dead_code)]
 pub(crate) type WeakObj<'v, T> = gc::BoxWeak<'v, Header, T>;
 
-impl<'v, 'a, T: gc::Collect> AsHeader for GcObjBorrow<'v, 'a, T> {
+impl<'v, T: Upcast<Header>> gc::Base<'v, T> {
+    /// The object's header.  Reading it needs no pin: header reads are transient.
+    pub(crate) fn header(&self) -> &Header {
+        unsafe { gc::Base::as_ptr(self).cast::<Header>().as_ref() }
+    }
+}
+
+impl<'v, 'p, T: ?Sized + Boxable<Header>> AsHeader for GcObjPin<'v, 'p, T> {
     unsafe fn as_header(&self) -> NonNull<Header> {
         self.into_raw().cast()
     }
 }
 
-impl<'v, 'a> AsHeader for gc::BaseBorrow<'v, 'a, Header> {
+impl<T: ?Sized + AsHeader> AsHeader for &T {
     unsafe fn as_header(&self) -> NonNull<Header> {
-        self.into_raw()
+        unsafe { (**self).as_header() }
+    }
+}
+
+impl<'v, T: Upcast<Header>> AsHeader for gc::Base<'v, T> {
+    unsafe fn as_header(&self) -> NonNull<Header> {
+        gc::Base::as_ptr(self).cast()
     }
 }
 

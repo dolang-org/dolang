@@ -108,9 +108,8 @@ impl<'v> BinBuf<'v> {
         self.embryo.extend(strand, bytes);
     }
 
-    /// Copies the raw bytes of `value` (a `Str` or `Bin`) directly into the buffer using a
-    /// GC-algorithm-agnostic access path (no assumption that the source won't move), rather
-    /// than `Value::as_u8_slice_raw`. Returns `false` if `value` is neither.
+    /// Copies the raw bytes of `value` (a `Str` or `Bin`) directly into the buffer under a
+    /// `Strand::access` pin. Returns `false` if `value` is neither.
     fn copy_from_value<'s>(&mut self, strand: &mut Strand<'v, 's>, value: &Value<'v>) -> bool {
         if let Some(bin) = value.as_bin(strand.vm()) {
             let len = bin.len();
@@ -254,10 +253,12 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
-        let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(
-            this_borrow.as_slice() == other_borrow.as_slice(),
-        ))
+        other.pin_sync(strand, |strand, other| {
+            let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(Value::from_bool(
+                this_borrow.as_slice() == other_borrow.as_slice(),
+            ))
+        })
     }
 
     fn op_lt<'a, 's>(
@@ -269,10 +270,12 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
-        let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        Ok(Value::from_bool(
-            this_borrow.as_slice() < other_borrow.as_slice(),
-        ))
+        other.pin_sync(strand, |strand, other| {
+            let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            Ok(Value::from_bool(
+                this_borrow.as_slice() < other_borrow.as_slice(),
+            ))
+        })
     }
 
     fn op_hash<'a, 's>(
@@ -476,10 +479,9 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 let pieces: Vec<_> = pieces.collect();
                 let mut total = 0;
                 for piece in &pieces {
-                    match piece.as_u8_slice_raw(strand.vm()) {
-                        Some(bytes) => total += bytes.len(),
-                        None => return Err(Error::type_error(strand, "expected `Str` or `Bin`")),
-                    }
+                    total += piece
+                        .with_u8_slice(strand, |_, bytes| bytes.len())
+                        .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
                 }
                 let mut borrow = this.borrow_mut(strand)?;
                 for piece in &pieces {
@@ -495,22 +497,18 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = borrow.as_slice().starts_with(
-                    prefix
-                        .as_u8_slice_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?,
-                );
+                let input = prefix
+                    .with_u8_slice(strand, |_, prefix| borrow.as_slice().starts_with(prefix))
+                    .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = borrow.as_slice().ends_with(
-                    suffix
-                        .as_u8_slice_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?,
-                );
+                let input = suffix
+                    .with_u8_slice(strand, |_, suffix| borrow.as_slice().ends_with(suffix))
+                    .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -518,11 +516,9 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 use bstr::ByteSlice;
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = borrow.as_slice().contains_str(
-                    needle
-                        .as_u8_slice_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?,
-                );
+                let input = needle
+                    .with_u8_slice(strand, |_, needle| borrow.as_slice().contains_str(needle))
+                    .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -855,19 +851,18 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
-        let mut buf = borrow
-            .buf
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let len = buf.len();
-        if len == 0 {
-            return Ok(false);
-        }
-        let want = borrow.chunk_size.min(len);
-        let chunk = buf.as_slice()[..want].to_vec();
-        buf.offset += want;
-        Output::set(strand, out, chunk.as_slice());
-        Ok(true)
+        borrow.buf.pin_sync(strand, |strand, buf| {
+            let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
+            let len = buf.len();
+            if len == 0 {
+                return Ok(false);
+            }
+            let want = borrow.chunk_size.min(len);
+            let chunk = buf.as_slice()[..want].to_vec();
+            buf.offset += want;
+            Output::set(strand, out, chunk.as_slice());
+            Ok(true)
+        })
     }
 
     fn op_get<'a, 's>(

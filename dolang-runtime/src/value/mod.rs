@@ -18,7 +18,7 @@ use crate::{
     arg::Args,
     error::{Error, ErrorKind, Result},
     frame::Frame,
-    gc::{self, Base, BaseBorrow, BaseWeak, Collect, Gc, arena},
+    gc::{self, Base, BaseWeak, Collect, Gc, arena},
     method,
     object::{
         self, BoundMethod, backtrace,
@@ -48,7 +48,7 @@ use self::fmt::{Format, Spec};
 
 pub(crate) enum Case<'v, 'a> {
     Prim(Prim),
-    Object(BaseBorrow<'v, 'a, Header>),
+    Object(&'a gc::Base<'v, Header>),
 }
 
 /// Do value.
@@ -58,6 +58,7 @@ pub(crate) enum Case<'v, 'a> {
 /// the garbage collector.  A [`Slot`] is the usual way to receive or store an
 /// owned value temporarily.  For holding a value long-term, use a [`Root`]
 /// or the [`Object::SLOTS`](crate::object::native::Object::SLOTS) mechanism.
+#[repr(transparent)]
 pub struct Value<'v>(Repr, PhantomData<&'v mut &'v ()>);
 
 /// Growable binary buffer that can be finalized directly into a Do `Bin` or `Str`.
@@ -104,19 +105,16 @@ impl<'v> Value<'v> {
     }
 
     /// Compare against an object by identity, without taking a reference to it.
-    pub(crate) fn repr_eq_obj<T: arena::Upcast<arena::Header>>(
-        &self,
-        other: BaseBorrow<'v, '_, T>,
-    ) -> bool {
+    pub(crate) fn repr_eq_obj<T: arena::Upcast<arena::Header>>(&self, other: NonNull<T>) -> bool {
         match self.0.decode() {
-            Decode::Object(ptr) => ptr.cast::<u8>() == other.into_raw().cast::<u8>(),
+            Decode::Object(ptr) => ptr.cast::<u8>() == other.cast::<u8>(),
             Decode::Prim(_) => false,
         }
     }
 
     pub(crate) fn dup(&self) -> Self {
         match self.case() {
-            Case::Object(base) => base.upcast::<arena::Header>().base_get().retain(),
+            Case::Object(base) => mem::forget(base.clone()),
             Case::Prim(_) => (),
         }
         Self(self.0.clone(), PhantomData)
@@ -248,7 +246,11 @@ impl<'v> Value<'v> {
         unsafe {
             match self.0.decode() {
                 Decode::Prim(prim) => Case::Prim(prim),
-                Decode::Object(ptr) => Case::Object(BaseBorrow::new(ptr)),
+                // SAFETY: an object `Value` is exactly a `Base` pointer: its tag is zero
+                // and both are transparent
+                Decode::Object(_) => {
+                    Case::Object(&*ptr::from_ref(self).cast::<gc::Base<'v, Header>>())
+                }
             }
         }
     }
@@ -314,7 +316,7 @@ impl<'v> Value<'v> {
         let Case::Object(o) = self.case() else {
             return None;
         };
-        let vtbl: *const object::protocol::Vtbl<'v> = unsafe { o.base_get().vtbl() };
+        let vtbl: *const object::protocol::Vtbl<'v> = unsafe { o.header().vtbl() };
         vm.error_kind_vtbls
             .iter()
             .find(|candidate| ptr::eq(candidate.as_ptr().cast_const().cast(), vtbl))
@@ -324,15 +326,20 @@ impl<'v> Value<'v> {
     pub(crate) fn downcast_ref<T: ?Sized + Protocol<'v>>(
         &self,
         handle: TypeHandle<'v, T>,
-    ) -> Option<gc::Borrow<'v, '_, Header, T>> {
-        match &self.case() {
-            Case::Object(o) => unsafe {
-                if ptr::eq(o.base_get().vtbl() as *const _, handle.vtbl() as *const _) {
-                    Some(gc::Borrow::from_raw(o.into_raw().cast()))
+    ) -> Option<&GcObj<'v, T>> {
+        match self.case() {
+            Case::Object(o) => {
+                if ptr::eq(
+                    unsafe { o.header().vtbl() } as *const _,
+                    handle.vtbl() as *const _,
+                ) {
+                    // SAFETY: the vtbl identifies the object's type, and `Base` is a
+                    // transparent pointer
+                    Some(unsafe { &*ptr::from_ref(o).cast::<GcObj<'v, T>>() })
                 } else {
                     None
                 }
-            },
+            }
             Case::Prim(_) => None,
         }
     }
@@ -347,7 +354,7 @@ impl<'v> Value<'v> {
         &'a self,
         vm: &Vm<'v>,
         vtbl: TypeHandle<'v, T>,
-    ) -> Option<gc::Borrow<'v, 'a, Header, T>> {
+    ) -> Option<&'a GcObj<'v, T>> {
         self.downcast_native_with(vm.builtin_types().class_instance, vtbl)
     }
 
@@ -361,7 +368,7 @@ impl<'v> Value<'v> {
         &'a self,
         class_instance: TypeHandle<'v, class::ClassInstance<'v>>,
         vtbl: TypeHandle<'v, T>,
-    ) -> Option<gc::Borrow<'v, 'a, Header, T>> {
+    ) -> Option<&'a GcObj<'v, T>> {
         if let Some(borrow) = self.downcast_ref(vtbl) {
             return Some(borrow);
         }
@@ -473,16 +480,16 @@ impl<'v> Value<'v> {
                 let vtbl_ci = bt.class_instance;
                 // Direct downcasts for the four boxed primitive types.
                 if let Some(b) = self.downcast_ref(vtbl_int) {
-                    return Ok((*b.get()).into());
+                    return Ok(b.read(|p| *p.get()).into());
                 }
                 if let Some(b) = self.downcast_ref(vtbl_f64) {
-                    return Ok((*b.get()).into());
+                    return Ok(b.read(|p| *p.get()).into());
                 }
                 if let Some(b) = self.downcast_ref(vtbl_vint) {
-                    return Ok(b.get().value.into());
+                    return Ok(b.read(|p| p.get().value).into());
                 }
                 if let Some(b) = self.downcast_ref(vtbl_vf64) {
-                    return Ok(b.get().value.into());
+                    return Ok(b.read(|p| p.get().value).into());
                 }
                 // For ClassInstance subclasses of numeric types, check each native slot.
                 // int/int::Verbatim share a type object (Int), as do f64/float::Verbatim
@@ -493,16 +500,16 @@ impl<'v> Value<'v> {
                             Case::Prim(p) => return Ok(p),
                             Case::Object(_) => {
                                 if let Some(b) = slot_val.downcast_ref(vtbl_int) {
-                                    return Ok((*b.get()).into());
+                                    return Ok(b.read(|p| *p.get()).into());
                                 }
                                 if let Some(b) = slot_val.downcast_ref(vtbl_f64) {
-                                    return Ok((*b.get()).into());
+                                    return Ok(b.read(|p| *p.get()).into());
                                 }
                                 if let Some(b) = slot_val.downcast_ref(vtbl_vint) {
-                                    return Ok(b.get().value.into());
+                                    return Ok(b.read(|p| p.get().value).into());
                                 }
                                 if let Some(b) = slot_val.downcast_ref(vtbl_vf64) {
-                                    return Ok(b.get().value.into());
+                                    return Ok(b.read(|p| p.get().value).into());
                                 }
                             }
                         }
@@ -549,12 +556,12 @@ impl<'v> Value<'v> {
         other: &'a Value<'v>,
         prim: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
         lobj: for<'b> fn(
-            &BaseBorrow<'v, 'b, Header>,
+            &'b gc::Base<'v, Header>,
             &'b mut Strand<'v, 's>,
             &Value<'v>,
         ) -> Result<'v, 's, Value<'v>>,
         robj: for<'b> fn(
-            &BaseBorrow<'v, 'a, Header>,
+            &'a gc::Base<'v, Header>,
             &'b mut Strand<'v, 's>,
             &Value<'v>,
         ) -> Result<'v, 's, Value<'v>>,
@@ -565,13 +572,13 @@ impl<'v> Value<'v> {
                 prim(&left, strand, &right).map(|v| Value::from_prim(strand, v))
             }
             // Object only on left: dispatch to left object handler
-            (Case::Object(left), Case::Prim(_)) => lobj(&left, strand, other),
+            (Case::Object(left), Case::Prim(_)) => lobj(left, strand, other),
             // Object only on right: dispatch to right object handler
-            (Case::Prim(_), Case::Object(right)) => robj(&right, strand, self),
+            (Case::Prim(_), Case::Object(right)) => robj(right, strand, self),
             // Object on both sides: try left object handler, fall back to right if unsupported
-            (Case::Object(left), Case::Object(right)) => match lobj(&left, strand, other) {
+            (Case::Object(left), Case::Object(right)) => match lobj(left, strand, other) {
                 Ok(v) => Ok(v),
-                Err(err) if err.kind() == ErrorKind::Unsupported => robj(&right, strand, self),
+                Err(err) if err.kind() == ErrorKind::Unsupported => robj(right, strand, self),
                 other => other,
             },
         } {
@@ -589,13 +596,13 @@ impl<'v> Value<'v> {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
         op: for<'a> fn(
-            &BaseBorrow<'v, 'a, Header>,
+            &'a gc::Base<'v, Header>,
             &mut Strand<'v, 's>,
             &Value<'v>,
         ) -> Result<'v, 's, Value<'v>>,
     ) -> Result<'v, 's, Value<'v>> {
         match self.case() {
-            Case::Object(this) => op(&this, strand, other),
+            Case::Object(this) => op(this, strand, other),
             Case::Prim(_) => Err(Error::unsupported(strand, "operator")),
         }
     }
@@ -1674,52 +1681,36 @@ impl<'v> Value<'v> {
         }
     }
 
-    /// Downcast to `Str` ([`&str`])
-    ///
-    /// If you want to convert to a string, use [`Value::to_string`].
-    ///
-    /// # Returns
-    /// - [`None`]: Not a `Str` value
-    /// - [`Some(value)`](Some): The value as a `Str`
-    #[inline]
-    pub(crate) fn as_str_raw(&self, vm: &Vm<'v>) -> Option<&str> {
-        self.downcast_native(vm, vm.builtin_types().str)
-            .map(|s| s.str())
-    }
-
     /// Downcast to a `Str` witness.
     #[inline]
     pub fn as_str<'a>(&'a self, vm: &Vm<'v>) -> Option<Str<'v, 'a>> {
-        Some(Str::from_value(self.as_str_raw(vm)?))
-    }
-
-    /// Downcast to `Bin` ([`&[u8]`])
-    ///
-    /// # Returns
-    /// - [`None`]: Not a `Bin` value
-    /// - [`Some(value)`](Some): The value as a `Bin`
-    #[inline]
-    pub(crate) fn as_bin_raw(&self, vm: &Vm<'v>) -> Option<&[u8]> {
-        self.downcast_native(vm, vm.builtin_types().bin)
-            .map(|s| s.bytes())
+        Some(Str::from_obj(
+            self.downcast_native(vm, vm.builtin_types().str)?,
+        ))
     }
 
     /// Downcast to a `Bin` witness.
     #[inline]
     pub fn as_bin<'a>(&'a self, vm: &Vm<'v>) -> Option<Bin<'v, 'a>> {
-        Some(Bin::from_value(self.as_bin_raw(vm)?))
+        Some(Bin::from_obj(
+            self.downcast_native(vm, vm.builtin_types().bin)?,
+        ))
     }
 
-    /// Downcast to [`&[u8]`].  This works for both `Str` and `Bin` types.
-    ///
-    /// # Returns
-    /// - [`None`]: Not a `&[u8]` value
-    /// - [`Some(value)`](Some): The value as a `&[u8]`
-    #[inline]
-    pub(crate) fn as_u8_slice_raw(&self, vm: &Vm<'v>) -> Option<&[u8]> {
-        // FIXME: there should probably be a "buffer" protocol to make this generic
-        self.as_bin_raw(vm)
-            .or_else(|| self.as_str_raw(vm).map(str::as_bytes))
+    /// Call `f` with the bytes of a `Bin` or `Str`, or return `None` for any other
+    /// value.
+    // FIXME: there should probably be a "buffer" protocol to make this generic
+    pub(crate) fn with_u8_slice<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl FnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
+    ) -> Option<R> {
+        if let Some(bin) = self.as_bin(strand) {
+            Some(bin.with_slice(strand, f))
+        } else {
+            let str = self.as_str(strand)?;
+            Some(str.with_str(strand, |strand, str| f(strand, str.as_bytes())))
+        }
     }
 
     /// Downcast to symbol
@@ -1730,7 +1721,7 @@ impl<'v> Value<'v> {
     #[inline]
     pub fn as_sym<'a>(&self, vm: &Vm<'v>) -> Option<Sym<'v, 'a>> {
         self.downcast_ref(vm.builtin_types().sym)
-            .map(|s| unsafe { Sym::from_tag(s.get().tag) })
+            .map(|s| unsafe { Sym::from_tag(s.tag()) })
     }
 
     /// Downcast value to array
@@ -1825,19 +1816,19 @@ impl<'v> Value<'v> {
                 let bt = vm.builtin_types();
                 // Boxed int
                 if let Some(v) = self.downcast_native(vm, bt.int) {
-                    return View::Int(*v.get());
+                    return View::Int(v.read(|p| *p.get()));
                 }
                 // Verbatim int
                 if let Some(v) = self.downcast_native(vm, bt.verbatim_int) {
-                    return View::Int(v.get().value);
+                    return View::Int(v.read(|p| p.get().value));
                 }
                 // Boxed f64
                 if let Some(v) = self.downcast_native(vm, bt.f64) {
-                    return View::Float(*v.get());
+                    return View::Float(v.read(|p| *p.get()));
                 }
                 // Verbatim f64
                 if let Some(v) = self.downcast_native(vm, bt.verbatim_f64) {
-                    return View::Float(v.get().value);
+                    return View::Float(v.read(|p| p.get().value));
                 }
                 // String
                 if let Some(s) = self.as_str(vm) {
@@ -1896,7 +1887,7 @@ impl<'v> Value<'v> {
                     return View::FmtSpec(spec.enter_finalize(fmt_obj::view_spec));
                 }
                 // Fallback: unknown GC object
-                View::Object(unsafe { ObjectView::from_ptr(obj.into_raw()) })
+                View::Object(unsafe { ObjectView::from_ptr(gc::Base::as_ptr(obj)) })
             }
         }
     }
@@ -2906,7 +2897,7 @@ impl<'v> Weak<'v> {
 
     pub(crate) fn from_value(value: &Value<'v>) -> Self {
         match value.case() {
-            Case::Object(base) => base.upcast::<arena::Header>().base_get().retain_weak(),
+            Case::Object(base) => mem::forget(gc::Base::downgrade(base)),
             Case::Prim(_) => (),
         }
         Self(value.0.clone(), PhantomData)

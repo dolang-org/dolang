@@ -2,7 +2,6 @@ use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    mem,
     num::NonZero,
     ops::Deref,
     ptr::NonNull,
@@ -13,11 +12,14 @@ use crate::{
     gc,
     object::{
         array,
+        bin::BinObj,
         dict::{self, Entry, EntryValue},
         native::Cast,
         pack::{self, ArgItem},
-        protocol::{GcObjBorrow, Header},
-        range, record, set, structure, tuple,
+        protocol::{GcObj, Header},
+        range, record, set,
+        str::StrObj,
+        structure, tuple,
     },
     stdlib::fmt as stdfmt,
     strand::{Access, Strand},
@@ -59,44 +61,54 @@ impl<'v, 'a> Hash for ObjectId<'v, 'a> {
 
 /// Typed view of a `Str` value.
 #[derive(Clone, Copy)]
-pub struct Str<'v, 'a> {
-    value: &'a str,
-    phantom: PhantomData<&'v mut &'v ()>,
-}
+pub struct Str<'v, 'a>(&'a GcObj<'v, StrObj>);
 
-/// Pinned `Str` view
+/// Pinned `Str`.
 ///
-/// The underlying string slice is guaranteed to remain address-stable for
-/// the lifetime of this struct.
+/// Owns a reference to the string, which keeps it alive and its text address-stable
+/// until this pin is dropped.  A native object can hold one alongside a structure
+/// borrowing the text, provided the borrower is dropped first.
 #[derive(Clone)]
-pub struct PinStr<'v, 'a> {
-    value: &'a str,
-    phantom: PhantomData<&'v mut &'v ()>,
-}
+pub struct PinStr<'v>(GcObj<'v, StrObj>);
 
 impl<'v, 'a> Str<'v, 'a> {
-    pub(crate) fn from_value(value: &'a str) -> Self {
-        Self {
-            value,
-            phantom: PhantomData,
-        }
+    pub(crate) fn from_obj(obj: &'a GcObj<'v, StrObj>) -> Self {
+        Self(obj)
     }
 
     /// Get underlying string slice.
     ///
     /// This requires a token from [`Strand::access`].
-    pub fn as_str<'s, 'x, 'b>(&self, access: &'x Access<'v, 's>) -> &'b str
+    pub fn as_str<'s, 'b>(&self, access: &'b Access<'v, 's>) -> &'b str
     where
         'a: 'b,
-        'x: 'b,
     {
-        let _ = access;
-        self.value
+        self.0.pin_access(access).str()
+    }
+
+    /// Call `f` with the underlying string slice.  Unlike [`Self::as_str`], `f` keeps
+    /// the strand.
+    pub fn with_str<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl FnOnce(&mut Strand<'v, 's>, &str) -> R,
+    ) -> R {
+        self.0.pin_sync(strand, |strand, pin| f(strand, pin.str()))
+    }
+
+    /// Async counterpart to [`Self::with_str`].
+    pub async fn with_str_async<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl AsyncFnOnce(&mut Strand<'v, 's>, &str) -> R,
+    ) -> R {
+        // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures shallow
+        f(strand, unsafe { self.0.pin_unchecked() }.str()).await
     }
 
     /// Get length of string
     pub fn len(&self) -> usize {
-        self.value.len()
+        self.0.read(|p| p.str().len())
     }
 
     /// Is string empty?
@@ -104,94 +116,94 @@ impl<'v, 'a> Str<'v, 'a> {
         self.len() == 0
     }
 
-    /// Get pinned view of string
-    pub fn pin(&self) -> PinStr<'v, 'a> {
-        PinStr {
-            value: self.value,
-            phantom: PhantomData,
-        }
+    /// Get pinned string
+    pub fn pin(&self) -> PinStr<'v> {
+        PinStr(self.0.clone())
     }
 }
 
 impl<'v, 'a> Display for Str<'v, 'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(self.value, f)
+        // Write through a held pin; there's no strand for a scoped one
+        Display::fmt(&*self.pin(), f)
     }
 }
 
-impl<'v, 'a> PinStr<'v, 'a> {
-    /// Widen the borrow lifetime of this pin without changing its dynamic pin state.
-    ///
-    /// This pin guarantees only address stability of the underlying string until it is
-    /// dropped. It does not guarantee rootedness or liveness of the underlying GC object.
-    ///
-    /// # Safety
-    /// The caller must ensure the underlying string object remains rooted and alive for the
-    /// full widened lifetime, and that any references derived from the widened pin are dropped
-    /// before the pin.
-    pub unsafe fn into_static_unchecked(self) -> PinStr<'v, 'static> {
-        unsafe { mem::transmute::<PinStr<'v, 'a>, PinStr<'v, 'static>>(self) }
+impl<'v> PinStr<'v> {
+    pub(crate) fn new(obj: GcObj<'v, StrObj>) -> Self {
+        Self(obj)
+    }
+
+    /// The pinned string object.
+    pub(crate) fn obj(&self) -> &GcObj<'v, StrObj> {
+        &self.0
     }
 }
 
-impl<'v, 'a> Deref for PinStr<'v, 'a> {
+impl<'v> Deref for PinStr<'v> {
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        self.value
+        // SAFETY: this pin holds the string pinned until it is dropped
+        unsafe { self.0.pin_unchecked() }.str()
     }
-}
-
-impl<'v, 'a> Drop for PinStr<'v, 'a> {
-    fn drop(&mut self) {}
 }
 
 impl<'v, 'a> From<Str<'v, 'a>> for String {
     fn from(value: Str<'v, 'a>) -> Self {
-        value.value.to_owned()
+        value.0.read(|p| p.str().to_owned())
     }
 }
 
 /// Typed view of a `Bin` value.
 #[derive(Clone, Copy)]
-pub struct Bin<'v, 'a> {
-    value: &'a [u8],
-    phantom: PhantomData<&'v mut &'v ()>,
-}
+pub struct Bin<'v, 'a>(&'a GcObj<'v, BinObj>);
 
-/// Pinned `Bin` view
+/// Pinned `Bin`.
 ///
-/// The underlying byte slice is guaranteed to remain address-stable for
-/// the lifetime of this struct.
+/// As [`PinStr`], for bytes.
 #[derive(Clone)]
-pub struct PinBin<'v, 'a> {
-    value: &'a [u8],
-    phantom: PhantomData<&'v mut &'v ()>,
-}
+pub struct PinBin<'v>(GcObj<'v, BinObj>);
 
 impl<'v, 'a> Bin<'v, 'a> {
-    pub(crate) fn from_value(value: &'a [u8]) -> Self {
-        Self {
-            value,
-            phantom: PhantomData,
-        }
+    pub(crate) fn from_obj(obj: &'a GcObj<'v, BinObj>) -> Self {
+        Self(obj)
     }
 
     /// Get underlying byte slice.
     ///
     /// This requires a token from [`Strand::access`].
-    pub fn as_slice<'s, 'x, 'b>(&self, access: &'x Access<'v, 's>) -> &'b [u8]
+    pub fn as_slice<'s, 'b>(&self, access: &'b Access<'v, 's>) -> &'b [u8]
     where
         'a: 'b,
-        'x: 'b,
     {
-        let _ = access;
-        self.value
+        self.0.pin_access(access).bytes()
+    }
+
+    /// Call `f` with the underlying byte slice.  Unlike [`Self::as_slice`], `f` keeps
+    /// the strand.
+    pub fn with_slice<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl FnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
+    ) -> R {
+        self.0
+            .pin_sync(strand, |strand, pin| f(strand, pin.bytes()))
+    }
+
+    /// Async counterpart to [`Self::with_slice`].
+    pub async fn with_slice_async<'s, R>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        f: impl AsyncFnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
+    ) -> R {
+        // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures shallow
+        f(strand, unsafe { self.0.pin_unchecked() }.bytes()).await
     }
 
     /// Get length of `Bin`
     pub fn len(&self) -> usize {
-        self.value.len()
+        self.0.read(|p| p.bytes().len())
     }
 
     /// Is the the `Bin` empty?
@@ -201,48 +213,38 @@ impl<'v, 'a> Bin<'v, 'a> {
 
     /// Convert to owned [`Vec`]
     pub fn to_vec(&self) -> Vec<u8> {
-        self.value.to_owned()
+        self.0.read(|p| p.bytes().to_vec())
     }
 
-    /// Get pinned view of `Bin`
-    pub fn pin(&self) -> PinBin<'v, 'a> {
-        PinBin {
-            value: self.value,
-            phantom: PhantomData,
-        }
+    /// Get pinned bytes
+    pub fn pin(&self) -> PinBin<'v> {
+        PinBin(self.0.clone())
     }
 }
 
-impl<'v, 'a> PinBin<'v, 'a> {
-    /// Widen the borrow lifetime of this pin without changing its dynamic pin state.
-    ///
-    /// This pin guarantees only address stability of the underlying binary until it is dropped.
-    /// It does not guarantee rootedness or liveness of the underlying GC object.
-    ///
-    /// # Safety
-    /// The caller must ensure the underlying binary object remains rooted and alive for the
-    /// full widened lifetime, and that any references derived from the widened pin are dropped
-    /// before the pin.
-    pub unsafe fn into_static_unchecked(self) -> PinBin<'v, 'static> {
-        unsafe { mem::transmute::<PinBin<'v, 'a>, PinBin<'v, 'static>>(self) }
+impl<'v> PinBin<'v> {
+    pub(crate) fn new(obj: GcObj<'v, BinObj>) -> Self {
+        Self(obj)
+    }
+
+    /// The pinned binary object.
+    pub(crate) fn obj(&self) -> &GcObj<'v, BinObj> {
+        &self.0
     }
 }
 
-impl<'v, 'a> Deref for PinBin<'v, 'a> {
+impl<'v> Deref for PinBin<'v> {
     type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
-        self.value
+        // SAFETY: this pin holds the bytes pinned until it is dropped
+        unsafe { self.0.pin_unchecked() }.bytes()
     }
-}
-
-impl<'v, 'a> Drop for PinBin<'v, 'a> {
-    fn drop(&mut self) {}
 }
 
 impl<'v, 'a> From<Bin<'v, 'a>> for Vec<u8> {
     fn from(value: Bin<'v, 'a>) -> Self {
-        value.value.to_vec()
+        value.to_vec()
     }
 }
 
@@ -253,15 +255,17 @@ pub struct ObjectView<'v, 'a> {
 }
 
 /// Read-only view of a `range` value.
-pub struct Range<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, range::RangeObj<'v>>);
+pub struct Range<'v, 'a>(pub(crate) &'a GcObj<'v, range::RangeObj<'v>>);
 
 impl<'v, 'a> Range<'v, 'a> {
     /// Copy the start, end, and step into rooted output slots.
     pub fn parts<'s>(&self, strand: &mut Strand<'v, 's>, [start, end, step]: [Slot<'v, '_>; 3]) {
-        let (start_value, end_value, step_value) = self.0.get().parts();
-        Output::set(strand, start, start_value);
-        Output::set(strand, end, end_value);
-        Output::set(strand, step, step_value);
+        self.0.pin_sync(strand, |strand, pin| {
+            let (start_value, end_value, step_value) = pin.get().parts();
+            Output::set(strand, start, start_value);
+            Output::set(strand, end, end_value);
+            Output::set(strand, step, step_value);
+        })
     }
 }
 
@@ -280,26 +284,28 @@ impl<'v, 'a> ObjectView<'v, 'a> {
 }
 
 /// Array view
-pub struct Array<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, array::Array<'v>>);
+pub struct Array<'v, 'a>(pub(crate) &'a GcObj<'v, array::Array<'v>>);
 
 impl<'v, 'a> Array<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, array::Array<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, array::Array<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this array for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        // BaseBorrow is Copy, so this copies and extracts the inner pointer.
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        // BasePin is Copy, so this copies and extracts the inner pointer.
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Number of elements. Briefly takes a shared interior borrow.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(borrow.inner.len())
+        self.0.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(borrow.inner.len())
+        })
     }
 
     /// Get element at `index`. Returns `false` if out of bounds.
@@ -309,17 +315,19 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        match borrow.inner.get(index) {
-            Some(v) => {
-                Output::set(strand, out, v);
-                Ok(true)
+        self.0.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            match borrow.inner.get(index) {
+                Some(v) => {
+                    Output::set(strand, out, v);
+                    Ok(true)
+                }
+                None => Ok(false),
             }
-            None => Ok(false),
-        }
+        })
     }
 
     /// Write `value` to `index`. Returns `false` if out of bounds.
@@ -329,17 +337,19 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        match borrow.inner.get_mut(index) {
-            Some(v) => {
-                *v = Value::from_input(strand, value);
-                Ok(true)
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            match borrow.inner.get_mut(index) {
+                Some(v) => {
+                    *v = Value::from_input(strand, value);
+                    Ok(true)
+                }
+                None => Ok(false),
             }
-            None => Ok(false),
-        }
+        })
     }
 
     /// Append a value drawn from `input`. Briefly takes an exclusive interior borrow.
@@ -348,14 +358,16 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         input: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        // Build the value before taking the exclusive borrow.
-        let value = Value::from_input(strand, input);
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.inner.push(value);
-        Ok(())
+        self.0.pin_sync(strand, |strand, pin| {
+            // Build the value before taking the exclusive borrow.
+            let value = Value::from_input(strand, input);
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.inner.push(value);
+            Ok(())
+        })
     }
 
     /// Append values from rooted slots. Briefly takes an exclusive interior borrow.
@@ -364,12 +376,14 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.inner.extend(values.iter_mut().map(Slot::take));
-        Ok(())
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.inner.extend(values.iter_mut().map(Slot::take));
+            Ok(())
+        })
     }
 
     /// Insert values at `index`, shifting later elements up. Returns `false`
@@ -380,17 +394,19 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, bool> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        if index > borrow.inner.len() {
-            return Ok(false);
-        }
-        borrow
-            .inner
-            .splice(index..index, values.iter_mut().map(Slot::take));
-        Ok(true)
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            if index > borrow.inner.len() {
+                return Ok(false);
+            }
+            borrow
+                .inner
+                .splice(index..index, values.iter_mut().map(Slot::take));
+            Ok(true)
+        })
     }
 
     /// Remove and write the last element to `out`. Returns `false` if empty.
@@ -399,21 +415,23 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        // Remove before calling Output::set, mirroring push's pattern.
-        let val = {
-            let mut borrow = match self.0.borrow_mut() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
+        self.0.pin_sync(strand, |strand, pin| {
+            // Remove before calling Output::set, mirroring push's pattern.
+            let val = {
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                borrow.inner.pop()
             };
-            borrow.inner.pop()
-        };
-        match val {
-            Some(v) => {
-                Output::set(strand, out, &v);
-                Ok(true)
+            match val {
+                Some(v) => {
+                    Output::set(strand, out, &v);
+                    Ok(true)
+                }
+                None => Ok(false),
             }
-            None => Ok(false),
-        }
+        })
     }
 
     /// Remove and write the element at `index` to `out`. Returns `false` if
@@ -424,52 +442,60 @@ impl<'v, 'a> Array<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let val = {
-            let mut borrow = match self.0.borrow_mut() {
+        self.0.pin_sync(strand, |strand, pin| {
+            let val = {
+                let mut borrow = match pin.borrow_mut() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                if index >= borrow.inner.len() {
+                    return Ok(false);
+                }
+                borrow.inner.remove(index)
+            };
+            Output::set(strand, out, &val);
+            Ok(true)
+        })
+    }
+
+    /// Remove the element at `index`, shifting later elements down. Returns
+    /// `false` if out of bounds.
+    pub fn delete<'s>(&self, strand: &mut Strand<'v, 's>, index: usize) -> Result<'v, 's, bool> {
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
             };
             if index >= borrow.inner.len() {
                 return Ok(false);
             }
-            borrow.inner.remove(index)
-        };
-        Output::set(strand, out, &val);
-        Ok(true)
-    }
-
-    /// Remove the element at `index`, shifting later elements down. Returns
-    /// `false` if out of bounds.
-    pub fn delete<'s>(&self, strand: &mut Strand<'v, 's>, index: usize) -> Result<'v, 's, bool> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        if index >= borrow.inner.len() {
-            return Ok(false);
-        }
-        borrow.inner.remove(index);
-        Ok(true)
+            borrow.inner.remove(index);
+            Ok(true)
+        })
     }
 
     /// Remove all elements.
     pub fn clear<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.inner.clear();
-        Ok(())
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.inner.clear();
+            Ok(())
+        })
     }
 
     /// Reverse the elements in place.
     pub fn reverse<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.inner.reverse();
-        Ok(())
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.inner.reverse();
+            Ok(())
+        })
     }
 
     /// Write a tuple of the current elements to `out`.
@@ -478,38 +504,42 @@ impl<'v, 'a> Array<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let tuple = {
-            let borrow = match self.0.borrow() {
-                Some(b) => b,
-                None => return Err(Error::concurrency(strand)),
+        self.0.pin_sync(strand, |strand, pin| {
+            let tuple = {
+                let borrow = match pin.borrow() {
+                    Some(b) => b,
+                    None => return Err(Error::concurrency(strand)),
+                };
+                tuple::tuple(strand.vm(), borrow.inner.iter().map(Value::dup))
             };
-            tuple::tuple(strand.vm(), borrow.inner.iter().map(Value::dup))
-        };
-        Output::set(strand, out, Value::from_object(tuple));
-        Ok(())
+            Output::set(strand, out, Value::from_object(tuple));
+            Ok(())
+        })
     }
 }
 
 /// Dict view
-pub struct Dict<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, dict::Dict<'v>>);
+pub struct Dict<'v, 'a>(pub(crate) &'a GcObj<'v, dict::Dict<'v>>);
 
 impl<'v, 'a> Dict<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, dict::Dict<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, dict::Dict<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this dict for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Total number of key-value pairs (counting duplicate keys).
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(borrow.total_pairs)
+        self.0.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(borrow.total_pairs)
+        })
     }
 
     /// Return a stateful cursor over insertion-order key-value pairs.
@@ -533,18 +563,20 @@ impl<'v, 'a> Dict<'v, 'a> {
         instance: Option<i64>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let key = Value::from_input(strand, key);
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        match borrow.get(strand, &key, instance)? {
-            Some(value) => {
-                Output::set(strand, out, value);
-                Ok(true)
+        self.0.pin_sync(strand, |strand, pin| {
+            let key = Value::from_input(strand, key);
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            match borrow.get(strand, &key, instance)? {
+                Some(value) => {
+                    Output::set(strand, out, value);
+                    Ok(true)
+                }
+                None => Ok(false),
             }
-            None => Ok(false),
-        }
+        })
     }
 
     /// Insert a key-value pair.
@@ -558,17 +590,19 @@ impl<'v, 'a> Dict<'v, 'a> {
         value: impl Input<'v>,
         unique: bool,
     ) -> Result<'v, 's, ()> {
-        let key = Value::from_input(strand, key);
-        let value = Value::from_input(strand, value);
-        let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
-        let hv = hasher.finish();
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.insert(strand, key, value, hv, unique)?;
-        Ok(())
+        self.0.pin_sync(strand, |strand, pin| {
+            let key = Value::from_input(strand, key);
+            let value = Value::from_input(strand, value);
+            let mut hasher = strand.vm().hasher();
+            key.op_hash(strand, &mut hasher)?;
+            let hv = hasher.finish();
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.insert(strand, key, value, hv, unique)?;
+            Ok(())
+        })
     }
 
     /// Delete all values for `key`. Returns whether the key was present.
@@ -577,35 +611,39 @@ impl<'v, 'a> Dict<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         key: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        let key = Value::from_input(strand, key);
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.delete(strand, &key)
+        self.0.pin_sync(strand, |strand, pin| {
+            let key = Value::from_input(strand, key);
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.delete(strand, &key)
+        })
     }
 }
 
 /// Set view
-pub struct Set<'v, 'a>(pub(crate) GcObjBorrow<'v, 'a, set::Set<'v>>);
+pub struct Set<'v, 'a>(pub(crate) &'a GcObj<'v, set::Set<'v>>);
 
 impl<'v, 'a> Set<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, set::Set<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, set::Set<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this set for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Number of members.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(borrow.len())
+        self.0.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(borrow.len())
+        })
     }
 
     /// Return a stateful cursor over the members in insertion order.
@@ -622,15 +660,17 @@ impl<'v, 'a> Set<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        let value = Value::from_input(strand, value);
-        let mut hasher = strand.vm().hasher();
-        value.op_hash(strand, &mut hasher)?;
-        let hash = hasher.finish();
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.contains(strand, &value, hash)
+        self.0.pin_sync(strand, |strand, pin| {
+            let value = Value::from_input(strand, value);
+            let mut hasher = strand.vm().hasher();
+            value.op_hash(strand, &mut hasher)?;
+            let hash = hasher.finish();
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.contains(strand, &value, hash)
+        })
     }
 
     /// Add `value`. Returns `false` if it was already a member, leaving the
@@ -640,16 +680,18 @@ impl<'v, 'a> Set<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        // Build the value and hash it before taking the exclusive borrow.
-        let value = Value::from_input(strand, value);
-        let mut hasher = strand.vm().hasher();
-        value.op_hash(strand, &mut hasher)?;
-        let hash = hasher.finish();
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.insert(strand, value, hash)
+        self.0.pin_sync(strand, |strand, pin| {
+            // Build the value and hash it before taking the exclusive borrow.
+            let value = Value::from_input(strand, value);
+            let mut hasher = strand.vm().hasher();
+            value.op_hash(strand, &mut hasher)?;
+            let hash = hasher.finish();
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.insert(strand, value, hash)
+        })
     }
 
     /// Remove `value`. Returns `false` if it was not a member.
@@ -658,44 +700,49 @@ impl<'v, 'a> Set<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        let value = Value::from_input(strand, value);
-        let mut hasher = strand.vm().hasher();
-        value.op_hash(strand, &mut hasher)?;
-        let hash = hasher.finish();
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.delete(strand, &value, hash)
+        self.0.pin_sync(strand, |strand, pin| {
+            let value = Value::from_input(strand, value);
+            let mut hasher = strand.vm().hasher();
+            value.op_hash(strand, &mut hasher)?;
+            let hash = hasher.finish();
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.delete(strand, &value, hash)
+        })
     }
 
     /// Remove every member.
     pub fn clear<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        let mut borrow = match self.0.borrow_mut() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        borrow.clear();
-        Ok(())
+        self.0.pin_sync(strand, |strand, pin| {
+            let mut borrow = match pin.borrow_mut() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            borrow.clear();
+            Ok(())
+        })
     }
 }
 
 /// [`Pack`](crate::object::pack::Pack) view
-pub struct Pack<'v, 'a>(gc::Borrow<'v, 'a, Header, pack::PackObj<'v>>);
+pub struct Pack<'v, 'a>(&'a GcObj<'v, pack::PackObj<'v>>);
 
 impl<'v, 'a> Pack<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, pack::PackObj<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, pack::PackObj<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this args value for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Total number of key-value pairs.
     pub fn len<'s>(&self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        Ok(self.0.get().items().len())
+        self.0
+            .pin_sync(_strand, |_strand, pin| Ok(pin.get().items().len()))
     }
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
@@ -710,25 +757,27 @@ impl<'v, 'a> Pack<'v, 'a> {
 }
 
 /// [`Record`](crate::object::record::Record) view
-pub struct Record<'v, 'a>(GcObjBorrow<'v, 'a, record::Record<'v>>);
+pub struct Record<'v, 'a>(&'a GcObj<'v, record::Record<'v>>);
 
 impl<'v, 'a> Record<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, record::Record<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, record::Record<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this record for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Total number of items.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(borrow.len())
+        self.0.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(borrow.len())
+        })
     }
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
@@ -743,25 +792,27 @@ impl<'v, 'a> Record<'v, 'a> {
 }
 
 /// Struct view
-pub struct Struct<'v, 'a>(GcObjBorrow<'v, 'a, structure::Struct<'v>>);
+pub struct Struct<'v, 'a>(&'a GcObj<'v, structure::Struct<'v>>);
 
 impl<'v, 'a> Struct<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: GcObjBorrow<'v, 'a, structure::Struct<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, structure::Struct<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this struct for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Total number of key-value pairs.
     pub fn len<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, usize> {
-        let borrow = match self.0.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(borrow.items().len())
+        self.0.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(borrow.items().len())
+        })
     }
 
     /// Return a stateful cursor over the key-value pairs in order. A positional
@@ -776,21 +827,21 @@ impl<'v, 'a> Struct<'v, 'a> {
 }
 
 /// Tuple view
-pub struct Tuple<'v, 'a>(pub(super) gc::Borrow<'v, 'a, Header, tuple::TupleObj<'v>>);
+pub struct Tuple<'v, 'a>(pub(super) &'a GcObj<'v, tuple::TupleObj<'v>>);
 
 impl<'v, 'a> Tuple<'v, 'a> {
-    pub(crate) fn from_borrow(borrow: gc::Borrow<'v, 'a, Header, tuple::TupleObj<'v>>) -> Self {
+    pub(crate) fn from_borrow(borrow: &'a GcObj<'v, tuple::TupleObj<'v>>) -> Self {
         Self(borrow)
     }
 
     /// Return the opaque identity of this tuple for cycle detection.
     pub fn id(&self) -> ObjectId<'v, 'a> {
-        ObjectId(self.0.into_raw().cast(), PhantomData)
+        ObjectId(gc::Base::as_ptr(self.0).cast(), PhantomData)
     }
 
     /// Number of elements. Tuples are fixed-size immutable slices; no borrow needed.
     pub fn len(&self) -> usize {
-        self.0.items().len()
+        self.0.read(|p| p.items().len())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -804,13 +855,14 @@ impl<'v, 'a> Tuple<'v, 'a> {
         index: usize,
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        match self.0.items().get(index) {
-            Some(v) => {
-                Output::set(strand, out, v);
-                Ok(true)
-            }
-            None => Ok(false),
-        }
+        self.0
+            .pin_sync(strand, |strand, pin| match pin.items().get(index) {
+                Some(v) => {
+                    Output::set(strand, out, v);
+                    Ok(true)
+                }
+                None => Ok(false),
+            })
     }
 }
 
@@ -965,7 +1017,7 @@ pub enum View<'v, 'a> {
 
 /// Iterator over a [`Dict`].
 pub struct DictPairs<'v, 'a> {
-    borrow: gc::Borrow<'v, 'a, Header, dict::Dict<'v>>,
+    borrow: &'a GcObj<'v, dict::Dict<'v>>,
     pos: usize,
 }
 
@@ -978,17 +1030,19 @@ impl<'v, 'a> DictPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = match self.borrow.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(dict_next_pair(&borrow, &mut self.pos, strand, key, value))
+        self.borrow.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(dict_next_pair(&borrow, &mut self.pos, strand, key, value))
+        })
     }
 }
 
 /// Iterator over a [`Set`].
 pub struct SetMembers<'v, 'a> {
-    borrow: gc::Borrow<'v, 'a, Header, set::Set<'v>>,
+    borrow: &'a GcObj<'v, set::Set<'v>>,
     pos: usize,
 }
 
@@ -1000,23 +1054,25 @@ impl<'v, 'a> SetMembers<'v, 'a> {
         strand: &mut Strand<'v, 's>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = match self.borrow.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        match borrow.next_from(&mut self.pos) {
-            Some(member) => {
-                Output::set(strand, value, member);
-                Ok(true)
+        self.borrow.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            match borrow.next_from(&mut self.pos) {
+                Some(member) => {
+                    Output::set(strand, value, member);
+                    Ok(true)
+                }
+                None => Ok(false),
             }
-            None => Ok(false),
-        }
+        })
     }
 }
 
 /// Iterator over a [`Pack`].
 pub struct PackPairs<'v, 'a> {
-    borrow: GcObjBorrow<'v, 'a, pack::PackObj<'v>>,
+    borrow: &'a GcObj<'v, pack::PackObj<'v>>,
     pos: usize,
     int: i64,
 }
@@ -1030,21 +1086,23 @@ impl<'v, 'a> PackPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = self.borrow.get();
-        Ok(next_item_pair(
-            borrow.items(),
-            &mut self.pos,
-            &mut self.int,
-            strand,
-            key,
-            value,
-        ))
+        self.borrow.pin_sync(strand, |strand, pin| {
+            let borrow = pin.get();
+            Ok(next_item_pair(
+                borrow.items(),
+                &mut self.pos,
+                &mut self.int,
+                strand,
+                key,
+                value,
+            ))
+        })
     }
 }
 
 /// Iterator over a [`Record`].
 pub struct RecordPairs<'v, 'a> {
-    borrow: GcObjBorrow<'v, 'a, record::Record<'v>>,
+    borrow: &'a GcObj<'v, record::Record<'v>>,
     slot: usize,
     int: i64,
 }
@@ -1058,33 +1116,35 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = match self.borrow.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        let order = borrow.order();
-        while let Some(item) = order.get(self.slot) {
-            self.slot += 1;
-            let Some((item_key, item_value)) = item else {
-                continue;
+        self.borrow.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
             };
-            match item_key {
-                Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
-                None => {
-                    Output::set(strand, key, self.int);
-                    self.int += 1;
+            let order = borrow.order();
+            while let Some(item) = order.get(self.slot) {
+                self.slot += 1;
+                let Some((item_key, item_value)) = item else {
+                    continue;
+                };
+                match item_key {
+                    Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
+                    None => {
+                        Output::set(strand, key, self.int);
+                        self.int += 1;
+                    }
                 }
+                Output::set(strand, value, item_value);
+                return Ok(true);
             }
-            Output::set(strand, value, item_value);
-            return Ok(true);
-        }
-        Ok(false)
+            Ok(false)
+        })
     }
 }
 
 /// Iterator over a [`Struct`].
 pub struct StructPairs<'v, 'a> {
-    borrow: GcObjBorrow<'v, 'a, structure::Struct<'v>>,
+    borrow: &'a GcObj<'v, structure::Struct<'v>>,
     pos: usize,
     int: i64,
 }
@@ -1098,18 +1158,20 @@ impl<'v, 'a> StructPairs<'v, 'a> {
         key: impl Output<'v>,
         value: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
-        let borrow = match self.borrow.borrow() {
-            Some(b) => b,
-            None => return Err(Error::concurrency(strand)),
-        };
-        Ok(next_item_pair(
-            borrow.items(),
-            &mut self.pos,
-            &mut self.int,
-            strand,
-            key,
-            value,
-        ))
+        self.borrow.pin_sync(strand, |strand, pin| {
+            let borrow = match pin.borrow() {
+                Some(b) => b,
+                None => return Err(Error::concurrency(strand)),
+            };
+            Ok(next_item_pair(
+                borrow.items(),
+                &mut self.pos,
+                &mut self.int,
+                strand,
+                key,
+                value,
+            ))
+        })
     }
 }
 

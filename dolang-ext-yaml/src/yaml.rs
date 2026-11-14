@@ -182,7 +182,7 @@ struct Builder<'k, 'v> {
     /// Holds every `Str` and `Sym` whose text the tree borrows.
     keep: Array<'v, 'k>,
     /// Pins of the borrowed `Str` texts.
-    pins: Vec<PinStr<'v, 'static>>,
+    pins: Vec<PinStr<'v>>,
     seen: HashSet<NonZero<usize>>,
     /// Nil, or an `Array` of the steps from the fault outward.
     path: Slot<'v, 'k>,
@@ -209,9 +209,9 @@ impl<'v> Builder<'_, 'v> {
             View::Float(f) => Ok(Yaml::Value(Scalar::FloatingPoint(OrderedFloat(f)))),
             View::Str(s) => {
                 self.keep.push(strand, value)?;
-                // SAFETY: `keep` roots the string until the encode ends, and the
-                // pin is dropped only after the tree that borrows its text.
-                let pin = unsafe { s.pin().into_static_unchecked() };
+                // The pin keeps the text alive and in place, and is dropped only
+                // after the tree that borrows it.
+                let pin = s.pin();
                 // SAFETY: as above; the text lives as long as the pin.
                 let text = unsafe { mem::transmute::<&str, &'static str>(&pin) };
                 self.pins.push(pin);

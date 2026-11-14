@@ -32,7 +32,7 @@ pub(crate) fn entries_from_value<'v>(
     value: &Value<'v>,
 ) -> Option<Vec<UnwindEntry<'v>>> {
     let backtrace = value.downcast_ref(vm.builtin_types().backtrace)?;
-    Some(backtrace.get().entries.to_vec())
+    Some(backtrace.project(|p| &p.get().entries).to_vec())
 }
 
 pub(crate) fn iter_from_value<'v, 'a>(
@@ -40,7 +40,9 @@ pub(crate) fn iter_from_value<'v, 'a>(
     value: &'a Value<'v>,
 ) -> Option<BacktraceIter<'v, 'a>> {
     let backtrace = value.downcast_ref(vm.builtin_types().backtrace)?;
-    Some(BacktraceIter::new(backtrace.get().entries.iter()))
+    Some(BacktraceIter::new(
+        backtrace.project(|p| &p.get().entries).iter(),
+    ))
 }
 
 pub(crate) fn frame_from_value<'v, 'a>(
@@ -48,7 +50,7 @@ pub(crate) fn frame_from_value<'v, 'a>(
     value: &'a Value<'v>,
 ) -> Option<BacktraceEntry<'v, 'a>> {
     let frame = value.downcast_ref(vm.builtin_types().backtrace_frame)?;
-    Some(BacktraceEntry::new(&frame.get().entry))
+    Some(BacktraceEntry::new(frame.project(|p| &p.get().entry)))
 }
 
 pub(crate) struct Backtrace<'v> {
@@ -228,11 +230,13 @@ impl<'v> Protocol<'v> for Iter<'v> {
         };
         borrow.index += 1;
         drop(borrow);
-        strand
-            .vm()
-            .builtin_types()
-            .backtrace_frame
-            .create_imm(strand, Frame { entry }, out);
+        strand.vm().builtin_types().backtrace_frame.create_imm(
+            strand,
+            Frame {
+                entry: Box::new(entry),
+            },
+            out,
+        );
         Ok(true)
     }
 
@@ -275,7 +279,8 @@ impl<'v> Protocol<'v> for Iter<'v> {
 }
 
 pub(crate) struct Frame<'v> {
-    entry: UnwindEntry<'v>,
+    // Out of line, so a view of the entry needs no pin
+    entry: Box<UnwindEntry<'v>>,
 }
 
 unsafe impl<'v> crate::gc::ImmState for Frame<'v> {

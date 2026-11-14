@@ -63,6 +63,13 @@ impl<'v> crate::gc::Annex for Pack<'v> {
 
 pub(crate) type PackObj<'v> = crate::gc::Imm<Pack<'v>>;
 
+impl<'v> GcObj<'v, PackObj<'v>> {
+    /// The pack's items, which live out of line.
+    pub(crate) fn items(&self) -> &[ArgItem<'v>] {
+        self.project(|p| &p.get().items)
+    }
+}
+
 impl<'v> Pack<'v> {
     pub(crate) fn new(items: Vec<ArgItem<'v>>) -> Self {
         Self {
@@ -111,7 +118,7 @@ pub(crate) fn find_index<'v>(
     if let Some(sym) = key.as_sym(strand) {
         return items
             .iter()
-            .rposition(|(k, _)| k.as_ref().is_some_and(|k| k.tag == sym.tag()));
+            .rposition(|(k, _)| k.as_ref().is_some_and(|k| k.tag() == sym.tag()));
     }
     let index = key.to_i64(strand).ok()?;
     let mut positions = items
@@ -154,7 +161,7 @@ pub(crate) fn debug_items<'v, 's>(
             crate::fmt!(strand, w, ", ")?;
         }
         if let Some(key) = key {
-            crate::fmt!(strand, w, "{}: ", key.name)?;
+            crate::fmt!(strand, w, "{}: ", key.name())?;
         }
         value.op_debug(strand, w)?;
     }
@@ -177,7 +184,7 @@ pub(crate) fn hash_items<'v, 's>(
         if (index + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
             strand.check_trap()?;
         }
-        key.as_ref().map(|key| key.tag).hash(hasher);
+        key.as_ref().map(|key| key.tag()).hash(hasher);
         value.op_hash(strand, hasher)?;
     }
     Ok(())
@@ -196,7 +203,7 @@ pub(crate) fn eq_items<'v, 's>(
             strand.check_trap()?;
         }
         // Positions line up when every key before them does
-        if lkey.as_ref().map(|key| key.tag) != rkey.as_ref().map(|key| key.tag)
+        if lkey.as_ref().map(|key| key.tag()) != rkey.as_ref().map(|key| key.tag())
             || !lvalue.op_eq(strand, rvalue)?.to_bool(strand)?
         {
             return Ok(false);
@@ -336,7 +343,7 @@ fn unpack_plan<'v, 'a, 's>(
                     continue;
                 }
                 if let sig::UnpackKeyKind::Sym(wanted_sym) = &wanted.kind
-                    && wanted_sym.tag() == sym.tag
+                    && wanted_sym.tag() == sym.tag()
                 {
                     *seen = true;
                     keys_left -= 1;
@@ -348,7 +355,7 @@ fn unpack_plan<'v, 'a, 's>(
                 }
             }
             if sig.key_rest() == RestKind::None {
-                unexpected_key.get_or_insert(sym.tag);
+                unexpected_key.get_or_insert(sym.tag());
                 continue;
             }
             if collect_keys {
@@ -462,7 +469,7 @@ pub(crate) fn unpack<'v, 'a, 's>(
     sig: &sig::Unpack<'v, 'a>,
     mut out: Slots<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    let items = &args.items;
+    let items = args.items();
     let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
 
     for action in &plan.actions {
@@ -519,9 +526,9 @@ impl<'v> Iter<'v> {
 
     /// The next item not yet consumed, and its index
     fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = &*self.args;
-        first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
-            let (key, value) = &record.items[index];
+        let items = self.args.items();
+        first_visible_index(items, &self.skip, self.pos).map(|index| {
+            let (key, value) = &items[index];
             (index, key.clone(), value.dup())
         })
     }
@@ -627,8 +634,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         match field.tag() {
             sym::LEN => {
                 let iter = this.borrow(strand)?;
-                let record = &*iter.args;
-                let len = i64::try_from(visible_len(&record.items, &iter.skip, iter.pos))
+                let len = i64::try_from(visible_len(iter.args.items(), &iter.skip, iter.pos))
                     .map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, len);
                 Ok(())
@@ -673,9 +679,9 @@ impl<'v> Rest<'v> {
 
     /// The next item not yet consumed, and its index
     fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
-        let record = &*self.args;
-        first_visible_index(&record.items, &self.skip, self.pos).map(|index| {
-            let (key, value) = &record.items[index];
+        let items = self.args.items();
+        first_visible_index(items, &self.skip, self.pos).map(|index| {
+            let (key, value) = &items[index];
             (index, key.clone(), value.dup())
         })
     }
@@ -742,7 +748,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
             borrow.int,
         );
         let record_obj = iter.args.clone();
-        let items = &record_obj.items;
+        let items = record_obj.items();
         let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
 
         for action in &plan.actions {
@@ -866,12 +872,8 @@ impl<'v> Protocol<'v> for PackObj<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.get();
-        let right = other.get();
-        Ok(Value::from_bool(eq_items(
-            strand,
-            &left.items,
-            &right.items,
-        )?))
+        let right = other.items();
+        Ok(Value::from_bool(eq_items(strand, &left.items, right)?))
     }
 
     fn op_lt<'a, 's>(
@@ -883,12 +885,8 @@ impl<'v> Protocol<'v> for PackObj<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.get();
-        let right = other.get();
-        Ok(Value::from_bool(lt_items(
-            strand,
-            &left.items,
-            &right.items,
-        )?))
+        let right = other.items();
+        Ok(Value::from_bool(lt_items(strand, &left.items, right)?))
     }
 
     fn op_index<'a, 's>(
@@ -996,7 +994,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
                         strand.check_trap()?;
                     }
-                    if let Some(index) = key.as_ref().and_then(|key| indices.get(&key.tag)) {
+                    if let Some(index) = key.as_ref().and_then(|key| indices.get(&key.tag())) {
                         if let Some(value) = replacements[*index].1.take() {
                             items.push((key.clone(), value));
                         }
@@ -1036,7 +1034,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
                         strand.check_trap()?;
                     }
-                    if !key.as_ref().is_some_and(|key| removed.contains(&key.tag)) {
+                    if !key.as_ref().is_some_and(|key| removed.contains(&key.tag())) {
                         items.push((key.clone(), value.dup()));
                     }
                 }
@@ -1118,10 +1116,12 @@ impl<'v> PackPairs<'_, 'v> {
             .pack
             .downcast_ref(strand.builtin_types().arg_acc)
             .expect("source accumulator");
-        pack.borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?
-            .push((key, value));
-        Ok(())
+        pack.pin_sync(strand, |strand, pack| {
+            pack.borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .push((key, value));
+            Ok(())
+        })
     }
 }
 
@@ -1322,12 +1322,14 @@ pub(crate) async fn source_items<'v, 's>(
             source
                 .op_spread(strand, SpreadContext::Pairs, &mut sink)
                 .await?;
-            Ok(pack
-                .downcast_ref(strand.builtin_types().arg_acc)
+            pack.downcast_ref(strand.builtin_types().arg_acc)
                 .expect("source accumulator")
-                .borrow_mut()
-                .ok_or_else(|| Error::concurrency(strand))?
-                .take())
+                .pin_sync(strand, |strand, pack| {
+                    Ok(pack
+                        .borrow_mut()
+                        .ok_or_else(|| Error::concurrency(strand))?
+                        .take())
+                })
         })
         .await
 }

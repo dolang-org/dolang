@@ -179,7 +179,9 @@ pub(crate) fn slice_bounds<'v, 's>(
     let Some(range) = index.downcast_ref(strand.builtin_types().range) else {
         return Ok(None);
     };
-    range.get().slice_bounds(strand, len).map(Some)
+    range.pin_sync(strand, |strand, range| {
+        range.get().slice_bounds(strand, len).map(Some)
+    })
 }
 
 /// Resolves an optional `range:` window over a sequence of length `len`.
@@ -206,7 +208,9 @@ pub(crate) fn slice<'v, 's>(
     let Some(range) = index.downcast_ref(strand.builtin_types().range) else {
         return Ok(None);
     };
-    range.get().slice(strand, len).map(Some)
+    range.pin_sync(strand, |strand, range| {
+        range.get().slice(strand, len).map(Some)
+    })
 }
 
 impl<'v> Protocol<'v> for RangeObj<'v> {
@@ -254,12 +258,14 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.get();
-        let right = other.get();
-        Ok(Value::from_bool(
-            left.start.op_eq(strand, &right.start)?.to_bool(strand)?
-                && left.end.op_eq(strand, &right.end)?.to_bool(strand)?
-                && left.step.op_eq(strand, &right.step)?.to_bool(strand)?,
-        ))
+        other.pin_sync(strand, |strand, right| {
+            let right = right.get();
+            Ok(Value::from_bool(
+                left.start.op_eq(strand, &right.start)?.to_bool(strand)?
+                    && left.end.op_eq(strand, &right.end)?.to_bool(strand)?
+                    && left.step.op_eq(strand, &right.step)?.to_bool(strand)?,
+            ))
+        })
     }
 
     fn op_hash<'a, 's>(

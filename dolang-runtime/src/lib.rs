@@ -93,15 +93,49 @@ pub(crate) struct ProgramAnnex<'v> {
     pub(crate) symroots: Vec<GcObj<'v, SymObj>>,
 }
 
-impl<'v> ProgramAnnex<'v> {
-    /// Returns the debug string table as `&str` directly from the owned bytecode.
-    ///
-    /// Sound because `verify_debug` validates the entire region as UTF-8
-    /// before a `Program` can be constructed.
+/// Accessors for a program's tables.  They live in their own allocations, so
+/// they're projected out of the program and outlive any pin.
+impl<'v> gc::Gc<'v, Program<'v>> {
+    pub(crate) fn bytecode(&self) -> &[u8] {
+        self.project(|p| &p.annex().bytecode)
+    }
+
+    pub(crate) fn funcs(&self) -> &[(Func, usize)] {
+        self.project(|p| &p.annex().funcs)
+    }
+
+    pub(crate) fn symtab(&self) -> &[Sym<'v, 'v>] {
+        self.project(|p| &p.annex().symtab)
+    }
+
+    pub(crate) fn consttab(&self) -> &[Value<'v>] {
+        self.project(|p| &p.annex().consttab)
+    }
+
+    pub(crate) fn packtab(&self) -> &[sig::Pack<'v, 'v>] {
+        self.project(|p| &p.annex().packtab)
+    }
+
+    pub(crate) fn unpacktab(&self) -> &[sig::Unpack<'v, 'v>] {
+        self.project(|p| &p.annex().unpacktab)
+    }
+
+    pub(crate) fn funcdebugs(&self) -> &[FuncDebug] {
+        self.project(|p| &p.annex().funcdebugs)
+    }
+
+    /// The debug string table, read directly from the bytecode.
     pub(crate) fn debug_strtab(&self) -> &str {
-        // SAFETY: the bytecode verifier rejects any file whose debug region
-        // contains invalid UTF-8, so this range is guaranteed to be valid UTF-8.
-        unsafe { std::str::from_utf8_unchecked(&self.bytecode[self.debugbintab.clone()]) }
+        let range = self.read(|p| p.annex().debugbintab.clone());
+        // SAFETY: the bytecode verifier rejects any file whose debug region contains
+        // invalid UTF-8, so this range is valid UTF-8
+        unsafe { std::str::from_utf8_unchecked(&self.bytecode()[range]) }
+    }
+
+    /// The module name, if any.
+    pub(crate) fn module_name(&self) -> Option<&str> {
+        let range = self.read(|p| p.annex().module_name.clone())?;
+        Some(&self.debug_strtab()[range])
     }
 }
 

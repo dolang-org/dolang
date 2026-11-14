@@ -454,12 +454,12 @@ fn size_arg<'v, 's>(
 }
 
 /// A `Str` or `Bin` a write takes its bytes from, pinned for the write.
-pub(super) enum Piece<'v, 'a> {
-    Str(PinStr<'v, 'a>),
-    Bin(PinBin<'v, 'a>),
+pub(super) enum Piece<'v> {
+    Str(PinStr<'v>),
+    Bin(PinBin<'v>),
 }
 
-impl Deref for Piece<'_, '_> {
+impl Deref for Piece<'_> {
     type Target = [u8];
 
     fn deref(&self) -> &[u8] {
@@ -474,7 +474,7 @@ impl Deref for Piece<'_, '_> {
 fn pieces<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, 'a>,
-) -> Result<'v, 's, Vec<Piece<'v, 'a>>> {
+) -> Result<'v, 's, Vec<Piece<'v>>> {
     let mut pieces = Vec::with_capacity(args.len());
     for arg in args {
         let value: &'a Value<'v> = match arg {
@@ -494,7 +494,7 @@ fn pieces<'v, 's, 'a>(
 }
 
 /// Slices over pinned pieces, and their total length.
-fn slices<'a>(pieces: &'a [Piece<'_, '_>]) -> (Vec<IoSlice<'a>>, usize) {
+fn slices<'a>(pieces: &'a [Piece<'_>]) -> (Vec<IoSlice<'a>>, usize) {
     let slices = pieces
         .iter()
         .map(|piece| IoSlice::new(piece))
@@ -1233,8 +1233,11 @@ impl Cursor {
                     let buf = target
                         .downcast_native(strand, strand.builtin_types().binbuf)
                         .expect("target is a `BinBuf`");
-                    let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
-                    buf.overwrite(strand, at, &data[..n]);
+                    buf.pin_sync(strand, |strand, buf| {
+                        let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
+                        buf.overwrite(strand, at, &data[..n]);
+                        Ok(())
+                    })?;
                 }
                 self.pos += n as u64;
                 Ok(n)
@@ -1265,10 +1268,13 @@ impl Cursor {
             let buf = target
                 .downcast_native(strand, strand.builtin_types().strbuf)
                 .expect("target is a `StrBuf`");
-            let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
-            if !buf.overwrite(strand, at, text) {
-                return Err(Error::value(strand, "write would split a character"));
-            }
+            buf.pin_sync(strand, |strand, buf| {
+                let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
+                if !buf.overwrite(strand, at, text) {
+                    return Err(Error::value(strand, "write would split a character"));
+                }
+                Ok(())
+            })?;
         }
         let taken = bytes.len().saturating_sub(self.held.len());
         self.pos += text.len() as u64;
@@ -1333,15 +1339,19 @@ fn with_bytes<'v, 's, R>(
             let buf = target
                 .downcast_native(strand, strand.builtin_types().binbuf)
                 .expect("target is a `BinBuf`");
-            let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Ok(f(strand, buf.as_slice()))
+            buf.pin_sync(strand, |strand, buf| {
+                let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                Ok(f(strand, buf.as_slice()))
+            })
         }
         MemTarget::StrBuf => {
             let buf = target
                 .downcast_native(strand, strand.builtin_types().strbuf)
                 .expect("target is a `StrBuf`");
-            let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Ok(f(strand, buf.as_str().as_bytes()))
+            buf.pin_sync(strand, |strand, buf| {
+                let buf = buf.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                Ok(f(strand, buf.as_str().as_bytes()))
+            })
         }
     }
 }
@@ -1357,16 +1367,18 @@ fn range_arg<'v, 's>(
     let Some(range) = range.downcast_ref(strand.builtin_types().range) else {
         return Err(Error::type_error(strand, "expected `Range` for `range`"));
     };
-    let (start, end, step) = range.get().parts();
-    if !step.is_nil() && step.to_i64(strand).ok() != Some(1) {
-        return Err(Error::value(strand, "range step must be 1"));
-    }
-    let start = bound(strand, start)?.unwrap_or(0);
-    let end = bound(strand, end)?;
-    if end.is_some_and(|end| end < start) {
-        return Err(Error::value(strand, "range must not run backward"));
-    }
-    Ok((start, end))
+    range.pin_sync(strand, |strand, range| {
+        let (start, end, step) = range.get().parts();
+        if !step.is_nil() && step.to_i64(strand).ok() != Some(1) {
+            return Err(Error::value(strand, "range step must be 1"));
+        }
+        let start = bound(strand, start)?.unwrap_or(0);
+        let end = bound(strand, end)?;
+        if end.is_some_and(|end| end < start) {
+            return Err(Error::value(strand, "range must not run backward"));
+        }
+        Ok((start, end))
+    })
 }
 
 /// Parses a range bound, `None` when it is open.

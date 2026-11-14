@@ -130,18 +130,22 @@ fn definition<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<(Box<str>, Span)> {
     let mut current = value.dup();
     for _ in 0..MAX_UNWRAP {
         if let Some(function) = current.downcast_ref(types.function) {
-            let function = function.get();
-            let program = function.module.annex();
-            let debug = program.funcdebugs.get(function.id)?;
-            let source = &program.debug_strtab()[debug.file.clone()];
-            return Some((source.into(), debug.definition));
+            return function.read(|function| {
+                let function = function.get();
+                let program = &function.module;
+                let debug = program.funcdebugs().get(function.id)?;
+                let source = &program.debug_strtab()[debug.file.clone()];
+                Some((source.into(), debug.definition))
+            });
         }
         let bound = current.downcast_ref(types.bound_method)?;
+        // SAFETY: a transient pin; with only a `Vm`, nothing here can collect
+        let bound = unsafe { bound.pin_unchecked() };
         let bound = bound.get();
         let receiver = bound.receiver();
         let method = bound.method();
         let next = if let Some(instance) = receiver.downcast_ref(types.class_instance) {
-            match instance.annex().prefix.class.annex().entry(method)? {
+            match instance.class().entry(method)? {
                 ClassEntry::Method(value) => value.dup(),
                 _ => return None,
             }

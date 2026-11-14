@@ -14,7 +14,7 @@ use crate::{
     bytecode::Rest,
     error::{Error, Result},
     gc::{self, Collect, arena::Visit},
-    object::protocol::{GcObj, GcObjBorrow, instance_get_fallback, members},
+    object::protocol::{GcObjPin, instance_get_fallback, members},
     sig,
     strand::Strand,
     sym::{self, Sym},
@@ -85,16 +85,9 @@ impl<'v, 'a> Recv<'v, 'a, StrObj> {
     }
 }
 
-impl<'v, 'a> GcObjBorrow<'v, 'a, StrObj> {
+impl<'v, 'a> GcObjPin<'v, 'a, StrObj> {
     /// The string's text.
     pub(crate) fn str(&self) -> &'a str {
-        &self.annex().tail
-    }
-}
-
-impl<'v> GcObj<'v, StrObj> {
-    /// The string's text.
-    pub(crate) fn str(&self) -> &str {
         &self.annex().tail
     }
 }
@@ -148,7 +141,8 @@ impl<'v> Protocol<'v> for StrObj {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
-            Ok(Value::from_bool(ostr.str() == this.str()))
+            let eq = ostr.pin_sync(strand, |_, ostr| ostr.str() == this.str());
+            Ok(Value::from_bool(eq))
         } else {
             Err(Error::unsupported(strand, "`==`"))
         }
@@ -160,7 +154,8 @@ impl<'v> Protocol<'v> for StrObj {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
-            Ok(Value::from_bool(this.str() < ostr.str()))
+            let lt = ostr.pin_sync(strand, |_, ostr| this.str() < ostr.str());
+            Ok(Value::from_bool(lt))
         } else {
             Err(Error::unsupported(strand, "`<`"))
         }
@@ -207,14 +202,13 @@ impl<'v> Protocol<'v> for StrObj {
                 strand.builtin_types().str_unicode_iter.create(
                     strand,
                     UnicodeIter::new(
-                        this.to_strong(),
+                        PinStr::new(this.to_strong()),
                         if matches!(method.tag(), sym::SCALARS | sym::SCALAR_BOUNDS) {
                             UnicodeKind::Scalar
                         } else {
                             UnicodeKind::Grapheme
                         },
                         matches!(method.tag(), sym::SCALAR_BOUNDS | sym::GRAPHEME_BOUNDS),
-                        strand,
                     ),
                     out,
                 );
@@ -237,44 +231,42 @@ impl<'v> Protocol<'v> for StrObj {
             }
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
-                let input =
-                    this.str()
-                        .starts_with(prefix.as_str_raw(strand).ok_or_else(|| {
-                            Error::type_error(strand, "str.starts_with: not a string")
-                        })?);
+                let prefix = prefix
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
+                let input = prefix.with_str(strand, |_, prefix| this.str().starts_with(prefix));
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.str();
-                let input = borrow
-                    .strip_prefix(prefix.as_str_raw(strand).ok_or_else(|| {
-                        Error::type_error(strand, "str.without_prefix: not a string")
-                    })?)
-                    .unwrap_or(borrow);
-                Output::set(strand, out, input);
+                let prefix = prefix
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "str.without_prefix: not a string"))?;
+                prefix.with_str(strand, |strand, prefix| {
+                    Output::set(strand, out, borrow.strip_prefix(prefix).unwrap_or(borrow))
+                });
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
-                let input = this.str().ends_with(
-                    suffix
-                        .as_str_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?,
-                );
+                let suffix = suffix
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
+                let input = suffix.with_str(strand, |_, suffix| this.str().ends_with(suffix));
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.str();
-                let input = borrow
-                    .strip_suffix(suffix.as_str_raw(strand).ok_or_else(|| {
-                        Error::type_error(strand, "str.without_suffix: not a string")
-                    })?)
-                    .unwrap_or(borrow);
-                Output::set(strand, out, input);
+                let suffix = suffix
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "str.without_suffix: not a string"))?;
+                suffix.with_str(strand, |strand, suffix| {
+                    Output::set(strand, out, borrow.strip_suffix(suffix).unwrap_or(borrow))
+                });
                 Ok(())
             }
             sym::SPLIT | sym::RSPLIT => {
@@ -287,12 +279,14 @@ impl<'v> Protocol<'v> for StrObj {
                             .map_err(|_| Error::type_error(strand, "limit: expected `Int`"))
                     })
                     .transpose()?;
-                let delim_gc = delim
-                    .downcast_ref(strand.builtin_types().str)
-                    .ok_or_else(|| {
-                        Error::type_error(strand, "str.split/rsplit: delimiter not a string")
-                    })?
-                    .to_strong();
+                let delim_gc = PinStr::new(
+                    delim
+                        .downcast_ref(strand.builtin_types().str)
+                        .ok_or_else(|| {
+                            Error::type_error(strand, "str.split/rsplit: delimiter not a string")
+                        })?
+                        .clone(),
+                );
                 let forward = method_sym == sym::SPLIT;
                 let state = match limit_i64 {
                     Some(l) if l < 0 => {
@@ -302,7 +296,7 @@ impl<'v> Protocol<'v> for StrObj {
                         let base = src.as_ptr() as usize;
                         let mut segs: Vec<(usize, usize)> = if forward {
                             // split(limit: -N): split from rear via rsplitn, yield forward
-                            src.rsplitn(n, delim_gc.str())
+                            src.rsplitn(n, &*delim_gc)
                                 .map(|s| {
                                     let st = s.as_ptr() as usize - base;
                                     (st, st + s.len())
@@ -310,7 +304,7 @@ impl<'v> Protocol<'v> for StrObj {
                                 .collect()
                         } else {
                             // rsplit(limit: -N): split from front via splitn, yield backward
-                            src.splitn(n, delim_gc.str())
+                            src.splitn(n, &*delim_gc)
                                 .map(|s| {
                                     let st = s.as_ptr() as usize - base;
                                     (st, st + s.len())
@@ -346,7 +340,7 @@ impl<'v> Protocol<'v> for StrObj {
                 strand.builtin_types().str_split.create(
                     strand,
                     Split {
-                        str: this.to_strong(),
+                        str: PinStr::new(this.to_strong()),
                         delim: delim_gc,
                         state,
                         forward,
@@ -432,17 +426,19 @@ impl<'v> Protocol<'v> for StrObj {
                 let range = Sym::well_known(sym::RANGE);
                 let ([needle], [range]) = unpack!(strand, args, 1, 0, range = None)?;
                 let needle = needle
-                    .as_str_raw(strand)
+                    .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
                 let (start, end) = range::window(strand, range.as_deref(), me.len())?;
                 let window = me
                     .get(start..end)
                     .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
-                let found = if method.tag() == sym::FIND {
-                    window.find(needle)
-                } else {
-                    window.rfind(needle)
-                };
+                let found = needle.with_str(strand, |_, needle| {
+                    if method.tag() == sym::FIND {
+                        window.find(needle)
+                    } else {
+                        window.rfind(needle)
+                    }
+                });
                 match found {
                     Some(offset) => Output::set(strand, out, start + offset),
                     None => Output::set(strand, out, Nil),
@@ -453,26 +449,30 @@ impl<'v> Protocol<'v> for StrObj {
                 let range = Sym::well_known(sym::RANGE);
                 let ([from, to], [range]) = unpack!(strand, args, 2, 0, range = None)?;
                 let from = from
-                    .as_str_raw(strand)
+                    .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "old value is not a string"))?;
                 let to = to
-                    .as_str_raw(strand)
+                    .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "new value is not a string"))?;
                 let (start, end) = range::window(strand, range.as_deref(), me.len())?;
                 let window = me
                     .get(start..end)
                     .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
-                let mut acc = StrEmbryo::new_with_capacity(strand, me.len());
-                acc.extend(strand, &me[..start]);
-                let mut last = 0;
-                for (at, _) in window.match_indices(from) {
-                    acc.extend(strand, &window[last..at]);
-                    acc.extend(strand, to);
-                    last = at + from.len();
-                }
-                acc.extend(strand, &window[last..]);
-                acc.extend(strand, &me[end..]);
-                acc.finish(strand, out);
+                from.with_str(strand, |strand, from| {
+                    to.with_str(strand, |strand, to| {
+                        let mut acc = StrEmbryo::new_with_capacity(strand, me.len());
+                        acc.extend(strand, &me[..start]);
+                        let mut last = 0;
+                        for (at, _) in window.match_indices(from) {
+                            acc.extend(strand, &window[last..at]);
+                            acc.extend(strand, to);
+                            last = at + from.len();
+                        }
+                        acc.extend(strand, &window[last..]);
+                        acc.extend(strand, &me[end..]);
+                        acc.finish(strand, out);
+                    })
+                });
                 Ok(())
             }
             sym::REPEAT => {
@@ -494,11 +494,10 @@ impl<'v> Protocol<'v> for StrObj {
             }
             sym::CONTAINS => {
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
-                let input = this.str().contains(
-                    needle
-                        .as_str_raw(strand)
-                        .ok_or_else(|| Error::type_error(strand, "not a string"))?,
-                );
+                let needle = needle
+                    .as_str(strand)
+                    .ok_or_else(|| Error::type_error(strand, "not a string"))?;
+                let input = needle.with_str(strand, |_, needle| this.str().contains(needle));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -565,30 +564,19 @@ enum UnicodeIterState {
 }
 
 pub(crate) struct UnicodeIter<'v> {
-    // Drop order is significant: borrowed iterator, pin, then GC root.
+    // Drop order is significant: the borrowing iterator, then the pin.
     state: UnicodeIterState,
     boundaries: bool,
     offset: usize,
     terminal_emitted: bool,
-    _pin: PinStr<'v, 'static>,
-    str: GcObj<'v, StrObj>,
+    str: PinStr<'v>,
 }
 
 impl<'v> UnicodeIter<'v> {
-    fn new(
-        str: GcObj<'v, StrObj>,
-        kind: UnicodeKind,
-        boundaries: bool,
-        strand: &Strand<'v, '_>,
-    ) -> Self {
-        let value = Value::from_object(str.clone());
-        let pin = value.as_str(strand.vm()).unwrap().pin();
-        // SAFETY: `str` roots the object and field order drops `state` before
-        // `_pin`, then drops the pin before the root.
-        let pin = unsafe { pin.into_static_unchecked() };
-        // SAFETY: the widened pin is stored below and is dropped only after
-        // `state`, the sole user of this reference.
-        let pinned = unsafe { mem::transmute::<&str, &'static str>(&pin) };
+    fn new(str: PinStr<'v>, kind: UnicodeKind, boundaries: bool) -> Self {
+        // SAFETY: the pin is stored below and is dropped only after `state`, the
+        // sole user of this reference.
+        let pinned = unsafe { mem::transmute::<&str, &'static str>(&str) };
         let state = match kind {
             UnicodeKind::Scalar => UnicodeIterState::Scalar(pinned.chars()),
             UnicodeKind::Grapheme => UnicodeIterState::Grapheme(pinned.graphemes(true)),
@@ -598,17 +586,16 @@ impl<'v> UnicodeIter<'v> {
             boundaries,
             offset: 0,
             terminal_emitted: false,
-            _pin: pin,
             str,
         }
     }
 
-    fn snapshot(&self, strand: &Strand<'v, '_>) -> Self {
+    fn snapshot(&self) -> Self {
         let kind = match self.state {
             UnicodeIterState::Scalar(_) => UnicodeKind::Scalar,
             UnicodeIterState::Grapheme(_) => UnicodeKind::Grapheme,
         };
-        let mut snapshot = Self::new(self.str.clone(), kind, self.boundaries, strand);
+        let mut snapshot = Self::new(self.str.clone(), kind, self.boundaries);
         snapshot.state = self.state.clone();
         snapshot.offset = self.offset;
         snapshot.terminal_emitted = self.terminal_emitted;
@@ -653,7 +640,7 @@ unsafe impl<'v> Collect for UnicodeIter<'v> {
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.str.accept(visit)
+        self.str.obj().accept(visit)
     }
 
     fn clear(&mut self) {
@@ -768,7 +755,7 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut iter = this.borrow(strand)?.snapshot(strand);
+        let mut iter = this.borrow(strand)?.snapshot();
         fill_unpack(strand, sig, &mut out, |strand| iter.next_value(strand))?;
         if let Some(i) = sig.pos_rest_slot() {
             strand
@@ -821,8 +808,9 @@ impl Clone for SplitState {
 
 #[derive(Clone)]
 pub(crate) struct Split<'v> {
-    str: GcObj<'v, StrObj>,
-    delim: GcObj<'v, StrObj>,
+    // Pinned, since segments are copied out while allocating
+    str: PinStr<'v>,
+    delim: PinStr<'v>,
     state: SplitState,
     /// `true` = yield left-to-right (split); `false` = right-to-left (rsplit).
     forward: bool,
@@ -847,11 +835,10 @@ impl<'v> Split<'v> {
                 reverse,
             } => {
                 let off = (*offset)?;
-                let delim_len = self.delim.str().len();
+                let delim_len = self.delim.len();
                 if !*reverse {
                     if *limit != 0
-                        && let Some((before, _)) =
-                            self.str.str()[off..].split_once(self.delim.str())
+                        && let Some((before, _)) = self.str[off..].split_once(&*self.delim)
                     {
                         let end = off + before.len();
                         *offset = Some(end + delim_len);
@@ -859,12 +846,11 @@ impl<'v> Split<'v> {
                         Some((off, end))
                     } else {
                         *offset = None;
-                        Some((off, self.str.str().len()))
+                        Some((off, self.str.len()))
                     }
                 } else {
                     if *limit != 0
-                        && let Some((before, _after)) =
-                            self.str.str()[..off].rsplit_once(self.delim.str())
+                        && let Some((before, _after)) = self.str[..off].rsplit_once(&*self.delim)
                     {
                         let after_start = before.len() + delim_len;
                         *offset = Some(before.len());
@@ -885,7 +871,7 @@ unsafe impl<'v> Collect for Split<'v> {
     type Annex = ();
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.str.accept(visit)
+        self.str.obj().accept(visit)
     }
 
     fn clear(&mut self) {
@@ -965,14 +951,14 @@ impl<'v> Protocol<'v> for Split<'v> {
                 return Err(Error::missing_positional(strand, sig.required));
             };
             out.at(i)
-                .store(Value::from_str(strand, &borrow.str.str()[start..end]));
+                .store(Value::from_str(strand, &borrow.str[start..end]));
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
                 out.at(sig.required + i)
-                    .store(Value::from_str(strand, &borrow.str.str()[start..end]));
+                    .store(Value::from_str(strand, &borrow.str[start..end]));
             } else {
                 out.at(sig.required + i).store(sig.optional[i].dup());
             }
@@ -1002,7 +988,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         let Some((start, end)) = borrow.next_segment() else {
             return Ok(false);
         };
-        Output::set(strand, out, &borrow.str.str()[start..end]);
+        Output::set(strand, out, &borrow.str[start..end]);
         Ok(true)
     }
 
@@ -1063,14 +1049,16 @@ impl<'v> Protocol<'v> for Type {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ([value], []) = unpack!(strand, args, 1, 0)?;
-        if let Some(value) = value.as_str_raw(strand) {
-            Output::set(strand, out, value);
+        if let Some(value) = value.as_str(strand) {
+            value.with_str(strand, |strand, value| Output::set(strand, out, value));
             Ok(())
-        } else if let Some(value) = value.as_bin_raw(strand) {
-            let value = std::str::from_utf8(value)
-                .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
-            Output::set(strand, out, value);
-            Ok(())
+        } else if let Some(value) = value.as_bin(strand) {
+            value.with_slice(strand, |strand, value| {
+                let value = std::str::from_utf8(value)
+                    .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
+                Output::set(strand, out, value);
+                Ok(())
+            })
         } else {
             Err(Error::type_error(strand, "Str: expected Str or Bin"))
         }
@@ -1179,12 +1167,15 @@ impl<'v> Protocol<'v> for Type {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
-                if let Some(value) = value.as_str_raw(strand) {
-                    Output::set(strand, &mut out, value);
-                } else if let Some(value) = value.as_bin_raw(strand) {
-                    let value = std::str::from_utf8(value)
-                        .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
-                    Output::set(strand, &mut out, value);
+                if let Some(value) = value.as_str(strand) {
+                    value.with_str(strand, |strand, value| Output::set(strand, &mut out, value));
+                } else if let Some(value) = value.as_bin(strand) {
+                    value.with_slice(strand, |strand, value| {
+                        let value = std::str::from_utf8(value)
+                            .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
+                        Output::set(strand, &mut out, value);
+                        Ok(())
+                    })?;
                 } else {
                     return Err(Error::type_error(strand, "Str: expected Str or Bin"));
                 }

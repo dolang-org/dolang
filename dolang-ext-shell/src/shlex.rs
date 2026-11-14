@@ -18,10 +18,11 @@ use dolang::{
 };
 use shlex::Shlex;
 
-// Transmuted to `'static` lifetime with the string kept alive by a GC slot
+// Transmuted to `'static` lifetime, with the string kept alive and in place by the pin,
+// which drops after `shlex`
 pub(crate) struct Iter<'v> {
     shlex: Shlex<'static>,
-    _pin: PinStr<'v, 'static>,
+    _pin: PinStr<'v>,
 }
 
 impl<'v> Object<'v> for Iter<'v> {
@@ -94,8 +95,9 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?;
 
-            // SAFETY: the string will be kept alive as long as this iterator object exists.
-            let pin = unsafe { s.pin().into_static_unchecked() };
+            // SAFETY: the pin keeps the string alive and in place as long as this iterator
+            // object exists.
+            let pin = s.pin();
             let shlex = Shlex::new(unsafe { mem::transmute::<&str, &'static str>(&*pin) });
             iter.create(strand, Iter { shlex, _pin: pin }, &mut out);
             iter.cast(&out).unwrap().enter_sync(strand, |strand, inst| {

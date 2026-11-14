@@ -138,7 +138,8 @@ impl<'v> crate::gc::Annex for Boxed<'v> {
     }
 }
 
-pub(crate) type BoxedObj<'v> = crate::gc::Imm<Boxed<'v>>;
+// Out of line, so an error reached through its value needs no pin to render
+pub(crate) type BoxedObj<'v> = crate::gc::Imm<dolang_util::alias::Box<Boxed<'v>>>;
 
 impl<'v> Protocol<'v> for BoxedObj<'v> {
     fn op_type<'a, 's>(
@@ -596,8 +597,8 @@ fn expect_index<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Resul
 }
 
 fn expect_string<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, String> {
-    if let Some(str) = value.as_str_raw(strand) {
-        Ok(str.to_owned())
+    if let Some(str) = value.as_str(strand) {
+        Ok(str.into())
     } else {
         Err(Error::type_error(strand, "expected `Str`"))
     }

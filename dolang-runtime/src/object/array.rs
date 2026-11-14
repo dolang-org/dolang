@@ -1,4 +1,4 @@
-use std::{mem, ops::ControlFlow};
+use std::ops::ControlFlow;
 
 use crate::value::fmt::{Format, Spec};
 
@@ -111,23 +111,22 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let array_borrow = borrow
-            .array
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, false)?;
-        if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().array_iter.create(
-                strand,
-                Iter {
-                    array: borrow.array.clone(),
-                    index: borrow.index + count,
-                },
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        borrow.array.pin_sync(strand, |strand, array| {
+            let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, false)?;
+            if let Some(i) = sig.pos_rest_slot() {
+                strand.builtin_types().array_iter.create(
+                    strand,
+                    Iter {
+                        array: borrow.array.clone(),
+                        index: borrow.index + count,
+                    },
+                    out.at(i),
+                );
+            }
+            sig.fill_empty_key_rest(strand, &mut out);
+            Ok(())
+        })
     }
 
     async fn op_next<'a, 's>(
@@ -137,18 +136,17 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        let array_borrow = borrow
+        borrow
             .array
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        if let Some(value) = array_borrow.inner.get(index) {
-            Output::set(strand, out, value);
-            mem::drop(array_borrow);
-            borrow.index += 1;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+            .pin_sync(strand, |strand, array| {
+                let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                let value = array_borrow.inner.get(index);
+                if let Some(value) = value {
+                    Output::set(strand, out, value);
+                }
+                Ok(value.is_some())
+            })
+            .inspect(|&found| borrow.index += usize::from(found))
     }
 
     fn op_type<'a, 's>(
@@ -255,17 +253,16 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        let borrow = rest
-            .array
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let start = rest.start.min(borrow.inner.len());
-        strand.with_slots_sync(|strand, [mut tmp]| {
-            for item in &borrow.inner[start..] {
-                Output::set(strand, &mut tmp, item);
-                sink.positional(strand, Slot::reborrow(&mut tmp))?;
-            }
-            Ok(())
+        rest.array.pin_sync(strand, |strand, array| {
+            let borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let start = rest.start.min(borrow.inner.len());
+            strand.with_slots_sync(|strand, [mut tmp]| {
+                for item in &borrow.inner[start..] {
+                    Output::set(strand, &mut tmp, item);
+                    sink.positional(strand, Slot::reborrow(&mut tmp))?;
+                }
+                Ok(())
+            })
         })
     }
 
@@ -276,16 +273,15 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        let borrow = rest
-            .array
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let count = unpack_from(strand, sig, &mut out, &borrow, rest.start, false)?;
-        if let Some(i) = sig.pos_rest_slot() {
-            make_rest(strand, rest.array.clone(), rest.start + count, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        rest.array.pin_sync(strand, |strand, array| {
+            let borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let count = unpack_from(strand, sig, &mut out, &borrow, rest.start, false)?;
+            if let Some(i) = sig.pos_rest_slot() {
+                make_rest(strand, rest.array.clone(), rest.start + count, out.at(i));
+            }
+            sig.fill_empty_key_rest(strand, &mut out);
+            Ok(())
+        })
     }
 }
 
@@ -349,12 +345,13 @@ impl<'v> Protocol<'v> for SinkObj<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        let mut array_borrow = borrow
-            .array
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        array_borrow.inner.push(value.take());
-        Ok(())
+        borrow.array.pin_sync(strand, |strand, array| {
+            let mut array_borrow = array
+                .borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            array_borrow.inner.push(value.take());
+            Ok(())
+        })
     }
 
     fn op_get<'a, 's>(
@@ -445,23 +442,22 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let array_borrow = borrow
-            .array
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, true)?;
-        if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().array_pairs.create(
-                strand,
-                Pairs {
-                    array: borrow.array.clone(),
-                    index: borrow.index + count,
-                },
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        borrow.array.pin_sync(strand, |strand, array| {
+            let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let count = unpack_from(strand, sig, &mut out, &array_borrow, borrow.index, true)?;
+            if let Some(i) = sig.pos_rest_slot() {
+                strand.builtin_types().array_pairs.create(
+                    strand,
+                    Pairs {
+                        array: borrow.array.clone(),
+                        index: borrow.index + count,
+                    },
+                    out.at(i),
+                );
+            }
+            sig.fill_empty_key_rest(strand, &mut out);
+            Ok(())
+        })
     }
 
     async fn op_next<'a, 's>(
@@ -471,20 +467,18 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        let array_borrow = borrow
+        borrow
             .array
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?;
-        let inner = &array_borrow.inner;
-        if let Some(value) = inner.get(index) {
-            let items = [Value::from_i64(strand, index as i64), value.dup()];
-            tuple::create(strand, items, out);
-            mem::drop(array_borrow);
-            borrow.index += 1;
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+            .pin_sync(strand, |strand, array| {
+                let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                let Some(value) = array_borrow.inner.get(index).map(Value::dup) else {
+                    return Ok(false);
+                };
+                drop(array_borrow);
+                tuple::create(strand, [Value::from_i64(strand, index as i64), value], out);
+                Ok(true)
+            })
+            .inspect(|&found| borrow.index += usize::from(found))
     }
 
     fn op_type<'a, 's>(
@@ -779,23 +773,25 @@ impl<'v> Protocol<'v> for Array<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
-        let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        let left = &this_borrow.inner;
-        let right = &other_borrow.inner;
-        if left.len() != right.len() {
-            return Ok(Value::from_bool(false));
-        }
-        for i in 0..left.len() {
-            if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_trap()?;
-            }
-            let l = unsafe { left.get_unchecked(i) };
-            let r = unsafe { right.get_unchecked(i) };
-            if !l.op_eq(strand, r)?.to_bool(strand)? {
+        other.pin_sync(strand, |strand, other| {
+            let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let left = &this_borrow.inner;
+            let right = &other_borrow.inner;
+            if left.len() != right.len() {
                 return Ok(Value::from_bool(false));
             }
-        }
-        Ok(Value::from_bool(true))
+            for i in 0..left.len() {
+                if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                    strand.check_trap()?;
+                }
+                let l = unsafe { left.get_unchecked(i) };
+                let r = unsafe { right.get_unchecked(i) };
+                if !l.op_eq(strand, r)?.to_bool(strand)? {
+                    return Ok(Value::from_bool(false));
+                }
+            }
+            Ok(Value::from_bool(true))
+        })
     }
 
     fn op_lt<'a, 's>(
@@ -807,20 +803,22 @@ impl<'v> Protocol<'v> for Array<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
-        let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-        let left = &this_borrow.inner;
-        let right = &other_borrow.inner;
-        for i in 0..left.len().min(right.len()) {
-            if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_trap()?;
+        other.pin_sync(strand, |strand, other| {
+            let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
+            let left = &this_borrow.inner;
+            let right = &other_borrow.inner;
+            for i in 0..left.len().min(right.len()) {
+                if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                    strand.check_trap()?;
+                }
+                let l = unsafe { left.get_unchecked(i) };
+                let r = unsafe { right.get_unchecked(i) };
+                if !l.op_eq(strand, r)?.to_bool(strand)? {
+                    return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
+                }
             }
-            let l = unsafe { left.get_unchecked(i) };
-            let r = unsafe { right.get_unchecked(i) };
-            if !l.op_eq(strand, r)?.to_bool(strand)? {
-                return Ok(Value::from_bool(l.op_lt(strand, r)?.to_bool(strand)?));
-            }
-        }
-        Ok(Value::from_bool(right.len() > left.len()))
+            Ok(Value::from_bool(right.len() > left.len()))
+        })
     }
 
     fn op_index<'a, 's>(
@@ -873,30 +871,34 @@ impl<'v> Protocol<'v> for Array<'v> {
                 return Err(Error::index(strand));
             };
             if let Some(source) = value.downcast_native(strand, strand.builtin_types().array) {
-                let source = source.to_strong();
-                let source_borrow = source.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                if let Some(mut target_borrow) = this.receiver.borrow_mut() {
-                    target_borrow
-                        .inner
-                        .splice(start..end, source_borrow.inner.iter().map(Value::dup));
-                    return Ok(());
-                }
-                drop(source_borrow);
-                let snapshot = {
+                return source.pin_sync(strand, |strand, source| {
                     let source_borrow =
                         source.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                    tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup))
-                };
-                this.borrow_mut(strand)?
-                    .inner
-                    .splice(start..end, snapshot.items().iter().map(Value::dup));
-                return Ok(());
+                    if let Some(mut target_borrow) = this.receiver.borrow_mut() {
+                        target_borrow
+                            .inner
+                            .splice(start..end, source_borrow.inner.iter().map(Value::dup));
+                        return Ok(());
+                    }
+                    // Assigning an array into itself: splice from a snapshot
+                    let snapshot =
+                        tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup));
+                    drop(source_borrow);
+                    snapshot.pin_sync(strand, |strand, snapshot| {
+                        this.borrow_mut(strand)?
+                            .inner
+                            .splice(start..end, snapshot.items().iter().map(Value::dup));
+                        Ok(())
+                    })
+                });
             }
             if let Some(source) = value.downcast_ref(strand.builtin_types().tuple) {
-                this.borrow_mut(strand)?
-                    .inner
-                    .splice(start..end, source.items().iter().map(Value::dup));
-                return Ok(());
+                return source.pin_sync(strand, |strand, source| {
+                    this.borrow_mut(strand)?
+                        .inner
+                        .splice(start..end, source.items().iter().map(Value::dup));
+                    Ok(())
+                });
             }
             // Only a sequence with a settled length replaces a slice. Anything
             // else -- a range, an iterator, a lone value -- would have to be

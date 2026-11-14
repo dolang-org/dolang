@@ -127,7 +127,7 @@ fn write_args<'v, 's, 'a>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, 'a>,
     offset_sym: Sym<'v, '_>,
-) -> Result<'v, 's, (Vec<Pinned<'v, 'a>>, Option<Slot<'v, 'a>>)> {
+) -> Result<'v, 's, (Vec<Pinned<'v>>, Option<Slot<'v, 'a>>)> {
     let mut pieces = Vec::with_capacity(args.len());
     let mut offset = None;
     for arg in args {
@@ -1263,7 +1263,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
     /// The pieces are written one after another, at consecutive offsets.
     async fn write_at<'s>(
         &self,
-        pieces: &[Pinned<'v, '_>],
+        pieces: &[Pinned<'v>],
         offset: u64,
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, '_>,
@@ -1317,7 +1317,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
 
     async fn write<'s>(
         &mut self,
-        pieces: &[Pinned<'v, '_>],
+        pieces: &[Pinned<'v>],
         strand: &mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {

@@ -273,7 +273,7 @@ impl<'v, 'a> Sym<'v, 'a> {
     }
 
     pub(crate) unsafe fn from_obj(obj: &GcObj<'v, SymObj>) -> Self {
-        Self(obj.tag, PhantomData)
+        Self(obj.tag(), PhantomData)
     }
 
     pub(crate) fn tag(self) -> Tag {

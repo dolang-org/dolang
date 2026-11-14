@@ -1585,7 +1585,8 @@ impl<'v, 's> Strand<'v, 's> {
 
                         // Store result in Handle via weak reference
                         if let Some(handle) = weak_handle.upgrade() {
-                            handle
+                            // SAFETY: a transient pin; completing cannot collect
+                            unsafe { handle.pin_unchecked() }
                                 .borrow_mut()
                                 .expect("strand handle had outstanding borrow")
                                 .complete(result);
@@ -1999,7 +2000,7 @@ mod constructor_tests {
     };
 
     fn text<'v>(strand: &Strand<'v, '_>, value: &Value<'v>) -> String {
-        value.as_str_raw(strand.vm()).expect("a string").to_owned()
+        String::from(value.as_str(strand.vm()).expect("a string"))
     }
 
     #[test]

@@ -11,7 +11,7 @@ use std::{
 };
 
 use dolang_bytecode::span::Span;
-use dolang_util::mono::MonoVec;
+use dolang_util::{alias, mono::MonoVec};
 
 use crate::{
     Program,
@@ -156,8 +156,7 @@ impl<'v> UnwindEntry<'v> {
                 function_index,
                 pc,
             } => {
-                let program = program.annex();
-                if let Some(debug) = program.funcdebugs.get(*function_index as usize) {
+                if let Some(debug) = program.funcdebugs().get(*function_index as usize) {
                     let file = &program.debug_strtab()[debug.file.clone()];
                     Some((Cow::Owned(file.to_owned()), debug.locate(*pc as usize - 1)))
                 } else {
@@ -176,10 +175,9 @@ impl<'v> UnwindEntry<'v> {
                 ..
             } => Cow::Owned(
                 program
-                    .annex()
-                    .funcdebugs
+                    .funcdebugs()
                     .get(*function_index as usize)
-                    .map(|debug| &program.annex().debug_strtab()[debug.name.clone()])
+                    .map(|debug| &program.debug_strtab()[debug.name.clone()])
                     .unwrap_or(if *function_index == 0 { "<main>" } else { "?" })
                     .to_owned(),
             ),
@@ -196,8 +194,8 @@ impl<'v> UnwindEntry<'v> {
 
     pub(crate) fn module(&self) -> Cow<'_, str> {
         match self {
-            UnwindEntry::Do { program, .. } => match &program.annex().module_name {
-                Some(range) => Cow::Owned(program.annex().debug_strtab()[range.clone()].to_owned()),
+            UnwindEntry::Do { program, .. } => match program.module_name() {
+                Some(name) => Cow::Owned(name.to_owned()),
                 None => Cow::Borrowed("<program>"),
             },
             UnwindEntry::Native { module, .. } => Cow::Borrowed(module.as_ref()),
@@ -493,8 +491,8 @@ impl<'v, 's> error::Error for Error<'v, 's> {
                 match val.downcast_ref(root.vm().builtin_types().error) {
                     Some(boxed) => match boxed.get() {
                         Boxed::Compile(error) | Boxed::Runtime(error) | Boxed::Abort(error) => {
-                            // Safety: the Box<dyn error::Error + 'static> is
-                            // kept alive by ErrorRoot which outlives &self.
+                            // Safety: the Box<dyn error::Error + 'static> is out of
+                            // line and kept alive by ErrorRoot, which outlives &self.
                             Some(unsafe {
                                 mem::transmute::<&dyn error::Error, &dyn error::Error>(&**error)
                             })
@@ -532,7 +530,7 @@ impl<'v, 's> Error<'v, 's> {
         let value = Value::from_object(GcObj::new_imm(
             inner.vm().arena(),
             inner.vm().builtin_types().error,
-            kind,
+            alias::Box::new(kind),
         ));
         Self {
             inner: Variant::Boxed(ErrorRoot::new(inner, value, Vec::new())),

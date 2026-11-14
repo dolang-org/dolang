@@ -612,7 +612,11 @@ mod tests {
         let garbage: Vec<_> = (0..count)
             .map(|_| {
                 let item = node(&arena, &cleared);
-                item.borrow_mut().unwrap().children.push(item.clone());
+                unsafe { item.pin_unchecked() }
+                    .borrow_mut()
+                    .unwrap()
+                    .children
+                    .push(item.clone());
                 Gc::downgrade(&item)
             })
             .collect();
@@ -626,10 +630,13 @@ mod tests {
         );
         assert_eq!(arena.0.balance.get(), 0);
         assert_eq!(keep.len(), count);
-        assert!(
-            keep.iter()
-                .all(|item| item.borrow().unwrap().children.is_empty())
-        );
+        assert!(keep.iter().all(|item| {
+            unsafe { item.pin_unchecked() }
+                .borrow()
+                .unwrap()
+                .children
+                .is_empty()
+        }));
 
         drop(keep);
         drop(garbage);
@@ -649,7 +656,8 @@ mod tests {
         arena.0.balance.set(COLLECT_THRESHOLD - 1);
         assert!(!arena.collect());
 
-        let borrow = item.borrow_mut().unwrap();
+        let pin = unsafe { item.pin_unchecked() };
+        let borrow = pin.borrow_mut().unwrap();
         arena.0.balance.set(COLLECT_THRESHOLD);
         assert!(arena.collect());
         assert_eq!(arena.0.balance.get(), COLLECT_THRESHOLD);

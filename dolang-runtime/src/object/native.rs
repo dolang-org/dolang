@@ -5,7 +5,7 @@ use std::{
     marker::PhantomData,
     mem::ManuallyDrop,
     ops::{ControlFlow, Deref, DerefMut},
-    ptr::NonNull,
+    ptr::{self, NonNull},
 };
 
 use crate::value::fmt::{Format, Spec};
@@ -17,7 +17,7 @@ use crate::{
         self, Base, Collect,
         arena::{self, Upcast, Visit},
     },
-    object::protocol::{Delegated, Dispatch, GcObjBorrow, Recv, Vtbl},
+    object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
     sig,
     strand::{Pinned, Strand},
     sym::{self, Sym},
@@ -31,7 +31,7 @@ use super::{
     interface::Request,
     pack,
     protocol::{
-        self, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
+        self, GcObj, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
     },
     tuple,
@@ -387,7 +387,7 @@ impl<'v, 'a, 'b> Iterator for UnpackIter<'v, 'a, 'b> {
 /// - Allows borrowing the underlying `T`
 /// - Is an [`Input`] representing the object as a Do [`Value`].
 pub struct Instance<'v, 'a, T: Object<'v>> {
-    pub(crate) receiver: gc::Borrow<'v, 'a, protocol::Header, ObjectWrap<'v, T>>,
+    pub(crate) receiver: gc::Pin<'v, 'a, protocol::Header, ObjectWrap<'v, T>>,
     /// When this operation arrived via class delegation, the original
     /// delegating value (e.g. the `ClassInstance`).  `None` for direct calls.
     pub(crate) delegator: Option<&'a Value<'v>>,
@@ -408,7 +408,7 @@ impl<'v, 'a, T: Object<'v>> Copy for Instance<'v, 'a, T> {}
 /// bounded scope.
 #[must_use]
 pub struct Cast<'v, 'a, T: Object<'v>> {
-    receiver: gc::Borrow<'v, 'a, protocol::Header, ObjectWrap<'v, T>>,
+    receiver: &'a GcObj<'v, ObjectWrap<'v, T>>,
     /// When the cast looked through a [`ClassInstance`](super::class::ClassInstance) native
     /// slot, the composite value it was found in.  `None` for a direct cast.
     delegator: Option<&'a Value<'v>>,
@@ -424,17 +424,6 @@ impl<'v, 'a, T: Object<'v>> Clone for Cast<'v, 'a, T> {
 impl<'v, 'a, T: Object<'v>> Copy for Cast<'v, 'a, T> {}
 
 impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
-    #[inline]
-    fn enter_impl<'x>(&self) -> Instance<'v, 'x, T>
-    where
-        'a: 'x,
-    {
-        Instance {
-            receiver: self.receiver,
-            delegator: self.delegator,
-        }
-    }
-
     /// Obtain an [`Instance`] for the duration of `f`.
     #[inline]
     pub async fn enter<'s, R>(
@@ -442,7 +431,13 @@ impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
         strand: &mut Strand<'v, 's>,
         f: impl for<'x> AsyncFnOnce(&mut Strand<'v, 's>, Instance<'v, 'x, T>) -> R,
     ) -> R {
-        f(strand, self.enter_impl()).await
+        let instance = Instance {
+            // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures
+            // shallow
+            receiver: unsafe { self.receiver.pin_unchecked() },
+            delegator: self.delegator,
+        };
+        f(strand, instance).await
     }
 
     /// Synchronous counterpart to [`Cast::enter`], for call sites that don't need
@@ -453,7 +448,16 @@ impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
         strand: &mut Strand<'v, 's>,
         f: impl for<'x> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'x, T>) -> R,
     ) -> R {
-        f(strand, self.enter_impl())
+        let delegator = self.delegator;
+        self.receiver.pin_sync(strand, |strand, receiver| {
+            f(
+                strand,
+                Instance {
+                    receiver,
+                    delegator,
+                },
+            )
+        })
     }
 
     /// [`Cast::enter_sync`] without a `strand` argument, for the rare contexts —
@@ -461,7 +465,11 @@ impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
     /// May be more expensive.
     #[inline]
     pub fn enter_finalize<R>(self, f: impl for<'x> FnOnce(Instance<'v, 'x, T>) -> R) -> R {
-        f(self.enter_impl())
+        f(Instance {
+            // SAFETY: without a strand, `f` cannot collect
+            receiver: unsafe { self.receiver.pin_unchecked() },
+            delegator: self.delegator,
+        })
     }
 }
 
@@ -586,7 +594,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
     pub fn is(&self, value: &Value<'v>) -> bool {
         match self.delegator {
             Some(delegator) => value.repr_eq(delegator),
-            None => value.repr_eq_obj(self.receiver),
+            None => value.repr_eq_obj(self.receiver.into_raw()),
         }
     }
 
@@ -617,7 +625,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
     }
 
     #[inline]
-    pub(crate) fn new(receiver: gc::Borrow<'v, 'a, protocol::Header, ObjectWrap<'v, T>>) -> Self {
+    pub(crate) fn new(receiver: gc::Pin<'v, 'a, protocol::Header, ObjectWrap<'v, T>>) -> Self {
         Self {
             receiver,
             delegator: None,
@@ -632,13 +640,25 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
         }
     }
 
-    pub(crate) fn from_native_value(value: &'a Value<'v>, vm: &Vm<'v>, ty: Type<'v, T>) -> Self {
-        Self {
-            receiver: value
-                .downcast_native(vm, ty.vtbl)
-                .expect("native view owner has wrong type"),
-            delegator: Some(value),
-        }
+    /// Call `f` with `value`, a native view owner of type `T`, as an instance.
+    pub(crate) fn with_native_value<'s, R>(
+        value: &'a Value<'v>,
+        strand: &mut Strand<'v, 's>,
+        ty: Type<'v, T>,
+        f: impl for<'x> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'x, T>) -> R,
+    ) -> R {
+        let obj = value
+            .downcast_native(strand, ty.vtbl)
+            .expect("native view owner has wrong type");
+        obj.pin_sync(strand, |strand, receiver| {
+            f(
+                strand,
+                Instance {
+                    receiver,
+                    delegator: Some(value),
+                },
+            )
+        })
     }
 
     /// Borrow content immutably
@@ -694,7 +714,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
             unreachable!("type singleton is always an object");
         };
         // SAFETY: `type_singletons[idx]` is always a `TypeObjectWrap<'v,T>` for this `T`.
-        unsafe { Type::<T>::from_type_header(singleton.into_raw().cast(), vm) }
+        unsafe { Type::<T>::from_type_header(gc::Base::as_ptr(singleton).cast(), vm) }
     }
 }
 
@@ -1693,7 +1713,8 @@ unsafe impl<'v, T: Object<'v>> Collect for ObjectWrap<'v, T> {
 
     fn finalize(this: NonNull<arena::Header>) {
         unsafe {
-            let obj: protocol::GcObjBorrow<Self> = gc::Borrow::new(this.cast());
+            // SAFETY: a finalizer runs without a strand, so nothing can collect
+            let obj: protocol::GcObjPin<Self> = gc::Pin::from_raw(this.cast());
             if obj
                 .borrow()
                 .expect("object borrowed during finalize")
@@ -2890,19 +2911,18 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         }
     }
 
-    /// Returns a `gc::Borrow<'v,'v,...>` to the type singleton.
+    /// The type singleton, pinned for `'v`.
     fn type_borrow_impl(
         self,
         vm: &Vm<'v>,
-    ) -> gc::Borrow<'v, 'v, protocol::Header, TypeObjectWrap<'v, T>> {
+    ) -> gc::Pin<'v, 'v, protocol::Header, TypeObjectWrap<'v, T>> {
         // SAFETY: type_singletons[singleton_idx] is always a TypeObjectWrap<T>.
-        let borrow = unsafe {
+        let obj = unsafe {
             vm.type_singletons[self.singleton_idx]
                 .downcast_ref(self.type_vtbl)
                 .unwrap_unchecked()
         };
-        // SAFETY: the singleton lives for 'v; transmuting the borrow lifetime to 'v is sound.
-        unsafe { std::mem::transmute(borrow) }
+        singleton_pin(obj)
     }
 
     /// Runtime shared borrow of `T::Type`.
@@ -3236,7 +3256,7 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         // subtype relation the same declaration establishes.
         let error_kind = self.nominal_supertypes.iter().find_map(|supertype| {
             let variant = supertype.downcast_ref(self.vm.builtin_types().error_variant_type)?;
-            let kind = variant.get().0;
+            let kind = variant.read(|p| p.get().0);
             assert!(
                 kind != ErrorKind::Abort,
                 "std.AbortError cannot be a nominal supertype"
@@ -3688,13 +3708,13 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             result.vm.inner.arena(),
             ty.type_vtbl,
             TypeObjectWrap(self.type_value, PhantomData),
-            TypeAnnexInner {
+            alias::Box::new(TypeAnnexInner {
                 proxy: result.vm.inner.types.register_type_handle(),
                 scope: result.vm.inner.types.register_type_handle(),
                 inner: self.type_annex,
                 supertypes: result.supertypes.into(),
                 nominal_supertypes: result.nominal_supertypes.into(),
-            },
+            }),
         ));
         result.vm.inner.type_singletons.push(singleton);
 
@@ -3731,27 +3751,36 @@ unsafe fn free_glue<F>(ptr: NonNull<()>) {
     unsafe { drop(alias::Box::<F>::from_non_null(ptr.cast())) }
 }
 
-fn instance_supertype<'v, 'a, T: Object<'v>>(
-    this: Recv<'v, 'a, ObjectWrap<'v, T>>,
+fn instance_supertype<'v, T: Object<'v>>(
+    this: Recv<'v, '_, ObjectWrap<'v, T>>,
     vm: &Vm<'v>,
     idx: usize,
-) -> &'a Value<'v> {
+) -> &'v Value<'v> {
     &instance_supertypes::<T>(this, vm)[idx]
 }
 
+/// Pins a native type singleton for `'v`.
+///
+/// Type singletons live as long as the VM and are permanently pinned: a moving
+/// collector must allocate them where they never move.
+fn singleton_pin<'v, T: Object<'v>>(
+    obj: &GcObj<'v, TypeObjectWrap<'v, T>>,
+) -> GcObjPin<'v, 'v, TypeObjectWrap<'v, T>> {
+    // SAFETY: see above; the singleton is alive and pinned for `'v`
+    unsafe { gc::Pin::from_raw(gc::Base::as_ptr(obj).cast()) }
+}
+
 /// The abstract supertypes of `this`'s type, as `TypeAnnexInner::supertypes` lists them.
-fn instance_supertypes<'v, 'a, T: Object<'v>>(
-    this: Recv<'v, 'a, ObjectWrap<'v, T>>,
+fn instance_supertypes<'v, T: Object<'v>>(
+    this: Recv<'v, '_, ObjectWrap<'v, T>>,
     vm: &Vm<'v>,
-) -> &'a [Value<'v>] {
+) -> &'v [Value<'v>] {
     let Case::Object(type_obj) = this.singleton(vm).case() else {
         unreachable!();
     };
-    // FIXME: awkward, could use an "unchecked downcast" method on borrows
-    let type_obj = unsafe {
-        GcObjBorrow::<'v, 'v, TypeObjectWrap<'v, T>>::from_raw(type_obj.into_raw().cast())
-    };
-    &type_obj.annex().supertypes
+    // SAFETY: a type singleton is a `TypeObjectWrap<T>` for its instances' `T`
+    let type_obj = unsafe { &*ptr::from_ref(type_obj).cast::<GcObj<'v, TypeObjectWrap<'v, T>>>() };
+    &singleton_pin(type_obj).annex().supertypes
 }
 
 /// Call glue: reconstructs a typed `Instance<T>` from the raw header and calls `F`.
@@ -3778,7 +3807,7 @@ where
 {
     let f = unsafe { closure.cast::<F>().as_ref() };
     let inst = Instance {
-        receiver: unsafe { gc::Borrow::from_raw(header.cast()) },
+        receiver: unsafe { gc::Pin::from_raw(header.cast()) },
         delegator,
     };
     strand.pin_future_call(async move |strand| f(inst, strand, args, out).await)
@@ -3799,7 +3828,7 @@ where
 {
     let f = unsafe { closure.cast::<F>().as_ref() };
     let inst = Instance {
-        receiver: unsafe { gc::Borrow::from_raw(header.cast()) },
+        receiver: unsafe { gc::Pin::from_raw(header.cast()) },
         delegator,
     };
     f(inst, strand, slot)
@@ -3845,9 +3874,10 @@ impl<'v, T: Object<'v>> gc::Annex for TypeAnnexInner<'v, T> {
     }
 }
 
+// Out of line, so the annex is reachable from a type singleton without a pin
 unsafe impl<'v, T: Object<'v>> Collect for TypeObjectWrap<'v, T> {
     const CYCLIC: bool = false;
-    type Annex = TypeAnnexInner<'v, T>;
+    type Annex = alias::Box<TypeAnnexInner<'v, T>>;
 
     fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
         ControlFlow::Continue(())
@@ -4106,8 +4136,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                                     strand,
                                     format!("expected {}.{}", T::MODULE, T::NAME),
                                 )
-                            })?
-                            .into_raw()
+                            })
+                            .map(gc::Base::as_ptr)?
                             .cast();
                         unsafe { handler.call(inst, None, strand, trailing, out).await }
                     }
@@ -4292,19 +4322,21 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeScope<'v, T>> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let scope = this.get();
-        let native = Recv::new(scope.native.downcast_ref(scope.ty.type_vtbl).unwrap())
-            .with_delegator(&scope.receiver);
+        let native = Recv::new(singleton_pin(
+            scope.native.downcast_ref(scope.ty.type_vtbl).unwrap(),
+        ))
+        .with_delegator(&scope.receiver);
         TypeObjectWrap::type_mcall(native, strand, method, args, out).await
     }
 }
 
 impl<'v, T: Object<'v>> NativeTypeProxy<'v, T> {
     fn native(&self) -> Recv<'v, '_, TypeObjectWrap<'v, T>> {
-        Recv::new(
+        Recv::new(singleton_pin(
             self.native
                 .downcast_ref(self.ty.type_vtbl)
                 .expect("native type proxy wraps its registered singleton"),
-        )
+        ))
     }
 }
 
@@ -4347,7 +4379,11 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
         let Some(other) = other.downcast_ref(proxy_type) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        let same = other.get().native.repr_eq(&this.get().native);
+        // SAFETY: a transient pin, only to compare representations
+        let same = unsafe { other.pin_unchecked() }
+            .get()
+            .native
+            .repr_eq(&this.get().native);
         Ok(Value::from_bool(same))
     }
 

@@ -93,13 +93,7 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
-        let name = borrow
-            .loaded
-            .annex()
-            .module_name
-            .as_ref()
-            .map(|r| &borrow.loaded.annex().debug_strtab()[r.clone()])
-            .unwrap_or("?");
+        let name = borrow.loaded.module_name().unwrap_or("?");
         crate::fmt!(strand, w, "{name}")
     }
 
@@ -123,13 +117,7 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
         match re.map.binary_search_by_key(&field, |(s, _)| *s) {
             Ok(index) => {
                 unsafe {
-                    out.store(
-                        re.upvars
-                            .annex()
-                            .tail
-                            .get_unchecked(re.map.get_unchecked(index).1)
-                            .get(),
-                    );
+                    out.store(re.upvars.var(re.map.get_unchecked(index).1));
                 }
                 Ok(())
             }
@@ -150,11 +138,7 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
             Ok(index) => {
                 unsafe {
                     re.upvars
-                        .annex()
-                        .tail
-                        .get_unchecked(re.map.get_unchecked(index).1)
-                        .slot()
-                        .store(value.take());
+                        .set_var(re.map.get_unchecked(index).1, value.take());
                 }
                 Ok(())
             }
@@ -230,14 +214,17 @@ impl<'v> Protocol<'v> for Iter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut this_borrow = this.borrow_mut(strand)?;
-        let mod_borrow = &*this_borrow.module;
-        if this_borrow.index == mod_borrow.map.len() {
+        let index = this_borrow.index;
+        let entry = this_borrow.module.pin_sync(strand, |_, module| {
+            let module = module.get();
+            // Safety: nothing borrows across a write to an upvar
+            let &(sym, var) = module.map.get(index)?;
+            Some((sym, unsafe { module.upvars.var(var) }))
+        });
+        let Some((sym, value)) = entry else {
             return Ok(false);
-        }
-        let entry = &mod_borrow.map[this_borrow.index];
-        let key = Value::from_object(strand.sym_obj(entry.0));
-        // Safety: nothing borrows across a write to an upvar
-        let value = unsafe { mod_borrow.upvars.annex().tail[entry.1].get() };
+        };
+        let key = Value::from_object(strand.sym_obj(sym));
         tuple::create(strand, [key, value], out);
         this_borrow.index += 1;
         Ok(true)
@@ -422,51 +409,53 @@ impl<'v> Namespace<'v> {
         match components.split_first() {
             Some((&first, rest)) => {
                 let sym = Value::from_object(strand.sym_register_obj(first));
-                if let Some(value) = self
-                    .dict
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?
-                    .get(strand, &sym, Some(0))?
-                {
+                let inserted = self.dict.pin_sync(strand, |strand, dict| {
+                    let dict = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                    let Some(value) = dict.get(strand, &sym, Some(0))? else {
+                        return Ok(false);
+                    };
                     let ns = value
                         .downcast_ref(strand.builtin_types().namespace)
                         .ok_or_else(|| {
                             Error::type_error(strand, "can't import into non-namespace")
                         })?;
-                    return ns
-                        .borrow_mut()
-                        .ok_or_else(|| Error::concurrency(strand))?
-                        .insert(strand, rest, slot);
+                    ns.pin_sync(strand, |strand, ns| {
+                        ns.borrow_mut()
+                            .ok_or_else(|| Error::concurrency(strand))?
+                            .insert(strand, rest, Slot::reborrow(&mut slot))
+                    })?;
+                    Ok(true)
+                })?;
+                if inserted {
+                    return Ok(());
                 }
                 let mut ns = Self::new(strand);
                 ns.insert(strand, rest, slot)?;
                 let mut hasher = strand.vm().hasher();
                 sym.op_hash(strand, &mut hasher)?;
                 let hv = hasher.finish();
-                self.dict
-                    .borrow_mut()
-                    .ok_or_else(|| Error::concurrency(strand))?
-                    .insert(
-                        strand,
-                        sym,
-                        Value::from_object(GcObj::new(
-                            strand.arena(),
-                            strand.builtin_types().namespace,
-                            ns,
-                        )),
-                        hv,
-                        true,
-                    )?;
+                let ns = Value::from_object(GcObj::new(
+                    strand.arena(),
+                    strand.builtin_types().namespace,
+                    ns,
+                ));
+                self.dict.pin_sync(strand, |strand, dict| {
+                    dict.borrow_mut()
+                        .ok_or_else(|| Error::concurrency(strand))?
+                        .insert(strand, sym, ns, hv, true)
+                })?;
                 Ok(())
             }
             None => {
                 if let Some(module) = slot.downcast_ref(strand.builtin_types().module) {
-                    let module = module.get();
-                    self.inner = NamespaceInner::Normal(Module {
-                        loaded: module.loaded.clone(),
-                        upvars: module.upvars.clone(),
-                        map: module.map.clone(),
-                    });
+                    self.inner = NamespaceInner::Normal(module.read(|module| {
+                        let module = module.get();
+                        Module {
+                            loaded: module.loaded.clone(),
+                            upvars: module.upvars.clone(),
+                            map: module.map.clone(),
+                        }
+                    }));
                 } else {
                     self.inner = NamespaceInner::Custom(slot.take());
                 }
@@ -493,13 +482,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         let borrow = this.borrow(strand)?;
         match &borrow.inner {
             NamespaceInner::Normal(module) => {
-                let name = module
-                    .loaded
-                    .annex()
-                    .module_name
-                    .as_ref()
-                    .map(|r| &module.loaded.annex().debug_strtab()[r.clone()])
-                    .unwrap_or("?");
+                let name = module.loaded.module_name().unwrap_or("?");
                 crate::fmt!(strand, w, "{name}")
             }
             NamespaceInner::Custom(value) => value.op_display(strand, w),
@@ -533,14 +516,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                 // A name that isn't an export may be a submodule inserted beneath
                 if let Ok(index) = module.map.binary_search_by_key(&field, |(s, _)| *s) {
                     unsafe {
-                        out.store(
-                            module
-                                .upvars
-                                .annex()
-                                .tail
-                                .get_unchecked(module.map.get_unchecked(index).1)
-                                .get(),
-                        );
+                        out.store(module.upvars.var(module.map.get_unchecked(index).1));
                     }
                     return Ok(());
                 }
@@ -555,18 +531,19 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Empty => (),
         };
         let key = Value::from_object(strand.sym_obj(field));
-        match re
-            .dict
-            .borrow()
-            .ok_or_else(|| Error::concurrency(strand))?
-            .get(strand, &key, Some(0))?
-        {
-            Some(value) => {
-                out.store(value.dup());
-                Ok(())
+        re.dict.pin_sync(strand, |strand, dict| {
+            match dict
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .get(strand, &key, Some(0))?
+            {
+                Some(value) => {
+                    out.store(value.dup());
+                    Ok(())
+                }
+                None => Err(Error::field(strand, field)),
             }
-            None => Err(Error::field(strand, field)),
-        }
+        })
     }
 
     fn op_set<'a, 's>(
@@ -582,7 +559,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                     Ok(index) => {
                         let var = module.map[index].1;
                         // Safety: nothing borrows across a write to an upvar
-                        unsafe { module.upvars.annex().tail[var].slot().store(value.take()) };
+                        unsafe { module.upvars.set_var(var, value.take()) };
                         return Ok(());
                     }
                     Err(_) => return Err(Error::field(strand, field)),
@@ -595,10 +572,11 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher).unwrap();
         let hv = hasher.finish();
-        re.dict
-            .borrow_mut()
-            .ok_or_else(|| Error::concurrency(strand))?
-            .insert(strand, key, value.take(), hv, true)?;
+        re.dict.pin_sync(strand, |strand, dict| {
+            dict.borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .insert(strand, key, value.take(), hv, true)
+        })?;
         Ok(())
     }
 }

@@ -664,7 +664,7 @@ impl<'v> Protocol<'v> for BoundMethodObj<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
-        crate::fmt!(strand, w, "<bound method: {} receiver: ", me.method.name)?;
+        crate::fmt!(strand, w, "<bound method: {} receiver: ", me.method.name())?;
         me.rcvr.op_debug(strand, w)?;
         crate::fmt!(strand, w, ">")
     }
@@ -676,7 +676,7 @@ impl<'v> Protocol<'v> for BoundMethodObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
-        let method = unsafe { Sym::from_tag(me.method.tag) };
+        let method = unsafe { Sym::from_tag(me.method.tag()) };
         me.rcvr.op_mcall(strand, method, args, out).await
     }
 }
@@ -690,7 +690,7 @@ impl<'v> BoundMethod<'v> {
     /// The method name
     pub(crate) fn method(&self) -> Sym<'v, '_> {
         // Safety: `self.method` roots the symbol
-        unsafe { Sym::from_tag(self.method.tag) }
+        unsafe { Sym::from_tag(self.method.tag()) }
     }
 
     pub(crate) fn create(

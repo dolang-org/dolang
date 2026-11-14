@@ -97,11 +97,11 @@ impl<'v> ArrayLike<'v> for Children {
         Ok(())
     }
 
-    fn push<'a, 's>(
+    fn push<'s>(
         &self,
         this: Instance<'v, '_, Element>,
-        strand: &'a mut Strand<'v, 's>,
-        values: &mut [Slot<'v, 'a>],
+        strand: &mut Strand<'v, 's>,
+        values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
         for value in values.iter() {
             check_child(strand, value)?;
@@ -112,12 +112,12 @@ impl<'v> ArrayLike<'v> for Children {
             .push_all(strand, values)
     }
 
-    fn insert<'a, 's>(
+    fn insert<'s>(
         &self,
         this: Instance<'v, '_, Element>,
-        strand: &'a mut Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         index: usize,
-        values: &mut [Slot<'v, 'a>],
+        values: &mut [Slot<'v, '_>],
     ) -> Result<'v, 's, ()> {
         for value in values.iter() {
             check_child(strand, value)?;

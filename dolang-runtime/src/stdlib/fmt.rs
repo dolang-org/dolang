@@ -501,9 +501,8 @@ fn write_param<'v, 's>(
     out: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
     let borrow = this.borrow(strand)?;
-    if let Some(source) = Ref::slot::<1>(&borrow).as_str_raw(strand) {
-        let source = source.to_string();
-        return out.write_str(strand, &source);
+    if let Some(source) = Ref::slot::<1>(&borrow).as_str(strand) {
+        return source.with_str(strand, |strand, source| out.write_str(strand, source));
     }
     let name = Ref::slot::<0>(&borrow).dup();
     let name = param_name(strand, &name);
@@ -789,9 +788,8 @@ fn render_segment<'v, 's>(
     segment: &Value<'v>,
     w: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
-    if let Some(text) = segment.as_str_raw(strand) {
-        let text = text.to_string();
-        return w.write_str(strand, &text);
+    if let Some(text) = segment.as_str(strand) {
+        return text.with_str(strand, |strand, text| w.write_str(strand, text));
     }
     if let Some(param) = global.types.param.cast(segment) {
         // An unfilled hole has no rendering. The template is unfinished, so
@@ -839,19 +837,20 @@ fn debug_segment<'v, 's>(
     segment: &Value<'v>,
     w: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
-    if let Some(text) = segment.as_str_raw(strand) {
-        let text = text.to_string();
-        return w.write_str(strand, &text);
+    if let Some(text) = segment.as_str(strand) {
+        return text.with_str(strand, |strand, text| w.write_str(strand, text));
     }
     if let Some(cast) = global.types.value.cast(segment) {
-        let source = cast.enter_sync(strand, |strand, this| {
+        let written = cast.enter_sync(strand, |strand, this| {
             let borrow = this.borrow(strand)?;
-            Ok(Ref::slot::<1>(&borrow)
-                .as_str_raw(strand)
-                .map(str::to_string))
+            let Some(source) = Ref::slot::<1>(&borrow).as_str(strand) else {
+                return Ok(false);
+            };
+            source.with_str(strand, |strand, source| w.write_str(strand, source))?;
+            Ok(true)
         })?;
-        if let Some(source) = source {
-            return w.write_str(strand, &source);
+        if written {
+            return Ok(());
         }
     }
     segment.debug(strand, w)
@@ -1075,7 +1074,7 @@ fn append_segment<'v, 's>(
     segments: &Value<'v>,
     segment: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    if segment.as_str_raw(strand).is_none()
+    if segment.as_str(strand).is_none()
         && global.types.value.cast(segment).is_none()
         && global.types.param.cast(segment).is_none()
     {
@@ -1182,12 +1181,12 @@ where
         .method("pad", async |this, strand, args, out| {
             let ([value], []) = unpack!(strand, args, 1, 0)?;
             let value = value
-                .as_str_raw(strand)
+                .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "FmtSpec.pad: expected Str"))?;
             let spec = this.annex().spec;
             let mut embryo = StrEmbryo::new();
             let mut pad = Pad::new(spec, &mut embryo);
-            pad.write_str(strand, value)?;
+            value.with_str(strand, |strand, value| pad.write_str(strand, value))?;
             pad.finish(strand)?;
             embryo.finish(strand, out);
             Ok(())
@@ -1439,15 +1438,15 @@ fn parse_fill<'v, 's>(
         return Ok(Fill::Zero);
     }
     let value = value
-        .as_str_raw(strand)
+        .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "fill: expected Str, :ZERO:, or nil"))?;
-    let mut chars = value.chars();
-    let Some(ch) = chars.next() else {
+    let ch = value.with_str(strand, |_, value| {
+        let mut chars = value.chars();
+        chars.next().filter(|_| chars.next().is_none())
+    });
+    let Some(ch) = ch else {
         return Err(Error::value(strand, "fill: expected one Unicode scalar"));
     };
-    if chars.next().is_some() {
-        return Err(Error::value(strand, "fill: expected one Unicode scalar"));
-    }
     Ok(Fill::Char(ch))
 }
 
@@ -1545,7 +1544,5 @@ where
     T: Object<'v, Annex = SpecAnnex<'v>>,
 {
     let borrow = this.borrow(strand)?;
-    Ok(Ref::slot::<1>(&borrow)
-        .as_str_raw(strand)
-        .map(str::to_string))
+    Ok(Ref::slot::<1>(&borrow).as_str(strand).map(String::from))
 }
