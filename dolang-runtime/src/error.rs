@@ -123,7 +123,6 @@ impl ErrorKind {
     }
 }
 
-#[derive(Clone)]
 pub(crate) enum UnwindEntry<'v> {
     Do {
         program: Gc<'v, Program<'v>>,
@@ -138,6 +137,33 @@ pub(crate) enum UnwindEntry<'v> {
 }
 
 impl<'v> UnwindEntry<'v> {
+    /// Duplicate the entry.
+    ///
+    /// # Safety
+    /// The result is loose, as for [`gc::Base::dup`].
+    pub(crate) unsafe fn dup(&self) -> Self {
+        match self {
+            UnwindEntry::Do {
+                program,
+                function_index,
+                pc,
+            } => UnwindEntry::Do {
+                program: unsafe { program.dup() },
+                function_index: *function_index,
+                pc: *pc,
+            },
+            UnwindEntry::Native {
+                module,
+                receiver,
+                method,
+            } => UnwindEntry::Native {
+                module: module.clone(),
+                receiver: receiver.clone(),
+                method: method.clone(),
+            },
+        }
+    }
+
     pub(crate) fn accept(&self, visit: &mut dyn gc::arena::Visit) -> ControlFlow<()> {
         match self {
             UnwindEntry::Do { program, .. } => program.accept(visit),
@@ -158,7 +184,10 @@ impl<'v> UnwindEntry<'v> {
             } => {
                 if let Some(debug) = program.funcdebugs().get(*function_index as usize) {
                     let file = &program.debug_strtab()[debug.file.clone()];
-                    Some((Cow::Owned(file.to_owned()), debug.locate(*pc as usize - 1)))
+                    Some((
+                        Cow::Owned(file.to_owned()),
+                        debug.locate_frame(*pc as usize),
+                    ))
                 } else {
                     None
                 }
@@ -1021,7 +1050,9 @@ impl<'v, 's> Error<'v, 's> {
     }
 
     pub(crate) fn from_pair_ref(strand: &mut Strand<'v, 's>, pair: &ErrorPair<'v>) -> Self {
-        Self::from_pair(strand, pair.0.dup(), pair.1.clone())
+        // SAFETY: the entries move straight into the new error's root
+        let backtrace = pair.1.iter().map(|entry| unsafe { entry.dup() }).collect();
+        Self::from_pair(strand, pair.0.dup(), backtrace)
     }
 
     pub fn from_value_backtrace(
@@ -1030,10 +1061,11 @@ impl<'v, 's> Error<'v, 's> {
         backtrace: impl Input<'v>,
     ) -> Result<'v, 's, Self> {
         let backtrace = Value::from_input(strand, backtrace);
-        let Some(backtrace) = backtrace::entries_from_value(strand, &backtrace) else {
+        let err = Value::from_input(strand, err);
+        // SAFETY: the entries move straight into the new error's root
+        let Some(backtrace) = (unsafe { backtrace::entries_from_value(strand, &backtrace) }) else {
             return Err(Error::type_error(strand, "expected inspect.Backtrace"));
         };
-        let err = Value::from_input(strand, err);
         Ok(Self::from_pair(strand, err, backtrace))
     }
 
@@ -1043,7 +1075,8 @@ impl<'v, 's> Error<'v, 's> {
         backtrace: Value<'v>,
     ) -> Result<'v, 's, Self> {
         let backtrace = if !backtrace.is_nil() {
-            backtrace::entries_from_value(strand.vm(), &backtrace)
+            // SAFETY: the entries move straight into the new error's root
+            unsafe { backtrace::entries_from_value(strand.vm(), &backtrace) }
                 .ok_or_else(|| Error::type_error_raw(strand, "expected inspect.Backtrace"))?
         } else {
             Vec::new()

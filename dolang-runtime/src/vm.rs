@@ -664,7 +664,8 @@ impl<'v> Vm<'v> {
                 file::Const::Bin(file::BinId { start, end }) => {
                     Value::from_u8_slice(self, &main[*start..*end])
                 }
-                file::Const::Sym(idx) => Value::from_object(symroots[*idx].clone()),
+                // SAFETY: TODO(#1707): the program is built from loose references
+                file::Const::Sym(idx) => Value::from_object(unsafe { symroots[*idx].dup() }),
             })
             .collect();
 
@@ -1633,10 +1634,13 @@ impl Bytecode {
     ) -> Result<'v, 's, ()> {
         let loaded = strand.load_bytecode(self, importer);
         let frame = unsafe { CallFrame::new(loaded, 0, None, Some(strand.fp)) };
-        strand
-            .vm()
-            .run(strand, &frame, Slot::from_output(&mut out))
-            .await
+        // SAFETY: no arguments to unpack
+        unsafe {
+            strand
+                .vm()
+                .run(strand, &frame, None, Slot::from_output(&mut out))
+                .await
+        }
     }
 }
 

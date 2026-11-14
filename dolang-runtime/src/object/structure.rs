@@ -108,7 +108,8 @@ fn snapshot<'v, 's>(
         .borrow(strand)?
         .items
         .iter()
-        .map(|(key, value)| (key.clone(), value.dup()))
+        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+        .map(|(key, value)| (key.as_ref().map(|key| unsafe { key.dup() }), value.dup()))
         .collect();
     Ok(GcObj::new_imm(
         strand.vm().arena(),

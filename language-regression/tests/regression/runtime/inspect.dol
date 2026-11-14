@@ -72,3 +72,15 @@ assert_eq (inspect.definition push) nil
 assert_eq (inspect.definition obj) nil
 assert_eq (inspect.definition Derived) nil
 assert_eq (inspect.definition 42) nil
+
+# An argument that doesn't unpack fails in the called function, at its header.
+def one x
+  x
+
+let unpack_bt = try
+  one 1 2
+catch _
+  strand.error_backtrace()
+let unpack_frames = [...unpack_bt]
+assert_eq $unpack_frames[0].receiver "one"
+located $unpack_frames[0].location 76 0 7

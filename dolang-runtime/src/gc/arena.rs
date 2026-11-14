@@ -616,7 +616,7 @@ mod tests {
                     .borrow_mut()
                     .unwrap()
                     .children
-                    .push(item.clone());
+                    .push(unsafe { item.dup() });
                 Gc::downgrade(&item)
             })
             .collect();

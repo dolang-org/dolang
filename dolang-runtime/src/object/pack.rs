@@ -269,7 +269,8 @@ fn key_value<'v>(
     int: i64,
 ) -> Value<'v> {
     match key {
-        Some(key) => Value::from_object(key.clone()),
+        // SAFETY: TODO(#1707): as loose as the value it becomes
+        Some(key) => Value::from_object(unsafe { key.dup() }),
         None => Value::from_i64(strand, int),
     }
 }
@@ -423,18 +424,20 @@ fn store_split_rests<'v, 'a>(
         tuple::create(strand, values, out.at(i));
     }
     if let Some(i) = sig.key_rest_slot() {
+        let embryo = strand.builtin_types().pack.embryo(strand);
+        // SAFETY: the entries move straight into the allocated pack
         let entries = plan
             .key_rest
             .iter()
             .map(|&index| {
                 let (key, value) = &items[index];
-                (key.clone().unwrap(), value.dup())
+                (
+                    unsafe { key.as_ref().unwrap_unchecked().dup() },
+                    value.dup(),
+                )
             })
             .collect();
-        strand
-            .builtin_types()
-            .pack
-            .create_imm(strand, Pack::from_sym_entries(entries), out.at(i));
+        embryo.finish_imm(strand, Pack::from_sym_entries(entries), out.at(i));
     }
 }
 
@@ -530,7 +533,12 @@ impl<'v> Iter<'v> {
         let items = self.args.items();
         first_visible_index(items, &self.skip, self.pos).map(|index| {
             let (key, value) = &items[index];
-            (index, key.clone(), value.dup())
+            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+            (
+                index,
+                key.as_ref().map(|key| unsafe { key.dup() }),
+                value.dup(),
+            )
         })
     }
 
@@ -589,7 +597,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        let mut cursor = Iter::new(iter.args.clone(), iter.skip.clone(), iter.pos, iter.int);
+        // SAFETY: TODO(#1707): the cursor's reference is loose across the unpack
+        let args = unsafe { iter.args.dup() };
+        let mut cursor = Iter::new(args, iter.skip.clone(), iter.pos, iter.int);
         super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos| {
             cursor.pos = pos;
             let pair = cursor.next_pair(strand)?;
@@ -683,7 +693,12 @@ impl<'v> Rest<'v> {
         let items = self.args.items();
         first_visible_index(items, &self.skip, self.pos).map(|index| {
             let (key, value) = &items[index];
-            (index, key.clone(), value.dup())
+            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+            (
+                index,
+                key.as_ref().map(|key| unsafe { key.dup() }),
+                value.dup(),
+            )
         })
     }
 }
@@ -742,14 +757,10 @@ impl<'v> Protocol<'v> for Rest<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let mut iter = Rest::new(
-            borrow.args.clone(),
-            borrow.skip.clone(),
-            borrow.pos,
-            borrow.int,
-        );
-        let record_obj = iter.args.clone();
-        let items = record_obj.items();
+        // SAFETY: TODO(#1707): the child's reference is loose across the unpack
+        let args = unsafe { borrow.args.dup() };
+        let mut iter = Rest::new(args, borrow.skip.clone(), borrow.pos, borrow.int);
+        let items = iter.args.items();
         let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
 
         for action in &plan.actions {
@@ -788,13 +799,11 @@ impl<'v> Protocol<'v> for Rest<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let iter = Iter::new(
-            borrow.args.clone(),
-            borrow.skip.clone(),
-            borrow.pos,
-            borrow.int,
-        );
-        strand.builtin_types().pack_iter.create(strand, iter, out);
+        let embryo = strand.builtin_types().pack_iter.embryo(strand);
+        // SAFETY: the reference moves straight into the allocated iterator
+        let args = unsafe { borrow.args.dup() };
+        let iter = Iter::new(args, borrow.skip.clone(), borrow.pos, borrow.int);
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 
@@ -805,12 +814,9 @@ impl<'v> Protocol<'v> for Rest<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let mut iter = Rest::new(
-            borrow.args.clone(),
-            borrow.skip.clone(),
-            borrow.pos,
-            borrow.int,
-        );
+        // SAFETY: TODO(#1707): the cursor's reference is loose across the spread
+        let args = unsafe { borrow.args.dup() };
+        let mut iter = Rest::new(args, borrow.skip.clone(), borrow.pos, borrow.int);
         with_slots!(strand, |mut slot| {
             while let Some((index, key, value)) = iter.next_item() {
                 Output::set(strand, &mut slot, value);
@@ -996,10 +1002,12 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     }
                     if let Some(index) = key.as_ref().and_then(|key| indices.get(&key.tag())) {
                         if let Some(value) = replacements[*index].1.take() {
-                            items.push((key.clone(), value));
+                            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+                            items.push((key.as_ref().map(|key| unsafe { key.dup() }), value));
                         }
                     } else {
-                        items.push((key.clone(), value.dup()));
+                        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+                        items.push((key.as_ref().map(|key| unsafe { key.dup() }), value.dup()));
                     }
                 }
                 for (i, (key, value)) in replacements.into_iter().enumerate() {
@@ -1035,7 +1043,8 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                         strand.check_trap()?;
                     }
                     if !key.as_ref().is_some_and(|key| removed.contains(&key.tag())) {
-                        items.push((key.clone(), value.dup()));
+                        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+                        items.push((key.as_ref().map(|key| unsafe { key.dup() }), value.dup()));
                     }
                 }
                 strand

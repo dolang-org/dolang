@@ -278,14 +278,13 @@ impl<'v> Protocol<'v> for StrObj {
                             .map_err(|_| Error::type_error(strand, "limit: expected `Int`"))
                     })
                     .transpose()?;
-                let delim_gc = PinStr::new(
-                    delim
-                        .downcast_ref(strand.builtin_types().str)
-                        .ok_or_else(|| {
-                            Error::type_error(strand, "str.split/rsplit: delimiter not a string")
-                        })?
-                        .clone(),
-                );
+                let delim_gc = delim
+                    .downcast_ref(strand.builtin_types().str)
+                    .ok_or_else(|| {
+                        Error::type_error(strand, "str.split/rsplit: delimiter not a string")
+                    })?;
+                // SAFETY: the pin owns its reference as a root
+                let delim_gc = PinStr::new(unsafe { delim_gc.dup() });
                 let forward = method_sym == sym::SPLIT;
                 let state = match limit_i64 {
                     Some(l) if l < 0 => {

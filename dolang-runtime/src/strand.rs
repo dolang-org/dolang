@@ -303,8 +303,10 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
     pub(crate) fn finish<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
         res.map_err(|mut e| {
             let entry = match self.entry {
+                // SAFETY: the entry moves straight into the error's backtrace, which
+                // its root scans
                 FrameEntry::Do(frame) => UnwindEntry::Do {
-                    program: frame.program.clone(),
+                    program: unsafe { frame.program.dup() },
                     function_index: frame.func as u32,
                     pc: frame.pc.get() as u32,
                 },
@@ -1012,6 +1014,7 @@ impl<'v> StrandInner<'v> {
     ///
     /// # Safety
     /// The strand must be suspended (not the running strand), so `sp` is accurate.
+    /// The entries are loose, as for [`UnwindEntry::dup`].
     pub(crate) unsafe fn suspended_entries(&self, full: bool) -> Vec<UnwindEntry<'v>> {
         unsafe { walk_entries(self.sp.get(), full) }
     }
@@ -1138,7 +1141,8 @@ pub(crate) struct RawInfo<'v> {
 /// case the walk continues into the scoped parent's frames.
 ///
 /// # Safety
-/// Every frame reachable from `head` must be live.
+/// Every frame reachable from `head` must be live.  The entries are loose, as for
+/// [`UnwindEntry::dup`].
 unsafe fn walk_entries<'v>(mut head: Option<frame::Ptr<'v>>, full: bool) -> Vec<UnwindEntry<'v>> {
     let mut out = Vec::new();
     while let Some(ptr) = head {
@@ -1146,7 +1150,7 @@ unsafe fn walk_entries<'v>(mut head: Option<frame::Ptr<'v>>, full: bool) -> Vec<
             frame::Ptr::Do(frame) => {
                 let frame = unsafe { frame.as_ref() };
                 out.push(UnwindEntry::Do {
-                    program: frame.program.clone(),
+                    program: unsafe { frame.program.dup() },
                     function_index: frame.func as u32,
                     pc: frame.pc.get() as u32,
                 });
@@ -1343,13 +1347,20 @@ impl<'v, 's> Strand<'v, 's> {
             .map(|entries| BacktraceIter::new(entries.iter()))
     }
 
-    pub(crate) fn backtrace_entries(&self) -> Vec<UnwindEntry<'v>> {
+    /// Live backtrace of this (running) strand.
+    ///
+    /// # Safety
+    /// The entries are loose, as for [`UnwindEntry::dup`].
+    pub(crate) unsafe fn backtrace_entries(&self) -> Vec<UnwindEntry<'v>> {
         unsafe { walk_entries(Some(self.fp), true) }
     }
 
     /// Live backtrace of this (running) strand, stopping after the nearest
     /// `<scoped>` boundary unless `full` is set.
-    pub(crate) fn backtrace_entries_to_boundary(&self, full: bool) -> Vec<UnwindEntry<'v>> {
+    ///
+    /// # Safety
+    /// The entries are loose, as for [`UnwindEntry::dup`].
+    pub(crate) unsafe fn backtrace_entries_to_boundary(&self, full: bool) -> Vec<UnwindEntry<'v>> {
         unsafe { walk_entries(Some(self.fp), full) }
     }
 
@@ -1357,14 +1368,15 @@ impl<'v, 's> Strand<'v, 's> {
     /// `fp`) or a suspended one (walked from its `sp`).
     ///
     /// # Safety
-    /// `target` must be live and must not be used past the next yield.
+    /// `target` must be live and must not be used past the next yield.  The
+    /// entries are loose, as for [`UnwindEntry::dup`].
     pub(crate) unsafe fn entries_of(
         &self,
         target: &StrandInner<'v>,
         full: bool,
     ) -> Vec<UnwindEntry<'v>> {
         if ptr::eq(target, self.inner) {
-            self.backtrace_entries_to_boundary(full)
+            unsafe { self.backtrace_entries_to_boundary(full) }
         } else {
             unsafe { target.suspended_entries(full) }
         }
@@ -1387,7 +1399,10 @@ impl<'v, 's> Strand<'v, 's> {
     /// Each top-level strand comes in creation order, followed by its scoped
     /// descendants in creation order.  Strands still queued in the spawn
     /// channel are not included.
-    pub(crate) fn snapshot_raw(&self) -> Vec<RawInfo<'v>> {
+    ///
+    /// # Safety
+    /// The entries are loose, as for [`UnwindEntry::dup`].
+    pub(crate) unsafe fn snapshot_raw(&self) -> Vec<RawInfo<'v>> {
         // Safety: the walk is synchronous, so every strand in the rings stays
         // live and suspended (except this one) throughout.
         unsafe {
@@ -1784,7 +1799,17 @@ impl<'v, 's> Strand<'v, 's> {
                 // Rooted in slots across the close calls below
                 let poisoned = match &result {
                     Completion::Err((value, backtrace_entries)) => {
-                        backtrace::create(strand, backtrace_entries.clone(), &mut poison_bt);
+                        // SAFETY: the entries move straight into the allocated object
+                        backtrace::create(
+                            strand,
+                            |_| {
+                                backtrace_entries
+                                    .iter()
+                                    .map(|e| unsafe { e.dup() })
+                                    .collect()
+                            },
+                            &mut poison_bt,
+                        );
                         poison_err.store(value.dup());
                         true
                     }

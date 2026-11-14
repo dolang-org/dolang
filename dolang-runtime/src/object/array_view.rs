@@ -497,27 +497,29 @@ pub(crate) type RestObj<'v> = gc::Imm<Rest<'v>>;
 
 /// Stores the rest of `parent` from `start`: an iterator if the view's owner
 /// is one, otherwise a reusable [`Rest`].
+/// Stores an iterator or rest of `parent` from `start`.  `parent` runs after the
+/// object is allocated, so the reference it returns moves straight into it.
 fn store_rest<'v>(
     strand: &mut Strand<'v, '_>,
-    parent: GcObj<'v, ViewObj<'v>>,
+    parent: impl FnOnce() -> GcObj<'v, ViewObj<'v>>,
     start: usize,
     iterator: bool,
     out: impl Output<'v>,
 ) {
     if iterator {
-        strand.builtin_types().array_view_iter.create_imm(
-            strand,
-            Iter {
-                parent,
-                index: start.into(),
-            },
-            out,
-        );
+        let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+        let iter = Iter {
+            parent: parent(),
+            index: start.into(),
+        };
+        embryo.finish_imm(strand, iter, out);
     } else {
-        strand
-            .builtin_types()
-            .array_view_rest
-            .create_imm(strand, Rest { parent, start }, out);
+        let embryo = strand.builtin_types().array_view_rest.embryo(strand);
+        let rest = Rest {
+            parent: parent(),
+            start,
+        };
+        embryo.finish_imm(strand, rest, out);
     }
 }
 
@@ -741,7 +743,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let view = this.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, 0)?;
         if let Some(i) = sig.pos_rest_slot() {
-            store_rest(strand, this.to_strong(), consumed, false, out.at(i));
+            store_rest(strand, || this.to_strong(), consumed, false, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -813,10 +815,12 @@ impl<'v> Protocol<'v> for IterObj<'v> {
             iter.index.get(),
         )?;
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().array_view_iter.create_imm(
+            let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish_imm(
                 strand,
                 Iter {
-                    parent: iter.parent.clone(),
+                    parent: unsafe { iter.parent.dup() },
                     index: Cell::new(iter.index.get() + consumed),
                 },
                 out.at(i),
@@ -872,7 +876,14 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
-        store_rest(strand, rest.parent.clone(), rest.start, true, out);
+        // SAFETY: `store_rest` calls it after allocating
+        store_rest(
+            strand,
+            || unsafe { rest.parent.dup() },
+            rest.start,
+            true,
+            out,
+        );
         Ok(())
     }
     async fn op_spread<'a, 's>(
@@ -895,9 +906,10 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         let view = rest.parent.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, rest.start)?;
         if let Some(i) = sig.pos_rest_slot() {
+            // SAFETY: `store_rest` calls it after allocating
             store_rest(
                 strand,
-                rest.parent.clone(),
+                || unsafe { rest.parent.dup() },
                 rest.start + consumed,
                 false,
                 out.at(i),
@@ -1014,7 +1026,9 @@ fn unpack_native<'v, 's>(
                 }
             }
             UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
-                store_rest(strand, parent.clone(), position, iterator, slot);
+                // SAFETY: TODO(#1707): `parent` is itself loose, fresh from
+                // `create_view`
+                store_rest(strand, || unsafe { parent.dup() }, position, iterator, slot);
             }
             UnpackItem::KeyRest { slot } => NativeUnpack::empty_key_rest(strand, slot),
         }

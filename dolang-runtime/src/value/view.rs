@@ -123,8 +123,14 @@ pub struct Str<'v, 'a>(&'a GcObj<'v, StrObj>);
 /// Owns a reference to the string, which keeps it alive and its text address-stable
 /// until this pin is dropped.  A native object can hold one alongside a structure
 /// borrowing the text, provided the borrower is dropped first.
-#[derive(Clone)]
 pub struct PinStr<'v>(GcObj<'v, StrObj>);
+
+impl<'v> Clone for PinStr<'v> {
+    fn clone(&self) -> Self {
+        // SAFETY: the pin owns its reference as a root
+        Self(unsafe { self.0.dup() })
+    }
+}
 
 impl<'v, 'a> Str<'v, 'a> {
     pub(crate) fn from_obj(obj: &'a GcObj<'v, StrObj>) -> Self {
@@ -170,7 +176,8 @@ impl<'v, 'a> Str<'v, 'a> {
 
     /// Get pinned string
     pub fn pin(&self) -> PinStr<'v> {
-        PinStr(self.0.clone())
+        // SAFETY: the pin owns its reference as a root
+        PinStr(unsafe { self.0.dup() })
     }
 }
 
@@ -214,8 +221,14 @@ pub struct Bin<'v, 'a>(&'a GcObj<'v, BinObj>);
 /// Pinned `Bin`.
 ///
 /// As [`PinStr`], for bytes.
-#[derive(Clone)]
 pub struct PinBin<'v>(GcObj<'v, BinObj>);
+
+impl<'v> Clone for PinBin<'v> {
+    fn clone(&self) -> Self {
+        // SAFETY: the pin owns its reference as a root
+        Self(unsafe { self.0.dup() })
+    }
+}
 
 impl<'v, 'a> Bin<'v, 'a> {
     pub(crate) fn from_obj(obj: &'a GcObj<'v, BinObj>) -> Self {
@@ -266,7 +279,8 @@ impl<'v, 'a> Bin<'v, 'a> {
 
     /// Get pinned bytes
     pub fn pin(&self) -> PinBin<'v> {
-        PinBin(self.0.clone())
+        // SAFETY: the pin owns its reference as a root
+        PinBin(unsafe { self.0.dup() })
     }
 }
 

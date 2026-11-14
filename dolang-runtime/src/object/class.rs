@@ -2328,11 +2328,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(
-            strand,
-            out,
-            Value::from_object(this.annex().prefix.class.clone()),
-        )
+        // SAFETY: the reference moves straight into `out`
+        let class = Value::from_object(unsafe { this.annex().prefix.class.dup() });
+        Output::set(strand, out, class)
     }
 
     fn op_display<'a, 's>(

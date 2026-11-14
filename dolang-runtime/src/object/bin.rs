@@ -319,15 +319,14 @@ impl<'v> Protocol<'v> for BinObj {
                             .map_err(|_| Error::type_error(strand, "limit: expected `Int`"))
                     })
                     .transpose()?;
-                let delim_gc = PinBin::new(
-                    delim
-                        .downcast_ref(strand.builtin_types().bin)
-                        .ok_or_else(|| {
-                            let msg = "not binary data: unknown".to_string();
-                            Error::type_error(strand, msg)
-                        })?
-                        .clone(),
-                );
+                let delim_gc = delim
+                    .downcast_ref(strand.builtin_types().bin)
+                    .ok_or_else(|| {
+                        let msg = "not binary data: unknown".to_string();
+                        Error::type_error(strand, msg)
+                    })?;
+                // SAFETY: the pin owns its reference as a root
+                let delim_gc = PinBin::new(unsafe { delim_gc.dup() });
                 let forward = method_sym == sym::SPLIT;
                 let state = match limit_i64 {
                     Some(l) if l < 0 => {

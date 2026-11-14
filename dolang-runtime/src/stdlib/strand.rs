@@ -614,8 +614,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             })
             .function_without_frame("backtrace", async move |strand, args, out| {
                 unpack!(strand, args =>);
-                let entries = strand.backtrace_entries();
-                backtrace::create(strand, entries, out);
+                // SAFETY: the entries move straight into the allocated object
+                backtrace::create(strand, |strand| unsafe { strand.backtrace_entries() }, out);
                 Ok(())
             })
             .function_without_frame("current", async move |strand, args, out| {
@@ -628,8 +628,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             .function_without_frame("snapshot", async move |strand, args, out| {
                 unpack!(strand, args =>);
                 // Walk first, then build values: the walk must not allocate
-                let raw: Vec<_> = strand
-                    .snapshot_raw()
+                // SAFETY: the entries are rooted by the scan frame entered below,
+                // before anything allocates
+                let raw: Vec<_> = unsafe { strand.snapshot_raw() }
                     .into_iter()
                     .map(|raw| RefCell::new(Some(raw)))
                     .collect();
@@ -667,12 +668,20 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
                 unpack!(strand, args =>);
-                let Some(entries) = strand.inner.focused_backtrace() else {
+                if strand.inner.focused_backtrace().is_none() {
                     return Err(Error::state_error(strand, "no active handled exception"));
-                };
-                let mut entries = entries.to_vec();
-                entries.extend(strand.backtrace_entries());
-                backtrace::create(strand, entries, out);
+                }
+                // SAFETY: the entries move straight into the allocated object
+                backtrace::create(
+                    strand,
+                    |strand| unsafe {
+                        let focused = strand.inner.focused_backtrace().unwrap_unchecked();
+                        let mut entries: Vec<_> = focused.iter().map(|e| e.dup()).collect();
+                        entries.extend(strand.backtrace_entries());
+                        entries
+                    },
+                    out,
+                );
                 Ok(())
             })
             .function_without_frame("throw", async move |strand, args, _| {
@@ -983,16 +992,14 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 // `Stream` returned below is not.
                 with_slots!(strand, |mut input, mut output| {
                     let builtin_types = strand.builtin_types();
-                    builtin_types.stream_sink.create(
-                        strand,
-                        StreamSink::new(input_sender, handle.clone()),
-                        &mut input,
-                    );
-                    builtin_types.stream_iter.create(
-                        strand,
-                        StreamIter::new(output_receiver, handle.clone()),
-                        &mut output,
-                    );
+                    // SAFETY: TODO(#1707): `handle` and the channel endpoints are
+                    // loose across these allocations
+                    let embryo = builtin_types.stream_sink.embryo(strand);
+                    let sink = StreamSink::new(input_sender, unsafe { handle.dup() });
+                    embryo.finish(strand, sink, &mut input);
+                    let embryo = builtin_types.stream_iter.embryo(strand);
+                    let iter = StreamIter::new(output_receiver, unsafe { handle.dup() });
+                    embryo.finish(strand, iter, &mut output);
                     builtin_types.stream.create_imm(
                         strand,
                         Stream {

@@ -16,8 +16,8 @@ use crate::{
     bytecode::{Rest, Variadic},
     error::{Error, Result},
     gc::{
-        self, Collect, Gc,
-        arena::{Arena, Visit},
+        self, Boxable, Collect, Gc,
+        arena::{Arena, Header, Visit},
     },
     object::{pack, tuple},
     sig,
@@ -523,17 +523,26 @@ impl<'v> CallFrame<'v> {
 
     /// Push a new upvar frame of `count` nil variables.
     pub(crate) fn push_upvars(&self, arena: &Arena<'v>, count: usize) {
-        // SAFETY: no write to the chain is in progress
+        // Allocate first, so the parent is duplicated straight into the new frame
+        // SAFETY: finished below with `Upvars`' own vtable and header
+        let embryo = unsafe { gc::Embryo::<Header, Upvars<'v>>::new_tail(arena, count) };
+        // SAFETY: no write to the chain is in progress, and the parent moves into
+        // the new frame without an allocation in between
         let parent = unsafe { self.upvars.get() };
-        let upvars = Gc::new_tail(
-            arena,
-            Upvars(PhantomData),
-            UpvarsPrefix {
-                parent,
-                stale: Cell::new(false),
-            },
-            (0..count).map(|_| ValueCell::default()),
-        );
+        let upvars = unsafe {
+            embryo.finish_tail(
+                Header::new(
+                    arena,
+                    NonNull::from_ref(<Upvars<'v> as Boxable<Header>>::VTBL),
+                ),
+                Upvars(PhantomData),
+                UpvarsPrefix {
+                    parent,
+                    stale: Cell::new(false),
+                },
+                (0..count).map(|_| ValueCell::default()),
+            )
+        };
         // SAFETY: nothing borrows the chain across this write
         unsafe { self.upvars.slot() }.store(Some(upvars))
     }
@@ -548,13 +557,24 @@ impl<'v> CallFrame<'v> {
             // SAFETY: nothing borrows the chain across these writes
             let mut slot = self.upvars.slot();
             let popped = slot.take().unwrap_unchecked();
-            slot.replace(popped.pin_unchecked().annex().prefix.parent.clone());
+            // SAFETY: the parent moves straight into the chain
+            let parent = popped
+                .pin_unchecked()
+                .annex()
+                .prefix
+                .parent
+                .as_ref()
+                .map(|p| p.dup());
+            slot.replace(parent);
             popped
         }
     }
 
     /// The current upvar chain, for a closure to capture.
-    pub(crate) fn upvars(&self) -> Option<Gc<'v, Upvars<'v>>> {
+    ///
+    /// # Safety
+    /// The result is loose, as for [`gc::Base::dup`].
+    pub(crate) unsafe fn upvars(&self) -> Option<Gc<'v, Upvars<'v>>> {
         // SAFETY: no write to the chain is in progress
         unsafe { self.upvars.get() }
     }
@@ -630,7 +650,7 @@ impl<'v, 'a> FrameInfo<'v, 'a> {
                 let loaded = &head.program;
                 if let Some(debug) = loaded.funcdebugs().get(head.func) {
                     let file = &loaded.debug_strtab()[debug.file.clone()];
-                    Some((file, debug.locate(head.pc.get() - 1)))
+                    Some((file, debug.locate_frame(head.pc.get())))
                 } else {
                     None
                 }

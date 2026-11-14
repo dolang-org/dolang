@@ -149,7 +149,8 @@ impl<'v> Record<'v> {
 
     fn snapshot(&self) -> Vec<ArgItem<'v>> {
         self.items()
-            .map(|(key, value)| (key.clone(), value.dup()))
+            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+            .map(|(key, value)| (key.as_ref().map(|key| unsafe { key.dup() }), value.dup()))
             .collect()
     }
 
@@ -851,7 +852,8 @@ impl<'v> Protocol<'v> for Iter<'v> {
                             Mode::KeyValues(tag) if key.tag() != tag => continue,
                             _ => {}
                         }
-                        Value::from_object(key.clone())
+                        // SAFETY: TODO(#1707): as loose as the `value.dup()`s below
+                        Value::from_object(unsafe { key.dup() })
                     }
                     None => {
                         let int = iter.int.get();

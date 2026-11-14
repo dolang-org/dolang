@@ -134,7 +134,9 @@ impl<'v> Value<'v> {
 
     pub(crate) fn dup(&self) -> Self {
         match self.case() {
-            Case::Object(base) => mem::forget(base.clone()),
+            // SAFETY: the handle is forgotten at once; its count backs the returned
+            // value, which is as loose as any other `Value::dup` result
+            Case::Object(base) => mem::forget(unsafe { base.dup() }),
             Case::Prim(_) => (),
         }
         Self(self.0.clone(), PhantomData)

@@ -825,12 +825,14 @@ impl<'v> Protocol<'v> for Values<'v> {
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().dict_values.create(
+            let embryo = strand.builtin_types().dict_values.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish(
                 strand,
                 Values {
                     index: Cell::new(next_index),
                     epoch: borrow.epoch,
-                    container: borrow.container.clone(),
+                    container: unsafe { borrow.container.dup() },
                 },
                 out.at(i),
             );
@@ -927,12 +929,14 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().dict_key_values.create(
+            let embryo = strand.builtin_types().dict_key_values.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish(
                 strand,
                 KeyValues {
                     index: Cell::new(next_index),
                     epoch: borrow.epoch,
-                    container: borrow.container.clone(),
+                    container: unsafe { borrow.container.dup() },
                     bucket: borrow.bucket.clone(),
                 },
                 out.at(i),
@@ -1047,12 +1051,14 @@ impl<'v> Protocol<'v> for Keys<'v> {
             })?
         };
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().dict_keys.create(
+            let embryo = strand.builtin_types().dict_keys.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish(
                 strand,
                 Keys {
                     index: Cell::new(next_index),
                     epoch: borrow.epoch,
-                    container: borrow.container.clone(),
+                    container: unsafe { borrow.container.dup() },
                     visited: RefCell::new(visited),
                 },
                 out.at(i),
@@ -1229,17 +1235,18 @@ pub(crate) struct Unpack<'v> {
 }
 
 /// Creates the lazy rest over a dict's leftover pairs.
+/// Stores a dict rest.  `dict` runs after the rest is allocated, so the reference
+/// it returns moves straight into the rest.
 fn make_unpack<'v>(
     strand: &mut Strand<'v, '_>,
-    dict: GcObj<'v, Dict<'v>>,
+    dict: impl FnOnce() -> GcObj<'v, Dict<'v>>,
     epoch: u64,
     state: UnpackState<'v>,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .dict_unpack
-        .create(strand, Unpack { state, dict, epoch }, out);
+    let embryo = strand.builtin_types().dict_unpack.embryo(strand);
+    let dict = dict();
+    embryo.finish(strand, Unpack { state, dict, epoch }, out);
 }
 
 unsafe impl<'v> Collect for Unpack<'v> {
@@ -1312,7 +1319,8 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         borrow.check_epoch(strand)?;
-        let container = borrow.dict.clone();
+        // SAFETY: TODO(#1707): as loose as the `Value::dup`s in the cloned `Skip`
+        let container = unsafe { borrow.dict.dup() };
         let (epoch, resume, skip) = with_pin!(strand, container, |pinned| {
             let dict = pinned.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let resume = borrow.state.index;
@@ -1323,7 +1331,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
             Ok((borrow.epoch, resume, skip))
         })?;
         drop(borrow);
-        dict_rests(strand, sig, &mut out, container, epoch, resume, skip);
+        dict_rests(strand, sig, &mut out, || container, epoch, resume, skip);
         Ok(())
     }
 
@@ -1334,7 +1342,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let container = borrow.dict.clone();
+        let container = &borrow.dict;
         let epoch = with_pin!(strand, container, |container| {
             Ok(container
                 .borrow()
@@ -1375,15 +1383,14 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
+        let embryo = strand.builtin_types().dict_unpack_iter.embryo(strand);
+        // SAFETY: the references move straight into the allocated iterator
         let iter = UnpackIter {
             state: borrow.state.clone(),
             epoch: borrow.epoch,
-            dict: borrow.dict.clone(),
+            dict: unsafe { borrow.dict.dup() },
         };
-        strand
-            .builtin_types()
-            .dict_unpack_iter
-            .create(strand, iter, out);
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 }
@@ -1449,18 +1456,18 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
-        let dict_obj = borrow.dict.clone();
-        with_pin!(strand, dict_obj, |dict_obj| {
+        let UnpackIter { state, epoch, dict } = &mut *borrow;
+        with_pin!(strand, dict, |dict_obj| {
             let dict = dict_obj
                 .borrow()
                 .ok_or_else(|| Error::concurrency(strand))?;
-            if dict.epoch != borrow.epoch {
+            if dict.epoch != *epoch {
                 return Err(Error::concurrency_msg(
                     strand,
                     "collection was modified during iteration",
                 ));
             }
-            let Some((key, value)) = borrow.state.next_pair(strand, &dict)? else {
+            let Some((key, value)) = state.next_pair(strand, &dict)? else {
                 return Ok(false);
             };
             tuple::create(strand, [key, value], out);
@@ -1945,19 +1952,20 @@ impl<'v> Protocol<'v> for Dict<'v> {
         dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
         let epoch = dict.epoch;
         drop(dict);
-        dict_rests(strand, sig, &mut out, this.to_strong(), epoch, 0, skip);
+        dict_rests(strand, sig, &mut out, || this.to_strong(), epoch, 0, skip);
         Ok(())
     }
 }
 
 /// Stores the rests of an unpack of a dict, or of a rest of one, whose
 /// leftover pairs start at `index` past what `skip` counts. A dict has no
-/// positional items, so a `*name` rest is empty.
+/// positional items, so a `*name` rest is empty.  `dict` is called as for
+/// [`make_unpack`].
 fn dict_rests<'v>(
     strand: &mut Strand<'v, '_>,
     sig: &sig::Unpack<'v, '_>,
     out: &mut Slots<'v, '_>,
-    dict: GcObj<'v, Dict<'v>>,
+    dict: impl FnOnce() -> GcObj<'v, Dict<'v>>,
     epoch: u64,
     index: usize,
     skip: Skip<'v>,

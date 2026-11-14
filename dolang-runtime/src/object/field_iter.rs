@@ -126,10 +126,13 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let fields = this.borrow(strand)?;
-        strand.builtin_types().field_pairs.create(
+        let embryo = strand.builtin_types().field_pairs.embryo(strand);
+        // SAFETY: the symbols move straight into the allocated iterator
+        let symbols = fields.symbols.iter().map(|s| unsafe { s.dup() }).collect();
+        embryo.finish(
             strand,
             FieldPairs {
-                fields: FieldIter::new(fields.receiver.dup(), fields.symbols.clone()),
+                fields: FieldIter::new(fields.receiver.dup(), symbols),
                 index: 0,
             },
             out,
@@ -171,7 +174,8 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
 
             let iter = this.borrow(strand)?;
             let receiver = iter.receiver.dup();
-            let symbols: Vec<_> = iter.symbols.iter().cloned().collect();
+            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+            let symbols: Vec<_> = iter.symbols.iter().map(|s| unsafe { s.dup() }).collect();
             let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
             let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
 
@@ -374,7 +378,13 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
-        let Some(symbol) = iter.fields.symbols.get(iter.index).cloned() else {
+        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
+        let Some(symbol) = iter
+            .fields
+            .symbols
+            .get(iter.index)
+            .map(|s| unsafe { s.dup() })
+        else {
             return Ok(false);
         };
         let receiver = iter.fields.receiver.dup();

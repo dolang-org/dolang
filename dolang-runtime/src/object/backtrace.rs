@@ -16,23 +16,31 @@ use crate::{
 
 use super::protocol::{Inspect, Protocol, Recv, instance_get_fallback};
 
-pub(crate) fn create<'v>(
-    strand: &mut Strand<'v, '_>,
-    entries: Vec<UnwindEntry<'v>>,
+/// Creates a backtrace object of the entries `entries` returns.
+///
+/// `entries` runs after the object is allocated, so the loose entries it returns
+/// move straight into the object.
+pub(crate) fn create<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    entries: impl FnOnce(&Strand<'v, 's>) -> Vec<UnwindEntry<'v>>,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .backtrace
-        .create_imm(strand, Backtrace::new(entries), out);
+    let embryo = strand.builtin_types().backtrace.embryo(strand);
+    let entries = entries(strand);
+    embryo.finish_imm(strand, Backtrace::new(entries), out);
 }
 
-pub(crate) fn entries_from_value<'v>(
+/// Duplicate the entries of a backtrace object.
+///
+/// # Safety
+/// The entries are loose, as for [`UnwindEntry::dup`].
+pub(crate) unsafe fn entries_from_value<'v>(
     vm: &Vm<'v>,
     value: &Value<'v>,
 ) -> Option<Vec<UnwindEntry<'v>>> {
     let backtrace = value.downcast_ref(vm.builtin_types().backtrace)?;
-    Some(backtrace.project(|p| &p.get().entries).to_vec())
+    let entries = backtrace.project(|p| &p.get().entries);
+    Some(entries.iter().map(|entry| unsafe { entry.dup() }).collect())
 }
 
 pub(crate) fn iter_from_value<'v, 'a>(
@@ -159,10 +167,13 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().backtrace_iter.create(
+        let embryo = strand.builtin_types().backtrace_iter.embryo(strand);
+        // SAFETY: the entries move straight into the allocated iterator
+        let entries = this.get().entries.iter().map(|e| unsafe { e.dup() });
+        embryo.finish(
             strand,
             Iter {
-                entries: this.get().entries.to_vec().into_boxed_slice(),
+                entries: entries.collect(),
                 index: 0,
             },
             out,
@@ -224,19 +235,18 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
+        let embryo = strand.vm().builtin_types().backtrace_frame.embryo(strand);
         let mut borrow = this.borrow_mut(strand)?;
-        let Some(entry) = borrow.entries.get(borrow.index).cloned() else {
+        // SAFETY: the entry moves straight into the allocated frame
+        let Some(entry) = borrow.entries.get(borrow.index).map(|e| unsafe { e.dup() }) else {
             return Ok(false);
         };
         borrow.index += 1;
         drop(borrow);
-        strand.vm().builtin_types().backtrace_frame.create_imm(
-            strand,
-            Frame {
-                entry: Box::new(entry),
-            },
-            out,
-        );
+        let frame = Frame {
+            entry: Box::new(entry),
+        };
+        embryo.finish_imm(strand, frame, out);
         Ok(true)
     }
 

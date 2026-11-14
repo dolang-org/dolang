@@ -553,10 +553,12 @@ impl<'v> Protocol<'v> for Iter<'v> {
             unpack_from(strand, sig, &mut out, tuple.items(), borrow.index, false)
         })?;
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().tuple_iter.create(
+            let embryo = strand.builtin_types().tuple_iter.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish(
                 strand,
                 Iter {
-                    tuple: borrow.tuple.clone(),
+                    tuple: unsafe { borrow.tuple.dup() },
                     index: borrow.index + count,
                 },
                 out.at(i),
@@ -668,10 +670,12 @@ impl<'v> Protocol<'v> for Pairs<'v> {
             unpack_from(strand, sig, &mut out, tuple.items(), borrow.index, true)
         })?;
         if let Some(i) = sig.pos_rest_slot() {
-            strand.builtin_types().tuple_pairs.create(
+            let embryo = strand.builtin_types().tuple_pairs.embryo(strand);
+            // SAFETY: the reference moves straight into the allocated iterator
+            embryo.finish(
                 strand,
                 Pairs {
-                    tuple: borrow.tuple.clone(),
+                    tuple: unsafe { borrow.tuple.dup() },
                     index: borrow.index + count,
                 },
                 out.at(i),

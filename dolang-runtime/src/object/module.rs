@@ -1,4 +1,4 @@
-use std::{borrow::Cow, hash::Hasher, ops::ControlFlow};
+use std::{borrow::Cow, hash::Hasher, mem, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -450,14 +450,22 @@ impl<'v> Namespace<'v> {
             }
             None => {
                 if let Some(module) = slot.downcast_ref(strand.builtin_types().module) {
-                    self.inner = NamespaceInner::Normal(module.read(|module| {
+                    let module = module.read(|module| {
                         let module = module.get();
-                        Module {
-                            loaded: module.loaded.clone(),
-                            upvars: module.upvars.clone(),
-                            map: module.map.clone(),
+                        // SAFETY: the references move straight into the namespace,
+                        // which is written before the old contents drop
+                        unsafe {
+                            Module {
+                                loaded: module.loaded.dup(),
+                                upvars: module.upvars.dup(),
+                                map: module.map.clone(),
+                            }
                         }
-                    }));
+                    });
+                    drop(mem::replace(
+                        &mut self.inner,
+                        NamespaceInner::Normal(module),
+                    ));
                 } else {
                     self.inner = NamespaceInner::Custom(slot.take());
                 }

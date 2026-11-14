@@ -67,7 +67,8 @@ pub class Frame
   pub def method self -> (Str | nil)
     ...
 
-  # The code being run in the called function, when it has a location.
+  # The code being run in the called function, when it has a location. While
+  # the function is still unpacking its arguments, this is its definition.
   #[getter]
   pub def location self -> (Location | nil)
     ...

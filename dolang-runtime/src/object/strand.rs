@@ -534,24 +534,19 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         match method.tag() {
             sym::JOIN => {
                 unpack!(strand, args =>);
-                let (input, output, handle) = {
-                    let borrow = this.get();
-                    (
-                        borrow.input.dup(),
-                        borrow.output.dup(),
-                        borrow.handle.clone(),
-                    )
-                };
+                let borrow = this.get();
+                let (input, output, handle) =
+                    (borrow.input.dup(), borrow.output.dup(), &borrow.handle);
                 let close = Sym::well_known(sym::CLOSE);
                 with_slots!(strand, |mut tmp| {
                     let _ = method!(strand, &input, close, &mut tmp);
                     let _ = method!(strand, &output, close, &mut tmp);
                 });
-                join_handle(&handle, strand, out).await
+                join_handle(handle, strand, out).await
             }
             sym::CANCEL => {
                 unpack!(strand, args =>);
-                let handle = this.get().handle.clone();
+                let handle = &this.get().handle;
                 with_pin!(strand, handle, |handle| {
                     let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     borrow.interrupt.cancel();
@@ -560,8 +555,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
             }
             sym::WAIT => {
                 unpack!(strand, args =>);
-                let handle = this.get().handle.clone();
-                wait_handle(&handle, strand).await
+                wait_handle(&this.get().handle, strand).await
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
             tag if is_observe_method(tag) => {
@@ -856,14 +850,23 @@ fn observe_mcall<'v, 's>(
                 Some(full) => full.op_bool(strand)?,
                 None => false,
             };
-            let entries = match (cell.state(), cell.get()) {
-                (CellState::Live, Some(inner)) => unsafe {
-                    strand.entries_of(inner.as_ref(), full)
-                },
-                (CellState::Pending, _) => Vec::new(),
+            match (cell.state(), cell.get()) {
+                (CellState::Live, Some(_)) | (CellState::Pending, _) => (),
                 _ => return Err(exited(strand)),
-            };
-            backtrace::create(strand, entries, out);
+            }
+            // The state is checked again after allocating, which can unwind a
+            // garbage strand
+            // SAFETY: the entries move straight into the allocated object
+            backtrace::create(
+                strand,
+                |strand| match (cell.state(), cell.get()) {
+                    (CellState::Live, Some(inner)) => unsafe {
+                        strand.entries_of(inner.as_ref(), full)
+                    },
+                    _ => Vec::new(),
+                },
+                out,
+            );
             Ok(())
         }
         sym::CHILDREN => {
