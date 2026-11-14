@@ -17,6 +17,7 @@ use crate::{
         fmt::{Align, Fill, Format, Kind, Pad, Sign, Spec},
     },
     vm::{AllocExt, Builder, State, StateTag, Vm},
+    with_slots,
 };
 
 /// Every symbol this module needs: the keyword parameter names, and the symbol
@@ -585,17 +586,15 @@ impl<'v> Object<'v> for Fmt {
     ) -> Result<'v, 's, ()> {
         let global = strand.vm().state::<Tag>();
         let ([items], []) = unpack!(strand, args, 1, 0)?;
-        strand
-            .with_slots(async move |strand, [mut segments, mut iter, mut item]| {
-                strand.new_array(&mut segments);
-                items.iter(strand, &mut iter).await?;
-                while iter.next(strand, &mut item).await? {
-                    append_segment(strand, global, &segments, &item)?;
-                }
-                create_from_segments(strand, global, &segments, out);
-                Ok(())
-            })
-            .await
+        with_slots!(strand, |mut segments, mut iter, mut item| {
+            strand.new_array(&mut segments);
+            items.iter(strand, &mut iter).await?;
+            while iter.next(strand, &mut item).await? {
+                append_segment(strand, global, &segments, &item)?;
+            }
+            create_from_segments(strand, global, &segments, out);
+            Ok(())
+        })
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
@@ -619,30 +618,26 @@ impl<'v> Object<'v> for Fmt {
                     embryo.finish(strand, out);
                     return Ok(());
                 }
-                strand
-                    .with_slots(
-                        async move |strand, [mut bindings, mut consumed, mut filled]| {
-                            // Positional arguments bind the parameters named by
-                            // their index
-                            let dict = Dict::from_indexed_args(strand, args)?;
-                            strand
-                                .builtin_types()
-                                .dict
-                                .create(strand, dict, &mut bindings);
-                            strand.new_set(&mut consumed);
-                            substitute(strand, global, this, &bindings, &consumed, &mut filled)?;
-                            reject_unused(strand, &bindings, &consumed)?;
-                            // A hole left unfilled raises when rendering reaches it.
-                            let filled = global.types.fmt.cast(&filled).unwrap();
-                            filled.enter_sync(strand, |strand, filled| {
-                                let mut embryo = StrEmbryo::new();
-                                render(filled, strand, &mut embryo)?;
-                                embryo.finish(strand, out);
-                                Ok(())
-                            })
-                        },
-                    )
-                    .await
+                with_slots!(strand, |mut bindings, mut consumed, mut filled| {
+                    // Positional arguments bind the parameters named by
+                    // their index
+                    let dict = Dict::from_indexed_args(strand, args)?;
+                    strand
+                        .builtin_types()
+                        .dict
+                        .create(strand, dict, &mut bindings);
+                    strand.new_set(&mut consumed);
+                    substitute(strand, global, this, &bindings, &consumed, &mut filled)?;
+                    reject_unused(strand, &bindings, &consumed)?;
+                    // A hole left unfilled raises when rendering reaches it.
+                    let filled = global.types.fmt.cast(&filled).unwrap();
+                    filled.enter_sync(strand, |strand, filled| {
+                        let mut embryo = StrEmbryo::new();
+                        render(filled, strand, &mut embryo)?;
+                        embryo.finish(strand, out);
+                        Ok(())
+                    })
+                })
             })
     }
 

@@ -329,7 +329,7 @@ impl<'v> Object<'v> for Regex {
                                 });
 
                             // Call the replacement function with the Captures
-                            call!(strand, &replacement, &mut cb_out, &caps_slot).await?;
+                            call!(strand, &replacement, &mut cb_out, &caps_slot)?;
 
                             let rep = cb_out
                                 .as_str(strand)

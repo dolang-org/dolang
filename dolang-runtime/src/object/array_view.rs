@@ -677,7 +677,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 if let Some(mut default) = default {
                     out.store(default.take());
                 } else if let Some(or_else) = or_else {
-                    call!(strand, or_else, out).await?;
+                    call!(strand, or_else, out)?;
                 } else {
                     return Err(Error::index(strand));
                 }
@@ -1152,9 +1152,11 @@ mod tests {
         error::ErrorKind,
         object::native::Object,
         sig,
+        strand::with_slots_dynamic,
         sym::Sym,
         test_support::with_builder,
         vm::{Builder, StateTag},
+        with_slots,
     };
 
     use super::*;
@@ -1214,7 +1216,7 @@ mod tests {
     }
 
     /// Populates `out` (which must be a GC-rooted slot, e.g. from
-    /// `Strand::with_slots_dynamic`) with a `FixtureArray` containing `items`. Values are
+    /// `with_slots_dynamic!`) with a `FixtureArray` containing `items`. Values are
     /// never returned as bare, unrooted locals — every call site roots the owner for as
     /// long as it's needed before this function returns.
     fn make_owner<'v>(strand: &mut Strand<'v, '_>, items: &[i64], out: Slot<'v, '_>) {
@@ -1251,12 +1253,10 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(3, vec![], vec![], Variadic::NONE);
-            strand
-                .with_slots_dynamic(3, async |strand, mut out| {
-                    let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::MissingPos);
-                })
-                .await;
+            with_slots_dynamic!(strand, 3, |mut out| {
+                let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::MissingPos);
+            });
         });
     }
 
@@ -1270,12 +1270,10 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::NONE);
-            strand
-                .with_slots_dynamic(1, async |strand, mut out| {
-                    let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::UnexpectedPos);
-                })
-                .await;
+            with_slots_dynamic!(strand, 1, |mut out| {
+                let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::UnexpectedPos);
+            });
         });
     }
 
@@ -1289,16 +1287,14 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::Capture);
-            strand
-                .with_slots_dynamic(1, async |strand, mut out| {
-                    // `unpack_from` itself only fills the required/optional/key
-                    // slots; the variadic capture slot is filled by the caller
-                    // (see `View::op_unpack`). Here we only assert it doesn't
-                    // error and reports 1 item consumed.
-                    let consumed = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap();
-                    assert_eq!(consumed, 1);
-                })
-                .await;
+            with_slots_dynamic!(strand, 1, |mut out| {
+                // `unpack_from` itself only fills the required/optional/key
+                // slots; the variadic capture slot is filled by the caller
+                // (see `View::op_unpack`). Here we only assert it doesn't
+                // error and reports 1 item consumed.
+                let consumed = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap();
+                assert_eq!(consumed, 1);
+            });
         });
     }
 
@@ -1321,12 +1317,10 @@ mod tests {
                 }],
                 Variadic::NONE,
             );
-            strand
-                .with_slots_dynamic(1, async |strand, mut out| {
-                    let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::MissingKey);
-                })
-                .await;
+            with_slots_dynamic!(strand, 1, |mut out| {
+                let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::MissingKey);
+            });
         });
     }
 
@@ -1352,13 +1346,11 @@ mod tests {
                 }],
                 Variadic::NONE,
             );
-            strand
-                .with_slots_dynamic(1, async |strand, mut out| {
-                    unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap();
-                    let filled = out.at(0).to_i64(strand).unwrap();
-                    assert_eq!(filled, 42);
-                })
-                .await;
+            with_slots_dynamic!(strand, 1, |mut out| {
+                unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap();
+                let filled = out.at(0).to_i64(strand).unwrap();
+                assert_eq!(filled, 42);
+            });
         });
     }
 
@@ -1376,32 +1368,30 @@ mod tests {
             // (2) slices nothing. `start`/`end` are constructed and consumed in the
             // same expression, immediately embedded (by value) into the `Range`,
             // which becomes GC-scanned as soon as it's rooted in `range_slot` below.
-            strand
-                .with_slots(async |strand, [mut range_slot, mut out_slot]| {
-                    let range = range::Range::new(
-                        Value::from_i64(strand, 5),
-                        Value::from_i64(strand, 2),
-                        Value::NIL,
-                    );
-                    strand.builtin_types().range.create_imm(
-                        strand,
-                        range,
-                        Slot::reborrow(&mut range_slot),
-                    );
-                    let range_value: &Value = &range_slot;
-                    index_from(
-                        owner,
-                        &glue,
-                        strand,
-                        range_value,
-                        Slot::reborrow(&mut out_slot),
-                    )
-                    .unwrap();
-                    let out: &Value = &out_slot;
-                    let array = out.downcast_ref(strand.builtin_types().array).unwrap();
-                    assert!(array.read(|array| array.borrow().unwrap().inner.is_empty()));
-                })
-                .await;
+            with_slots!(strand, |mut range_slot, mut out_slot| {
+                let range = range::Range::new(
+                    Value::from_i64(strand, 5),
+                    Value::from_i64(strand, 2),
+                    Value::NIL,
+                );
+                strand.builtin_types().range.create_imm(
+                    strand,
+                    range,
+                    Slot::reborrow(&mut range_slot),
+                );
+                let range_value: &Value = &range_slot;
+                index_from(
+                    owner,
+                    &glue,
+                    strand,
+                    range_value,
+                    Slot::reborrow(&mut out_slot),
+                )
+                .unwrap();
+                let out: &Value = &out_slot;
+                let array = out.downcast_ref(strand.builtin_types().array).unwrap();
+                assert!(array.read(|array| array.borrow().unwrap().inner.is_empty()));
+            });
         });
     }
 }

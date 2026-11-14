@@ -289,7 +289,7 @@ impl<'v> Object<'v> for Env<'v> {
         let me = this.borrow(strand)?;
         let local = me.global.local.get(strand);
         let env = local.replace_env(Rc::new(local::Env::derived(local.env(), vars)));
-        let res = call!(strand, func, out).await;
+        let res = call!(strand, func, out);
         let local = me.global.local.get(strand);
         let _ = local.replace_env(env);
         res

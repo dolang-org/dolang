@@ -846,7 +846,7 @@ pub fn configure_vm<'v>(vm: &mut Builder<'v>) -> State<'v, TestState> {
             async move |strand, args, mut out| {
                 let ([ty, block], [expected_str, msg]) =
                     unpack!(strand, args, 2, 0, str_sym = None, msg = None)?;
-                match call!(strand, &block, &mut out).await {
+                match call!(strand, &block, &mut out) {
                     Ok(()) => {
                         if let Some(msg) = msg {
                             assertion_failed!(

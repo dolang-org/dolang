@@ -25,6 +25,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, TypeObject, View},
     vm::Register,
+    with_interrupt_mask, with_slots,
 };
 use futures_lite::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::io::{AsyncRead as TokioAsyncRead, ReadBuf};
@@ -554,18 +555,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let annex = StreamAnnex { global, format };
             let ty = global.types.decompressor;
             if let Some(block) = block {
-                strand
-                    .with_slots(async |strand, [mut wrapper, mut tmp]| {
-                        ty.create_with_annex(strand, state, annex, &mut wrapper);
-                        let result = call!(strand, block, out, &wrapper).await;
-                        let close_result = strand
-                            .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                                method!(strand, &wrapper, close, &mut tmp).await
-                            })
-                            .await;
-                        result.and(close_result)
-                    })
-                    .await
+                with_slots!(strand, |mut wrapper, mut tmp| {
+                    ty.create_with_annex(strand, state, annex, &mut wrapper);
+                    let result = call!(strand, block, out, &wrapper);
+                    let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
+                        method!(strand, &wrapper, close, &mut tmp)
+                    });
+                    result.and(close_result)
+                })
             } else {
                 ty.create_with_annex(strand, state, annex, out);
                 Ok(())
@@ -585,18 +582,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             let annex = StreamAnnex { global, format };
             let ty = global.types.compressor;
             if let Some(block) = block {
-                strand
-                    .with_slots(async |strand, [mut wrapper, mut tmp]| {
-                        ty.create_with_annex(strand, state, annex, &mut wrapper);
-                        let result = call!(strand, block, out, &wrapper).await;
-                        let close_result = strand
-                            .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                                method!(strand, &wrapper, close, &mut tmp).await
-                            })
-                            .await;
-                        result.and(close_result)
-                    })
-                    .await
+                with_slots!(strand, |mut wrapper, mut tmp| {
+                    ty.create_with_annex(strand, state, annex, &mut wrapper);
+                    let result = call!(strand, block, out, &wrapper);
+                    let close_result = with_interrupt_mask!(strand, InterruptMask::all(), {
+                        method!(strand, &wrapper, close, &mut tmp)
+                    });
+                    result.and(close_result)
+                })
             } else {
                 ty.create_with_annex(strand, state, annex, out);
                 Ok(())

@@ -42,7 +42,8 @@ use crate::{
     sig::{self, UnpackKey, UnpackKeyKind},
     stdlib,
     strand::{
-        Local, LocalKey, LocalRootKey, LocalVtbl, Strand, StrandGroup, StrandInner, StrandRing,
+        Local, LocalKey, LocalRootKey, LocalVtbl, SlotFrame, Strand, StrandGroup, StrandInner,
+        StrandRing,
     },
     sym::{self, Sym},
     unpack,
@@ -881,7 +882,8 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     /// Create a native function with scratch [`Slot`]s for temporary values.
     ///
     /// This is a convenience wrapper around [`ModuleBuilder::function`] that
-    /// automatically calls [`Strand::with_slots`] before invoking your function.
+    /// roots the slots, as [`with_slots!`](crate::with_slots) does, before invoking your
+    /// function.
     ///
     /// ## Example
     ///
@@ -902,9 +904,10 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         + 'v,
     ) -> Self {
         self.function(name, async move |strand, args, out| {
-            strand
-                .with_slots(async |strand, slots| f(strand, args, out, slots).await)
-                .await
+            let frame = SlotFrame::new();
+            // Safety: the scope is dropped before `frame`
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(&mut scope, args, out, slots).await
         })
     }
 
@@ -1538,15 +1541,16 @@ impl<'v> Builder<'v> {
 
     /// Finalize and enter VM with additional scratch [`Slot`]s.
     ///
-    /// Combines [`Builder::enter`] with [`Strand::with_slots`].
+    /// Combines [`Builder::enter`] with [`with_slots!`](crate::with_slots).
     pub async fn enter_with_slots<const N: usize, R>(
         &mut self,
         f: impl for<'a> AsyncFnOnce(&mut Strand<'v, '_>, [Slot<'v, 'a>; N]) -> R,
     ) -> R {
         self.enter(async move |strand| {
-            strand
-                .with_slots(async move |strand, slots| f(strand, slots).await)
-                .await
+            let frame = SlotFrame::new();
+            // Safety: the scope is dropped before `frame`
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(&mut scope, slots).await
         })
         .await
     }

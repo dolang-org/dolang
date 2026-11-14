@@ -7,7 +7,7 @@ use std::{
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, object::Ref, object::TypeBuilder,
-    value::TypeObject,
+    value::TypeObject, with_instance, with_slots,
 };
 
 use crate::{
@@ -270,30 +270,27 @@ impl<'v> Object<'v> for EventIter {
                 return Ok(true);
             }
 
-            let chunk = strand
-                .with_slots(async move |strand, [mut response]| {
-                    let borrow = this.borrow(strand)?;
-                    Output::set(strand, &mut response, Ref::slot::<0>(&borrow));
-                    drop(borrow);
-                    let response =
-                        global.types.response.cast(&response).ok_or_else(|| {
-                            Error::state_error(strand, "invalid response reference")
-                        })?;
+            let chunk = with_slots!(strand, |mut response| {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, &mut response, Ref::slot::<0>(&borrow));
+                drop(borrow);
+                let response = global
+                    .types
+                    .response
+                    .cast(&response)
+                    .ok_or_else(|| Error::state_error(strand, "invalid response reference"))?;
 
-                    response
-                        .enter(strand, async move |strand, response| {
-                            let mut response_borrow = response.borrow_mut(strand)?;
-                            let body = response_borrow
-                                .inner
-                                .as_mut()
-                                .ok_or_else(|| Error::state_error(strand, "closed"))?
-                                .body(strand)?;
+                with_instance!(strand, response, |response| {
+                    let mut response_borrow = response.borrow_mut(strand)?;
+                    let body = response_borrow
+                        .inner
+                        .as_mut()
+                        .ok_or_else(|| Error::state_error(strand, "closed"))?
+                        .body(strand)?;
 
-                            chunk(body).await.into_http(strand)
-                        })
-                        .await
+                    chunk(body).await.into_http(strand)
                 })
-                .await?;
+            })?;
 
             match chunk {
                 Some(chunk) => {

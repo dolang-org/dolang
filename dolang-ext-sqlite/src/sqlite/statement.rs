@@ -13,6 +13,7 @@ use dolang::runtime::{
     object::TypeBuilder,
     unpack,
     value::{View, fmt::Spec},
+    with_instance,
 };
 use libsqlite3_sys::{
     SQLITE_DONE, SQLITE_OK, SQLITE_ROW, SQLITE_TRANSIENT, sqlite3_bind_blob, sqlite3_bind_double,
@@ -200,13 +201,10 @@ impl<'v> Object<'v> for Statement {
                     let mut borrow = this.borrow_mut(strand)?;
 
                     Output::set(strand, &mut conn, Mut::slot::<0>(&borrow));
-                    let affected = annex
-                        .global
-                        .types
-                        .connection
-                        .cast(&conn)
-                        .unwrap()
-                        .enter(strand, async move |strand, conn| {
+                    let affected = with_instance!(
+                        strand,
+                        annex.global.types.connection.cast(&conn).unwrap(),
+                        |conn| {
                             if conn.annex().raw.get().is_null() {
                                 return Err(Error::state_error(strand, "connection closed"));
                             }
@@ -241,8 +239,8 @@ impl<'v> Object<'v> for Statement {
                                         .await
                                 })
                                 .await
-                        })
-                        .await?;
+                        }
+                    )?;
 
                     if affected < 0 {
                         return Err(Error::runtime(strand, "execution failed"));

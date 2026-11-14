@@ -16,6 +16,7 @@ use crate::{
     unpack,
     value::{BinEmbryo, Nil, Output, Slot, Slots, Value, view::PinBin},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -61,20 +62,18 @@ async fn value_to_pattern<'v, 's>(
         ));
     }
 
-    strand
-        .with_slots(async move |strand, [mut input, mut elem]| {
-            let mut acc = Vec::new();
-            value.iter(strand, &mut input).await?;
-            while input.next(strand, &mut elem).await? {
-                let bin = elem
-                    .as_bin(strand)
-                    .ok_or_else(|| Error::type_error(strand, "invalid pattern: not binary data"))?;
-                acc.extend_from_slice(&bin.to_vec());
-                strand.check_trap_gc()?;
-            }
-            Ok(acc)
-        })
-        .await
+    with_slots!(strand, |mut input, mut elem| {
+        let mut acc = Vec::new();
+        value.iter(strand, &mut input).await?;
+        while input.next(strand, &mut elem).await? {
+            let bin = elem
+                .as_bin(strand)
+                .ok_or_else(|| Error::type_error(strand, "invalid pattern: not binary data"))?;
+            acc.extend_from_slice(&bin.to_vec());
+            strand.check_trap_gc()?;
+        }
+        Ok(acc)
+    })
 }
 
 fn trim_start_bytes<'a>(me: &'a [u8], pattern: &[u8]) -> &'a [u8] {
@@ -393,33 +392,31 @@ impl<'v> Protocol<'v> for BinObj {
             }
             sym::JOIN => {
                 let ([], [arg]) = unpack!(strand, args, 0, 1)?;
-                strand
-                    .with_slots(async move |strand, [mut input, mut value]| {
-                        if let Some(arg) = arg {
-                            arg.iter(strand, &mut input).await?
-                        } else {
-                            strand.input(&mut input)
-                        }
-                        let mut acc = BinEmbryo::new();
-                        if input.next(strand, &mut value).await? {
-                            value
-                                .with_u8_slice(strand, |strand, slice| acc.extend(strand, slice))
-                                .ok_or_else(|| {
-                                    Error::type_error(strand, "element was not binary data")
-                                })?;
-                        }
-                        while input.next(strand, &mut value).await? {
-                            acc.extend(strand, this.bytes());
-                            value
-                                .with_u8_slice(strand, |strand, slice| acc.extend(strand, slice))
-                                .ok_or_else(|| {
-                                    Error::type_error(strand, "element was not binary data")
-                                })?;
-                        }
-                        acc.finish(strand, out);
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut input, mut value| {
+                    if let Some(arg) = arg {
+                        arg.iter(strand, &mut input).await?
+                    } else {
+                        strand.input(&mut input)
+                    }
+                    let mut acc = BinEmbryo::new();
+                    if input.next(strand, &mut value).await? {
+                        value
+                            .with_u8_slice(strand, |strand, slice| acc.extend(strand, slice))
+                            .ok_or_else(|| {
+                                Error::type_error(strand, "element was not binary data")
+                            })?;
+                    }
+                    while input.next(strand, &mut value).await? {
+                        acc.extend(strand, this.bytes());
+                        value
+                            .with_u8_slice(strand, |strand, slice| acc.extend(strand, slice))
+                            .ok_or_else(|| {
+                                Error::type_error(strand, "element was not binary data")
+                            })?;
+                    }
+                    acc.finish(strand, out);
+                    Ok(())
+                })
             }
             sym::CHOMP => {
                 let me = this.bytes();
@@ -930,22 +927,19 @@ impl<'v> Protocol<'v> for Class {
             }
             sym::PACK => {
                 let ([obj], []) = unpack!(strand, args, 1, 0)?;
-                strand
-                    .with_slots(async move |strand, [mut iter, mut value]| {
-                        let mut acc = Vec::new();
-                        obj.iter(strand, &mut iter).await?;
-                        while iter.next(strand, &mut value).await? {
-                            let value = value
-                                .to_i64(strand)
-                                .map_err(|_| Error::type_error(strand, "non-integer element"))?;
-                            let value: u8 =
-                                value.try_into().map_err(|_| Error::overflow(strand))?;
-                            acc.push(value);
-                        }
-                        Output::set(strand, out, acc.as_slice());
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut iter, mut value| {
+                    let mut acc = Vec::new();
+                    obj.iter(strand, &mut iter).await?;
+                    while iter.next(strand, &mut value).await? {
+                        let value = value
+                            .to_i64(strand)
+                            .map_err(|_| Error::type_error(strand, "non-integer element"))?;
+                        let value: u8 = value.try_into().map_err(|_| Error::overflow(strand))?;
+                        acc.push(value);
+                    }
+                    Output::set(strand, out, acc.as_slice());
+                    Ok(())
+                })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().bin, method, args, out).await,
         }

@@ -19,12 +19,14 @@ use crate::{
         record::Record,
         tuple,
     },
+    redirect,
     sig::{self, Pack},
     strand::{InterruptMask, Redirect, Strand},
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell},
     vm::{ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
+    with_interrupt_mask, with_slots, with_str,
 };
 use dolang_bytecode::{Opcode, builtin};
 
@@ -125,10 +127,12 @@ impl<'v> Vm<'v> {
         name: &str,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Redirect::new(strand)
-            .input(Singleton::Null)
-            .output(Singleton::Null)
-            .enter(async move |strand| {
+        redirect!(
+            strand,
+            Redirect::new(strand)
+                .input(Singleton::Null)
+                .output(Singleton::Null),
+            {
                 let mut module = self.native_modules.borrow().get(name).map(Value::dup);
                 if module.is_none() {
                     let unit = self.lazy.borrow().by_module.get(name).copied();
@@ -181,7 +185,7 @@ impl<'v> Vm<'v> {
                     );
                 }
                 for importer in self.importers.iter() {
-                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name).await {
+                    if let Err(e) = call!(strand, importer, Slot::reborrow(&mut out), name) {
                         if e.kind() == ErrorKind::Import {
                             err = e;
                             continue;
@@ -196,8 +200,8 @@ impl<'v> Vm<'v> {
                 }
                 self.import_cache.borrow_mut().remove(name);
                 Err(err)
-            })
-            .await
+            }
+        )
     }
 
     #[inline(never)]
@@ -208,10 +212,12 @@ impl<'v> Vm<'v> {
         importer: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Redirect::new(strand)
-            .input(Singleton::Null)
-            .output(Singleton::Null)
-            .enter(async move |strand| {
+        redirect!(
+            strand,
+            Redirect::new(strand)
+                .input(Singleton::Null)
+                .output(Singleton::Null),
+            {
                 enum Mode {
                     Get,
                     Insert,
@@ -229,59 +235,53 @@ impl<'v> Vm<'v> {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "import must be a string"))?;
                 // Pinned across the import, which runs arbitrary code
-                name.with_str_async(strand, async |strand, name| {
+                with_str!(strand, name, |name| {
                     let components: Vec<_> = name.split('.').collect();
-                    strand
-                        .with_slots(async move |strand, [mut raw]| {
-                            if importer.is_nil() {
-                                self.import_raw(strand, name, Slot::reborrow(&mut raw))
-                                    .await?
-                            } else {
-                                call!(strand, importer, Slot::reborrow(&mut raw), name).await?
-                            }
-                            match mode {
-                                Mode::Get => Slot::set(strand, out, raw),
-                                Mode::Insert => {
-                                    let root = args
-                                        .next()
-                                        .ok_or_else(|| Error::missing_positional(strand, 0))?;
-                                    let root = match root {
-                                        Arg::Pos(slot) => slot,
-                                        Arg::Key(sym, _) => {
-                                            return Err(Error::unexpected_key(strand, sym));
-                                        }
-                                    };
-                                    let ns = root
-                                        .downcast_ref(strand.builtin_types().namespace)
-                                        .ok_or_else(|| {
-                                            Error::type_error(
-                                                strand,
-                                                "import root must be a namespace",
-                                            )
-                                        })?;
-                                    ns.pin_sync(strand, |strand, ns| {
-                                        ns.borrow_mut()
-                                            .ok_or_else(|| Error::concurrency(strand))?
-                                            .insert(strand, components.get(1..).unwrap_or(&[]), raw)
+                    with_slots!(strand, |mut raw| {
+                        if importer.is_nil() {
+                            self.import_raw(strand, name, Slot::reborrow(&mut raw))
+                                .await?
+                        } else {
+                            call!(strand, importer, Slot::reborrow(&mut raw), name)?
+                        }
+                        match mode {
+                            Mode::Get => Slot::set(strand, out, raw),
+                            Mode::Insert => {
+                                let root = args
+                                    .next()
+                                    .ok_or_else(|| Error::missing_positional(strand, 0))?;
+                                let root = match root {
+                                    Arg::Pos(slot) => slot,
+                                    Arg::Key(sym, _) => {
+                                        return Err(Error::unexpected_key(strand, sym));
+                                    }
+                                };
+                                let ns = root
+                                    .downcast_ref(strand.builtin_types().namespace)
+                                    .ok_or_else(|| {
+                                        Error::type_error(strand, "import root must be a namespace")
                                     })?;
-                                }
-                                Mode::Module => {
-                                    let mut ns = Namespace::new(strand);
-                                    ns.insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
-                                    strand
-                                        .vm()
-                                        .builtin_types()
-                                        .namespace
-                                        .create(strand, ns, out);
-                                }
+                                ns.pin_sync(strand, |strand, ns| {
+                                    ns.borrow_mut()
+                                        .ok_or_else(|| Error::concurrency(strand))?
+                                        .insert(strand, components.get(1..).unwrap_or(&[]), raw)
+                                })?;
                             }
-                            Ok(())
-                        })
-                        .await
+                            Mode::Module => {
+                                let mut ns = Namespace::new(strand);
+                                ns.insert(strand, components.get(1..).unwrap_or(&[]), raw)?;
+                                strand
+                                    .vm()
+                                    .builtin_types()
+                                    .namespace
+                                    .create(strand, ns, out);
+                            }
+                        }
+                        Ok(())
+                    })
                 })
-                .await
-            })
-            .await
+            }
+        )
     }
 
     async fn array<'a, 's>(
@@ -525,81 +525,77 @@ impl<'v> Vm<'v> {
             }
             _ => return Err(Error::runtime(strand, "guard: invalid argument count")),
         };
-        strand
-            .with_slots(async |strand, [mut tmp]| {
-                // 1. Call body
-                let mut status = call!(strand, &body, &mut out).await;
+        with_slots!(strand, |mut tmp| {
+            // 1. Call body
+            let mut status = call!(strand, &body, &mut out);
 
-                // 2. On catchable error, try handlers
-                status = match status {
-                    Ok(()) => Ok(()),
-                    Err(mut err) if err.catchable() => {
-                        err.get_value(strand, &mut tmp);
-                        // Handlers see the error being handled.  Its slot stays
-                        // put while `cause` moves, and `cause` outlives the call.
-                        let slot = err.slot(strand);
+            // 2. On catchable error, try handlers
+            status = match status {
+                Ok(()) => Ok(()),
+                Err(mut err) if err.catchable() => {
+                    err.get_value(strand, &mut tmp);
+                    // Handlers see the error being handled.  Its slot stays
+                    // put while `cause` moves, and `cause` outlives the call.
+                    let slot = err.slot(strand);
 
-                        let mut cause = Some(err);
-                        let res = loop {
-                            let (ty, handler) = match (args.next(), args.next()) {
-                                (None, None) => {
-                                    break if !catch_all.is_nil() {
-                                        let _focus = strand.inner.focus_error(slot);
-                                        call!(strand, &catch_all, &mut out, &tmp).await
-                                    } else {
-                                        Err(cause.take().unwrap())
-                                    };
-                                }
-                                (Some(Arg::Pos(c)), Some(Arg::Pos(h))) => (c, h),
-                                _ => {
-                                    return Err(Error::runtime(
-                                        strand,
-                                        "guard: invalid argument count",
-                                    ));
-                                }
-                            };
-                            if tmp.is_instance_of(strand, &ty) {
-                                let _focus = strand.inner.focus_error(slot);
-                                break call!(strand, &handler, &mut out, &tmp).await;
+                    let mut cause = Some(err);
+                    let res = loop {
+                        let (ty, handler) = match (args.next(), args.next()) {
+                            (None, None) => {
+                                break if !catch_all.is_nil() {
+                                    let _focus = strand.inner.focus_error(slot);
+                                    call!(strand, &catch_all, &mut out, &tmp)
+                                } else {
+                                    Err(cause.take().unwrap())
+                                };
+                            }
+                            (Some(Arg::Pos(c)), Some(Arg::Pos(h))) => (c, h),
+                            _ => {
+                                return Err(Error::runtime(
+                                    strand,
+                                    "guard: invalid argument count",
+                                ));
                             }
                         };
-
-                        if let Err(err2) = res {
-                            if let Some(cause) = cause {
-                                Err(err2.caused_by(strand, cause))
-                            } else {
-                                Err(err2)
-                            }
-                        } else {
-                            res
+                        if tmp.is_instance_of(strand, &ty) {
+                            let _focus = strand.inner.focus_error(slot);
+                            break call!(strand, &handler, &mut out, &tmp);
                         }
-                    }
-                    err => err,
-                };
-
-                // 3. Run finally under cancel mask.  It sees the error that
-                // will propagate from it, or else whatever an enclosing
-                // `guard` is handling.
-                if !finally.is_nil() {
-                    let slot = match &mut status {
-                        Err(err) if err.catchable() => err.slot(strand),
-                        _ => strand.inner.focused_slot(),
                     };
-                    let _focus = strand.inner.focus_error(slot);
-                    let finally_status = strand
-                        .with_interrupt_mask(InterruptMask::all(), async |strand| {
-                            call!(strand, &finally, &mut tmp).await
-                        })
-                        .await;
-                    match (status, finally_status) {
-                        (Ok(()), Ok(())) => Ok(()),
-                        (Err(e), Ok(())) | (_, Err(e)) => Err(e),
+
+                    if let Err(err2) = res {
+                        if let Some(cause) = cause {
+                            Err(err2.caused_by(strand, cause))
+                        } else {
+                            Err(err2)
+                        }
+                    } else {
+                        res
                     }
-                } else {
-                    status
                 }
-            })
-            .await
+                err => err,
+            };
+
+            // 3. Run finally under cancel mask.  It sees the error that
+            // will propagate from it, or else whatever an enclosing
+            // `guard` is handling.
+            if !finally.is_nil() {
+                let slot = match &mut status {
+                    Err(err) if err.catchable() => err.slot(strand),
+                    _ => strand.inner.focused_slot(),
+                };
+                let _focus = strand.inner.focus_error(slot);
+                let finally_status = with_interrupt_mask!(strand, InterruptMask::all(), {
+                    call!(strand, &finally, &mut tmp)
+                });
+                match (status, finally_status) {
+                    (Ok(()), Ok(())) => Ok(()),
+                    (Err(e), Ok(())) | (_, Err(e)) => Err(e),
+                }
+            } else {
+                status
+            }
+        })
     }
 
     pub(crate) fn check_trap<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
@@ -1273,20 +1269,21 @@ impl<'v> Vm<'v> {
         let mut reader = UnsafeInstDecoder::new(
             &loaded.bytecode()[loaded.funcs()[frame.func].0.bytecode.clone()],
         );
-        // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame
-        unsafe {
-            Strand::async_for_frame(strand, frame, async |strand| {
-                loop {
-                    match self.step(strand, frame, &mut reader).await? {
-                        Status::Ret(value) => {
-                            out.store(value);
-                            break Ok(());
-                        }
-                        Status::Running => (),
-                    }
+        // SAFETY: `frame` is a live Do frame whose parent is `strand`'s frame, and the scope
+        // is a local that is dropped before `frame`
+        let mut scope = unsafe { strand.enter_do_frame(frame) }?;
+        let res = loop {
+            // SAFETY: `frame` is live and verified, and `reader` decodes its function from
+            // the start, one instruction per step
+            match unsafe { self.step(&mut scope, frame, &mut reader) }.await {
+                Ok(Status::Ret(value)) => {
+                    out.store(value);
+                    break Ok(());
                 }
-            })
-            .await
-        }
+                Ok(Status::Running) => (),
+                Err(e) => break Err(e),
+            }
+        };
+        scope.finish(res)
     }
 }

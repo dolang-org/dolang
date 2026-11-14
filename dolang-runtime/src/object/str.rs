@@ -21,6 +21,7 @@ use crate::{
     unpack,
     value::{Nil, Output, Slot, Slots, StrEmbryo, Value, view::PinStr},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -62,20 +63,18 @@ async fn value_to_pattern<'v, 's>(
         return Err(Error::type_error(strand, "invalid pattern: not a string"));
     }
 
-    strand
-        .with_slots(async move |strand, [mut input, mut elem]| {
-            let mut acc = Vec::new();
-            value.iter(strand, &mut input).await?;
-            while input.next(strand, &mut elem).await? {
-                let str = elem
-                    .as_str(strand)
-                    .ok_or_else(|| Error::type_error(strand, "invalid pattern: not a string"))?;
-                acc.extend(String::from(str).chars());
-                strand.check_trap_gc()?;
-            }
-            Ok(acc)
-        })
-        .await
+    with_slots!(strand, |mut input, mut elem| {
+        let mut acc = Vec::new();
+        value.iter(strand, &mut input).await?;
+        while input.next(strand, &mut elem).await? {
+            let str = elem
+                .as_str(strand)
+                .ok_or_else(|| Error::type_error(strand, "invalid pattern: not a string"))?;
+            acc.extend(String::from(str).chars());
+            strand.check_trap_gc()?;
+        }
+        Ok(acc)
+    })
 }
 
 impl<'v, 'a> Recv<'v, 'a, StrObj> {
@@ -351,26 +350,24 @@ impl<'v> Protocol<'v> for StrObj {
             }
             sym::JOIN => {
                 let ([], [arg]) = unpack!(strand, args, 0, 1)?;
-                strand
-                    .with_slots(async move |strand, [mut input, mut value]| {
-                        if let Some(arg) = arg {
-                            arg.iter(strand, &mut input).await?
-                        } else {
-                            strand.input(&mut input)
-                        }
-                        let mut acc = StrEmbryo::new();
-                        if input.next(strand, &mut value).await? {
-                            value.op_display(strand, &mut acc)?;
-                        }
-                        while input.next(strand, &mut value).await? {
-                            acc.extend(strand, this.str());
-                            value.op_display(strand, &mut acc)?;
-                            strand.check_trap_gc()?;
-                        }
-                        acc.finish(strand, out);
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut input, mut value| {
+                    if let Some(arg) = arg {
+                        arg.iter(strand, &mut input).await?
+                    } else {
+                        strand.input(&mut input)
+                    }
+                    let mut acc = StrEmbryo::new();
+                    if input.next(strand, &mut value).await? {
+                        value.op_display(strand, &mut acc)?;
+                    }
+                    while input.next(strand, &mut value).await? {
+                        acc.extend(strand, this.str());
+                        value.op_display(strand, &mut acc)?;
+                        strand.check_trap_gc()?;
+                    }
+                    acc.finish(strand, out);
+                    Ok(())
+                })
             }
             sym::CHOMP => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;

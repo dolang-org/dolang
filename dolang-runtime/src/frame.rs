@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     marker::PhantomData,
     ops::ControlFlow,
-    ptr::NonNull,
+    ptr::{self, NonNull},
 };
 
 use bitvec::{array::BitArray, bitbox, slice::BitSlice};
@@ -252,11 +252,11 @@ pub(crate) struct Native<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
 }
 
-/// A rooting frame: native-held GC references visited by a closure.
+/// A rooting frame: native-held GC references visited by a closure or held in cells.
 ///
-/// [`Strand::with_scan`](crate::strand::Strand::with_scan) pushes one around a
-/// call; [`Strand::scan_stack`](crate::strand::StrandInner::scan_stack) runs the
-/// closure, and backtraces skip the frame.
+/// [`Strand::enter_scan`](crate::strand::Strand::enter_scan) pushes one;
+/// [`Strand::scan_stack`](crate::strand::StrandInner::scan_stack) visits it, and
+/// backtraces skip it.
 pub(crate) struct Scan<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
     data: *const (),
@@ -285,11 +285,51 @@ impl<'v> Scan<'v> {
         }
     }
 
+    /// A frame that visits each of `cells`.
+    ///
+    /// The frame borrows `cells` without a lifetime, as [`Self::new`] borrows its
+    /// closure.
+    pub(crate) fn cells<const N: usize>(
+        parent: Option<Ptr<'v>>,
+        cells: &[ValueCell<'v>; N],
+    ) -> Self {
+        unsafe fn glue<const N: usize>(
+            data: *const (),
+            visitor: &mut dyn Visit,
+        ) -> ControlFlow<()> {
+            let cells = unsafe { &*data.cast::<[ValueCell<'_>; N]>() };
+            cells.iter().try_for_each(|cell| cell.accept(visitor))
+        }
+        Scan {
+            parent,
+            data: ptr::from_ref(cells).cast(),
+            visit: glue::<N>,
+        }
+    }
+
+    /// A frame that visits each of `cells`, as [`Self::cells`] does.
+    #[allow(
+        clippy::ptr_arg,
+        reason = "the frame keeps the `Vec`'s address, not the slice's"
+    )]
+    pub(crate) fn cell_vec(parent: Option<Ptr<'v>>, cells: &Vec<ValueCell<'v>>) -> Self {
+        unsafe fn glue(data: *const (), visitor: &mut dyn Visit) -> ControlFlow<()> {
+            let cells = unsafe { &*data.cast::<Vec<ValueCell<'_>>>() };
+            cells.iter().try_for_each(|cell| cell.accept(visitor))
+        }
+        Scan {
+            parent,
+            data: ptr::from_ref(cells).cast(),
+            visit: glue,
+        }
+    }
+
     /// Visit the frame's roots.
     ///
     /// # Safety
     ///
-    /// The closure passed to [`Self::new`] must still be live.
+    /// The closure or cells passed to [`Self::new`], [`Self::cells`] or [`Self::cell_vec`]
+    /// must still be live.
     pub(crate) unsafe fn scan(&self, visitor: &mut dyn Visit) -> ControlFlow<()> {
         unsafe { (self.visit)(self.data, visitor) }
     }

@@ -18,6 +18,7 @@ use crate::{
     unpack,
     value::{Output, Slot, Slots, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -292,12 +293,10 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let Some(callee) = callee else {
             return Err(Error::field(strand, method));
         };
-        strand
-            .with_slots(async |strand, [mut slot]| {
-                slot.store(callee);
-                slot.call(strand, args, out).await
-            })
-            .await
+        with_slots!(strand, |mut slot| {
+            slot.store(callee);
+            slot.call(strand, args, out).await
+        })
     }
 
     async fn op_iter<'a, 's>(
@@ -408,13 +407,11 @@ impl<'v> Protocol<'v> for Class {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
-                strand
-                    .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().structure, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().structure, native.take())?;
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut native| {
+                    call!(strand, &strand.singletons().structure, &mut native, items)?;
+                    self_val.op_fill(strand, &strand.singletons().structure, native.take())?;
+                    Ok(())
+                })
             }
             sym::GET => {
                 let default = Sym::well_known(sym::DEFAULT);
@@ -437,7 +434,7 @@ impl<'v> Protocol<'v> for Class {
                     out.store(default.take());
                     Ok(())
                 } else if let Some(or_else) = or_else {
-                    call!(strand, or_else, out).await
+                    call!(strand, or_else, out)
                 } else {
                     out.store(Value::NIL);
                     Ok(())

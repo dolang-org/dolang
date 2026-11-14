@@ -6,7 +6,10 @@ use dolang_vfs::{
 };
 use futures::{
     future::MaybeDone,
-    io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, BufReader},
+    io::{
+        AsyncBufReadExt as _, AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _,
+        BufReader,
+    },
 };
 
 use dolang::runtime::object::fmt;
@@ -20,6 +23,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, Singleton, TypeObject},
     vm::Register,
+    with_interrupt_mask, with_slots,
 };
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{process::ProcessControl, target::OperatingSystem};
@@ -217,23 +221,19 @@ async fn cleanup_io<'v, 's>(
     value: Streams<&Value<'v>>,
     temp: Streams<bool>,
 ) {
-    strand
-        .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-            strand
-                .with_slots(async move |strand, [mut tmp]| {
-                    for (temp, value) in [
-                        (temp.stdin, value.stdin),
-                        (temp.stdout, value.stdout),
-                        (temp.stderr, value.stderr),
-                    ] {
-                        if temp {
-                            let _ = method!(strand, value, global.syms.close, &mut tmp).await;
-                        }
-                    }
-                })
-                .await
+    with_interrupt_mask!(strand, InterruptMask::all(), {
+        with_slots!(strand, |mut tmp| {
+            for (temp, value) in [
+                (temp.stdin, value.stdin),
+                (temp.stdout, value.stdout),
+                (temp.stderr, value.stderr),
+            ] {
+                if temp {
+                    let _ = method!(strand, value, global.syms.close, &mut tmp);
+                }
+            }
         })
-        .await
+    })
 }
 
 /// How [`run`] linked one standard stream to the child.
@@ -378,13 +378,11 @@ async fn make_iter<'v, 's>(
     strand: &mut Strand<'v, 's>,
     slot: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async |strand, [mut iter]| {
-            slot.iter(strand, Slot::reborrow(&mut iter)).await?;
-            Output::set(strand, slot, &*iter);
-            Ok(())
-        })
-        .await
+    with_slots!(strand, |mut iter| {
+        slot.iter(strand, Slot::reborrow(&mut iter)).await?;
+        Output::set(strand, slot, &*iter);
+        Ok(())
+    })
 }
 
 /// Replaces `slot`'s value with its sink.
@@ -392,13 +390,11 @@ async fn make_sink<'v, 's>(
     strand: &mut Strand<'v, 's>,
     slot: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async |strand, [mut sink]| {
-            slot.sink(strand, Slot::reborrow(&mut sink)).await?;
-            Output::set(strand, slot, &*sink);
-            Ok(())
-        })
-        .await
+    with_slots!(strand, |mut sink| {
+        slot.sink(strand, Slot::reborrow(&mut sink)).await?;
+        Output::set(strand, slot, &*sink);
+        Ok(())
+    })
 }
 
 /// Connects the child's stdin to `input`.
@@ -578,15 +574,13 @@ async fn input_pump<'v, 's, W>(
 where
     W: AsyncWrite + Unpin,
 {
-    strand
-        .with_slots(async move |strand, [mut inval]| {
-            while input.next(strand, &mut inval).await? {
-                let bytes = encode_value(strand, &inval)?;
-                writer.write_all(&bytes).await.into_sys(strand)?;
-            }
-            Ok(())
-        })
-        .await
+    with_slots!(strand, |mut inval| {
+        while input.next(strand, &mut inval).await? {
+            let bytes = encode_value(strand, &inval)?;
+            writer.write_all(&bytes).await.into_sys(strand)?;
+        }
+        Ok(())
+    })
 }
 
 /// Where a child's output is being pumped.
@@ -613,17 +607,20 @@ enum PumpTarget<'v, 'a> {
 /// rather than held for the child's entire lifetime. Terminal owners already
 /// cope with arbitrary chunk boundaries — the progress writer buffers a partial
 /// line and coalesces it with the next newline.
-async fn console_pump<'v, 's, R>(strand: &mut Strand<'v, 's>, mut reader: R) -> Result<'v, 's, ()>
+async fn console_pump<'v, 's, R>(strand: &mut Strand<'v, 's>, reader: R) -> Result<'v, 's, ()>
 where
     R: AsyncRead + Unpin,
 {
-    let mut buf = [0u8; 8192];
+    // Read through a heap buffer, keeping none in the future
+    let mut reader = BufReader::new(reader);
     loop {
-        let read = reader.read(&mut buf).await.into_sys(strand)?;
-        if read == 0 {
+        let buf = reader.fill_buf().await.into_sys(strand)?;
+        if buf.is_empty() {
             break;
         }
-        dolang_ext_term::write(strand, &buf[..read]).await?;
+        let read = buf.len();
+        dolang_ext_term::write(strand, buf).await?;
+        reader.consume_unpin(read);
     }
     Ok(())
 }
@@ -647,18 +644,16 @@ where
             Ok(())
         });
     }
-    strand
-        .with_slots(async move |strand, [mut outval]| {
-            let mut reader = BufReader::new(reader);
-            while read_value(&mut reader, io_mode, strand, &mut outval)
-                .await
-                .into_sys(strand)?
-            {
-                output.put(strand, &mut outval).await?;
-            }
-            Ok(())
-        })
-        .await
+    with_slots!(strand, |mut outval| {
+        let mut reader = BufReader::new(reader);
+        while read_value(&mut reader, io_mode, strand, &mut outval)
+            .await
+            .into_sys(strand)?
+        {
+            output.put(strand, &mut outval).await?;
+        }
+        Ok(())
+    })
 }
 
 /// The parent ends of whatever pipes `run` created for the child, with what
@@ -906,11 +901,7 @@ async fn run<'v, 's>(
     };
 
     if res.is_err() {
-        let _ = strand
-            .with_interrupt_mask(InterruptMask::all(), async move |_strand| {
-                proc.terminate().await
-            })
-            .await;
+        let _ = with_interrupt_mask!(strand, InterruptMask::all(), proc.terminate().await);
     }
 
     res
@@ -922,45 +913,43 @@ async fn dispatch_run<'v, 's>(
     args: Args<'v, '_>,
     global: State<'v, ProcGlobal<'v>>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut input, mut output, mut stderr]| {
-            let resolved = resolve_io(
-                strand,
-                global,
-                args,
-                Slot::reborrow(&mut input),
-                Slot::reborrow(&mut output),
-                Slot::reborrow(&mut stderr),
-            )
-            .await?;
+    with_slots!(strand, |mut input, mut output, mut stderr| {
+        let resolved = resolve_io(
+            strand,
+            global,
+            args,
+            Slot::reborrow(&mut input),
+            Slot::reborrow(&mut output),
+            Slot::reborrow(&mut stderr),
+        )
+        .await?;
 
-            let res = run(
-                strand,
-                name,
-                resolved.args,
-                global,
-                RunIo {
-                    streams: Streams {
-                        stdin: Slot::reborrow(&mut input),
-                        stdout: Slot::reborrow(&mut output),
-                        stderr: Slot::reborrow(&mut stderr),
-                    },
-                    explicit: resolved.explicit,
-                    policy_override: resolved.policy,
-                    mode: resolved.mode,
+        let res = run(
+            strand,
+            name,
+            resolved.args,
+            global,
+            RunIo {
+                streams: Streams {
+                    stdin: Slot::reborrow(&mut input),
+                    stdout: Slot::reborrow(&mut output),
+                    stderr: Slot::reborrow(&mut stderr),
                 },
-            )
-            .await;
-            // A file `run` opened is never replaced by an iterator or sink.
-            let value = Streams {
-                stdin: &*input,
-                stdout: &*output,
-                stderr: &*stderr,
-            };
-            cleanup_io(strand, global, value, resolved.temp).await;
-            res
-        })
-        .await
+                explicit: resolved.explicit,
+                policy_override: resolved.policy,
+                mode: resolved.mode,
+            },
+        )
+        .await;
+        // A file `run` opened is never replaced by an iterator or sink.
+        let value = Streams {
+            stdin: &*input,
+            stdout: &*output,
+            stderr: &*stderr,
+        };
+        cleanup_io(strand, global, value, resolved.temp).await;
+        res
+    })
 }
 
 impl<'v> Object<'v> for Program {

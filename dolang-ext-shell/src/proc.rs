@@ -257,7 +257,7 @@ pub(crate) fn configure_vm<'v>(
                 force.as_deref(),
             )?;
             global.local.get(strand).replace_termination_policy(policy);
-            let result = call!(strand, func, out).await;
+            let result = call!(strand, func, out);
             global
                 .local
                 .get(strand)

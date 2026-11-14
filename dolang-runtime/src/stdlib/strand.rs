@@ -22,12 +22,15 @@ use crate::{
         strand::{StrandInfo, StrandRef, Stream, StreamIter, StreamSink},
         tuple,
     },
+    redirect,
     strand::{
-        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect, Strand,
+        InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Redirect,
+        Strand, with_slots_dynamic,
     },
     unpack,
     value::{Output, Singleton, Slot, Value},
     vm::{AllocExt, Builder, State, StateTag},
+    with_interrupt_mask, with_slots,
 };
 
 /// Creates a channel pair using the VM's registered factory if set,
@@ -362,7 +365,7 @@ impl<'v> Object<'v> for Key {
                     let dict = root.as_dict(strand).expect("strand local store is a dict");
                     dict.insert(strand, &key, &mut value, true)?;
 
-                    let result = call!(strand, block, out).await;
+                    let result = call!(strand, block, out);
 
                     let root = unique_local_root(state, strand)?;
                     let dict = root.as_dict(strand).expect("strand local store is a dict");
@@ -429,7 +432,7 @@ async fn resource_with<'v, 's>(
 
     if state.resource.get(strand).inherited.contains(&resource.id) {
         return strand
-            .interrupt_guard(async move |strand| call!(strand, block, out).await)
+            .interrupt_guard(async move |strand| call!(strand, block, out))
             .await;
     }
 
@@ -464,7 +467,7 @@ async fn resource_with<'v, 's>(
     }
 
     let result = strand
-        .interrupt_guard(async move |strand| call!(strand, block, out).await)
+        .interrupt_guard(async move |strand| call!(strand, block, out))
         .await;
 
     let mut held = state.resource.get(strand).held.borrow_mut();
@@ -489,60 +492,56 @@ async fn map_workers<'v, 's>(
     disconnect_input: bool,
     disconnect_output: bool,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-            let mut redirect = Redirect::new(strand);
-            if disconnect_input {
-                redirect = redirect.input(Singleton::Null);
-            }
-            if disconnect_output {
-                redirect = redirect.output(Singleton::Null);
-            }
-            redirect
-                .enter(async move |strand| {
-                    let mut strands = Vec::with_capacity(count);
-                    let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                    for _ in 0..count {
-                        strands.push(strand.spawn_scoped(
-                            Some(interrupt.clone()),
-                            async move |strand| {
-                                let result = strand
-                                    .with_slots(async move |strand, [mut item, mut mapped]| {
-                                        while input.next(strand, &mut item).await? {
-                                            call!(strand, block, &mut mapped, &item).await?;
-                                            output.put(strand, &mut mapped).await?;
-                                            strand.check_trap_gc()?;
-                                        }
-                                        Ok(())
-                                    })
-                                    .await;
-                                if result.is_err() {
-                                    strand.interrupt_token().cancel();
+    with_interrupt_mask!(strand, InterruptMask::all(), {
+        let mut redirect = Redirect::new(strand);
+        if disconnect_input {
+            redirect = redirect.input(Singleton::Null);
+        }
+        if disconnect_output {
+            redirect = redirect.output(Singleton::Null);
+        }
+        redirect!(strand, redirect, {
+            let mut strands = Vec::with_capacity(count);
+            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+            for _ in 0..count {
+                strands.push(
+                    strand.spawn_scoped(Some(interrupt.clone()), async move |strand| {
+                        let result = async {
+                            with_slots!(strand, |mut item, mut mapped| {
+                                while input.next(strand, &mut item).await? {
+                                    call!(strand, block, &mut mapped, &item)?;
+                                    output.put(strand, &mut mapped).await?;
+                                    strand.check_trap_gc()?;
                                 }
-                                result
-                            },
-                        ));
-                    }
-                    let mut first_err: Option<Error<'v, '_>> = None;
-                    for result in join_all(strands).await {
-                        if let Err(error) = result
-                            && first_err.as_ref().is_none_or(|previous| {
-                                previous.kind() == ErrorKind::Canceled
-                                    && error.kind() != ErrorKind::Canceled
+                                Ok(())
                             })
-                        {
-                            first_err = Some(error);
                         }
-                    }
-                    if let Some(error) = first_err {
-                        Err(error)
-                    } else {
-                        Ok(())
-                    }
-                })
-                .await
+                        .await;
+                        if result.is_err() {
+                            strand.interrupt_token().cancel();
+                        }
+                        result
+                    }),
+                );
+            }
+            let mut first_err: Option<Error<'v, '_>> = None;
+            for result in join_all(strands).await {
+                if let Err(error) = result
+                    && first_err.as_ref().is_none_or(|previous| {
+                        previous.kind() == ErrorKind::Canceled
+                            && error.kind() != ErrorKind::Canceled
+                    })
+                {
+                    first_err = Some(error);
+                }
+            }
+            if let Some(error) = first_err {
+                Err(error)
+            } else {
+                Ok(())
+            }
         })
-        .await
+    })
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
@@ -599,7 +598,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         out.store(default.take());
                         return Ok(());
                     } else if let Some(or_else) = or_else {
-                        return call!(strand, or_else, out).await;
+                        return call!(strand, or_else, out);
                     }
                     return Err(Error::iter_stop(strand));
                 }
@@ -651,25 +650,22 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 // Safety: `visit` visits each staged entry's program reference;
                 // an entry leaves its cell only after its object is allocated
                 unsafe {
-                    strand.with_scan(visit, async |strand| {
-                        strand
-                            .with_slots_dynamic(raw.len(), async |strand, mut infos| {
-                                for (i, raw) in raw.iter().enumerate() {
-                                    let embryo = ty.embryo(strand);
-                                    embryo.finish_imm(
-                                        strand,
-                                        StrandInfo::new(raw.take().expect("taken once")),
-                                        infos.at(i),
-                                    );
-                                }
-                                let len = infos.len();
-                                let embryo = tuple::embryo(strand, len);
-                                embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
-                            })
-                            .await
+                    strand.with_scan_sync(visit, |strand| {
+                        with_slots_dynamic!(strand, raw.len(), |mut infos| {
+                            for (i, raw) in raw.iter().enumerate() {
+                                let embryo = ty.embryo(strand);
+                                embryo.finish_imm(
+                                    strand,
+                                    StrandInfo::new(raw.take().expect("taken once")),
+                                    infos.at(i),
+                                );
+                            }
+                            let len = infos.len();
+                            let embryo = tuple::embryo(strand, len);
+                            embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
+                        })
                     })
                 }
-                .await;
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {
@@ -703,9 +699,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     output.sink(&mut redir, &mut tmp).await?;
                     redir = redir.output(&mut tmp);
                 }
-                redir
-                    .enter(async move |strand| call!(strand, block, out).await)
-                    .await
+                redirect!(strand, redir, call!(strand, block, out))
             })
             .function("with_io", async move |strand, args, out| {
                 let ([block], [arg_input, arg_output]) =
@@ -717,9 +711,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 if let Some(output) = arg_output {
                     redir = redir.output(output);
                 }
-                redir
-                    .enter(async move |strand| call!(strand, block, out).await)
-                    .await
+                redirect!(strand, redir, call!(strand, block, out))
             })
             .function("channel", async move |strand, args, out| {
                 let (_, [limit]) = unpack!(strand, args, 0, 1)?;
@@ -754,92 +746,89 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 }
 
                 // We must avoid being dropped until we've awaited all strands we create
-                strand
-                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                        async {
-                            let mut last_recv = Value::NIL;
-                            let mut out = Some(out);
-                            let mut strands = Vec::new();
-                            let mut pipes = Vec::with_capacity(count.saturating_sub(1));
-                            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                            // Resolve the caller's redirects up front, in place.
-                            // Doing this in the stage body would put a fallible
-                            // await ahead of the call, and an early return from it
-                            // would skip closing the stage's pipe ends.
-                            if let Some(input) = &mut redir_input {
-                                input.iter(strand, &mut tmp).await?;
-                                input.store(tmp.take());
-                            }
-                            if let Some(output) = &mut redir_output {
-                                output.sink(strand, &mut tmp).await?;
-                                output.store(tmp.take());
-                            }
-                            for _ in 0..count.saturating_sub(1) {
-                                let pair =
-                                    strand.with_slots_sync(|strand, [mut send, mut recv]| {
-                                        pipe_pair(strand, &mut send, &mut recv);
-                                        (send.take(), recv.take())
-                                    });
-                                pipes.push(Some(pair));
-                            }
-                            for (i, thunk) in thunks.into_iter().enumerate() {
-                                let (send, recv, mut out, redir_output) = if i < count - 1 {
-                                    let (send, recv) = pipes[i].take().unwrap();
-                                    (Some(send), Some(recv), None, None)
-                                } else {
-                                    (None, None, out.take(), redir_output.take())
-                                };
-                                let redir_input = if i == 0 { redir_input.take() } else { None };
+                with_interrupt_mask!(strand, InterruptMask::all(), {
+                    async {
+                        let mut last_recv = Value::NIL;
+                        let mut out = Some(out);
+                        let mut strands = Vec::new();
+                        let mut pipes = Vec::with_capacity(count.saturating_sub(1));
+                        let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                        // Resolve the caller's redirects up front, in place.
+                        // Doing this in the stage body would put a fallible
+                        // await ahead of the call, and an early return from it
+                        // would skip closing the stage's pipe ends.
+                        if let Some(input) = &mut redir_input {
+                            input.iter(strand, &mut tmp).await?;
+                            input.store(tmp.take());
+                        }
+                        if let Some(output) = &mut redir_output {
+                            output.sink(strand, &mut tmp).await?;
+                            output.store(tmp.take());
+                        }
+                        for _ in 0..count.saturating_sub(1) {
+                            let pair = strand.with_slots_sync(|strand, [mut send, mut recv]| {
+                                pipe_pair(strand, &mut send, &mut recv);
+                                (send.take(), recv.take())
+                            });
+                            pipes.push(Some(pair));
+                        }
+                        for (i, thunk) in thunks.into_iter().enumerate() {
+                            let (send, recv, mut out, redir_output) = if i < count - 1 {
+                                let (send, recv) = pipes[i].take().unwrap();
+                                (Some(send), Some(recv), None, None)
+                            } else {
+                                (None, None, out.take(), redir_output.take())
+                            };
+                            let redir_input = if i == 0 { redir_input.take() } else { None };
 
-                                strands.push(strand.spawn_scoped(
-                                    Some(interrupt.clone()),
-                                    async move |strand| {
-                                        if let Err(e) = strand
-                                        .with_slots(
-                                            async move |strand, [mut s, mut r, mut tmp, mut tmp2]| {
-                                                let mut redir = Redirect::new(strand);
-                                                if !last_recv.is_nil() {
-                                                    r.store(last_recv);
-                                                    redir = redir.input(&*r);
-                                                } else if let Some(redir_input) = redir_input {
-                                                    redir = redir.input(&*redir_input);
-                                                }
-                                                if let Some(send) = send {
-                                                    s.store(send);
-                                                    redir = redir.output(&*s);
-                                                } else if let Some(redir_output) = redir_output {
-                                                    redir = redir.output(&*redir_output);
-                                                }
-                                                let res = redir
-                                                    .enter(async move |strand| {
-                                                        call!(
-                                                            strand,
-                                                            thunk,
-                                                            out.as_mut().unwrap_or(&mut tmp)
-                                                        )
-                                                        .await
-                                                    })
-                                                    .await;
-                                                // Close both ends even if the
-                                                // first close fails, so a
-                                                // failure cannot strand the
-                                                // other end open.
-                                                let closed_recv = if !r.is_nil() {
-                                                    method!(strand, r, close, &mut tmp2).await
-                                                } else {
-                                                    Ok(())
-                                                };
-                                                let closed_send = if !s.is_nil() {
-                                                    method!(strand, s, close, &mut tmp2).await
-                                                } else {
-                                                    Ok(())
-                                                };
-                                                closed_recv?;
-                                                closed_send?;
-                                                res
-                                            },
-                                        )
-                                        .await
+                            strands.push(strand.spawn_scoped(
+                                Some(interrupt.clone()),
+                                async move |strand| {
+                                    if let Err(e) = async {
+                                        with_slots!(strand, |mut s, mut r, mut tmp, mut tmp2| {
+                                            let mut redir = Redirect::new(strand);
+                                            if !last_recv.is_nil() {
+                                                r.store(last_recv);
+                                                redir = redir.input(&*r);
+                                            } else if let Some(redir_input) = redir_input {
+                                                redir = redir.input(&*redir_input);
+                                            }
+                                            if let Some(send) = send {
+                                                s.store(send);
+                                                redir = redir.output(&*s);
+                                            } else if let Some(redir_output) = redir_output {
+                                                redir = redir.output(&*redir_output);
+                                            }
+                                            let res = redirect!(strand, redir, {
+                                                call!(
+                                                    strand,
+                                                    thunk,
+                                                    out.as_mut().map_or_else(
+                                                        || Slot::reborrow(&mut tmp),
+                                                        Slot::reborrow
+                                                    )
+                                                )
+                                            });
+                                            // Close both ends even if the
+                                            // first close fails, so a
+                                            // failure cannot strand the
+                                            // other end open.
+                                            let closed_recv = if !r.is_nil() {
+                                                method!(strand, r, close, &mut tmp2)
+                                            } else {
+                                                Ok(())
+                                            };
+                                            let closed_send = if !s.is_nil() {
+                                                method!(strand, s, close, &mut tmp2)
+                                            } else {
+                                                Ok(())
+                                            };
+                                            closed_recv?;
+                                            closed_send?;
+                                            res
+                                        })
+                                    }
+                                    .await
                                         && !matches!(
                                             e.kind(),
                                             ErrorKind::IterStop | ErrorKind::SinkStop
@@ -848,36 +837,31 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                         strand.interrupt_token().cancel();
                                         return Err(e);
                                     }
-                                        Ok(())
-                                    },
-                                ));
-                                last_recv = recv.unwrap_or(Value::NIL);
-                            }
-                            for (i, res) in join_all(strands).await.into_iter().enumerate() {
-                                if let Err(e) = res {
-                                    // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
-                                    // but the final element
-                                    if i != count - 1 {
-                                        if matches!(
-                                            e.kind(),
-                                            ErrorKind::IterStop | ErrorKind::SinkStop
-                                        ) {
-                                            continue;
-                                        }
-                                        if interrupt.is_canceled()
-                                            && e.kind() == ErrorKind::Canceled
-                                        {
-                                            continue;
-                                        }
-                                    }
-                                    return Err(e);
-                                }
-                            }
-                            Ok(())
+                                    Ok(())
+                                },
+                            ));
+                            last_recv = recv.unwrap_or(Value::NIL);
                         }
-                        .await
-                    })
+                        for (i, res) in join_all(strands).await.into_iter().enumerate() {
+                            if let Err(e) = res {
+                                // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
+                                // but the final element
+                                if i != count - 1 {
+                                    if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop)
+                                    {
+                                        continue;
+                                    }
+                                    if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
+                                        continue;
+                                    }
+                                }
+                                return Err(e);
+                            }
+                        }
+                        Ok(())
+                    }
                     .await
+                })
             })
             .function_with_slots(
                 "each",
@@ -885,18 +869,20 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     let ([func], _) = unpack!(strand, args, 1, 0)?;
                     strand.input(&mut input);
                     strand.output(&mut output);
-                    Redirect::new(strand)
-                        .input(Singleton::Null)
-                        .output(Singleton::Null)
-                        .enter(async move |strand| {
+                    redirect!(
+                        strand,
+                        Redirect::new(strand)
+                            .input(Singleton::Null)
+                            .output(Singleton::Null),
+                        {
                             while input.next(strand, &mut value).await? {
-                                call!(strand, &func, &mut tmp, &value).await?;
+                                call!(strand, &func, &mut tmp, &value)?;
                                 output.put(strand, &mut tmp).await?;
                                 strand.check_trap_gc()?
                             }
                             Ok(())
-                        })
-                        .await
+                        }
+                    )
                 },
             )
             .function_with_slots(
@@ -905,20 +891,22 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     let ([pred], _) = unpack!(strand, args, 1, 0)?;
                     strand.input(&mut input);
                     strand.output(&mut output);
-                    Redirect::new(strand)
-                        .input(Singleton::Null)
-                        .output(Singleton::Null)
-                        .enter(async move |strand| {
+                    redirect!(
+                        strand,
+                        Redirect::new(strand)
+                            .input(Singleton::Null)
+                            .output(Singleton::Null),
+                        {
                             while input.next(strand, &mut value).await? {
-                                call!(strand, &pred, &mut tmp, &value).await?;
+                                call!(strand, &pred, &mut tmp, &value)?;
                                 if tmp.to_bool(strand)? {
                                     output.put(strand, &mut value).await?;
                                 }
                                 strand.check_trap_gc()?
                             }
                             Ok(())
-                        })
-                        .await
+                        }
+                    )
                 },
             )
             .function_with_slots(
@@ -966,7 +954,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     callable.take(),
                     InterruptToken::new(),
                     None,
-                    async move |strand, arg, out| call!(strand, arg, out).await,
+                    async move |strand, arg, out| call!(strand, arg, out),
                 )?;
                 Output::set(strand, out, Value::from_object(handle));
                 Ok(())
@@ -994,36 +982,34 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     callable.take(),
                     InterruptToken::new(),
                     Some((input_receiver, output_sender)),
-                    async move |strand, arg, out| call!(strand, arg, out).await,
+                    async move |strand, arg, out| call!(strand, arg, out),
                 )?;
 
                 // Wrap the endpoints up front so they keep `handle` GC-reachable
                 // for as long as they're reachable themselves, even once the
                 // `Stream` returned below is not.
-                strand
-                    .with_slots(async move |strand, [mut input, mut output]| {
-                        let builtin_types = strand.builtin_types();
-                        builtin_types.stream_sink.create(
-                            strand,
-                            StreamSink::new(input_sender, handle.clone()),
-                            &mut input,
-                        );
-                        builtin_types.stream_iter.create(
-                            strand,
-                            StreamIter::new(output_receiver, handle.clone()),
-                            &mut output,
-                        );
-                        builtin_types.stream.create_imm(
-                            strand,
-                            Stream {
-                                handle,
-                                input: input.take(),
-                                output: output.take(),
-                            },
-                            &mut out,
-                        );
-                    })
-                    .await;
+                with_slots!(strand, |mut input, mut output| {
+                    let builtin_types = strand.builtin_types();
+                    builtin_types.stream_sink.create(
+                        strand,
+                        StreamSink::new(input_sender, handle.clone()),
+                        &mut input,
+                    );
+                    builtin_types.stream_iter.create(
+                        strand,
+                        StreamIter::new(output_receiver, handle.clone()),
+                        &mut output,
+                    );
+                    builtin_types.stream.create_imm(
+                        strand,
+                        Stream {
+                            handle,
+                            input: input.take(),
+                            output: output.take(),
+                        },
+                        &mut out,
+                    );
+                });
                 Ok(())
             })
             .function_with_slots(
@@ -1095,54 +1081,53 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
                 let count = thunks.len();
                 // We must avoid being dropped until we've awaited all strands we create
-                strand
-                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                        let result = async {
-                            let results =
-                                RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
-                            let mut strands = Vec::with_capacity(count);
-                            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                            for (i, thunk) in thunks.into_iter().enumerate() {
-                                let results = &results;
-                                strands.push(strand.spawn_scoped(
-                                    Some(interrupt.clone()),
-                                    async move |strand| {
-                                        let result = strand
-                                            .with_slots(async move |strand, [mut tmp]| {
-                                                call!(strand, thunk, &mut tmp).await?;
-                                                results.borrow_mut()[i] = tmp.take();
-                                                Ok(())
-                                            })
-                                            .await;
-                                        if result.is_err() {
-                                            strand.interrupt_token().cancel();
-                                        }
-                                        result
-                                    },
-                                ));
-                            }
-                            let mut first_err: Option<Error<'v, '_>> = None;
-                            for res in join_all(strands).await {
-                                if let Err(e) = res
-                                    && first_err.as_ref().is_none_or(|prev| {
-                                        prev.kind() == ErrorKind::Canceled
-                                            && e.kind() != ErrorKind::Canceled
-                                    })
-                                {
-                                    first_err = Some(e);
-                                }
-                            }
-                            if let Some(e) = first_err {
-                                return Err(e);
-                            }
-                            Ok(results.into_inner())
+                with_interrupt_mask!(strand, InterruptMask::all(), {
+                    let result = async {
+                        let results =
+                            RefCell::new((0..count).map(|_| Value::NIL).collect::<Vec<_>>());
+                        let mut strands = Vec::with_capacity(count);
+                        let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                        for (i, thunk) in thunks.into_iter().enumerate() {
+                            let results = &results;
+                            strands.push(strand.spawn_scoped(
+                                Some(interrupt.clone()),
+                                async move |strand| {
+                                    let result = async {
+                                        with_slots!(strand, |mut tmp| {
+                                            call!(strand, thunk, &mut tmp)?;
+                                            results.borrow_mut()[i] = tmp.take();
+                                            Ok(())
+                                        })
+                                    }
+                                    .await;
+                                    if result.is_err() {
+                                        strand.interrupt_token().cancel();
+                                    }
+                                    result
+                                },
+                            ));
                         }
-                        .await;
-                        let results = result?;
-                        tuple::create(strand, results, out);
-                        Ok(())
-                    })
-                    .await
+                        let mut first_err: Option<Error<'v, '_>> = None;
+                        for res in join_all(strands).await {
+                            if let Err(e) = res
+                                && first_err.as_ref().is_none_or(|prev| {
+                                    prev.kind() == ErrorKind::Canceled
+                                        && e.kind() != ErrorKind::Canceled
+                                })
+                            {
+                                first_err = Some(e);
+                            }
+                        }
+                        if let Some(e) = first_err {
+                            return Err(e);
+                        }
+                        Ok(results.into_inner())
+                    }
+                    .await;
+                    let results = result?;
+                    tuple::create(strand, results, out);
+                    Ok(())
+                })
             })
             .commit();
     });

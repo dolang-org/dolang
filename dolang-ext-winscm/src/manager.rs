@@ -8,6 +8,7 @@ use dolang::runtime::{
     object::{FlagsTypeExt, TypeBuilder},
     unpack,
     vm::Register,
+    with_slots,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_vfs_winscm::{CreateServiceOptions, ErrorControl, ServiceStateFilter, StartType};
@@ -105,20 +106,18 @@ pub(crate) async fn binary_path_from_value<'v, 's>(
         return binary_path_arg_from_value(strand, value);
     }
 
-    strand
-        .with_slots(async move |strand, [mut iter, mut item]| {
-            value.iter(strand, &mut iter).await?;
-            let mut arguments = Vec::new();
-            while iter.next(strand, &mut item).await? {
-                arguments.push(binary_path_arg_from_value(
-                    strand,
-                    Slot::reborrow(&mut item),
-                )?);
-            }
-            dolang_winterop::process::join_arguments(arguments)
-                .map_err(|error| Error::value(strand, error.to_string()))
-        })
-        .await
+    with_slots!(strand, |mut iter, mut item| {
+        value.iter(strand, &mut iter).await?;
+        let mut arguments = Vec::new();
+        while iter.next(strand, &mut item).await? {
+            arguments.push(binary_path_arg_from_value(
+                strand,
+                Slot::reborrow(&mut item),
+            )?);
+        }
+        dolang_winterop::process::join_arguments(arguments)
+            .map_err(|error| Error::value(strand, error.to_string()))
+    })
 }
 
 pub(crate) async fn expect_str_iterable<'v, 's>(
@@ -126,16 +125,14 @@ pub(crate) async fn expect_str_iterable<'v, 's>(
     slot: Slot<'v, '_>,
     what: &str,
 ) -> Result<'v, 's, Vec<String>> {
-    strand
-        .with_slots(async move |strand, [mut iter, mut item]| {
-            slot.iter(strand, &mut iter).await?;
-            let mut values = Vec::new();
-            while iter.next(strand, &mut item).await? {
-                values.push(expect_str(strand, Slot::reborrow(&mut item), what)?);
-            }
-            Ok(values)
-        })
-        .await
+    with_slots!(strand, |mut iter, mut item| {
+        slot.iter(strand, &mut iter).await?;
+        let mut values = Vec::new();
+        while iter.next(strand, &mut item).await? {
+            values.push(expect_str(strand, Slot::reborrow(&mut item), what)?);
+        }
+        Ok(values)
+    })
 }
 
 /// Wraps a freshly opened [`dolang_vfs_winscm::ScManager`] into a
@@ -151,17 +148,15 @@ async fn finish_open_manager<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     if let Some(block) = block {
-        strand
-            .with_slots(async move |strand, [mut handle, mut tmp]| {
-                global
-                    .types
-                    .manager
-                    .create(strand, ScManager(Some(inner)), &mut handle);
-                let result = call!(strand, block, out, &handle).await;
-                let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
-                result
-            })
-            .await
+        with_slots!(strand, |mut handle, mut tmp| {
+            global
+                .types
+                .manager
+                .create(strand, ScManager(Some(inner)), &mut handle);
+            let result = call!(strand, block, out, &handle);
+            let _ = method!(strand, &handle, global.syms.close, &mut tmp);
+            result
+        })
     } else {
         global
             .types

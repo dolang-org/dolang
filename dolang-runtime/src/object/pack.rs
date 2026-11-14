@@ -19,6 +19,7 @@ use crate::{
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -966,7 +967,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     out.store(default.take());
                     Ok(())
                 } else if let Some(or_else) = or_else {
-                    call!(strand, or_else, out).await
+                    call!(strand, or_else, out)
                 } else {
                     out.store(Value::NIL);
                     Ok(())
@@ -1241,13 +1242,11 @@ impl<'v> Protocol<'v> for Class {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
-                strand
-                    .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().pack, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().pack, native.take())?;
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut native| {
+                    call!(strand, &strand.singletons().pack, &mut native, items)?;
+                    self_val.op_fill(strand, &strand.singletons().pack, native.take())?;
+                    Ok(())
+                })
             }
             _ => {
                 let vm = strand.vm();
@@ -1309,27 +1308,25 @@ pub(crate) async fn source_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     source: &Value<'v>,
 ) -> Result<'v, 's, Vec<ArgItem<'v>>> {
-    strand
-        .with_slots(async |strand, [mut pack]| {
-            // Spreading can run arbitrary code, so the items collect in a
-            // pack the GC can see
-            strand.builtin_types().arg_acc.create(
-                strand,
-                ArgAcc::new(Vec::new()),
-                Slot::reborrow(&mut pack),
-            );
-            let mut sink = PackPairs { pack: &pack };
-            source
-                .op_spread(strand, SpreadContext::Pairs, &mut sink)
-                .await?;
-            pack.downcast_ref(strand.builtin_types().arg_acc)
-                .expect("source accumulator")
-                .pin_sync(strand, |strand, pack| {
-                    Ok(pack
-                        .borrow_mut()
-                        .ok_or_else(|| Error::concurrency(strand))?
-                        .take())
-                })
-        })
-        .await
+    with_slots!(strand, |mut pack| {
+        // Spreading can run arbitrary code, so the items collect in a
+        // pack the GC can see
+        strand.builtin_types().arg_acc.create(
+            strand,
+            ArgAcc::new(Vec::new()),
+            Slot::reborrow(&mut pack),
+        );
+        let mut sink = PackPairs { pack: &pack };
+        source
+            .op_spread(strand, SpreadContext::Pairs, &mut sink)
+            .await?;
+        pack.downcast_ref(strand.builtin_types().arg_acc)
+            .expect("source accumulator")
+            .pin_sync(strand, |strand, pack| {
+                Ok(pack
+                    .borrow_mut()
+                    .ok_or_else(|| Error::concurrency(strand))?
+                    .take())
+            })
+    })
 }

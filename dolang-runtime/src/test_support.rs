@@ -21,7 +21,7 @@ pub(crate) fn with_builder<R: 'static>(
 }
 
 /// Build a VM with default configuration, enter it, and run `body` with the resulting
-/// `Strand` plus `N` GC-rooted scratch slots (see [`Strand::with_slots`]). Blocks the
+/// `Strand` plus `N` GC-rooted scratch slots (see [`with_slots!`](crate::with_slots)). Blocks the
 /// calling thread. Values a test needs to hold onto — across a call that might allocate
 /// or yield — belong in one of these slots, never in a bare, unrooted Rust local: use
 /// `Slot::reborrow` to hand a slot to something that wants to fill it (e.g. as an `out`
@@ -33,7 +33,7 @@ pub(crate) fn with_vm<const N: usize, R: 'static>(
 }
 
 /// Builds `Args` over the backing storage of an already GC-rooted [`Slots`] value
-/// (e.g. obtained from [`Strand::with_slots_dynamic`](crate::strand::Strand::with_slots_dynamic)).
+/// (e.g. obtained from [`with_slots_dynamic!`](crate::strand::with_slots_dynamic)).
 /// Values must never be held in plain, unrooted Rust stack locals across a call that
 /// could allocate or yield — this keeps the one `unsafe` `Args` construction it takes to
 /// build a call-argument list contained here instead of scattered across test bodies.

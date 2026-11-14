@@ -22,7 +22,7 @@ use crate::{
         structure, tuple,
     },
     stdlib::fmt as stdfmt,
-    strand::{Access, Strand},
+    strand::{Access, PinScope, Strand},
     sym::Sym,
     value::{Input, Output, Slot, Value, fmt::Spec},
     vm::Alloc,
@@ -57,6 +57,56 @@ impl<'v, 'a> Hash for ObjectId<'v, 'a> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.hash(state);
     }
+}
+
+/// Run a block with the string slice of a [`Str`] pinned for its duration.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_str, strand::Strand, value::view::Str};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>, value: Str<'v, '_>) -> usize {
+/// with_str!(strand, value, |s| s.len())
+/// # }
+/// ```
+///
+/// The closure-like pattern binds the `&str`, which can't outlive the body. `strand` must
+/// be the name of the current [`Strand`]. The body runs inline, as for
+/// [`with_slots!`](crate::with_slots), and the macro evaluates to its value.
+#[macro_export]
+macro_rules! with_str {
+    ($strand:ident, $value:expr, |$s:pat_param| $body:expr) => {{
+        let value = &$value;
+        let scope = $crate::strand::PinScope;
+        // Safety: `scope` is a local of this block
+        #[allow(unused_unsafe)]
+        let $s = unsafe { value.scoped_str(&scope) };
+        $body
+    }};
+}
+
+/// Run a block with the byte slice of a [`Bin`] pinned for its duration.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_slice, strand::Strand, value::view::Bin};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>, value: Bin<'v, '_>) -> usize {
+/// with_slice!(strand, value, |bytes| bytes.len())
+/// # }
+/// ```
+///
+/// As for [`with_str!`](crate::with_str), with a `&[u8]`.
+#[macro_export]
+macro_rules! with_slice {
+    ($strand:ident, $value:expr, |$bytes:pat_param| $body:expr) => {{
+        let value = &$value;
+        let scope = $crate::strand::PinScope;
+        // Safety: `scope` is a local of this block
+        #[allow(unused_unsafe)]
+        let $bytes = unsafe { value.scoped_slice(&scope) };
+        $body
+    }};
 }
 
 /// Typed view of a `Str` value.
@@ -96,14 +146,21 @@ impl<'v, 'a> Str<'v, 'a> {
         self.0.pin_sync(strand, |strand, pin| f(strand, pin.str()))
     }
 
-    /// Async counterpart to [`Self::with_str`].
-    pub async fn with_str_async<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl AsyncFnOnce(&mut Strand<'v, 's>, &str) -> R,
-    ) -> R {
-        // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures shallow
-        f(strand, unsafe { self.0.pin_unchecked() }.str()).await
+    /// Pin the string slice for the borrow of `scope`.
+    ///
+    /// This backs [`with_str!`](crate::with_str).
+    ///
+    /// # Safety
+    ///
+    /// `scope` must be a local of the block that uses the slice.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn scoped_str<'p>(&self, _scope: &'p PinScope) -> &'p str
+    where
+        'a: 'p,
+    {
+        // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+        unsafe { self.0.pin_unchecked() }.str()
     }
 
     /// Get length of string
@@ -191,14 +248,21 @@ impl<'v, 'a> Bin<'v, 'a> {
             .pin_sync(strand, |strand, pin| f(strand, pin.bytes()))
     }
 
-    /// Async counterpart to [`Self::with_slice`].
-    pub async fn with_slice_async<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl AsyncFnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
-    ) -> R {
-        // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures shallow
-        f(strand, unsafe { self.0.pin_unchecked() }.bytes()).await
+    /// Pin the byte slice for the borrow of `scope`.
+    ///
+    /// This backs [`with_slice!`](crate::with_slice).
+    ///
+    /// # Safety
+    ///
+    /// `scope` must be a local of the block that uses the slice.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn scoped_slice<'p>(&self, _scope: &'p PinScope) -> &'p [u8]
+    where
+        'a: 'p,
+    {
+        // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+        unsafe { self.0.pin_unchecked() }.bytes()
     }
 
     /// Get length of `Bin`

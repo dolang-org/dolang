@@ -27,6 +27,93 @@ impl<T, const N: usize> HeadroomCells<T, N> {
     }
 }
 
+/// Argument cells for [`call!`](crate::call) and [`method!`](crate::method), declared in
+/// the caller's frame.
+#[doc(hidden)]
+pub struct ArgFrame<'v, 'i, const N: usize> {
+    // N+1 contiguous cells: head is headroom (NIL), tail[0..N] hold the arguments
+    cells: HeadroomCells<ValueCell<'v>, N>,
+    // Where each argument moved from, restored after the call
+    replace: [Option<Slot<'v, 'i>>; N],
+}
+
+impl<'v, 'i, const N: usize> ArgFrame<'v, 'i, N> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            cells: HeadroomCells {
+                head: ValueCell::default(),
+                tail: std::array::from_fn(|_| ValueCell::default()),
+            },
+            replace: [const { None }; N],
+        }
+    }
+
+    /// Take `inputs` into the frame, returning the arguments and a guard that moves values
+    /// taken from rooted locations back when dropped.
+    #[inline]
+    pub fn enter<'f>(
+        &'f mut self,
+        strand: &mut Strand<'v, '_>,
+        inputs: &'i mut [&mut dyn Input<'v>; N],
+        sig: &'f [Option<Sym<'v, 'f>>; N],
+    ) -> (ArgGuard<'v, 'i, 'f>, Args<'v, 'f>) {
+        marshal(strand, &self.cells.tail, inputs, &mut self.replace);
+        let guard = ArgGuard {
+            cells: &self.cells.tail,
+            replace: &mut self.replace,
+        };
+        // Safety: the arguments are not scanned, here or during the call
+        let args = unsafe { Args::new(self.cells.as_slice(), sig, 1) };
+        (guard, args)
+    }
+}
+
+impl<const N: usize> Default for ArgFrame<'_, '_, N> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Moves arguments back to the rooted locations they were taken from when dropped.
+#[doc(hidden)]
+pub struct ArgGuard<'v, 'i, 'f> {
+    cells: &'f [ValueCell<'v>],
+    replace: &'f mut [Option<Slot<'v, 'i>>],
+}
+
+impl Drop for ArgGuard<'_, '_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        restore(self.cells, self.replace);
+    }
+}
+
+#[inline(never)]
+fn marshal<'v, 'i>(
+    strand: &mut Strand<'v, '_>,
+    cells: &[ValueCell<'v>],
+    inputs: &'i mut [&mut dyn Input<'v>],
+    replace: &mut [Option<Slot<'v, 'i>>],
+) {
+    for ((cell, input), replace) in cells.iter().zip(inputs).zip(replace) {
+        // Safety: nothing else accesses the cell while the slot lives
+        let out = unsafe { cell.slot() };
+        *replace = input.input_take(strand, out, value::private::Sealed);
+    }
+}
+
+#[inline(never)]
+fn restore<'v>(cells: &[ValueCell<'v>], replace: &mut [Option<Slot<'v, '_>>]) {
+    for (cell, replace) in cells.iter().zip(replace) {
+        if let Some(mut replace) = replace.take() {
+            // Safety: the call is over, so nothing else accesses the cell
+            replace.store(unsafe { cell.slot() }.take())
+        }
+    }
+}
+
 enum ArgContent<'v, 'a> {
     Borrowed {
         sig: &'a [Option<Sym<'v, 'a>>],
@@ -193,41 +280,6 @@ impl<'v, 'a> Args<'v, 'a> {
         if !self.mask.is_empty() {
             self.mask[self.index] = false;
         }
-    }
-
-    #[doc(hidden)]
-    #[inline]
-    pub async fn with<'s, const N: usize, R>(
-        strand: &mut Strand<'v, 's>,
-        mut inputs: [&mut dyn Input<'v>; N],
-        sig: [Option<Sym<'v, '_>>; N],
-        f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, Args<'v, 'b>) -> R,
-    ) -> R {
-        // HeadroomCells gives us N+1 contiguous cells: head is headroom (NIL),
-        // tail[0..N] hold the actual arguments.
-        let mut cells: HeadroomCells<_, N> = HeadroomCells {
-            head: ValueCell::default(),
-            tail: std::array::from_fn(|_| ValueCell::default()),
-        };
-        let mut replace = [const { MaybeUninit::uninit() }; N];
-        for ((cell, input), replace) in cells
-            .tail
-            .iter_mut()
-            .zip(inputs.iter_mut())
-            .zip(replace.iter_mut())
-        {
-            // Safety: nothing else accesses the cell while the slot lives. The argument
-            // cells are not scanned, here or during the call, as before.
-            let out = unsafe { cell.slot() };
-            replace.write(input.input_take(strand, out, value::private::Sealed));
-        }
-        let res = f(strand, unsafe { Args::new(cells.as_slice(), &sig, 1) }).await;
-        for (cell, replace) in cells.tail.iter_mut().zip(replace.iter_mut()) {
-            if let Some(mut replace) = unsafe { replace.assume_init_mut().take() } {
-                replace.store(cell.get_mut().take())
-            }
-        }
-        res
     }
 
     #[doc(hidden)]
@@ -524,7 +576,7 @@ macro_rules! unpack {
 /// ```rust,no_run
 /// # use dolang_runtime::{call, strand::Strand, value::{Value, Slot}};
 /// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, rcvr: &Value<'v>, mut out: Slot<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// call!(strand, rcvr, &mut out, 42i64).await?;
+/// call!(strand, rcvr, &mut out, 42i64)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -537,15 +589,25 @@ macro_rules! unpack {
 /// - `key`: key for a key argument, which should be an in-scope [`Sym`] (typically obtained from
 ///   [`Builder::sym`](crate::vm::Builder::sym)).
 /// - `val`: value for key argument, the same as positional
+///
+/// The call runs and is awaited inline, so the macro must be used in an async context and
+/// evaluates to the call's [`Result`](crate::error::Result). An argument moved out of a
+/// [`Slot`](value::Slot) is moved back when the call finishes or is dropped.
 #[macro_export]
 macro_rules! call {
     (impl $strand: expr, $rcvr: expr, $out: expr,
      { $(, $slots: tt)* }, { $(, $sig: tt)* }, {}) => {
-        $crate::arg::Args::with($strand, [$($slots),*], [$($sig),*], {
+        {
+            let mut inputs: [&mut dyn $crate::value::Input<'_>; _] = [$($slots),*];
+            let sig = [$($sig),*];
             let rcvr = $rcvr;
-            let out = $out;
-            async move |strand, args| rcvr.call(strand, args, out).await
-        })
+            let mut out = $out;
+            let strand: &mut $crate::strand::Strand<'_, '_> = $strand;
+            let mut frame = $crate::arg::ArgFrame::new();
+            let (_guard, args) = frame.enter(strand, &mut inputs, &sig);
+            let out = $crate::value::Slot::from_output(&mut out);
+            $crate::value::Value::op_call(&rcvr, strand, args, out).await
+        }
     };
     (impl $strand: expr, $rcvr: expr, $out: expr,
      { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr, $($rest: tt)*}) => {
@@ -578,7 +640,7 @@ macro_rules! call {
 /// ```rust,no_run
 /// # use dolang_runtime::{method, strand::Strand, sym::Sym, value::{Value, Slot}};
 /// # async fn example<'v, 's, 'a>(strand: &mut Strand<'v, 's>, rcvr: &Value<'v>, method_sym: Sym<'v, 'a>, mut out: Slot<'v, 'a>) -> dolang_runtime::error::Result<'v, 's, ()> {
-/// method!(strand, rcvr, method_sym, &mut out, 42i64).await?;
+/// method!(strand, rcvr, method_sym, &mut out, 42i64)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -592,16 +654,26 @@ macro_rules! call {
 /// - `key`: key for a key argument, which should be an in-scope [`Sym`] (typically obtained from
 ///   [`Builder::sym`](crate::vm::Builder::sym)).
 /// - `val`: value for key argument, the same as positional
+///
+/// The call runs and is awaited inline, so the macro must be used in an async context and
+/// evaluates to the call's [`Result`](crate::error::Result). An argument moved out of a
+/// [`Slot`](value::Slot) is moved back when the call finishes or is dropped.
 #[macro_export]
 macro_rules! method {
     (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
      { $(, $slots: tt)* }, { $(, $sig: tt)* }, {}) => {
-        $crate::arg::Args::with($strand, [$($slots),*], [$($sig),*], {
+        {
+            let mut inputs: [&mut dyn $crate::value::Input<'_>; _] = [$($slots),*];
+            let sig = [$($sig),*];
             let rcvr = $rcvr;
             let method = $method;
-            let out = $out;
-            async move |strand, args| rcvr.method(strand, method, args, out).await
-        })
+            let mut out = $out;
+            let strand: &mut $crate::strand::Strand<'_, '_> = $strand;
+            let mut frame = $crate::arg::ArgFrame::new();
+            let (_guard, args) = frame.enter(strand, &mut inputs, &sig);
+            let out = $crate::value::Slot::from_output(&mut out);
+            $crate::value::Value::op_mcall(&rcvr, strand, method, args, out).await
+        }
     };
     (impl $strand: expr, $rcvr: expr, $method: expr, $out: expr,
      { $(, $slots: tt)* }, { $(, $sig: tt)* }, {$arg: expr, $($rest: tt)*}) => {

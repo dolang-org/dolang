@@ -1,3 +1,4 @@
+use dolang::runtime::with_interrupt_mask;
 use std::{
     borrow::Cow,
     io,
@@ -245,24 +246,22 @@ impl<'v> Object<'v> for LineEditor {
 
                 // Rustyline cannot be aborted from another thread. Keep the editor
                 // owned by this call until it returns, even after cancellation.
-                let result = strand
-                    .with_interrupt_mask(InterruptMask::all(), async |strand| {
-                        tokio::task::spawn_blocking(move || {
-                            let result = editor.readline(&prompt).and_then(|line| {
-                                editor.add_history_entry(&line)?;
-                                Ok(line)
-                            });
-                            (editor, result)
-                        })
-                        .await
-                        .map_err(|err| {
-                            if err.is_panic() {
-                                std::panic::resume_unwind(err.into_panic())
-                            }
-                            Error::canceled(strand)
-                        })
+                let result = with_interrupt_mask!(strand, InterruptMask::all(), {
+                    tokio::task::spawn_blocking(move || {
+                        let result = editor.readline(&prompt).and_then(|line| {
+                            editor.add_history_entry(&line)?;
+                            Ok(line)
+                        });
+                        (editor, result)
                     })
-                    .await?;
+                    .await
+                    .map_err(|err| {
+                        if err.is_panic() {
+                            std::panic::resume_unwind(err.into_panic())
+                        }
+                        Error::canceled(strand)
+                    })
+                })?;
                 let (editor, result) = result;
                 this.borrow_mut(strand)?.editor = Some(editor);
                 match result {

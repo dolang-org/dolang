@@ -69,7 +69,7 @@ pub(crate) fn configure(builder: &mut Builder<'_>) {
             let ([ty, block], [expected, msg]) =
                 unpack!(strand, args, 2, 0, str_sym = None, msg_sym = None)?;
             let msg = message!(strand, msg);
-            match call!(strand, &block, &mut out).await {
+            match call!(strand, &block, &mut out) {
                 Ok(()) => {
                     let detail = format!("{} thrown", ty.to_debug(strand)?);
                     Err(fail(strand, Some(detail), msg))

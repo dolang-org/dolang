@@ -13,6 +13,7 @@ use dolang::runtime::{
     unpack,
     value::{Array, Dict, TypeObject},
     vm::Register,
+    with_instance, with_interrupt_mask, with_slots,
 };
 use dolang_ext_time::{as_datetime, datetime};
 use dolang_ext_url::create_url;
@@ -337,13 +338,11 @@ async fn raise_verify_failure<'v, 's>(
         return Ok(());
     };
     let assert = global.syms.assert;
-    strand
-        .with_slots(async move |strand, [mut test, mut error]| {
-            strand.import("test", &mut test).await?;
-            method!(strand, test, assert, &mut error, message.as_str()).await?;
-            Err(Error::from_value(strand, &error))
-        })
-        .await
+    with_slots!(strand, |mut test, mut error| {
+        strand.import("test", &mut test).await?;
+        method!(strand, test, assert, &mut error, message.as_str())?;
+        Err(Error::from_value(strand, &error))
+    })
 }
 
 /// Combines two independent cleanup-step outcomes into one, chaining the
@@ -379,143 +378,137 @@ async fn parse_mock_spec<'v, 's>(
         .as_dict(strand)
         .ok_or_else(|| Error::type_error(strand, "mock: expected a Dict"))?;
 
-    let (matchers, response, has_respond, expect, name) = strand
-        .with_slots(
-            async move |strand,
-                        [
-                mut tmp,
-                mut tmp2,
-                mut tmp3,
-                mut match_cb,
-                mut respond_cb,
-                mut record,
-            ]| {
-                let mut matchers = Vec::new();
-                let mut response = None;
-                let mut has_respond = false;
-                let mut expect: Option<(u64, Option<u64>)> = None;
-                let mut name: Option<String> = None;
-                let mut uses_callback = false;
+    let (matchers, response, has_respond, expect, name) =
+        with_slots!(strand, |mut tmp,
+                             mut tmp2,
+                             mut tmp3,
+                             mut match_cb,
+                             mut respond_cb,
+                             mut record| {
+            let mut matchers = Vec::new();
+            let mut response = None;
+            let mut has_respond = false;
+            let mut expect: Option<(u64, Option<u64>)> = None;
+            let mut name: Option<String> = None;
+            let mut uses_callback = false;
 
-                if dict.get(strand, global.syms.method, None, &mut tmp)? {
-                    let method = tmp.to_string(strand)?.to_ascii_uppercase();
-                    let method = http::Method::from_bytes(method.as_bytes()).map_err(|_| {
-                        Error::value(strand, format!("method: invalid HTTP method {method:?}"))
-                    })?;
-                    matchers.push(Matcher::Method(method));
-                }
-                if dict.get(strand, global.syms.path, None, &mut tmp)? {
-                    let path = tmp.to_string(strand)?;
-                    if path.contains('?') {
-                        return Err(Error::value(
-                            strand,
-                            format!(
-                                "path: {path:?} contains `?`; match query parameters with `query:`"
-                            ),
-                        ));
-                    }
-                    if url::Url::parse(&path).is_ok_and(|url| url.host_str().is_some()) {
-                        return Err(Error::value(
-                            strand,
-                            format!("path: {path:?} must not include a host"),
-                        ));
-                    }
-                    let path = if path.starts_with('/') {
-                        path
-                    } else {
-                        format!("/{path}")
-                    };
-                    matchers.push(Matcher::Path(path));
-                }
-                if dict.get(strand, global.syms.path_regex, None, &mut tmp)? {
-                    let pattern = tmp.to_string(strand)?;
-                    let regex = regex::Regex::new(&pattern)
-                        .map_err(|err| Error::value(strand, format!("path_regex: {err}")))?;
-                    matchers.push(Matcher::PathRegex(regex));
-                }
-                if dict.get(strand, global.syms.headers, None, &mut tmp)? {
-                    let headers_dict = tmp
-                        .as_dict(strand)
-                        .ok_or_else(|| Error::type_error(strand, "headers must be a dict"))?;
-                    dict_for_each(
+            if dict.get(strand, global.syms.method, None, &mut tmp)? {
+                let method = tmp.to_string(strand)?.to_ascii_uppercase();
+                let method = http::Method::from_bytes(method.as_bytes()).map_err(|_| {
+                    Error::value(strand, format!("method: invalid HTTP method {method:?}"))
+                })?;
+                matchers.push(Matcher::Method(method));
+            }
+            if dict.get(strand, global.syms.path, None, &mut tmp)? {
+                let path = tmp.to_string(strand)?;
+                if path.contains('?') {
+                    return Err(Error::value(
                         strand,
-                        &headers_dict,
-                        Slot::reborrow(&mut tmp2),
-                        Slot::reborrow(&mut tmp3),
-                        |strand, key, value| {
-                            let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
-                                .map_err(|err| Error::value(strand, err.to_string()))?;
-                            let hvalue = header_value_from_slot(strand, value)?;
-                            matchers.push(Matcher::Header(name, hvalue));
-                            Ok(())
-                        },
-                    )?;
-                }
-                if dict.get(strand, global.syms.query, None, &mut tmp)? {
-                    let query_dict = tmp
-                        .as_dict(strand)
-                        .ok_or_else(|| Error::type_error(strand, "query must be a dict"))?;
-                    dict_for_each(
-                        strand,
-                        &query_dict,
-                        Slot::reborrow(&mut tmp2),
-                        Slot::reborrow(&mut tmp3),
-                        |strand, key, value| {
-                            matchers.push(Matcher::Query(
-                                key.to_string(strand)?,
-                                value.to_string(strand)?,
-                            ));
-                            Ok(())
-                        },
-                    )?;
-                }
-                #[cfg(feature = "json")]
-                if dict.get(strand, global.syms.body_json, None, &mut tmp)? {
-                    strand.import("json", &mut tmp2).await?;
-                    let encode = global.syms.encode;
-                    method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp).await?;
-                    let json = serde_json::from_str(&tmp3.to_string(strand)?)
-                        .map_err(|err| Error::runtime(strand, err))?;
-                    matchers.push(Matcher::BodyJson(json));
-                }
-                #[cfg(not(feature = "json"))]
-                if dict.get(strand, global.syms.body_json, None, &mut tmp)? {
-                    return Err(Error::runtime(
-                        strand,
-                        "body_json requires the json feature",
+                        format!(
+                            "path: {path:?} contains `?`; match query parameters with `query:`"
+                        ),
                     ));
                 }
-                if dict.get(strand, global.syms.match_kw, None, &mut match_cb)? {
+                if url::Url::parse(&path).is_ok_and(|url| url.host_str().is_some()) {
+                    return Err(Error::value(
+                        strand,
+                        format!("path: {path:?} must not include a host"),
+                    ));
+                }
+                let path = if path.starts_with('/') {
+                    path
+                } else {
+                    format!("/{path}")
+                };
+                matchers.push(Matcher::Path(path));
+            }
+            if dict.get(strand, global.syms.path_regex, None, &mut tmp)? {
+                let pattern = tmp.to_string(strand)?;
+                let regex = regex::Regex::new(&pattern)
+                    .map_err(|err| Error::value(strand, format!("path_regex: {err}")))?;
+                matchers.push(Matcher::PathRegex(regex));
+            }
+            if dict.get(strand, global.syms.headers, None, &mut tmp)? {
+                let headers_dict = tmp
+                    .as_dict(strand)
+                    .ok_or_else(|| Error::type_error(strand, "headers must be a dict"))?;
+                dict_for_each(
+                    strand,
+                    &headers_dict,
+                    Slot::reborrow(&mut tmp2),
+                    Slot::reborrow(&mut tmp3),
+                    |strand, key, value| {
+                        let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
+                            .map_err(|err| Error::value(strand, err.to_string()))?;
+                        let hvalue = header_value_from_slot(strand, value)?;
+                        matchers.push(Matcher::Header(name, hvalue));
+                        Ok(())
+                    },
+                )?;
+            }
+            if dict.get(strand, global.syms.query, None, &mut tmp)? {
+                let query_dict = tmp
+                    .as_dict(strand)
+                    .ok_or_else(|| Error::type_error(strand, "query must be a dict"))?;
+                dict_for_each(
+                    strand,
+                    &query_dict,
+                    Slot::reborrow(&mut tmp2),
+                    Slot::reborrow(&mut tmp3),
+                    |strand, key, value| {
+                        matchers.push(Matcher::Query(
+                            key.to_string(strand)?,
+                            value.to_string(strand)?,
+                        ));
+                        Ok(())
+                    },
+                )?;
+            }
+            #[cfg(feature = "json")]
+            if dict.get(strand, global.syms.body_json, None, &mut tmp)? {
+                strand.import("json", &mut tmp2).await?;
+                let encode = global.syms.encode;
+                method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp)?;
+                let json = serde_json::from_str(&tmp3.to_string(strand)?)
+                    .map_err(|err| Error::runtime(strand, err))?;
+                matchers.push(Matcher::BodyJson(json));
+            }
+            #[cfg(not(feature = "json"))]
+            if dict.get(strand, global.syms.body_json, None, &mut tmp)? {
+                return Err(Error::runtime(
+                    strand,
+                    "body_json requires the json feature",
+                ));
+            }
+            if dict.get(strand, global.syms.match_kw, None, &mut match_cb)? {
+                uses_callback = true;
+            }
+            if dict.get(strand, global.syms.expect, None, &mut tmp)? {
+                expect = Some(parse_expect(strand, &tmp)?);
+            }
+            if dict.get(strand, global.syms.name, None, &mut tmp)? {
+                name = Some(tmp.to_string(strand)?);
+            }
+
+            if dict.get(strand, global.syms.respond, None, &mut respond_cb)? {
+                has_respond = true;
+                if respond_cb.as_dict(strand).is_some() {
+                    response = Some(build_response(strand, global, &respond_cb).await?);
+                } else {
                     uses_callback = true;
                 }
-                if dict.get(strand, global.syms.expect, None, &mut tmp)? {
-                    expect = Some(parse_expect(strand, &tmp)?);
-                }
-                if dict.get(strand, global.syms.name, None, &mut tmp)? {
-                    name = Some(tmp.to_string(strand)?);
-                }
+            }
 
-                if dict.get(strand, global.syms.respond, None, &mut respond_cb)? {
-                    has_respond = true;
-                    if respond_cb.as_dict(strand).is_some() {
-                        response = Some(build_response(strand, global, &respond_cb).await?);
-                    } else {
-                        uses_callback = true;
-                    }
-                }
+            if uses_callback {
+                strand.new_dict(&mut record);
+                let record_dict = record.as_dict(strand).unwrap();
+                record_dict.insert(strand, global.syms.match_kw, &match_cb, false)?;
+                record_dict.insert(strand, global.syms.respond, &respond_cb, false)?;
+            }
+            callbacks.push(strand, &record)?;
 
-                if uses_callback {
-                    strand.new_dict(&mut record);
-                    let record_dict = record.as_dict(strand).unwrap();
-                    record_dict.insert(strand, global.syms.match_kw, &match_cb, false)?;
-                    record_dict.insert(strand, global.syms.respond, &respond_cb, false)?;
-                }
-                callbacks.push(strand, &record)?;
-
-                Ok((matchers, response, has_respond, expect, name))
-            },
-        )
-        .await?;
+            Ok((matchers, response, has_respond, expect, name))
+        })?;
 
     if !has_respond {
         return Err(Error::missing_key(strand, "respond"));
@@ -555,82 +548,80 @@ async fn build_response<'v, 's>(
         .as_dict(strand)
         .ok_or_else(|| Error::type_error(strand, "respond must be a dict"))?;
 
-    let (status, headers, body, fault) = strand
-        .with_slots(async move |strand, [mut tmp, mut tmp2, mut tmp3]| {
-            let mut fault = None;
-            if dict.get(strand, global.syms.fault, None, &mut tmp)? {
-                let sym = tmp.as_sym(strand.vm());
-                let faults = &global.syms.faults;
-                fault = Some(match sym {
-                    Some(sym) if sym == faults.reset => Fault::Reset,
-                    Some(sym) if sym == faults.close => Fault::Close,
-                    Some(sym) if sym == faults.garbage => Fault::Garbage,
-                    Some(sym) if sym == faults.truncate => Fault::Truncate,
-                    Some(sym) if sym == faults.bad_chunk => Fault::BadChunk,
-                    _ => {
-                        return Err(Error::value(
-                            strand,
-                            "respond.fault: expected :RESET:, :CLOSE:, :GARBAGE:, :TRUNCATE: or :BAD_CHUNK:",
-                        ));
-                    }
-                });
-            }
-            let mut status: Option<u16> = None;
-            let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
-            let mut body: Option<Vec<u8>> = None;
-
-            if dict.get(strand, global.syms.status, None, &mut tmp)? {
-                let n = tmp.as_int(strand).ok_or_else(|| {
-                    Error::type_error(strand, "respond.status must be an integer")
-                })?;
-                status = Some(
-                    u16::try_from(n)
-                        .map_err(|_| Error::value(strand, "respond.status out of range"))?,
-                );
-            }
-
-            if dict.get(strand, global.syms.headers, None, &mut tmp)? {
-                let headers_dict = tmp
-                    .as_dict(strand)
-                    .ok_or_else(|| Error::type_error(strand, "respond.headers must be a dict"))?;
-                dict_for_each(
-                    strand,
-                    &headers_dict,
-                    Slot::reborrow(&mut tmp2),
-                    Slot::reborrow(&mut tmp3),
-                    |strand, key, value| {
-                        let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
-                            .map_err(|err| Error::value(strand, err.to_string()))?;
-                        let hvalue = header_value_from_slot(strand, value)?;
-                        headers.push((name, hvalue));
-                        Ok(())
-                    },
-                )?;
-            }
-
-            if dict.get(strand, global.syms.body, None, &mut tmp)? {
-                if let Some(slice) = tmp.as_bin(strand) {
-                    body = Some(slice.to_vec());
-                } else {
-                    body = Some(tmp.to_string(strand)?.into_bytes());
+    let (status, headers, body, fault) = with_slots!(strand, |mut tmp, mut tmp2, mut tmp3| {
+        let mut fault = None;
+        if dict.get(strand, global.syms.fault, None, &mut tmp)? {
+            let sym = tmp.as_sym(strand.vm());
+            let faults = &global.syms.faults;
+            fault = Some(match sym {
+                Some(sym) if sym == faults.reset => Fault::Reset,
+                Some(sym) if sym == faults.close => Fault::Close,
+                Some(sym) if sym == faults.garbage => Fault::Garbage,
+                Some(sym) if sym == faults.truncate => Fault::Truncate,
+                Some(sym) if sym == faults.bad_chunk => Fault::BadChunk,
+                _ => {
+                    return Err(Error::value(
+                        strand,
+                        "respond.fault: expected :RESET:, :CLOSE:, :GARBAGE:, :TRUNCATE: or :BAD_CHUNK:",
+                    ));
                 }
-            }
+            });
+        }
+        let mut status: Option<u16> = None;
+        let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
+        let mut body: Option<Vec<u8>> = None;
 
-            #[cfg(feature = "json")]
-            if dict.get(strand, global.syms.json, None, &mut tmp)? {
-                strand.import("json", &mut tmp2).await?;
-                let encode = global.syms.encode;
-                method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp).await?;
-                body = Some(tmp3.to_string(strand)?.into_bytes());
-                headers.push((
-                    HeaderName::from_static("content-type"),
-                    HeaderValue::from_static("application/json"),
-                ));
-            }
+        if dict.get(strand, global.syms.status, None, &mut tmp)? {
+            let n = tmp
+                .as_int(strand)
+                .ok_or_else(|| Error::type_error(strand, "respond.status must be an integer"))?;
+            status = Some(
+                u16::try_from(n)
+                    .map_err(|_| Error::value(strand, "respond.status out of range"))?,
+            );
+        }
 
-            Ok((status, headers, body, fault))
-        })
-        .await?;
+        if dict.get(strand, global.syms.headers, None, &mut tmp)? {
+            let headers_dict = tmp
+                .as_dict(strand)
+                .ok_or_else(|| Error::type_error(strand, "respond.headers must be a dict"))?;
+            dict_for_each(
+                strand,
+                &headers_dict,
+                Slot::reborrow(&mut tmp2),
+                Slot::reborrow(&mut tmp3),
+                |strand, key, value| {
+                    let name = HeaderName::from_bytes(key.to_string(strand)?.as_bytes())
+                        .map_err(|err| Error::value(strand, err.to_string()))?;
+                    let hvalue = header_value_from_slot(strand, value)?;
+                    headers.push((name, hvalue));
+                    Ok(())
+                },
+            )?;
+        }
+
+        if dict.get(strand, global.syms.body, None, &mut tmp)? {
+            if let Some(slice) = tmp.as_bin(strand) {
+                body = Some(slice.to_vec());
+            } else {
+                body = Some(tmp.to_string(strand)?.into_bytes());
+            }
+        }
+
+        #[cfg(feature = "json")]
+        if dict.get(strand, global.syms.json, None, &mut tmp)? {
+            strand.import("json", &mut tmp2).await?;
+            let encode = global.syms.encode;
+            method!(strand, Slot::reborrow(&mut tmp2), encode, &mut tmp3, &tmp)?;
+            body = Some(tmp3.to_string(strand)?.into_bytes());
+            headers.push((
+                HeaderName::from_static("content-type"),
+                HeaderValue::from_static("application/json"),
+            ));
+        }
+
+        Ok((status, headers, body, fault))
+    })?;
 
     let status = StatusCode::from_u16(status.unwrap_or(200))
         .map_err(|_| Error::value(strand, "respond.status out of range"))?;
@@ -686,52 +677,43 @@ async fn respond<'v, 's>(
 ) -> Result<'v, 's, Response> {
     let global = strand.state::<Tag>();
     let request = Rc::new(request);
-    strand
-        .with_slots(
-            async |strand, [mut req, mut mounted, mut received, mut mock]| {
-                global.types.request.create_with_annex(
+    with_slots!(strand, |mut req, mut mounted, mut received, mut mock| {
+        global
+            .types
+            .request
+            .create_with_annex(strand, RequestObject, request.clone(), &mut req);
+        global
+            .types
+            .server
+            .cast(server)
+            .unwrap()
+            .enter_sync(strand, |strand, server| {
+                let borrow = server.borrow(strand)?;
+                // Mocks can unmount while a callback runs, so walk a copy.
+                copy_array(
                     strand,
-                    RequestObject,
-                    request.clone(),
-                    &mut req,
-                );
-                global.types.server.cast(server).unwrap().enter_sync(
-                    strand,
-                    |strand, server| {
-                        let borrow = server.borrow(strand)?;
-                        // Mocks can unmount while a callback runs, so walk a copy.
-                        copy_array(
-                            strand,
-                            Ref::slot::<0>(&borrow),
-                            Slot::reborrow(&mut mounted),
-                        )?;
-                        Output::set(strand, &mut received, Ref::slot::<2>(&borrow));
-                        Ok(())
-                    },
+                    Ref::slot::<0>(&borrow),
+                    Slot::reborrow(&mut mounted),
                 )?;
-                if let Some(received) = received.as_array(strand) {
-                    received.push(strand, &req)?;
-                }
-                let mounted = mounted.as_array(strand).unwrap();
-                for i in 0..mounted.len(strand)? {
-                    mounted.get(strand, i, &mut mock)?;
-                    let response = global
-                        .types
-                        .mock
-                        .cast(&mock)
-                        .unwrap()
-                        .enter(strand, async |strand, mock| {
-                            respond_mock(strand, global, mock, &request, &req).await
-                        })
-                        .await?;
-                    if let Some(response) = response {
-                        return Ok(response);
-                    }
-                }
-                Ok(Response::new(StatusCode::NOT_FOUND, Bytes::new()))
-            },
-        )
-        .await
+                Output::set(strand, &mut received, Ref::slot::<2>(&borrow));
+                Ok(())
+            })?;
+        if let Some(received) = received.as_array(strand) {
+            received.push(strand, &req)?;
+        }
+        let mounted = mounted.as_array(strand).unwrap();
+        for i in 0..mounted.len(strand)? {
+            mounted.get(strand, i, &mut mock)?;
+            let response =
+                with_instance!(strand, global.types.mock.cast(&mock).unwrap(), |mock| {
+                    respond_mock(strand, global, mock, &request, &req).await
+                })?;
+            if let Some(response) = response {
+                return Ok(response);
+            }
+        }
+        Ok(Response::new(StatusCode::NOT_FOUND, Bytes::new()))
+    })
 }
 
 /// Answers `request` from the first of `mock`'s entries that matches it, if
@@ -743,73 +725,73 @@ async fn respond_mock<'v, 's>(
     request: &RequestSnapshot,
     req: &Slot<'v, '_>,
 ) -> Result<'v, 's, Option<Response>> {
-    strand
-        .with_slots(
-            async |strand, [mut callbacks, mut received, mut record, mut cb, mut ret]| {
-                let len = {
-                    let borrow = mock.borrow(strand)?;
-                    Output::set(strand, &mut callbacks, Ref::slot::<1>(&borrow));
-                    borrow.entries.len()
-                };
-                let callbacks = callbacks.as_array(strand).unwrap();
-                for i in 0..len {
-                    {
-                        let borrow = mock.borrow(strand)?;
-                        if !borrow.mounted {
-                            return Ok(None);
-                        }
-                        if !borrow.entries[i]
-                            .matchers
-                            .iter()
-                            .all(|m| m.matches(request))
-                        {
-                            continue;
-                        }
-                    }
-                    callbacks.get(strand, i, &mut record)?;
-                    let record = record.as_dict(strand);
-                    if let Some(record) = &record
-                        && record.get(strand, global.syms.match_kw, None, &mut cb)?
-                        && !cb.is_nil()
-                    {
-                        // A failing `match:` counts as no match.
-                        let matched = match call!(strand, &cb, &mut ret, req).await {
-                            Ok(()) => ret.to_bool(strand).unwrap_or(false),
-                            Err(_) => false,
-                        };
-                        if !matched {
-                            continue;
-                        }
-                    }
-
-                    let response = {
-                        let mut borrow = mock.borrow_mut(strand)?;
-                        if !borrow.mounted {
-                            return Ok(None);
-                        }
-                        borrow.entries[i].count += 1;
-                        Output::set(strand, &mut received, Mut::slot::<2>(&borrow));
-                        borrow.entries[i].response.clone()
-                    };
-                    if let Some(received) = received.as_array(strand) {
-                        received.push(strand, req)?;
-                    }
-                    let response = match response {
-                        Some(response) => response,
-                        None => {
-                            record
-                                .unwrap()
-                                .get(strand, global.syms.respond, None, &mut cb)?;
-                            call!(strand, &cb, &mut ret, req).await?;
-                            build_response(strand, global, &ret).await?
-                        }
-                    };
-                    return Ok(Some(response));
+    with_slots!(strand, |mut callbacks,
+                         mut received,
+                         mut record,
+                         mut cb,
+                         mut ret| {
+        let len = {
+            let borrow = mock.borrow(strand)?;
+            Output::set(strand, &mut callbacks, Ref::slot::<1>(&borrow));
+            borrow.entries.len()
+        };
+        let callbacks = callbacks.as_array(strand).unwrap();
+        for i in 0..len {
+            {
+                let borrow = mock.borrow(strand)?;
+                if !borrow.mounted {
+                    return Ok(None);
                 }
-                Ok(None)
-            },
-        )
-        .await
+                if !borrow.entries[i]
+                    .matchers
+                    .iter()
+                    .all(|m| m.matches(request))
+                {
+                    continue;
+                }
+            }
+            callbacks.get(strand, i, &mut record)?;
+            let record = record.as_dict(strand);
+            if let Some(record) = &record
+                && record.get(strand, global.syms.match_kw, None, &mut cb)?
+                && !cb.is_nil()
+            {
+                // A failing `match:` counts as no match.
+                let matched = match call!(strand, &cb, &mut ret, req) {
+                    Ok(()) => ret.to_bool(strand).unwrap_or(false),
+                    Err(_) => false,
+                };
+                if !matched {
+                    continue;
+                }
+            }
+
+            let response = {
+                let mut borrow = mock.borrow_mut(strand)?;
+                if !borrow.mounted {
+                    return Ok(None);
+                }
+                borrow.entries[i].count += 1;
+                Output::set(strand, &mut received, Mut::slot::<2>(&borrow));
+                borrow.entries[i].response.clone()
+            };
+            if let Some(received) = received.as_array(strand) {
+                received.push(strand, req)?;
+            }
+            let response = match response {
+                Some(response) => response,
+                None => {
+                    record
+                        .unwrap()
+                        .get(strand, global.syms.respond, None, &mut cb)?;
+                    call!(strand, &cb, &mut ret, req)?;
+                    build_response(strand, global, &ret).await?
+                }
+            };
+            return Ok(Some(response));
+        }
+        Ok(None)
+    })
 }
 
 /// Slot 0 holds a Do array of every mounted `Mock` this server has
@@ -899,29 +881,27 @@ async fn start_server<'v, 's>(
         ServerAnnex { global },
         Slot::reborrow(&mut out),
     );
-    strand
-        .with_slots(async |strand, [mut dispatcher]| {
-            // The dispatcher roots the `Server`, and the `Server` roots the
-            // dispatcher's handle; if neither is otherwise reachable, the
-            // collector unwinds the strand and drops the `Server`, which stops
-            // the server task.
-            strand.spawn_background(
-                &out,
-                None,
-                &mut dispatcher,
-                async move |strand, server, _out| run_dispatcher(strand, server, dispatch_rx).await,
-            )?;
-            this.cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, instance| {
-                    let mut borrow = instance.borrow_mut(strand)?;
-                    strand.new_array(Mut::slot_mut::<0>(&mut borrow));
-                    Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
-                    strand.new_array(Mut::slot_mut::<2>(&mut borrow));
-                    Ok(())
-                })
-        })
-        .await?;
+    with_slots!(strand, |mut dispatcher| {
+        // The dispatcher roots the `Server`, and the `Server` roots the
+        // dispatcher's handle; if neither is otherwise reachable, the
+        // collector unwinds the strand and drops the `Server`, which stops
+        // the server task.
+        strand.spawn_background(
+            &out,
+            None,
+            &mut dispatcher,
+            async move |strand, server, _out| run_dispatcher(strand, server, dispatch_rx).await,
+        )?;
+        this.cast(&out)
+            .unwrap()
+            .enter_sync(strand, |strand, instance| {
+                let mut borrow = instance.borrow_mut(strand)?;
+                strand.new_array(Mut::slot_mut::<0>(&mut borrow));
+                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
+                strand.new_array(Mut::slot_mut::<2>(&mut borrow));
+                Ok(())
+            })
+    })?;
     strand
         .vm()
         .spawn_task(serve::serve(listener, dispatch_tx, shutdown_rx, stopped_tx));
@@ -946,18 +926,14 @@ impl<'v> Object<'v> for Server {
         let ([], [func]) = unpack!(strand, args, 0, 1)?;
 
         if let Some(func) = func {
-            strand
-                .with_slots(async move |strand, [mut handle, tmp]| {
-                    start_server(this, strand, global, Slot::reborrow(&mut handle)).await?;
-                    let res = call!(strand, func, out, &handle).await;
-                    let _ = strand
-                        .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                            method!(strand, handle, global.syms.close, tmp).await
-                        })
-                        .await;
-                    res
-                })
-                .await
+            with_slots!(strand, |mut handle, tmp| {
+                start_server(this, strand, global, Slot::reborrow(&mut handle)).await?;
+                let res = call!(strand, func, out, &handle);
+                let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
+                    method!(strand, handle, global.syms.close, tmp)
+                });
+                res
+            })
         } else {
             start_server(this, strand, global, Slot::reborrow(&mut out)).await
         }
@@ -974,24 +950,21 @@ impl<'v> Object<'v> for Server {
                     drop(borrow.shutdown.take());
                     borrow.stopped.take()
                 };
-                strand
-                    .with_slots(async |strand, [mut dispatcher, mut tmp]| {
-                        {
-                            let borrow = this.borrow(strand)?;
-                            Output::set(strand, &mut dispatcher, Ref::slot::<1>(&borrow));
-                        }
-                        if !dispatcher.is_nil() {
-                            method!(
-                                strand,
-                                Slot::reborrow(&mut dispatcher),
-                                global.syms.cancel,
-                                &mut tmp
-                            )
-                            .await?;
-                        }
-                        Ok(())
-                    })
-                    .await?;
+                with_slots!(strand, |mut dispatcher, mut tmp| {
+                    {
+                        let borrow = this.borrow(strand)?;
+                        Output::set(strand, &mut dispatcher, Ref::slot::<1>(&borrow));
+                    }
+                    if !dispatcher.is_nil() {
+                        method!(
+                            strand,
+                            Slot::reborrow(&mut dispatcher),
+                            global.syms.cancel,
+                            &mut tmp
+                        )?;
+                    }
+                    Ok(())
+                })?;
                 if let Some(stopped) = stopped {
                     let _ = stopped.await;
                 }
@@ -1051,101 +1024,90 @@ impl<'v> Object<'v> for Server {
             })
             .method("mock", async move |this, strand, args, out| {
                 let global = this.annex().global;
-                strand
-                    .with_slots(async move |strand, [mut item, mut callbacks]| {
-                        let mut specs: Vec<Slot<'_, '_>> = Vec::new();
-                        let mut block = None;
+                with_slots!(strand, |mut item, mut callbacks| {
+                    let mut specs: Vec<Slot<'_, '_>> = Vec::new();
+                    let mut block = None;
 
-                        for arg in args {
-                            match arg {
-                                Arg::Pos(slot) => {
-                                    if slot.as_dict(strand).is_some() {
-                                        specs.push(slot);
-                                    } else if block.is_none() {
-                                        block = Some(slot);
-                                    } else {
-                                        return Err(Error::unexpected_positional(
-                                            strand,
-                                            specs.len() + 1,
-                                        ));
-                                    }
-                                }
-                                Arg::Key(sym, _) => {
-                                    return Err(Error::unexpected_key(strand, sym));
+                    for arg in args {
+                        match arg {
+                            Arg::Pos(slot) => {
+                                if slot.as_dict(strand).is_some() {
+                                    specs.push(slot);
+                                } else if block.is_none() {
+                                    block = Some(slot);
+                                } else {
+                                    return Err(Error::unexpected_positional(
+                                        strand,
+                                        specs.len() + 1,
+                                    ));
                                 }
                             }
+                            Arg::Key(sym, _) => {
+                                return Err(Error::unexpected_key(strand, sym));
+                            }
                         }
-                        if specs.is_empty() {
-                            return Err(Error::missing_positional(strand, 0));
-                        }
-                        this.borrow(strand)?.check_open(strand)?;
+                    }
+                    if specs.is_empty() {
+                        return Err(Error::missing_positional(strand, 0));
+                    }
+                    this.borrow(strand)?.check_open(strand)?;
 
-                        strand.new_array(&mut callbacks);
-                        let callbacks_array = callbacks.as_array(strand).unwrap();
-                        let mut entries = Vec::new();
-                        for spec in &specs {
-                            entries.push(
-                                parse_mock_spec(strand, global, spec, &callbacks_array).await?,
-                            );
-                        }
+                    strand.new_array(&mut callbacks);
+                    let callbacks_array = callbacks.as_array(strand).unwrap();
+                    let mut entries = Vec::new();
+                    for spec in &specs {
+                        entries
+                            .push(parse_mock_spec(strand, global, spec, &callbacks_array).await?);
+                    }
 
-                        // Register this `Mock` in the server's array of
-                        // mounted mocks, and give it a back-reference to the
-                        // server so unmounting can remove it from that array.
-                        let mock_object = MockObject {
-                            entries,
-                            mounted: true,
-                        };
-                        global
-                            .types
-                            .mock
-                            .create_with_annex(strand, mock_object, global, &mut item);
-                        global.types.mock.cast(&item).unwrap().enter_sync(
-                            strand,
-                            |strand, instance| {
-                                let mut mock_borrow = instance.borrow_mut(strand)?;
-                                Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
-                                Output::set(
-                                    strand,
-                                    Mut::slot_mut::<1>(&mut mock_borrow),
-                                    &callbacks,
-                                );
-                                strand.new_array(Mut::slot_mut::<2>(&mut mock_borrow));
-                                Ok(())
-                            },
-                        )?;
-                        {
-                            let server_borrow = this.borrow(strand)?;
-                            let array = Ref::slot::<0>(&server_borrow).as_array(strand).unwrap();
-                            array.push(strand, &item)?;
-                        }
-
-                        if let Some(block) = block {
-                            let result = call!(strand, block, out, &item).await;
-                            let cleanup = strand
-                                .with_interrupt_mask(InterruptMask::all(), async |strand| {
-                                    let (failure, unmounted) = global
-                                        .types
-                                        .mock
-                                        .cast(&item)
-                                        .unwrap()
-                                        .enter_sync(strand, |strand, instance| {
-                                            let failure = verify_mock(strand, instance);
-                                            let unmounted = unmount_mock(strand, instance, global);
-                                            (failure, unmounted)
-                                        });
-                                    let verified =
-                                        raise_verify_failure(strand, global, failure).await;
-                                    combine_results(strand, verified, unmounted)
-                                })
-                                .await;
-                            combine_results(strand, result, cleanup)
-                        } else {
-                            Output::set(strand, out, &item);
+                    // Register this `Mock` in the server's array of
+                    // mounted mocks, and give it a back-reference to the
+                    // server so unmounting can remove it from that array.
+                    let mock_object = MockObject {
+                        entries,
+                        mounted: true,
+                    };
+                    global
+                        .types
+                        .mock
+                        .create_with_annex(strand, mock_object, global, &mut item);
+                    global.types.mock.cast(&item).unwrap().enter_sync(
+                        strand,
+                        |strand, instance| {
+                            let mut mock_borrow = instance.borrow_mut(strand)?;
+                            Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
+                            Output::set(strand, Mut::slot_mut::<1>(&mut mock_borrow), &callbacks);
+                            strand.new_array(Mut::slot_mut::<2>(&mut mock_borrow));
                             Ok(())
-                        }
-                    })
-                    .await
+                        },
+                    )?;
+                    {
+                        let server_borrow = this.borrow(strand)?;
+                        let array = Ref::slot::<0>(&server_borrow).as_array(strand).unwrap();
+                        array.push(strand, &item)?;
+                    }
+
+                    if let Some(block) = block {
+                        let result = call!(strand, block, out, &item);
+                        let cleanup = with_interrupt_mask!(strand, InterruptMask::all(), {
+                            let (failure, unmounted) =
+                                global.types.mock.cast(&item).unwrap().enter_sync(
+                                    strand,
+                                    |strand, instance| {
+                                        let failure = verify_mock(strand, instance);
+                                        let unmounted = unmount_mock(strand, instance, global);
+                                        (failure, unmounted)
+                                    },
+                                );
+                            let verified = raise_verify_failure(strand, global, failure).await;
+                            combine_results(strand, verified, unmounted)
+                        });
+                        combine_results(strand, result, cleanup)
+                    } else {
+                        Output::set(strand, out, &item);
+                        Ok(())
+                    }
+                })
             })
     }
 }

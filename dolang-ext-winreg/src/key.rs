@@ -8,6 +8,7 @@ use dolang::runtime::{
     object::{FlagsTypeExt, TypeBuilder},
     unpack,
     vm::Register,
+    with_slots,
 };
 use dolang_ext_shell::{ErrorExt, ResultExt};
 use dolang_vfs_winreg::{PredefinedRoot, Resolve, View};
@@ -217,17 +218,15 @@ async fn finish_open<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     if let Some(block) = block {
-        strand
-            .with_slots(async move |strand, [mut handle, mut tmp]| {
-                global
-                    .types
-                    .key
-                    .create(strand, Key(Some(inner)), &mut handle);
-                let result = call!(strand, block, out, &handle).await;
-                let _ = method!(strand, &handle, global.syms.close, &mut tmp).await;
-                result
-            })
-            .await
+        with_slots!(strand, |mut handle, mut tmp| {
+            global
+                .types
+                .key
+                .create(strand, Key(Some(inner)), &mut handle);
+            let result = call!(strand, block, out, &handle);
+            let _ = method!(strand, &handle, global.syms.close, &mut tmp);
+            result
+        })
     } else {
         global.types.key.create(strand, Key(Some(inner)), out);
         Ok(())

@@ -7,6 +7,7 @@ use dolang::runtime::{
     object::{Mut, Ref, Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     value::Nil,
     value::TypeObject,
+    with_instance, with_slots,
 };
 use libsqlite3_sys::{
     SQLITE_BLOB, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_NULL, SQLITE_ROW, SQLITE_TEXT,
@@ -81,14 +82,12 @@ impl<'v> Object<'v> for Rows {
         });
         drop(borrow);
 
-        strand
-            .with_slots(async move |strand, [mut item]| {
-                while Self::next(this, strand, Slot::reborrow(&mut item)).await? {
-                    sink.positional(strand, Slot::reborrow(&mut item))?;
-                }
-                Ok(())
-            })
-            .await
+        with_slots!(strand, |mut item| {
+            while Self::next(this, strand, Slot::reborrow(&mut item)).await? {
+                sink.positional(strand, Slot::reborrow(&mut item))?;
+            }
+            Ok(())
+        })
     }
 
     async fn next<'a, 's>(
@@ -115,89 +114,81 @@ impl<'v> Object<'v> for Rows {
             ));
         }
 
-        stmt.enter(strand, async move |strand, stmt| {
-            strand
-                .with_slots(async move |strand, [mut conn]| {
-                    let stmt_borrow = stmt.borrow(strand)?;
-                    let owned =
-                        matches!(&stmt_borrow.query, QueryState::Active { owned: true, .. });
+        with_instance!(strand, stmt, |stmt| {
+            with_slots!(strand, |mut conn| {
+                let stmt_borrow = stmt.borrow(strand)?;
+                let owned = matches!(&stmt_borrow.query, QueryState::Active { owned: true, .. });
 
-                    Output::set(strand, &mut conn, Ref::slot::<0>(&stmt_borrow));
-                    drop(stmt_borrow);
-                    let conn = annex.global.types.connection.cast(&conn).unwrap();
+                Output::set(strand, &mut conn, Ref::slot::<0>(&stmt_borrow));
+                drop(stmt_borrow);
+                let conn = annex.global.types.connection.cast(&conn).unwrap();
 
-                    let raw = stmt.annex().raw.get();
-                    if raw.is_null() {
-                        return Err(Error::state_error(strand, "statement closed"));
-                    }
+                let raw = stmt.annex().raw.get();
+                if raw.is_null() {
+                    return Err(Error::state_error(strand, "statement closed"));
+                }
 
-                    let row_epoch = stmt.annex().bump_row_epoch();
+                let row_epoch = stmt.annex().bump_row_epoch();
 
-                    // Step to next row
-                    let raw = AssertSend(raw);
-                    let has_row = conn
-                        .enter(strand, async move |strand, conn| {
+                // Step to next row
+                let raw = AssertSend(raw);
+                let has_row = with_instance!(strand, conn, |conn| {
+                    conn.annex()
+                        .busy_retry(strand, async move |strand| {
                             conn.annex()
-                                .busy_retry(strand, async move |strand| {
-                                    conn.annex()
-                                        .with_raw(strand, move |_| {
-                                            let rc = unsafe { sqlite3_step(raw.into_inner()) };
-                                            Ok(rc == SQLITE_ROW)
-                                        })
-                                        .await
+                                .with_raw(strand, move |_| {
+                                    let rc = unsafe { sqlite3_step(raw.into_inner()) };
+                                    Ok(rc == SQLITE_ROW)
                                 })
                                 .await
                         })
-                        .await?;
+                        .await
+                })?;
 
-                    if has_row {
-                        let data = if owned {
-                            // Copy row data
-                            let bool_columns = &stmt.annex().bool_columns;
-                            let values: Vec<_> = unsafe {
-                                let count = sqlite3_column_count(raw.into_inner());
-                                (0..count)
-                                    .map(|i| column_to_value(raw.into_inner(), i, bool_columns))
-                                    .collect()
-                            };
-                            RowData::Owned(values.into_boxed_slice())
-                        } else {
-                            RowData::Ref(row_epoch)
+                if has_row {
+                    let data = if owned {
+                        // Copy row data
+                        let bool_columns = &stmt.annex().bool_columns;
+                        let values: Vec<_> = unsafe {
+                            let count = sqlite3_column_count(raw.into_inner());
+                            (0..count)
+                                .map(|i| column_to_value(raw.into_inner(), i, bool_columns))
+                                .collect()
                         };
-
-                        strand
-                            .with_slots(async |strand, [mut wrapper]| {
-                                annex.global.types.row.create_with_annex(
-                                    strand,
-                                    Row,
-                                    RowAnnex {
-                                        global: annex.global,
-                                        epoch: annex.epoch,
-                                        data,
-                                    },
-                                    &mut wrapper,
-                                );
-
-                                annex.global.types.row.cast(&wrapper).unwrap().enter_sync(
-                                    strand,
-                                    |strand, row| {
-                                        let mut row = row.borrow_mut_unwrap();
-                                        Output::set(strand, Mut::slot_mut::<0>(&mut row), stmt);
-                                    },
-                                );
-
-                                Output::set(strand, out, wrapper);
-                                Ok(true)
-                            })
-                            .await
+                        RowData::Owned(values.into_boxed_slice())
                     } else {
-                        stmt.borrow_mut(strand)?.query = QueryState::None;
-                        Ok(false)
-                    }
-                })
-                .await
+                        RowData::Ref(row_epoch)
+                    };
+
+                    with_slots!(strand, |mut wrapper| {
+                        annex.global.types.row.create_with_annex(
+                            strand,
+                            Row,
+                            RowAnnex {
+                                global: annex.global,
+                                epoch: annex.epoch,
+                                data,
+                            },
+                            &mut wrapper,
+                        );
+
+                        annex.global.types.row.cast(&wrapper).unwrap().enter_sync(
+                            strand,
+                            |strand, row| {
+                                let mut row = row.borrow_mut_unwrap();
+                                Output::set(strand, Mut::slot_mut::<0>(&mut row), stmt);
+                            },
+                        );
+
+                        Output::set(strand, out, wrapper);
+                        Ok(true)
+                    })
+                } else {
+                    stmt.borrow_mut(strand)?.query = QueryState::None;
+                    Ok(false)
+                }
+            })
         })
-        .await
     }
 }
 
@@ -830,14 +821,12 @@ impl<'v> Object<'v> for RowRestIter {
         _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut item]| {
-                while Self::next(this, strand, Slot::reborrow(&mut item)).await? {
-                    sink.positional(strand, Slot::reborrow(&mut item))?;
-                }
-                Ok(())
-            })
-            .await
+        with_slots!(strand, |mut item| {
+            while Self::next(this, strand, Slot::reborrow(&mut item)).await? {
+                sink.positional(strand, Slot::reborrow(&mut item))?;
+            }
+            Ok(())
+        })
     }
 
     async fn next<'a, 's>(

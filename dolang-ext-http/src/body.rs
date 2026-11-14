@@ -9,6 +9,7 @@ use dolang::runtime::{
     Error, Result, Strand, Value,
     error::ErrorKind,
     io::{self, IoCaps},
+    with_slots,
 };
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
@@ -46,12 +47,10 @@ pub(crate) async fn items<'v, 's>(
     value: &Value<'v>,
     end: &[u8],
 ) -> Result<'v, 's, Box<dyn io::Read>> {
-    let handle = strand
-        .with_slots(async |strand, [mut iterator]| {
-            value.iter(strand, &mut iterator).await?;
-            io::concat(strand, &iterator, end)
-        })
-        .await?;
+    let handle = with_slots!(strand, |mut iterator| {
+        value.iter(strand, &mut iterator).await?;
+        io::concat(strand, &iterator, end)
+    })?;
     read(strand, handle)
 }
 

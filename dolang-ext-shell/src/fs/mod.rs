@@ -5,6 +5,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, View},
     vm::Register,
+    with_interrupt_mask,
 };
 use dolang_vfs::file::File as VfsFile;
 use dolang_vfs::path as vfs_path;
@@ -1835,15 +1836,13 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
                     .await
                     .into_sys(strand)?;
                 create_path(strand, global, temp_path.clone(), &mut path)?;
-                let result = call!(strand, callable, out, &path).await;
-                let _ = strand
-                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                        let local = global.local.get(strand);
-                        let vfs = local.vfs();
-                        vfs.remove(temp_path.to_path(), true, false, Stop::Cross)
-                            .await
-                    })
-                    .await;
+                let result = call!(strand, callable, out, &path);
+                let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
+                    let local = global.local.get(strand);
+                    let vfs = local.vfs();
+                    vfs.remove(temp_path.to_path(), true, false, Stop::Cross)
+                        .await
+                });
                 result
             },
         )

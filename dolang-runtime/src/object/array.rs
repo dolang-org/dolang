@@ -12,11 +12,12 @@ use crate::{
     gc::{Collect, arena::Visit},
     object::protocol::members,
     sig::{Unpack, UnpackKeyKind},
-    strand::Strand,
+    strand::{Strand, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -603,41 +604,39 @@ impl<'v> Array<'v> {
         if let Some(key_fn) = key {
             let borrow = this.borrow(strand)?;
             let len = borrow.inner.len();
-            strand
-                .with_slots_dynamic(len, async |strand, mut slots| {
-                    {
-                        for (i, value) in borrow.inner.iter().enumerate() {
-                            if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                                strand.check_trap_gc()?;
-                            }
-                            let out = slots.at(i);
-                            call!(strand, &key_fn, out, value).await?;
+            with_slots_dynamic!(strand, len, |mut slots| {
+                {
+                    for (i, value) in borrow.inner.iter().enumerate() {
+                        if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
+                            strand.check_trap_gc()?;
                         }
+                        let out = slots.at(i);
+                        call!(strand, &key_fn, out, value)?;
                     }
+                }
 
-                    let keys = unsafe {
-                        std::slice::from_raw_parts_mut(
-                            slots.as_inner().as_ptr().cast::<Value<'v>>().cast_mut(),
-                            len,
-                        )
+                let keys = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        slots.as_inner().as_ptr().cast::<Value<'v>>().cast_mut(),
+                        len,
+                    )
+                };
+                drop(borrow);
+                let mut borrow = this.borrow_mut(strand)?;
+                let mut compare_count = 0usize;
+                pairsort::sort_by(keys, borrow.inner.as_mut_slice(), |lhs, rhs| {
+                    compare_count += 1;
+                    if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
+                        strand.check_trap()?;
+                    }
+                    let result = if reverse {
+                        rhs.op_lt(strand, lhs)?
+                    } else {
+                        lhs.op_lt(strand, rhs)?
                     };
-                    drop(borrow);
-                    let mut borrow = this.borrow_mut(strand)?;
-                    let mut compare_count = 0usize;
-                    pairsort::sort_by(keys, borrow.inner.as_mut_slice(), |lhs, rhs| {
-                        compare_count += 1;
-                        if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
-                            strand.check_trap()?;
-                        }
-                        let result = if reverse {
-                            rhs.op_lt(strand, lhs)?
-                        } else {
-                            lhs.op_lt(strand, rhs)?
-                        };
-                        result.to_bool(strand)
-                    })
+                    result.to_bool(strand)
                 })
-                .await
+            })
         } else {
             let mut borrow = this.borrow_mut(strand)?;
             let mut payload = vec![(); borrow.inner.len()];
@@ -1005,7 +1004,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                         if let Some(mut default) = default {
                             out.store(default.take())
                         } else if let Some(or_else) = or_else {
-                            call!(strand, or_else, out).await?;
+                            call!(strand, or_else, out)?;
                         }
                     }
                 }
@@ -1036,7 +1035,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                         if let Some(mut default) = default {
                             out.store(default.take())
                         } else if let Some(or_else) = or_else {
-                            call!(strand, or_else, out).await?;
+                            call!(strand, or_else, out)?;
                         } else {
                             return Err(Error::index(strand));
                         }
@@ -1063,13 +1062,11 @@ impl<'v> Protocol<'v> for Array<'v> {
             sym::COPY => {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 if this.delegator().is_some() {
-                    return strand
-                        .with_slots(async |strand, [mut receiver, mut ty]| {
-                            Output::set(strand, Slot::reborrow(&mut receiver), &this);
-                            receiver.op_type(strand, Slot::reborrow(&mut ty));
-                            call!(strand, &ty, out, &receiver).await
-                        })
-                        .await;
+                    return with_slots!(strand, |mut receiver, mut ty| {
+                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        receiver.op_type(strand, Slot::reborrow(&mut ty));
+                        call!(strand, &ty, out, &receiver)
+                    });
                 }
                 let borrow = this.borrow(strand)?;
                 let array = Array {
@@ -1415,13 +1412,11 @@ impl<'v> Protocol<'v> for Type {
         match method.tag() {
             sym::INIT_METHOD => {
                 let ([self_val, items], []) = unpack!(strand, args, 2, 0)?;
-                strand
-                    .with_slots(async |strand, [mut native]| {
-                        call!(strand, &strand.singletons().array, &mut native, items).await?;
-                        self_val.op_fill(strand, &strand.singletons().array, native.take())?;
-                        Ok(())
-                    })
-                    .await
+                with_slots!(strand, |mut native| {
+                    call!(strand, &strand.singletons().array, &mut native, items)?;
+                    self_val.op_fill(strand, &strand.singletons().array, native.take())?;
+                    Ok(())
+                })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().array, method, args, out).await,
         }

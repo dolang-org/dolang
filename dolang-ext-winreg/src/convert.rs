@@ -8,6 +8,7 @@
 use dolang::runtime::{
     Error, Output, Result, Slot, Strand,
     value::{Nil, View},
+    with_slots,
 };
 use dolang_vfs_winreg::Value;
 
@@ -158,16 +159,14 @@ async fn expect_str_iterable<'v, 's>(
     strand: &mut Strand<'v, 's>,
     input: Slot<'v, '_>,
 ) -> Result<'v, 's, Vec<String>> {
-    strand
-        .with_slots(async move |strand, [mut iter, mut item]| {
-            input.iter(strand, &mut iter).await?;
-            let mut parts = Vec::new();
-            while iter.next(strand, &mut item).await? {
-                parts.push(expect_str(strand, Slot::reborrow(&mut item))?);
-            }
-            Ok(parts)
-        })
-        .await
+    with_slots!(strand, |mut iter, mut item| {
+        input.iter(strand, &mut iter).await?;
+        let mut parts = Vec::new();
+        while iter.next(strand, &mut item).await? {
+            parts.push(expect_str(strand, Slot::reborrow(&mut item))?);
+        }
+        Ok(parts)
+    })
 }
 
 fn expect_u32<'v, 's>(strand: &mut Strand<'v, 's>, input: Slot<'v, '_>) -> Result<'v, 's, u32> {

@@ -2,7 +2,7 @@ use std::{cell::Cell, ffi::CString, path::Path, ptr};
 
 use dolang::runtime::{
     Error, State, Strand, call, error::ResultExt, method, strand::InterruptMask, unpack,
-    vm::Register,
+    vm::Register, with_interrupt_mask, with_slots,
 };
 use libsqlite3_sys::{
     SQLITE_OK, SQLITE_OPEN_CREATE, SQLITE_OPEN_READWRITE, sqlite3, sqlite3_close, sqlite3_open_v2,
@@ -169,39 +169,35 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             }
 
             if let Some(block) = block {
-                strand
-                    .with_slots(async |strand, [mut wrapper, mut tmp]| {
-                        global.types.connection.create_with_annex(
-                            strand,
-                            Connection,
-                            ConnectionAnnex {
-                                global,
-                                raw: Cell::new(raw),
-                                in_use: Cell::new(false),
-                                in_transaction: Cell::new(false),
-                                pending_close: Cell::new(false),
-                                epoch: Cell::new(0),
-                                #[cfg(unix)]
-                                agent: (!dolang_ext_shell::vfs(strand).is_direct())
-                                    .then(|| dolang_ext_shell::vfs(strand)),
-                                busy_retries,
-                                busy_min_wait,
-                                busy_max_wait,
-                            },
-                            &mut wrapper,
-                        );
+                with_slots!(strand, |mut wrapper, mut tmp| {
+                    global.types.connection.create_with_annex(
+                        strand,
+                        Connection,
+                        ConnectionAnnex {
+                            global,
+                            raw: Cell::new(raw),
+                            in_use: Cell::new(false),
+                            in_transaction: Cell::new(false),
+                            pending_close: Cell::new(false),
+                            epoch: Cell::new(0),
+                            #[cfg(unix)]
+                            agent: (!dolang_ext_shell::vfs(strand).is_direct())
+                                .then(|| dolang_ext_shell::vfs(strand)),
+                            busy_retries,
+                            busy_min_wait,
+                            busy_max_wait,
+                        },
+                        &mut wrapper,
+                    );
 
-                        let result = call!(strand, block, out, &wrapper).await;
+                    let result = call!(strand, block, out, &wrapper);
 
-                        strand
-                            .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                                let _ = method!(strand, &wrapper, close, &mut tmp).await;
-                            })
-                            .await;
+                    with_interrupt_mask!(strand, InterruptMask::all(), {
+                        let _ = method!(strand, &wrapper, close, &mut tmp);
+                    });
 
-                        result
-                    })
-                    .await
+                    result
+                })
             } else {
                 global.types.connection.create_with_annex(
                     strand,

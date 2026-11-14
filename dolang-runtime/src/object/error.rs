@@ -19,6 +19,7 @@ use crate::{
     unpack,
     value::{Output, Slot, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -362,12 +363,10 @@ impl<'v> Protocol<'v> for VariantTypeObj {
                 self_val.op_fill(strand, variant_singleton(strand, kind), native)
             }
             _ => {
-                strand
-                    .with_slots(async move |strand, [mut func]| {
-                        Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
-                        func.op_call(strand, args, out).await
-                    })
-                    .await
+                with_slots!(strand, |mut func| {
+                    Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
+                    func.op_call(strand, args, out).await
+                })
             }
         }
     }

@@ -22,6 +22,7 @@ use crate::{
     unpack,
     value::{Output, Slot, TypeObject, Value},
     vm::Vm,
+    with_slots,
 };
 
 use super::{
@@ -542,12 +543,10 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
                     )
                 };
                 let close = Sym::well_known(sym::CLOSE);
-                strand
-                    .with_slots(async move |strand, [mut tmp]| {
-                        let _ = method!(strand, &input, close, &mut tmp).await;
-                        let _ = method!(strand, &output, close, &mut tmp).await;
-                    })
-                    .await;
+                with_slots!(strand, |mut tmp| {
+                    let _ = method!(strand, &input, close, &mut tmp);
+                    let _ = method!(strand, &output, close, &mut tmp);
+                });
                 join_handle(&handle, strand, out).await
             }
             sym::CANCEL => {

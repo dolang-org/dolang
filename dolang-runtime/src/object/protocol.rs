@@ -15,11 +15,12 @@ use crate::{
     },
     object::{BoundMethod, class::get_native_slot, interface::Request},
     sig::Unpack,
-    strand::{Pinned, Strand},
+    strand::{PinScope, Pinned, Strand},
     sym::{self, Sym},
     unpack,
     value::{Input, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
     vm::{Alloc, Vm},
+    with_slots,
 };
 
 pub(crate) struct Inspect<'v, 'a> {
@@ -125,12 +126,10 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         if is_special_mcall(method.tag()) {
             return recv_special_mcall(strand, &this, method, args, out).await;
         }
-        strand
-            .with_slots(async move |strand, [mut func]| {
-                Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
-                func.op_call(strand, args, out).await
-            })
-            .await
+        with_slots!(strand, |mut func| {
+            Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
+            func.op_call(strand, args, out).await
+        })
     }
 
     fn op_type<'a, 's>(this: Recv<'v, 'a, Self>, strand: &'a mut Strand<'v, 's>, out: Slot<'v, 'a>);
@@ -1042,10 +1041,10 @@ impl<'v, T: Protocol<'v, Annex: Sized>> ObjEmbryo<'v, T> {
 
 impl<'v, T: ?Sized + Protocol<'v>> TypeHandle<'v, T> {
     /// Downcast `value` to this type, returning a [`RecvCast`] that must be entered via
-    /// [`RecvCast::enter`]/[`RecvCast::enter_sync`] to obtain a [`Recv`]. This scopes the
-    /// resulting borrow to the duration of a closure rather than handing back an
-    /// indefinitely-long-lived one, mirroring [`Type::cast`](super::native::Type::cast) in
-    /// the public extension API.
+    /// [`with_instance!`](crate::with_instance) or [`RecvCast::enter_sync`] to obtain a
+    /// [`Recv`]. This scopes the resulting borrow to a block or closure rather than handing
+    /// back an indefinitely-long-lived one, mirroring [`Type::cast`](super::native::Type::cast)
+    /// in the public extension API.
     // Only exercised by in-crate unit tests so far (see `object::dict::tests` and
     // `object::array_view::tests`); not yet adopted by any production call site, hence
     // the dead-code allowance outside test builds.
@@ -1062,19 +1061,21 @@ pub(crate) struct RecvCast<'v, 'a, T: ?Sized + Protocol<'v>> {
 }
 
 impl<'v, 'a, T: ?Sized + Protocol<'v>> RecvCast<'v, 'a, T> {
-    /// Obtain a [`Recv`] for the duration of `f`.
+    /// Obtain a [`Recv`] for the borrow of `scope`, for [`with_instance!`](crate::with_instance).
+    ///
+    /// # Safety
+    ///
+    /// `scope` must be a local of the block that uses the `Recv`.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) async fn enter<'s, R>(
-        self,
-        strand: &mut Strand<'v, 's>,
-        f: impl for<'x> AsyncFnOnce(&mut Strand<'v, 's>, Recv<'v, 'x, T>) -> R,
-    ) -> R {
-        // SAFETY: scoped to `f`, as for `GcObj::pin`, inlined to keep futures shallow
-        f(strand, Recv::new(unsafe { self.obj.pin_unchecked() })).await
+    pub(crate) unsafe fn scoped_instance<'p>(self, _scope: &'p PinScope) -> Recv<'v, 'p, T>
+    where
+        'a: 'p,
+    {
+        // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+        Recv::new(unsafe { self.obj.pin_unchecked() })
     }
 
-    /// Synchronous counterpart to [`RecvCast::enter`], for call sites that don't need to
-    /// hold the `Recv` across an `.await`.
+    /// Obtain a [`Recv`] for the duration of `f`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn enter_sync<'s, R>(
         self,

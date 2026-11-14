@@ -14,6 +14,7 @@ use dolang::runtime::{
     strand::InterruptMask,
     unpack,
     value::{BinEmbryo, Nil, TypeObject},
+    with_instance, with_interrupt_mask, with_slots,
 };
 use dolang_util::{shared::Locked, utf8};
 use dolang_vfs::file::{
@@ -315,13 +316,9 @@ async fn copy_data<'v, 's, S: FileKind<'v>, D: FileKind<'v>>(
         ));
     }
     let region = match range {
-        Some(range) => Some(
-            strand
-                .with_slots(async move |strand, [start, end, step]| {
-                    byte_range(strand, &range, [start, end, step], "copy range")
-                })
-                .await?,
-        ),
+        Some(range) => Some(with_slots!(strand, |start, end, step| {
+            byte_range(strand, &range, [start, end, step], "copy range")
+        })?),
         None => None,
     };
 
@@ -1003,17 +1000,15 @@ pub(crate) async fn open_file<'v, 's>(
     let caps = spec.caps();
 
     if let Some(block) = block {
-        strand
-            .with_slots(async move |strand, [mut handle, mut tmp]| {
-                create_file(strand, global, file, caps, buffered, &mut handle);
-                let result = call!(strand, block, out, &handle).await;
-                // Always closed, even on error. A close error matters only
-                // when the block succeeded: it may be a buffered write failing
-                // late.
-                let closed = method!(strand, &handle, global.syms.close, &mut tmp).await;
-                result.and(closed)
-            })
-            .await
+        with_slots!(strand, |mut handle, mut tmp| {
+            create_file(strand, global, file, caps, buffered, &mut handle);
+            let result = call!(strand, block, out, &handle);
+            // Always closed, even on error. A close error matters only
+            // when the block succeeded: it may be a buffered write failing
+            // late.
+            let closed = method!(strand, &handle, global.syms.close, &mut tmp);
+            result.and(closed)
+        })
     } else {
         create_file(strand, global, file, caps, buffered, out);
         Ok(())
@@ -1180,54 +1175,46 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
             FileLockMode::Exclusive
         };
         T::drop_buffers(this, strand).await?;
-        strand
-            .with_slots(async move |strand, [mut guard, start, end, step]| {
-                let range = lock_range(strand, &range, [start, end, step])?;
-                let lock = {
-                    let borrow = this.borrow(strand)?;
-                    let file = borrow.open_ref(strand)?;
-                    file.lock(range, mode, behavior).await.into_sys(strand)?
+        with_slots!(strand, |mut guard, start, end, step| {
+            let range = lock_range(strand, &range, [start, end, step])?;
+            let lock = {
+                let borrow = this.borrow(strand)?;
+                let file = borrow.open_ref(strand)?;
+                file.lock(range, mode, behavior).await.into_sys(strand)?
+            };
+            if behavior == FileLockBehavior::Blocking {
+                assert!(lock.is_some(), "blocking file lock did not acquire");
+            }
+            // A `try_lock` that does not acquire gives nil, and still runs
+            // the block.
+            let Some(lock) = lock else {
+                return match block {
+                    Some(block) => call!(strand, block, out, &guard),
+                    None => {
+                        Output::set(strand, out, Nil);
+                        Ok(())
+                    }
                 };
-                if behavior == FileLockBehavior::Blocking {
-                    assert!(lock.is_some(), "blocking file lock did not acquire");
-                }
-                // A `try_lock` that does not acquire gives nil, and still runs
-                // the block.
-                let Some(lock) = lock else {
-                    return match block {
-                        Some(block) => call!(strand, block, out, &guard).await,
-                        None => {
-                            Output::set(strand, out, Nil);
-                            Ok(())
-                        }
-                    };
-                };
-                let lock_type = this.annex().global.types.file_lock;
-                let Some(block) = block else {
-                    FileLockObject::create(strand, lock_type, Some(lock), out);
-                    return Ok(());
-                };
-                FileLockObject::create(strand, lock_type, Some(lock), &mut guard);
-                let result = call!(strand, block, out, &guard).await;
-                let cleanup = strand
-                    .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                        lock_type
-                            .cast(&guard)
-                            .unwrap()
-                            .enter(strand, async move |strand, guard| {
-                                FileLockObject::release(guard, strand).await
-                            })
-                            .await
-                    })
-                    .await;
-                match (result, cleanup) {
-                    (Ok(()), Ok(())) => Ok(()),
-                    (Err(error), Ok(())) => Err(error),
-                    (Ok(()), Err(error)) => Err(error),
-                    (Err(cause), Err(error)) => Err(error.caused_by(strand, cause)),
-                }
-            })
-            .await
+            };
+            let lock_type = this.annex().global.types.file_lock;
+            let Some(block) = block else {
+                FileLockObject::create(strand, lock_type, Some(lock), out);
+                return Ok(());
+            };
+            FileLockObject::create(strand, lock_type, Some(lock), &mut guard);
+            let result = call!(strand, block, out, &guard);
+            let cleanup = with_interrupt_mask!(strand, InterruptMask::all(), {
+                with_instance!(strand, lock_type.cast(&guard).unwrap(), |guard| {
+                    FileLockObject::release(guard, strand).await
+                })
+            });
+            match (result, cleanup) {
+                (Ok(()), Ok(())) => Ok(()),
+                (Err(error), Ok(())) => Err(error),
+                (Ok(()), Err(error)) => Err(error),
+                (Err(cause), Err(error)) => Err(error.caused_by(strand, cause)),
+            }
+        })
     }
 
     /// Capabilities while open; a closed file has none.
@@ -1914,10 +1901,10 @@ pub(crate) fn cast_file<'v, 'a>(
 /// Enters whichever kind of file `$cast` holds, binding the instance as
 /// `$file`.
 macro_rules! enter_file {
-    ($cast:expr, $strand:expr, |$s:ident, $file:ident| $body:expr) => {
+    ($strand:ident, $cast:expr, |$file:ident| $body:expr) => {
         match $cast {
-            FileCast::Buffered(cast) => cast.enter($strand, async move |$s, $file| $body).await,
-            FileCast::Raw(cast) => cast.enter($strand, async move |$s, $file| $body).await,
+            FileCast::Buffered(cast) => with_instance!($strand, cast, |$file| $body),
+            FileCast::Raw(cast) => with_instance!($strand, cast, |$file| $body),
         }
     };
 }
@@ -1928,10 +1915,8 @@ impl<'v> FileCast<'v, '_> {
         self,
         strand: &mut Strand<'v, 's>,
     ) -> Result<'v, 's, VfsFile> {
-        enter_file!(self, strand, |strand, file| FileObject::command_file(
-            file, strand
-        )
-        .await)
+        enter_file!(strand, self, |file| FileObject::command_file(file, strand)
+            .await)
     }
 }
 
@@ -1947,7 +1932,7 @@ async fn copy_to<'v, 's, S: FileKind<'v>>(
     clone: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    enter_file!(dst, strand, |strand, dst| copy_data(
+    enter_file!(strand, dst, |dst| copy_data(
         strand, global, src, dst, range, size, offset, clone, out
     )
     .await)
@@ -1965,7 +1950,7 @@ pub(crate) async fn copy_files<'v, 's>(
     clone: Option<Slot<'v, '_>>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    enter_file!(src, strand, |strand, src| copy_to(
+    enter_file!(strand, src, |src| copy_to(
         strand, global, src, dst, range, size, offset, clone, out
     )
     .await)

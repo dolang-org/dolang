@@ -57,6 +57,7 @@ use crate::{
     unpack,
     value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, ValueCell, fmt::Format},
     vm::Vm,
+    with_slots,
 };
 
 /// Bytes `read_all` and `copy_to` request per call, and the default `chunks` size.
@@ -376,18 +377,16 @@ async fn read_to_end<'v, 's>(
     stream: &Value<'v>,
     buf: &mut BinEmbryo<'v>,
 ) -> Result<'v, 's, ()> {
-    strand
-        .with_slots(async move |strand, [mut chunk]| {
-            while read_chunk(strand, stream, CHUNK, Slot::reborrow(&mut chunk)).await? {
-                let bytes = chunk
-                    .as_bin(strand.vm())
-                    .expect("read_chunk checks for `Bin`");
-                let bytes = bytes.pin();
-                buf.extend(strand, &bytes);
-            }
-            Ok(())
-        })
-        .await
+    with_slots!(strand, |mut chunk| {
+        while read_chunk(strand, stream, CHUNK, Slot::reborrow(&mut chunk)).await? {
+            let bytes = chunk
+                .as_bin(strand.vm())
+                .expect("read_chunk checks for `Bin`");
+            let bytes = bytes.pin();
+            buf.extend(strand, &bytes);
+        }
+        Ok(())
+    })
 }
 
 /// Calls `stream.read size` into `out`, returning whether it read anything.
@@ -403,8 +402,7 @@ async fn read_chunk<'v, 's>(
         Sym::well_known(sym::READ),
         &mut out,
         size as i64
-    )
-    .await?;
+    )?;
     match out.as_bin(strand.vm()) {
         Some(bytes) => Ok(!bytes.is_empty()),
         None => Err(Error::type_error(strand, "read: expected `Bin`")),
@@ -436,32 +434,30 @@ async fn write_all<'v, 's>(
     if len == 0 {
         return Ok(());
     }
-    strand
-        .with_slots(async move |strand, [mut count, mut rest]| {
-            let write = Sym::well_known(sym::WRITE);
-            stream
-                .method(strand, write, Args::new_owned(&items, 1), &mut count)
-                .await?;
-            let mut skip = written(strand, &count, len)?;
-            if skip == len {
-                return Ok(());
-            }
-            let mut left = BinEmbryo::new_with_capacity(strand, len - skip);
-            for arg in args {
-                let Arg::Pos(piece) = arg else { continue };
-                piece.with_u8_slice(strand, |strand, bytes| {
-                    if skip >= bytes.len() {
-                        skip -= bytes.len();
-                    } else {
-                        left.extend(strand, &bytes[skip..]);
-                        skip = 0;
-                    }
-                });
-            }
-            left.finish(strand, &mut rest);
-            write_all_value(strand, stream, &rest).await
-        })
-        .await
+    with_slots!(strand, |mut count, mut rest| {
+        let write = Sym::well_known(sym::WRITE);
+        stream
+            .method(strand, write, Args::new_owned(&items, 1), &mut count)
+            .await?;
+        let mut skip = written(strand, &count, len)?;
+        if skip == len {
+            return Ok(());
+        }
+        let mut left = BinEmbryo::new_with_capacity(strand, len - skip);
+        for arg in args {
+            let Arg::Pos(piece) = arg else { continue };
+            piece.with_u8_slice(strand, |strand, bytes| {
+                if skip >= bytes.len() {
+                    skip -= bytes.len();
+                } else {
+                    left.extend(strand, &bytes[skip..]);
+                    skip = 0;
+                }
+            });
+        }
+        left.finish(strand, &mut rest);
+        write_all_value(strand, stream, &rest).await
+    })
 }
 
 /// The length of a `write` piece, which must be a `Str` or `Bin`.
@@ -479,25 +475,23 @@ async fn write_all_value<'v, 's>(
     data: &Value<'v>,
 ) -> Result<'v, 's, ()> {
     let len = piece_len(strand, data)?;
-    strand
-        .with_slots(async move |strand, [mut rest, mut written_count]| {
-            let write = Sym::well_known(sym::WRITE);
-            let mut offset = 0;
-            while offset < len {
-                if offset == 0 {
-                    method!(strand, stream, write, &mut written_count, data).await?;
-                } else {
-                    data.with_u8_slice(strand, |strand, bytes| {
-                        Output::set(strand, &mut rest, &bytes[offset..])
-                    })
-                    .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
-                    method!(strand, stream, write, &mut written_count, &rest).await?;
-                }
-                offset += written(strand, &written_count, len - offset)?;
+    with_slots!(strand, |mut rest, mut written_count| {
+        let write = Sym::well_known(sym::WRITE);
+        let mut offset = 0;
+        while offset < len {
+            if offset == 0 {
+                method!(strand, stream, write, &mut written_count, data)?;
+            } else {
+                data.with_u8_slice(strand, |strand, bytes| {
+                    Output::set(strand, &mut rest, &bytes[offset..])
+                })
+                .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
+                method!(strand, stream, write, &mut written_count, &rest)?;
             }
-            Ok(())
-        })
-        .await
+            offset += written(strand, &written_count, len - offset)?;
+        }
+        Ok(())
+    })
 }
 
 /// Checks the count a `write` of `len` bytes returned: at least one, and no more than `len`.
@@ -525,12 +519,10 @@ async fn put<'v, 's>(
         return write_all_value(strand, stream, value).await;
     }
     let text = value.to_string(strand)?;
-    strand
-        .with_slots(async move |strand, [mut data]| {
-            Output::set(strand, &mut data, text.as_str());
-            write_all_value(strand, stream, &data).await
-        })
-        .await
+    with_slots!(strand, |mut data| {
+        Output::set(strand, &mut data, text.as_str());
+        write_all_value(strand, stream, &data).await
+    })
 }
 
 /// Puts the rest of `stream` into `dest`'s sink, returning the number of bytes copied.
@@ -540,19 +532,17 @@ async fn copy_to<'v, 's>(
     dest: &Value<'v>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let copied = strand
-        .with_slots(async move |strand, [mut sink, mut chunk]| {
-            dest.sink(strand, &mut sink).await?;
-            let mut copied = 0;
-            while read_chunk(strand, stream, CHUNK, Slot::reborrow(&mut chunk)).await? {
-                if let Some(bytes) = chunk.as_bin(strand.vm()) {
-                    copied += bytes.len();
-                }
-                sink.put(strand, Slot::reborrow(&mut chunk)).await?;
+    let copied = with_slots!(strand, |mut sink, mut chunk| {
+        dest.sink(strand, &mut sink).await?;
+        let mut copied = 0;
+        while read_chunk(strand, stream, CHUNK, Slot::reborrow(&mut chunk)).await? {
+            if let Some(bytes) = chunk.as_bin(strand.vm()) {
+                copied += bytes.len();
             }
-            Ok(copied)
-        })
-        .await?;
+            sink.put(strand, Slot::reborrow(&mut chunk)).await?;
+        }
+        Ok(copied)
+    })?;
     Output::set(strand, out, copied);
     Ok(())
 }
@@ -763,15 +753,13 @@ async fn serve_read<'v, 's>(
     stream: &Value<'v>,
     size: usize,
 ) -> Result<'v, 's, Vec<u8>> {
-    strand
-        .with_slots(async move |strand, [mut chunk]| {
-            read_chunk(strand, stream, size, Slot::reborrow(&mut chunk)).await?;
-            let bytes = chunk
-                .as_bin(strand.vm())
-                .expect("read_chunk checks for `Bin`");
-            Ok(bytes.pin().to_vec())
-        })
-        .await
+    with_slots!(strand, |mut chunk| {
+        read_chunk(strand, stream, size, Slot::reborrow(&mut chunk)).await?;
+        let bytes = chunk
+            .as_bin(strand.vm())
+            .expect("read_chunk checks for `Bin`");
+        Ok(bytes.pin().to_vec())
+    })
 }
 
 /// Calls the stream's `fork` and gets the handle of the stream it returns.
@@ -781,32 +769,29 @@ async fn serve_fork<'v, 's>(
     offset: u64,
 ) -> Result<'v, 's, ByteHandle> {
     let offset = i64::try_from(offset).map_err(|_| Error::overflow(strand))?;
-    strand
-        .with_slots(async move |strand, [mut fork]| {
-            method!(
-                strand,
-                stream,
-                Sym::well_known(sym::FORK),
-                &mut fork,
-                offset
-            )
-            .await?;
-            crate::io::get(strand, &fork, |strand, caps| {
-                if caps.intersects(IoCaps::READ | IoCaps::WRITE) {
-                    Ok(())
-                } else {
-                    Err(Error::value(strand, "fork must be readable or writable"))
-                }
-            })
-            .map_err(|err| {
-                if err.kind() == crate::error::ErrorKind::Unsupported {
-                    Error::type_error(strand, "fork: expected `io.Io`")
-                } else {
-                    err
-                }
-            })
+    with_slots!(strand, |mut fork| {
+        method!(
+            strand,
+            stream,
+            Sym::well_known(sym::FORK),
+            &mut fork,
+            offset
+        )?;
+        crate::io::get(strand, &fork, |strand, caps| {
+            if caps.intersects(IoCaps::READ | IoCaps::WRITE) {
+                Ok(())
+            } else {
+                Err(Error::value(strand, "fork must be readable or writable"))
+            }
         })
-        .await
+        .map_err(|err| {
+            if err.kind() == crate::error::ErrorKind::Unsupported {
+                Error::type_error(strand, "fork: expected `io.Io`")
+            } else {
+                err
+            }
+        })
+    })
 }
 
 async fn serve_write<'v, 's>(
@@ -814,20 +799,17 @@ async fn serve_write<'v, 's>(
     stream: &Value<'v>,
     data: &[u8],
 ) -> Result<'v, 's, usize> {
-    strand
-        .with_slots(async move |strand, [mut bin, mut count]| {
-            Output::set(strand, &mut bin, data);
-            method!(
-                strand,
-                stream,
-                Sym::well_known(sym::WRITE),
-                &mut count,
-                &bin
-            )
-            .await?;
-            written(strand, &count, data.len())
-        })
-        .await
+    with_slots!(strand, |mut bin, mut count| {
+        Output::set(strand, &mut bin, data);
+        method!(
+            strand,
+            stream,
+            Sym::well_known(sym::WRITE),
+            &mut count,
+            &bin
+        )?;
+        written(strand, &count, data.len())
+    })
 }
 
 async fn serve_seek<'v, 's>(
@@ -836,24 +818,22 @@ async fn serve_seek<'v, 's>(
     pos: SeekFrom,
 ) -> Result<'v, 's, u64> {
     let method = Sym::well_known(sym::SEEK);
-    strand
-        .with_slots(async move |strand, [mut out]| {
-            match pos {
-                SeekFrom::Start(n) => {
-                    let n = i64::try_from(n).map_err(|_| Error::overflow(strand))?;
-                    let start = Sym::well_known(sym::START);
-                    method!(strand, stream, method, &mut out, start: n).await?;
-                }
-                SeekFrom::Current(n) => method!(strand, stream, method, &mut out, n).await?,
-                SeekFrom::End(n) => {
-                    let end = Sym::well_known(sym::END);
-                    method!(strand, stream, method, &mut out, end: n).await?;
-                }
+    with_slots!(strand, |mut out| {
+        match pos {
+            SeekFrom::Start(n) => {
+                let n = i64::try_from(n).map_err(|_| Error::overflow(strand))?;
+                let start = Sym::well_known(sym::START);
+                method!(strand, stream, method, &mut out, start: n)?;
             }
-            out.to_i64(strand)
-                .ok()
-                .and_then(|n| u64::try_from(n).ok())
-                .ok_or_else(|| Error::type_error(strand, "seek: expected a position"))
-        })
-        .await
+            SeekFrom::Current(n) => method!(strand, stream, method, &mut out, n)?,
+            SeekFrom::End(n) => {
+                let end = Sym::well_known(sym::END);
+                method!(strand, stream, method, &mut out, end: n)?;
+            }
+        }
+        out.to_i64(strand)
+            .ok()
+            .and_then(|n| u64::try_from(n).ok())
+            .ok_or_else(|| Error::type_error(strand, "seek: expected a position"))
+    })
 }

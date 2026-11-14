@@ -18,6 +18,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, TypeObject},
     vm::Register,
+    with_interrupt_mask, with_slots,
 };
 use dolang_ext_time::{as_datetime, datetime};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
@@ -374,7 +375,7 @@ impl<'v> Object<'v> for StatusObject {
                 let annex = this.annex();
                 let text = status_text(strand, &annex)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text).await
+                method!(strand, json, decode, out, text)
             });
 
         builder
@@ -483,114 +484,112 @@ async fn multipart_part<'v, 's>(
 
     #[cfg(not(feature = "json"))]
     let _ = global;
-    strand
-        .with_slots(
-            async move |strand, [mut iter, mut item, mut key, mut value, mut body]| {
-                let mut name = None;
-                let mut body_kind = None;
-                let mut filename = None;
-                let mut content_type = None;
+    with_slots!(strand, |mut iter,
+                         mut item,
+                         mut key,
+                         mut value,
+                         mut body| {
+        let mut name = None;
+        let mut body_kind = None;
+        let mut filename = None;
+        let mut content_type = None;
 
-                part_spec.iter(strand, &mut iter).await?;
-                while iter.next(strand, &mut item).await? {
-                    item.index(strand, 0, &mut key)?;
-                    item.index(strand, 1, &mut value)?;
-                    let key_sym = key.as_sym(strand.vm()).ok_or_else(|| {
-                        Error::type_error(strand, "multipart part keys must be symbols")
-                    })?;
-                    if key_sym == global.syms.name {
-                        name = Some(multipart_text_field(
-                            strand,
-                            Some(&value),
-                            global.syms.name,
-                        )?);
-                    } else if key_sym == global.syms.body {
-                        #[cfg(feature = "json")]
-                        if body_kind == Some(BodyKind::Json) {
-                            return Err(Error::value(
-                                strand,
-                                "multipart part may specify at most one of `body` or `json`",
-                            ));
-                        }
-                        Output::set(strand, &mut body, &value);
-                        body_kind = Some(BodyKind::Body);
-                    } else if key_sym == global.syms.filename {
-                        filename = Some(multipart_text_field(
-                            strand,
-                            Some(&value),
-                            global.syms.filename,
-                        )?);
-                    } else if key_sym == global.syms.content_type {
-                        content_type = Some(multipart_text_field(
-                            strand,
-                            Some(&value),
-                            global.syms.content_type,
-                        )?);
-                    } else {
-                        #[cfg(feature = "json")]
-                        if key_sym == global.syms.json {
-                            if body_kind == Some(BodyKind::Body) {
-                                return Err(Error::value(
-                                    strand,
-                                    "multipart part may specify at most one of `body` or `json`",
-                                ));
-                            }
-                            Output::set(strand, &mut body, &value);
-                            body_kind = Some(BodyKind::Json);
-                            continue;
-                        }
-                        return Err(Error::unexpected_key(strand, &key));
-                    }
-                }
-
-                let name = name.ok_or_else(|| Error::missing_key(strand, global.syms.name))?;
-                if body_kind.is_none() {
-                    return Err(Error::missing_key(strand, global.syms.body));
-                }
-
+        part_spec.iter(strand, &mut iter).await?;
+        while iter.next(strand, &mut item).await? {
+            item.index(strand, 0, &mut key)?;
+            item.index(strand, 1, &mut value)?;
+            let key_sym = key
+                .as_sym(strand.vm())
+                .ok_or_else(|| Error::type_error(strand, "multipart part keys must be symbols"))?;
+            if key_sym == global.syms.name {
+                name = Some(multipart_text_field(
+                    strand,
+                    Some(&value),
+                    global.syms.name,
+                )?);
+            } else if key_sym == global.syms.body {
                 #[cfg(feature = "json")]
                 if body_kind == Some(BodyKind::Json) {
-                    strand
-                        .with_slots(async |strand, [mut json_mod, mut json_text]| {
-                            strand.import("json", &mut json_mod).await?;
-                            let encode = global.syms.encode;
-                            method!(strand, json_mod, encode, &mut json_text, &mut body).await?;
-                            Output::set(strand, &mut body, &json_text);
-                            Ok(())
-                        })
-                        .await?;
-                    if content_type.is_none() {
-                        content_type = Some("application/json".to_owned());
+                    return Err(Error::value(
+                        strand,
+                        "multipart part may specify at most one of `body` or `json`",
+                    ));
+                }
+                Output::set(strand, &mut body, &value);
+                body_kind = Some(BodyKind::Body);
+            } else if key_sym == global.syms.filename {
+                filename = Some(multipart_text_field(
+                    strand,
+                    Some(&value),
+                    global.syms.filename,
+                )?);
+            } else if key_sym == global.syms.content_type {
+                content_type = Some(multipart_text_field(
+                    strand,
+                    Some(&value),
+                    global.syms.content_type,
+                )?);
+            } else {
+                #[cfg(feature = "json")]
+                if key_sym == global.syms.json {
+                    if body_kind == Some(BodyKind::Body) {
+                        return Err(Error::value(
+                            strand,
+                            "multipart part may specify at most one of `body` or `json`",
+                        ));
                     }
+                    Output::set(strand, &mut body, &value);
+                    body_kind = Some(BodyKind::Json);
+                    continue;
                 }
+                return Err(Error::unexpected_key(strand, &key));
+            }
+        }
 
-                let mut part = if let Some(slice) = body.as_bin(strand) {
-                    multipart::Part::bytes(slice.to_vec())
-                } else if let Some(text) = body.as_str(strand) {
-                    multipart::Part::text(text.to_string())
-                } else {
-                    match body::reader(strand, &body).await {
-                        Ok(reader) => multipart::Part::stream(bodies.add(strand, reader).await?),
-                        Err(e) if e.kind() == ErrorKind::Type => {
-                            multipart::Part::text(body.to_string(strand)?)
-                        }
-                        Err(e) => return Err(e),
-                    }
-                };
+        let name = name.ok_or_else(|| Error::missing_key(strand, global.syms.name))?;
+        if body_kind.is_none() {
+            return Err(Error::missing_key(strand, global.syms.body));
+        }
 
-                if let Some(filename) = filename {
-                    part = part.file_name(filename);
+        #[cfg(feature = "json")]
+        if body_kind == Some(BodyKind::Json) {
+            with_slots!(strand, |mut json_mod, mut json_text| {
+                strand.import("json", &mut json_mod).await?;
+                let encode = global.syms.encode;
+                method!(strand, json_mod, encode, &mut json_text, &mut body)?;
+                Output::set(strand, &mut body, &json_text);
+                Ok(())
+            })?;
+            if content_type.is_none() {
+                content_type = Some("application/json".to_owned());
+            }
+        }
+
+        let mut part = if let Some(slice) = body.as_bin(strand) {
+            multipart::Part::bytes(slice.to_vec())
+        } else if let Some(text) = body.as_str(strand) {
+            multipart::Part::text(text.to_string())
+        } else {
+            match body::reader(strand, &body).await {
+                Ok(reader) => multipart::Part::stream(bodies.add(strand, reader).await?),
+                Err(e) if e.kind() == ErrorKind::Type => {
+                    multipart::Part::text(body.to_string(strand)?)
                 }
-                if let Some(content_type) = content_type {
-                    part = part.mime_str(&content_type).map_err(|err| {
-                        Error::value(strand, format!("multipart part content_type: {err}"))
-                    })?;
-                }
+                Err(e) => return Err(e),
+            }
+        };
 
-                Ok((name, part))
-            },
-        )
-        .await
+        if let Some(filename) = filename {
+            part = part.file_name(filename);
+        }
+        if let Some(content_type) = content_type {
+            part = part.mime_str(&content_type).map_err(|err| {
+                Error::value(strand, format!("multipart part content_type: {err}"))
+            })?;
+        }
+
+        Ok((name, part))
+    })
 }
 
 async fn request<'v, 's>(
@@ -601,177 +600,164 @@ async fn request<'v, 's>(
     args: Args<'v, '_>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    st.with_slots(
-        async |st,
-               [
-            mut iter,
-            mut item,
-            mut key,
-            mut value,
-            mut tmp,
-        ]| {
-            let mut url = None;
-            let mut thunk = None;
-            let mut body = None;
-            let mut lines = None;
-            let mut multipart = None;
-            let mut status = StatusPolicy::Check;
-            #[cfg(feature = "json")]
-            let mut json = None;
-            let mut headers = HeaderMap::new();
-            let mut queries = Vec::new();
-            for arg in args {
-                match arg {
-                    Arg::Pos(slot) => {
-                        if url.is_none() {
-                            url = Some(slot)
-                        } else if thunk.is_none() {
-                            thunk = Some(slot)
-                        } else {
-                            return Err(Error::unexpected_positional(st, 2));
-                        }
-                    }
-                    Arg::Key(sym, slot) if sym == global.syms.body => body = Some(slot),
-                    Arg::Key(sym, slot) if sym == global.syms.lines => lines = Some(slot),
-                    Arg::Key(sym, slot) if sym == global.syms.multipart => multipart = Some(slot),
-                    #[cfg(feature = "json")]
-                    Arg::Key(sym, slot) if sym == global.syms.json => json = Some(slot),
-                    Arg::Key(sym, slot) if sym == global.syms.headers => {
-                        slot.iter(st, &mut iter).await?;
-                        while iter.next(st, &mut item).await? {
-                            item.index(st, 0, &mut key)?;
-                            item.index(st, 1, &mut value)?;
-                            let name = HeaderName::from_bytes(key.to_string(st)?.as_bytes())
-                                .into_do_value(st)?;
-                            let value = header_value_from_slot(st, &value)?;
-                            headers.append(name, value);
-                        }
-                    }
-                    Arg::Key(sym, slot) if sym == global.syms.query => {
-                        slot.iter(st, &mut iter).await?;
-                        while iter.next(st, &mut item).await? {
-                            item.index(st, 0, &mut key)?;
-                            item.index(st, 1, &mut value)?;
-                            queries.push((key.to_string(st)?, value.to_string(st)?));
-                        }
-                    }
-                    Arg::Key(sym, slot) if sym == global.syms.status => {
-                        status = parse_status_policy(st, global, &slot)?
-                    }
-                    Arg::Key(sym, _) => return Err(Error::unexpected_key(st, sym)),
-                }
-            }
-            #[cfg(feature = "json")]
-            if body.is_some() as usize
-                + lines.is_some() as usize
-                + json.is_some() as usize
-                + multipart.is_some() as usize
-                > 1
-            {
-                return Err(Error::value(
-                    st,
-                    "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified",
-                ));
-            }
-            #[cfg(not(feature = "json"))]
-            if body.is_some() as usize + lines.is_some() as usize + multipart.is_some() as usize > 1
-            {
-                return Err(Error::value(
-                    st,
-                    "at most one of `body`, `lines`, or `multipart` arguments may be specified",
-                ));
-            }
-            let url = url.ok_or_else(|| Error::missing_positional(st, 0))?;
-            let url = value_to_url(st, &url)?;
-            let mut builder = client.request(method, url);
-
-            let mut bodies = Bodies::new();
-
-            if let Some(body) = body {
-                // Try direct conversions first (backward compatibility)
-                if let Some(slice) = body.as_bin(st) {
-                    // Direct binary - no streaming needed
-                    builder = builder.body(slice.to_vec());
-                } else if let Some(str) = body.as_str(st) {
-                    // Direct string - no streaming needed
-                    builder = builder.body(str.to_string());
-                } else {
-                    // Stream the value's bytes, or its items
-                    match body::reader(st, &body).await {
-                        Ok(reader) => builder = builder.body(bodies.add(st, reader).await?),
-                        Err(e) if e.kind() == ErrorKind::Type => {
-                            // Neither - convert to string
-                            builder = builder.body(body.to_string(st)?);
-                        }
-                        Err(e) => return Err(e),
+    with_slots!(st, |mut iter, mut item, mut key, mut value, mut tmp| {
+        let mut url = None;
+        let mut thunk = None;
+        let mut body = None;
+        let mut lines = None;
+        let mut multipart = None;
+        let mut status = StatusPolicy::Check;
+        #[cfg(feature = "json")]
+        let mut json = None;
+        let mut headers = HeaderMap::new();
+        let mut queries = Vec::new();
+        for arg in args {
+            match arg {
+                Arg::Pos(slot) => {
+                    if url.is_none() {
+                        url = Some(slot)
+                    } else if thunk.is_none() {
+                        thunk = Some(slot)
+                    } else {
+                        return Err(Error::unexpected_positional(st, 2));
                     }
                 }
-            }
-
-            #[cfg(feature = "json")]
-            if let Some(json) = json {
-                st.import("json", &mut key).await?;
-                let encode = global.syms.encode;
-                method!(st, key, encode, &mut value, json).await?;
-                builder = builder
-                    .body(value.to_string(st)?)
-                    .header("content-type", "application/json");
-            }
-
-            if let Some(lines) = lines {
-                let reader = body::items(st, &lines, b"\n").await?;
-                builder = builder.body(bodies.add(st, reader).await?);
-            }
-
-            if let Some(multipart) = multipart {
-                if headers.contains_key("content-type") {
-                    return Err(Error::value(
-                        st,
-                        "multipart requests must not set content-type manually",
-                    ));
+                Arg::Key(sym, slot) if sym == global.syms.body => body = Some(slot),
+                Arg::Key(sym, slot) if sym == global.syms.lines => lines = Some(slot),
+                Arg::Key(sym, slot) if sym == global.syms.multipart => multipart = Some(slot),
+                #[cfg(feature = "json")]
+                Arg::Key(sym, slot) if sym == global.syms.json => json = Some(slot),
+                Arg::Key(sym, slot) if sym == global.syms.headers => {
+                    slot.iter(st, &mut iter).await?;
+                    while iter.next(st, &mut item).await? {
+                        item.index(st, 0, &mut key)?;
+                        item.index(st, 1, &mut value)?;
+                        let name = HeaderName::from_bytes(key.to_string(st)?.as_bytes())
+                            .into_do_value(st)?;
+                        let value = header_value_from_slot(st, &value)?;
+                        headers.append(name, value);
+                    }
                 }
-
-                let mut form = multipart::Form::new();
-                multipart.iter(st, &mut iter).await?;
-                while iter.next(st, &mut item).await? {
-                    let (name, part) = multipart_part(st, global, &item, &mut bodies).await?;
-                    form = form.part(name, part);
+                Arg::Key(sym, slot) if sym == global.syms.query => {
+                    slot.iter(st, &mut iter).await?;
+                    while iter.next(st, &mut item).await? {
+                        item.index(st, 0, &mut key)?;
+                        item.index(st, 1, &mut value)?;
+                        queries.push((key.to_string(st)?, value.to_string(st)?));
+                    }
                 }
-                builder = builder.multipart(form);
+                Arg::Key(sym, slot) if sym == global.syms.status => {
+                    status = parse_status_policy(st, global, &slot)?
+                }
+                Arg::Key(sym, _) => return Err(Error::unexpected_key(st, sym)),
             }
+        }
+        #[cfg(feature = "json")]
+        if body.is_some() as usize
+            + lines.is_some() as usize
+            + json.is_some() as usize
+            + multipart.is_some() as usize
+            > 1
+        {
+            return Err(Error::value(
+                st,
+                "at most one of `body`, `lines`, `json`, or `multipart` arguments may be specified",
+            ));
+        }
+        #[cfg(not(feature = "json"))]
+        if body.is_some() as usize + lines.is_some() as usize + multipart.is_some() as usize > 1 {
+            return Err(Error::value(
+                st,
+                "at most one of `body`, `lines`, or `multipart` arguments may be specified",
+            ));
+        }
+        let url = url.ok_or_else(|| Error::missing_positional(st, 0))?;
+        let url = value_to_url(st, &url)?;
+        let mut builder = client.request(method, url);
 
-            if !queries.is_empty() {
-                builder = builder.query(&queries);
-            }
-            builder = builder.headers(headers);
+        let mut bodies = Bodies::new();
 
-            // Execute request, pumping any streamed bodies concurrently
-            let response = ResponseParts::new(bodies.send(st, builder).await?);
-            if status == StatusPolicy::Check && !response.status.is_success() {
-                return Err(status_error(st, global, response).await);
-            }
-            let response = Response {
-                inner: Some(response),
-            };
-            global
-                .types
-                .response
-                .create_with_annex(st, response, global, &mut value);
-            if let Some(thunk) = thunk {
-                let res = call!(st, thunk, out, &value).await;
-                let _ = st
-                    .with_interrupt_mask(InterruptMask::all(), async move |st| {
-                        method!(st, value, global.syms.close, &mut tmp).await
-                    })
-                    .await;
-                res
+        if let Some(body) = body {
+            // Try direct conversions first (backward compatibility)
+            if let Some(slice) = body.as_bin(st) {
+                // Direct binary - no streaming needed
+                builder = builder.body(slice.to_vec());
+            } else if let Some(str) = body.as_str(st) {
+                // Direct string - no streaming needed
+                builder = builder.body(str.to_string());
             } else {
-                Output::set(st, out, value);
-                Ok(())
+                // Stream the value's bytes, or its items
+                match body::reader(st, &body).await {
+                    Ok(reader) => builder = builder.body(bodies.add(st, reader).await?),
+                    Err(e) if e.kind() == ErrorKind::Type => {
+                        // Neither - convert to string
+                        builder = builder.body(body.to_string(st)?);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
-        },
-    )
-    .await
+        }
+
+        #[cfg(feature = "json")]
+        if let Some(json) = json {
+            st.import("json", &mut key).await?;
+            let encode = global.syms.encode;
+            method!(st, key, encode, &mut value, json)?;
+            builder = builder
+                .body(value.to_string(st)?)
+                .header("content-type", "application/json");
+        }
+
+        if let Some(lines) = lines {
+            let reader = body::items(st, &lines, b"\n").await?;
+            builder = builder.body(bodies.add(st, reader).await?);
+        }
+
+        if let Some(multipart) = multipart {
+            if headers.contains_key("content-type") {
+                return Err(Error::value(
+                    st,
+                    "multipart requests must not set content-type manually",
+                ));
+            }
+
+            let mut form = multipart::Form::new();
+            multipart.iter(st, &mut iter).await?;
+            while iter.next(st, &mut item).await? {
+                let (name, part) = multipart_part(st, global, &item, &mut bodies).await?;
+                form = form.part(name, part);
+            }
+            builder = builder.multipart(form);
+        }
+
+        if !queries.is_empty() {
+            builder = builder.query(&queries);
+        }
+        builder = builder.headers(headers);
+
+        // Execute request, pumping any streamed bodies concurrently
+        let response = ResponseParts::new(bodies.send(st, builder).await?);
+        if status == StatusPolicy::Check && !response.status.is_success() {
+            return Err(status_error(st, global, response).await);
+        }
+        let response = Response {
+            inner: Some(response),
+        };
+        global
+            .types
+            .response
+            .create_with_annex(st, response, global, &mut value);
+        if let Some(thunk) = thunk {
+            let res = call!(st, thunk, out, &value);
+            let _ = with_interrupt_mask!(st, InterruptMask::all(), {
+                method!(st, value, global.syms.close, &mut tmp)
+            });
+            res
+        } else {
+            Output::set(st, out, value);
+            Ok(())
+        }
+    })
 }
 
 impl<'v> Object<'v> for Client {
@@ -932,21 +918,17 @@ impl<'v> Object<'v> for Client {
         };
 
         if let Some(func) = func {
-            strand
-                .with_slots(async move |strand, [mut client, tmp]| {
-                    let value = Client {
-                        inner: Some(builder.build().into_http(strand)?),
-                    };
-                    this.create_with_annex(strand, value, ClientAnnex { global }, &mut client);
-                    let res = call!(strand, func, out, &client).await;
-                    let _ = strand
-                        .with_interrupt_mask(InterruptMask::all(), async move |strand| {
-                            method!(strand, client, global.syms.close, tmp).await
-                        })
-                        .await;
-                    res
-                })
-                .await
+            with_slots!(strand, |mut client, tmp| {
+                let value = Client {
+                    inner: Some(builder.build().into_http(strand)?),
+                };
+                this.create_with_annex(strand, value, ClientAnnex { global }, &mut client);
+                let res = call!(strand, func, out, &client);
+                let _ = with_interrupt_mask!(strand, InterruptMask::all(), {
+                    method!(strand, client, global.syms.close, tmp)
+                });
+                res
+            })
         } else {
             let value = Client {
                 inner: Some(builder.build().into_http(strand)?),
@@ -1101,7 +1083,7 @@ impl<'v> Object<'v> for Response {
                 let body = take_body(this, strand)?;
                 let text = text(body).await.into_http(strand)?;
                 strand.import("json", &mut json).await?;
-                method!(strand, json, decode, out, text.as_str()).await
+                method!(strand, json, decode, out, text.as_str())
             });
 
         builder
@@ -1164,7 +1146,7 @@ impl<'v> Object<'v> for Response {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = *this.annex();
                 take_io(this, strand, Slot::reborrow(&mut io))?;
-                method!(strand, io, global.syms.chunks, out).await
+                method!(strand, io, global.syms.chunks, out)
             })
             .method_with_slots(
                 "events",
@@ -1206,8 +1188,8 @@ impl<'v> Object<'v> for Response {
                     let global = *this.annex();
                     take_io(this, strand, Slot::reborrow(&mut io))?;
                     strand.import("io", &mut module).await?;
-                    method!(strand, module, global.syms.buffered, &mut buffered, &io).await?;
-                    method!(strand, buffered, global.syms.chomp, out).await
+                    method!(strand, module, global.syms.buffered, &mut buffered, &io)?;
+                    method!(strand, buffered, global.syms.chomp, out)
                 },
             )
             .method_with_slots(
@@ -1224,7 +1206,7 @@ impl<'v> Object<'v> for Response {
                     if io.is_nil() {
                         return Ok(());
                     }
-                    method!(strand, io, global.syms.close, tmp).await
+                    method!(strand, io, global.syms.close, tmp)
                 },
             )
     }

@@ -48,6 +48,7 @@ use crate::{
         view::{PinBin, PinStr},
     },
     vm::{Alloc, Builder, StateTag},
+    with_slots,
 };
 
 /// Buffer capacity, and the size from which reads and writes skip the buffer.
@@ -1027,38 +1028,36 @@ impl Concat {
         strand: &mut Strand<'v, 's>,
         size: usize,
     ) -> Result<'v, 's, ()> {
-        strand
-            .with_slots(async move |strand, [mut item]| {
-                if this.state == ConcatState::Ready {
-                    Mut::slot::<0>(this)
-                        .iter(strand, Slot::reborrow(&mut item))
-                        .await?;
-                    Output::set(strand, Mut::slot_mut::<0>(this), &item);
-                    this.state = ConcatState::Iterating;
+        with_slots!(strand, |mut item| {
+            if this.state == ConcatState::Ready {
+                Mut::slot::<0>(this)
+                    .iter(strand, Slot::reborrow(&mut item))
+                    .await?;
+                Output::set(strand, Mut::slot_mut::<0>(this), &item);
+                this.state = ConcatState::Iterating;
+            }
+            while this.state == ConcatState::Iterating && this.pending.len() < size {
+                if !Mut::slot::<0>(this)
+                    .next(strand, Slot::reborrow(&mut item))
+                    .await?
+                {
+                    this.state = ConcatState::Done;
+                    Mut::slot_mut::<0>(this).store(Value::NIL);
+                    break;
                 }
-                while this.state == ConcatState::Iterating && this.pending.len() < size {
-                    if !Mut::slot::<0>(this)
-                        .next(strand, Slot::reborrow(&mut item))
-                        .await?
-                    {
-                        this.state = ConcatState::Done;
-                        Mut::slot_mut::<0>(this).store(Value::NIL);
-                        break;
-                    }
-                    if let Some(b) = item.as_bin(strand.vm()) {
-                        this.pending.extend_from_slice(&b.pin());
-                    } else if let Some(s) = item.as_str(strand.vm()) {
-                        this.pending.extend_from_slice(s.pin().as_bytes());
-                    } else {
-                        let text = item.to_string(strand)?;
-                        this.pending.extend_from_slice(text.as_bytes());
-                    }
-                    let Self { end, pending, .. } = &mut **this;
-                    pending.extend_from_slice(end);
+                if let Some(b) = item.as_bin(strand.vm()) {
+                    this.pending.extend_from_slice(&b.pin());
+                } else if let Some(s) = item.as_str(strand.vm()) {
+                    this.pending.extend_from_slice(s.pin().as_bytes());
+                } else {
+                    let text = item.to_string(strand)?;
+                    this.pending.extend_from_slice(text.as_bytes());
                 }
-                Ok(())
-            })
-            .await
+                let Self { end, pending, .. } = &mut **this;
+                pending.extend_from_slice(end);
+            }
+            Ok(())
+        })
     }
 }
 
@@ -1890,9 +1889,7 @@ mod tests {
             let read = Sym::well_known(sym::READ);
             let mut got = Vec::new();
             loop {
-                method!(strand, &stream, read, Slot::reborrow(&mut out), 3_i64)
-                    .await
-                    .unwrap();
+                method!(strand, &stream, read, Slot::reborrow(&mut out), 3_i64).unwrap();
                 let chunk = bin(strand, &out);
                 if chunk.is_empty() {
                     break;
@@ -1932,7 +1929,6 @@ mod tests {
                 Slot::reborrow(&mut iter),
                 2_i64
             )
-            .await
             .unwrap();
             let mut got = Vec::new();
             while iter.next(strand, Slot::reborrow(&mut item)).await.unwrap() {
@@ -1956,7 +1952,6 @@ mod tests {
                 Slot::reborrow(&mut out),
                 "xyz"
             )
-            .await
             .unwrap();
             assert_eq!(out.as_int(strand), Some(3));
             let start = Sym::well_known(sym::START);
@@ -1967,13 +1962,10 @@ mod tests {
                 Slot::reborrow(&mut out),
                 start: 0_i64
             )
-            .await
             .unwrap();
             assert_eq!(out.as_int(strand), Some(0));
             let read = Sym::well_known(sym::READ);
-            method!(strand, &stream, read, Slot::reborrow(&mut out), 8_i64)
-                .await
-                .unwrap();
+            method!(strand, &stream, read, Slot::reborrow(&mut out), 8_i64).unwrap();
             assert_eq!(bin(strand, &out), b"xyz");
 
             method!(
@@ -1982,7 +1974,6 @@ mod tests {
                 Sym::well_known(sym::CLOSE),
                 Slot::reborrow(&mut out)
             )
-            .await
             .unwrap();
             stream
                 .get(
@@ -1992,7 +1983,7 @@ mod tests {
                 )
                 .unwrap();
             assert_eq!(out.as_bool(strand), Some(false));
-            let res = method!(strand, &stream, read, Slot::reborrow(&mut out), 1_i64).await;
+            let res = method!(strand, &stream, read, Slot::reborrow(&mut out), 1_i64);
             assert!(res.is_err());
         });
     }
@@ -2015,7 +2006,6 @@ mod tests {
                 Slot::reborrow(&mut out),
                 8_i64
             )
-            .await
             .unwrap();
             assert_eq!(bin(strand, &out), b"b");
         });

@@ -40,6 +40,292 @@ use crate::{
     vm::{Alloc, Vm},
 };
 
+/// Run a block with scratch [`Slot`](crate::value::Slot)s rooted for its duration.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_slots, strand::Strand, value::{Output, Slot}};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// with_slots!(strand, |mut a, mut b| {
+///     Output::set(strand, Slot::reborrow(&mut a), 1i64);
+///     Output::set(strand, Slot::reborrow(&mut b), 2i64);
+///     Ok(())
+/// })
+/// # }
+/// ```
+///
+/// The closure-like parameters bind the slots, and their count gives the number of
+/// slots. `strand` must be the name of the current [`Strand`]; the body sees the same name
+/// rebound to a handle on the same strand whose frame pointer is the slots' frame. The
+/// macro evaluates to the body's value.
+///
+/// The body runs inline in the enclosing function, so `.await` works in it, and `?` and
+/// `return` leave the enclosing function, not just the body. The slots stay rooted
+/// until the body finishes or the enclosing future is dropped. To inspect the body's
+/// result instead of propagating it, wrap the body in `async { … }.await`.
+#[macro_export]
+macro_rules! with_slots {
+    ($strand:ident, |$($slot:pat_param),+ $(,)?| $body:expr) => {{
+        let frame = $crate::strand::SlotFrame::new();
+        // Safety: the scope is a local of this block that nothing can move or forget
+        #[allow(unused_unsafe)]
+        let (mut scope, [$($slot),+]) = unsafe { $strand.enter_slot_frame(&frame) };
+        let $strand = &mut *scope;
+        $body
+    }};
+}
+
+/// Run a block with the strand's interrupt mask replaced.
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{with_interrupt_mask, strand::{InterruptMask, Strand}};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) {
+/// with_interrupt_mask!(strand, InterruptMask::all(), {
+///     // Cleanup that must finish even if the strand is interrupted
+/// })
+/// # }
+/// ```
+///
+/// The body runs inline, as for [`with_slots!`](crate::with_slots). The mask is restored
+/// when the body finishes, including when it leaves by `?` or `return`, or the enclosing
+/// future is dropped.
+///
+/// # Interrupt Semantics
+///
+/// By default, when a strand is interrupted, all Do-related futures will return
+/// a `Canceled` or `TimedOut` error on the next poll, and the deepest future
+/// in the stack may be dropped entirely. This is the normal interruption behavior.
+///
+/// Causes present in `mask` are temporarily suppressed:
+/// - Do-related futures will continue to work normally
+/// - Futures won't be dropped on the floor
+/// - The strand won't see interrupt errors
+///
+/// # Use Cases
+///
+/// Interrupt masking is intended for cleanup paths where you must perform
+/// certain operations even when the strand is being interrupted:
+/// - Deleting temporary files
+/// - Closing file handles
+/// - Rolling back database transactions
+/// - Releasing locks
+///
+/// # Important Warning
+///
+/// Interrupted strands are expected to unwind in a timely manner. Do NOT use
+/// interrupt masking to perform arbitrary long-running operations.
+/// Keep masked operations short and focused on cleanup.
+#[macro_export]
+macro_rules! with_interrupt_mask {
+    ($strand:ident, $mask:expr, $body:expr) => {{
+        let _guard = $strand.interrupt_mask_guard($mask);
+        $body
+    }};
+}
+
+/// Anchor bounding a pin minted by [`with_instance!`](crate::with_instance),
+/// [`with_str!`](crate::with_str) or [`with_slice!`](crate::with_slice) to a block.
+#[doc(hidden)]
+pub struct PinScope;
+
+/// Scratch slots for [`with_slots!`](crate::with_slots), rooted while entered.
+#[doc(hidden)]
+pub struct SlotFrame<'v, const N: usize> {
+    values: [ValueCell<'v>; N],
+    scan: OnceCell<frame::Scan<'v>>,
+}
+
+impl<'v, const N: usize> SlotFrame<'v, N> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            values: std::array::from_fn(|_| ValueCell::default()),
+            scan: OnceCell::new(),
+        }
+    }
+}
+
+impl<'v, const N: usize> Default for SlotFrame<'v, N> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A [`Strand`] handle whose frame pointer is an entered [`SlotFrame`], which pops the frame
+/// when dropped.
+#[doc(hidden)]
+pub struct SlotScope<'v, 's, 'f> {
+    strand: Strand<'v, 's>,
+    prior: Option<frame::Ptr<'v>>,
+    _borrow: PhantomData<&'f mut Strand<'v, 's>>,
+}
+
+impl<'v, 's> Deref for SlotScope<'v, 's, '_> {
+    type Target = Strand<'v, 's>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.strand
+    }
+}
+
+impl<'v, 's> DerefMut for SlotScope<'v, 's, '_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.strand
+    }
+}
+
+impl Drop for SlotScope<'_, '_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.strand.inner.sp.set(self.prior);
+    }
+}
+
+/// Restores a strand's interrupt mask when dropped; see
+/// [`with_interrupt_mask!`](crate::with_interrupt_mask).
+#[doc(hidden)]
+#[must_use]
+pub struct InterruptMaskGuard<'v, 's> {
+    inner: &'s StrandInner<'v>,
+    orig: InterruptMask,
+}
+
+impl Drop for InterruptMaskGuard<'_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.inner.interrupt_mask.set(self.orig);
+    }
+}
+
+/// Scratch slots for [`with_slots_dynamic!`], sized at run time and rooted while entered.
+pub(crate) struct DynSlotFrame<'v> {
+    values: Vec<ValueCell<'v>>,
+    scan: OnceCell<frame::Scan<'v>>,
+}
+
+impl<'v> DynSlotFrame<'v> {
+    #[inline]
+    pub(crate) fn new(len: usize) -> Self {
+        Self {
+            values: (0..len).map(|_| ValueCell::default()).collect(),
+            scan: OnceCell::new(),
+        }
+    }
+}
+
+/// Run a block with a runtime-sized scratch [`Slots`](crate::value::Slots) allocation.
+///
+/// Like [`with_slots!`](crate::with_slots), the body runs inline with `strand` rebound to a
+/// handle whose frame roots the slots: `?` and `return` leave the enclosing function.
+macro_rules! with_slots_dynamic {
+    ($strand:ident, $len:expr, |$slots:pat_param| $body:expr) => {{
+        let frame = $crate::strand::DynSlotFrame::new($len);
+        // Safety: the scope is a local of this block that nothing can move or forget
+        #[allow(unused_unsafe)]
+        let (mut scope, $slots) = unsafe { $strand.enter_dyn_slot_frame(&frame) };
+        #[allow(unused_variables)]
+        let $strand = &mut *scope;
+        $body
+    }};
+}
+pub(crate) use with_slots_dynamic;
+
+/// The frame a [`FrameScope`] entered.
+enum FrameEntry<'v, 'f> {
+    Do(&'f frame::CallFrame<'v>),
+    Native(&'f Native<'v>),
+}
+
+/// A [`Strand`] handle whose frame pointer is an entered Do or native frame, one call level
+/// deeper.  Dropping it pops the frame and the call level.
+pub(crate) struct FrameScope<'v, 's, 'f> {
+    strand: Strand<'v, 's>,
+    prior: Option<frame::Ptr<'v>>,
+    entry: FrameEntry<'v, 'f>,
+    _borrow: PhantomData<&'f mut Strand<'v, 's>>,
+}
+
+impl<'v, 's> FrameScope<'v, 's, '_> {
+    /// Leave the frame, adding its backtrace entry to `res`'s error.
+    ///
+    /// A Do frame's entry records its pc as of this call.
+    #[inline]
+    pub(crate) fn finish<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+        res.map_err(|mut e| {
+            let entry = match self.entry {
+                FrameEntry::Do(frame) => UnwindEntry::Do {
+                    program: frame.program.clone(),
+                    function_index: frame.func as u32,
+                    pc: frame.pc.get() as u32,
+                },
+                FrameEntry::Native(frame) => UnwindEntry::Native {
+                    module: frame.module.clone(),
+                    receiver: frame.receiver.clone(),
+                    method: frame.method.clone(),
+                },
+            };
+            e.push_backtrace(self.strand.inner, entry);
+            e
+        })
+    }
+}
+
+impl<'v, 's> Deref for FrameScope<'v, 's, '_> {
+    type Target = Strand<'v, 's>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.strand
+    }
+}
+
+impl<'v, 's> DerefMut for FrameScope<'v, 's, '_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.strand
+    }
+}
+
+impl Drop for FrameScope<'_, '_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        let inner = self.strand.inner;
+        inner.sp.set(self.prior);
+        inner.call_depth.update(|depth| depth - 1);
+    }
+}
+
+/// Run an expression in a native frame for `module`, `receiver` and `method`, one call level
+/// deeper.
+///
+/// The expression runs inline with `strand` rebound to a handle on the native frame.  An
+/// error it evaluates to gets the frame's backtrace entry; an error leaving through `?` or
+/// `return` does not, so wrap such a body in `async { … }.await`.  Exceeding the call
+/// depth returns the error from the enclosing function.
+macro_rules! in_native_frame {
+    ($strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {{
+        let frame = $crate::frame::Native {
+            module: $module,
+            receiver: $receiver,
+            method: $method,
+            parent: Some($strand.fp),
+        };
+        // Safety: the scope is a local of this block that nothing can move or forget
+        #[allow(unused_unsafe)]
+        let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
+        let $strand = &mut *scope;
+        let res = $body;
+        scope.finish(res)
+    }};
+}
+pub(crate) use in_native_frame;
+
 pub(crate) type InterruptId = u64;
 
 struct InterruptInner {
@@ -920,14 +1206,6 @@ pub struct Strand<'v, 's> {
 }
 
 impl<'v, 's> Strand<'v, 's> {
-    unsafe fn from_frame(inner: &'s StrandInner<'v>, frame: &frame::CallFrame<'v>) -> Self {
-        Self {
-            inner,
-            fp: frame::Ptr::Do(NonNull::from_ref(frame)),
-            phantom: PhantomData,
-        }
-    }
-
     pub(crate) unsafe fn from_native_frame(
         inner: &'s StrandInner<'v>,
         frame: &frame::Native<'v>,
@@ -969,73 +1247,66 @@ impl<'v, 's> Strand<'v, 's> {
         }
     }
 
-    /// Run `f` in a new strand context whose frame is the Do `frame`.
+    /// Enter the Do `frame` one call level deeper, returning a handle on this strand with
+    /// `frame` as its frame pointer.
     ///
-    /// Checks the call depth, makes `frame` the stack pointer for the duration, and adds
-    /// the frame's backtrace entry, at its current pc, to any error `f` returns.
+    /// Pass the frame's result through [`FrameScope::finish`] to add its backtrace entry.
     ///
     /// # Safety
     ///
-    /// `frame` must be a live Do frame whose parent is `base`'s frame, and must outlive
-    /// the call.
-    pub(crate) async unsafe fn async_for_frame<R>(
-        base: &mut Strand<'v, 's>,
-        frame: &frame::CallFrame<'v>,
-        f: impl AsyncFnOnce(&mut Self) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let inner = base.inner;
-        let _depth_guard = inner.push_call_depth()?;
-        let _sp_guard = unsafe { inner.push_sp(frame::Ptr::Do(NonNull::from_ref(frame))) };
-        match f(&mut unsafe { Self::from_frame(inner, frame) }).await {
-            Ok(v) => Ok(v),
-            Err(mut e) => {
-                e.push_backtrace(
-                    inner,
-                    UnwindEntry::Do {
-                        program: frame.program.clone(),
-                        function_index: frame.func as u32,
-                        pc: frame.pc.get() as u32,
-                    },
-                );
-                Err(e)
-            }
-        }
+    /// `frame` must be a live Do frame whose parent is this strand's frame, and the scope
+    /// must be dropped, not forgotten, before `frame` is.
+    #[inline]
+    pub(crate) unsafe fn enter_do_frame<'f>(
+        &'f mut self,
+        frame: &'f frame::CallFrame<'v>,
+    ) -> Result<'v, 's, FrameScope<'v, 's, 'f>> {
+        unsafe { self.enter_frame(FrameEntry::Do(frame)) }
     }
 
-    pub(crate) async fn async_for_native_frame<R>(
-        base: &mut Strand<'v, 's>,
-        module: Cow<'v, str>,
-        receiver: Cow<'v, str>,
-        method: Option<Cow<'v, str>>,
-        f: impl AsyncFnOnce(&mut Self) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
-        let _depth_guard = base.inner.push_call_depth()?;
-        let frame = Native {
-            module,
-            receiver,
-            method,
-            parent: Some(base.fp),
-        };
-        // Keep `sp` at the innermost frame so a suspended strand's backtrace
-        // includes the native frame it's blocked in.  The GC skips native frames.
-        let _sp_guard = unsafe {
-            base.inner
-                .push_sp(frame::Ptr::Native(NonNull::from_ref(&frame)))
-        };
-        match f(&mut unsafe { Self::from_native_frame(base.inner, &frame) }).await {
-            Ok(v) => Ok(v),
-            Err(mut e) => {
-                e.push_backtrace(
-                    base.inner,
-                    UnwindEntry::Native {
-                        module: frame.module.clone(),
-                        receiver: frame.receiver.clone(),
-                        method: frame.method.clone(),
-                    },
-                );
-                Err(e)
-            }
+    /// Enter the native `frame` one call level deeper, as for [`Self::enter_do_frame`].
+    ///
+    /// This backs [`in_native_frame!`].
+    ///
+    /// # Safety
+    ///
+    /// `frame`'s parent must be this strand's frame, and the scope must be dropped, not
+    /// forgotten, before `frame` is.
+    #[inline]
+    pub(crate) unsafe fn enter_native_frame<'f>(
+        &'f mut self,
+        frame: &'f Native<'v>,
+    ) -> Result<'v, 's, FrameScope<'v, 's, 'f>> {
+        unsafe { self.enter_frame(FrameEntry::Native(frame)) }
+    }
+
+    #[inline]
+    unsafe fn enter_frame<'f>(
+        &'f mut self,
+        entry: FrameEntry<'v, 'f>,
+    ) -> Result<'v, 's, FrameScope<'v, 's, 'f>> {
+        let inner = self.inner;
+        if inner.call_depth.get() >= MAX_CALL_DEPTH {
+            return Err(Error::call_depth_raw(inner));
         }
+        inner.call_depth.update(|depth| depth.strict_add(1));
+        let fp = match entry {
+            FrameEntry::Do(frame) => frame::Ptr::Do(NonNull::from_ref(frame)),
+            FrameEntry::Native(frame) => frame::Ptr::Native(NonNull::from_ref(frame)),
+        };
+        // Keep `sp` at the innermost frame so a suspended strand's backtrace includes the
+        // frame it's blocked in.  The GC skips native frames.
+        let prior = inner.sp.replace(Some(fp));
+        Ok(FrameScope {
+            strand: Strand {
+                inner,
+                fp,
+                phantom: PhantomData,
+            },
+            prior,
+            entry,
+            _borrow: PhantomData,
+        })
     }
 
     /// Iterate over live backtrace, deepest frame first.
@@ -1140,11 +1411,12 @@ impl<'v, 's> Strand<'v, 's> {
         f(&access)
     }
 
-    /// Call an async function with `visit` rooting native-held GC references.
+    /// Call a sync function with `visit` rooting native-held GC references.
     ///
     /// `visit` runs whenever the collector scans this strand's stack while `f`
     /// runs.  It holds a shared borrow of the data it roots, so rooted data that
     /// changes needs interior mutability, such as a [`Cell`] or [`RefCell`].
+    /// [`Self::enter_scan`] pushes such a frame for async code.
     ///
     /// # Safety
     ///
@@ -1153,29 +1425,6 @@ impl<'v, 's> Strand<'v, 's> {
     /// reference counts, so a missed, repeated, or foreign visit can free a live
     /// object.  The rooted data must not change while a collection runs, so
     /// every call within one collection visits the same references.
-    #[inline]
-    pub(crate) async unsafe fn with_scan<R>(
-        &mut self,
-        visit: impl Fn(&mut dyn Visit) -> ControlFlow<()>,
-        f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
-    ) -> R {
-        let frame = frame::Scan::new(Some(self.fp), &visit);
-        let fp = frame::Ptr::Scan(NonNull::from_ref(&frame));
-        // Safety: `frame` and `visit` outlive the guard, which pops the frame
-        let _guard = unsafe { self.inner.push_sp(fp) };
-        f(&mut Strand {
-            inner: self.inner,
-            fp,
-            phantom: PhantomData,
-        })
-        .await
-    }
-
-    /// Call a sync function with `visit` rooting native-held GC references.
-    ///
-    /// # Safety
-    ///
-    /// As for [`Self::with_scan`].
     #[inline]
     pub(crate) unsafe fn with_scan_sync<R>(
         &mut self,
@@ -1193,36 +1442,83 @@ impl<'v, 's> Strand<'v, 's> {
         })
     }
 
-    /// Call an async function with the requested number of scratch [`Slot`]s, usually inferred
-    /// from the passed function.
+    /// Push `frame`, returning a handle on this strand with `frame` as its frame pointer, and
+    /// the frame's slots.
+    ///
+    /// This backs [`with_slots!`](crate::with_slots).
+    ///
+    /// # Safety
+    ///
+    /// The scope must be dropped, not forgotten, before `frame` is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `frame` was entered before.
+    #[doc(hidden)]
     #[inline]
-    pub async fn with_slots<const N: usize, R>(
-        &mut self,
-        f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
-    ) -> R {
-        let values: [ValueCell<'v>; N] = std::array::from_fn(|_| ValueCell::default());
+    pub unsafe fn enter_slot_frame<'f, const N: usize>(
+        &'f mut self,
+        frame: &'f SlotFrame<'v, N>,
+    ) -> (SlotScope<'v, 's, 'f>, [Slot<'v, 'f>; N]) {
+        let scan = frame::Scan::cells(Some(self.fp), &frame.values);
+        assert!(frame.scan.set(scan).is_ok(), "slot frame entered twice");
+        // Safety: the caller's contract; the scan reads `frame.values`, which `'f` keeps live
+        let scope = unsafe { self.enter_scan(frame.scan.get().unwrap()) };
         // Safety: the slots are the cells' only writers; the scan only reads
-        let slots = values.each_ref().map(|value| unsafe { value.slot() });
-        let visit =
-            |visitor: &mut dyn Visit| values.iter().try_for_each(|cell| cell.accept(visitor));
-        // Safety: `visit` visits each cell, and each cell owns at most one reference
-        unsafe { self.with_scan(visit, async move |strand| f(strand, slots).await) }.await
+        let slots = frame.values.each_ref().map(|value| unsafe { value.slot() });
+        (scope, slots)
     }
 
-    /// Call an async function with a runtime-sized scratch [`Slots`] allocation.
+    /// Push `frame`, returning a handle on this strand with `frame` as its frame pointer, and
+    /// the frame's slots.
+    ///
+    /// This backs [`with_slots_dynamic!`].
+    ///
+    /// # Safety
+    ///
+    /// The scope must be dropped, not forgotten, before `frame` is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `frame` was entered before.
     #[inline]
-    pub(crate) async fn with_slots_dynamic<R>(
-        &mut self,
-        len: usize,
-        f: impl for<'b> AsyncFnOnce(&mut Strand<'v, 's>, crate::value::Slots<'v, 'b>) -> R,
-    ) -> R {
-        let values: Vec<_> = (0..len).map(|_| ValueCell::default()).collect();
+    pub(crate) unsafe fn enter_dyn_slot_frame<'f>(
+        &'f mut self,
+        frame: &'f DynSlotFrame<'v>,
+    ) -> (SlotScope<'v, 's, 'f>, crate::value::Slots<'v, 'f>) {
+        let scan = frame::Scan::cell_vec(Some(self.fp), &frame.values);
+        assert!(frame.scan.set(scan).is_ok(), "slot frame entered twice");
+        // Safety: the caller's contract; the scan reads `frame.values`, which `'f` keeps live
+        let scope = unsafe { self.enter_scan(frame.scan.get().unwrap()) };
         // Safety: the slots are the cells' only writers; the scan only reads
-        let slots = unsafe { crate::value::Slots::new(values.as_slice()) };
-        let visit =
-            |visitor: &mut dyn Visit| values.iter().try_for_each(|cell| cell.accept(visitor));
-        // Safety: `visit` visits each cell, and each cell owns at most one reference
-        unsafe { self.with_scan(visit, async move |strand| f(strand, slots).await) }.await
+        let slots = unsafe { crate::value::Slots::new(frame.values.as_slice()) };
+        (scope, slots)
+    }
+
+    /// Push the rooting frame `scan`, returning a handle on this strand with `scan` as its
+    /// frame pointer.
+    ///
+    /// # Safety
+    ///
+    /// The scope must be dropped, not forgotten, before `scan` is, and whatever `scan` visits
+    /// must stay live and unchanged during collections until then.  See
+    /// [`Self::with_scan_sync`] for what the visits must be.
+    #[inline]
+    pub(crate) unsafe fn enter_scan<'f>(
+        &'f mut self,
+        scan: &'f frame::Scan<'v>,
+    ) -> SlotScope<'v, 's, 'f> {
+        let fp = frame::Ptr::Scan(NonNull::from_ref(scan));
+        let prior = self.inner.sp.replace(Some(fp));
+        SlotScope {
+            strand: Strand {
+                inner: self.inner,
+                fp,
+                phantom: PhantomData,
+            },
+            prior,
+            _borrow: PhantomData,
+        }
     }
 
     /// Call a sync function with the requested number of scratch [`Slot`]s, usually inferred
@@ -1232,13 +1528,10 @@ impl<'v, 's> Strand<'v, 's> {
         &mut self,
         f: impl for<'b> FnOnce(&mut Strand<'v, 's>, [Slot<'v, 'b>; N]) -> R,
     ) -> R {
-        let values: [ValueCell<'v>; N] = std::array::from_fn(|_| ValueCell::default());
-        // Safety: the slots are the cells' only writers; the scan only reads
-        let slots = values.each_ref().map(|value| unsafe { value.slot() });
-        let visit =
-            |visitor: &mut dyn Visit| values.iter().try_for_each(|cell| cell.accept(visitor));
-        // Safety: `visit` visits each cell, and each cell owns at most one reference
-        unsafe { self.with_scan_sync(visit, move |strand| f(strand, slots)) }
+        let frame = SlotFrame::new();
+        // Safety: the scope is dropped before `frame`
+        let (mut scope, slots) = unsafe { self.enter_slot_frame(&frame) };
+        f(&mut scope, slots)
     }
 
     /// Store a new tuple of `items` into `out`.
@@ -1284,54 +1577,16 @@ impl<'v, 's> Strand<'v, 's> {
         })
     }
 
-    /// Run function with interrupt mask changed.
+    /// Replace the interrupt mask until the returned guard is dropped.
     ///
-    /// ## Interrupt Semantics
-    ///
-    /// By default, when a strand is interrupted, all Do-related futures will return
-    /// a `Canceled` or `TimedOut` error on the next poll, and the deepest future
-    /// in the stack may be dropped entirely. This is the normal interruption behavior.
-    ///
-    /// Causes present in `mask` are temporarily suppressed:
-    /// - Do-related futures will continue to work normally
-    /// - Futures won't be dropped on the floor
-    /// - The strand won't see interrupt errors
-    ///
-    /// # Use Cases
-    ///
-    /// Interrupt masking is intended for cleanup paths where you must perform
-    /// certain operations even when the strand is being interrupted:
-    /// - Deleting temporary files
-    /// - Closing file handles
-    /// - Rolling back database transactions
-    /// - Releasing locks
-    ///
-    /// # Important Warning
-    ///
-    /// Interrupted strands are expected to unwind in a timely manner. Do NOT use
-    /// interrupt masking to perform arbitrary long-running operations.
-    /// Keep masked operations short and focused on cleanup.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// // In a cleanup handler
-    /// strand.with_interrupt_mask(InterruptMask::all(), async |strand| {
-    ///     // This will complete even if the strand is interrupted
-    ///     file.delete().await?;
-    ///     conn.rollback().await?;
-    /// }).await?;
-    /// ```
+    /// This backs [`with_interrupt_mask!`](crate::with_interrupt_mask).
+    #[doc(hidden)]
     #[inline]
-    pub async fn with_interrupt_mask<R>(
-        &mut self,
-        mask: InterruptMask,
-        f: impl AsyncFnOnce(&mut Strand<'v, 's>) -> R,
-    ) -> R {
-        let orig = self.inner.interrupt_mask.replace(mask);
-        let res = f(self).await;
-        self.inner.interrupt_mask.set(orig);
-        res
+    pub fn interrupt_mask_guard(&self, mask: InterruptMask) -> InterruptMaskGuard<'v, 's> {
+        InterruptMaskGuard {
+            inner: self.inner,
+            orig: self.inner.interrupt_mask.replace(mask),
+        }
     }
 
     /// Return the currently active interrupt mask.
@@ -1557,70 +1812,61 @@ impl<'v, 's> Strand<'v, 's> {
             // Safety: native outlives strand
             let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
 
-            strand
-                .with_slots(
-                    async |strand, [mut out, mut tmp, mut poison_err, mut poison_bt]| {
-                        let result = strand
-                            .pin_future_call(async |strand| {
-                                f(strand, &inner.start, Slot::reborrow(&mut out)).await
-                            })
-                            .await;
-                        let result = match result {
-                            Ok(()) => Completion::Ok(out.take()),
-                            Err(e) => Completion::Err(e.into_pair(strand)),
-                        };
-                        // Rooted in slots across the close calls below
-                        let poisoned = match &result {
-                            Completion::Err((value, backtrace_entries)) => {
-                                backtrace::create(
-                                    strand,
-                                    backtrace_entries.clone(),
-                                    &mut poison_bt,
-                                );
-                                poison_err.store(value.dup());
-                                true
-                            }
-                            Completion::Ok(_) => false,
-                        };
+            with_slots!(strand, |mut out, mut tmp, mut poison_err, mut poison_bt| {
+                let result = strand
+                    .pin_future_call(async |strand| {
+                        f(strand, &inner.start, Slot::reborrow(&mut out)).await
+                    })
+                    .await;
+                let result = match result {
+                    Ok(()) => Completion::Ok(out.take()),
+                    Err(e) => Completion::Err(e.into_pair(strand)),
+                };
+                // Rooted in slots across the close calls below
+                let poisoned = match &result {
+                    Completion::Err((value, backtrace_entries)) => {
+                        backtrace::create(strand, backtrace_entries.clone(), &mut poison_bt);
+                        poison_err.store(value.dup());
+                        true
+                    }
+                    Completion::Ok(_) => false,
+                };
 
-                        // Store result in Handle via weak reference
-                        if let Some(handle) = weak_handle.upgrade() {
-                            // SAFETY: a transient pin; completing cannot collect
-                            unsafe { handle.pin_unchecked() }
-                                .borrow_mut()
-                                .expect("strand handle had outstanding borrow")
-                                .complete(result);
+                // Store result in Handle via weak reference
+                if let Some(handle) = weak_handle.upgrade() {
+                    // SAFETY: a transient pin; completing cannot collect
+                    unsafe { handle.pin_unchecked() }
+                        .borrow_mut()
+                        .expect("strand handle had outstanding borrow")
+                        .complete(result);
+                } else {
+                    drop(result)
+                }
+
+                if close_on_exit {
+                    let close = Sym::well_known(sym::CLOSE);
+                    let backtrace_key = Sym::well_known(sym::BACKTRACE);
+                    tmp.store(strand.inner.replace_input(Value::NIL));
+                    if !tmp.is_nil() {
+                        let _ = method!(strand, &tmp, close, &mut out);
+                    }
+                    tmp.store(strand.inner.replace_output(Value::NIL));
+                    if !tmp.is_nil() {
+                        let _ = if poisoned {
+                            method!(
+                                strand,
+                                &tmp,
+                                close,
+                                &mut out,
+                                &poison_err,
+                                backtrace_key: &poison_bt
+                            )
                         } else {
-                            drop(result)
-                        }
-
-                        if close_on_exit {
-                            let close = Sym::well_known(sym::CLOSE);
-                            let backtrace_key = Sym::well_known(sym::BACKTRACE);
-                            tmp.store(strand.inner.replace_input(Value::NIL));
-                            if !tmp.is_nil() {
-                                let _ = method!(strand, &tmp, close, &mut out).await;
-                            }
-                            tmp.store(strand.inner.replace_output(Value::NIL));
-                            if !tmp.is_nil() {
-                                let _ = if poisoned {
-                                    method!(
-                                        strand,
-                                        &tmp,
-                                        close,
-                                        &mut out,
-                                        &poison_err,
-                                        backtrace_key: &poison_bt
-                                    )
-                                    .await
-                                } else {
-                                    method!(strand, &tmp, close, &mut out).await
-                                };
-                            }
-                        }
-                    },
-                )
-                .await
+                            method!(strand, &tmp, close, &mut out)
+                        };
+                    }
+                }
+            })
         });
 
         // Send future through spawn channel
@@ -1750,6 +1996,33 @@ impl<'v, 'a> Alloc<'v> for Strand<'v, 'a> {
     }
 }
 
+/// Run a block with the strand-local iterator and sink redirected by a [`Redirect`].
+///
+/// Invoke as:
+///
+/// ```rust,no_run
+/// # use dolang_runtime::{redirect, strand::{Redirect, Strand}, value::Singleton};
+/// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) -> dolang_runtime::error::Result<'v, 's, ()> {
+/// redirect!(strand, Redirect::new(strand).input(Singleton::Null), {
+///     Ok(())
+/// })
+/// # }
+/// ```
+///
+/// `strand` names both the strand the
+/// [`Redirect`] was built from and, inside the body, the redirected one, as for
+/// [`with_slots!`](crate::with_slots). The body runs inline, as for `with_slots!`. The
+/// iterator and sink are restored when the body finishes, including when it leaves by `?`
+/// or `return`, or the enclosing future is dropped.
+#[macro_export]
+macro_rules! redirect {
+    ($strand:ident, $redirect:expr, $body:expr) => {{
+        let mut guard = $crate::strand::Redirect::guard($redirect);
+        let $strand = &mut *guard;
+        $body
+    }};
+}
+
 /// Input/output redirect configuration
 pub struct Redirect<'v, 'a, 's> {
     strand: &'a mut Strand<'v, 's>,
@@ -1804,24 +2077,57 @@ impl<'v, 'a, 's> Redirect<'v, 'a, 's> {
         self
     }
 
-    /// Call function with strand-local iterator/sink redirected
-    pub async fn enter<R>(
-        self,
-        f: impl for<'b> AsyncFnOnce(&'b mut Strand<'v, 's>) -> Result<'v, 's, R>,
-    ) -> Result<'v, 's, R> {
+    /// Apply the redirection until the returned guard is dropped.
+    ///
+    /// This backs [`redirect!`](crate::redirect).
+    #[doc(hidden)]
+    #[inline]
+    pub fn guard(self) -> RedirectGuard<'v, 'a, 's> {
         let strand = self.strand;
         let input = self.input.map(|input| strand.inner.replace_input(input));
         let output = self
             .output
             .map(|output| strand.inner.replace_output(output));
-        let res = f(strand).await;
-        if let Some(input) = input {
-            drop(strand.inner.replace_input(input));
+        RedirectGuard {
+            strand,
+            input,
+            output,
         }
-        if let Some(output) = output {
-            drop(strand.inner.replace_output(output));
+    }
+}
+
+/// A strand with its iterator and sink redirected, which restores them when dropped.
+#[doc(hidden)]
+pub struct RedirectGuard<'v, 'a, 's> {
+    strand: &'a mut Strand<'v, 's>,
+    input: Option<Value<'v>>,
+    output: Option<Value<'v>>,
+}
+
+impl<'v, 's> Deref for RedirectGuard<'v, '_, 's> {
+    type Target = Strand<'v, 's>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.strand
+    }
+}
+
+impl<'v, 's> DerefMut for RedirectGuard<'v, '_, 's> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.strand
+    }
+}
+
+impl Drop for RedirectGuard<'_, '_, '_> {
+    fn drop(&mut self) {
+        if let Some(input) = self.input.take() {
+            drop(self.strand.inner.replace_input(input));
         }
-        res
+        if let Some(output) = self.output.take() {
+            drop(self.strand.inner.replace_output(output));
+        }
     }
 }
 
@@ -1904,9 +2210,9 @@ mod interrupt_tests {
 
 #[cfg(test)]
 mod scan_tests {
-    use std::{ops::ControlFlow, ptr::NonNull};
+    use std::{future, ops::ControlFlow, pin::pin, ptr::NonNull};
 
-    use super::Strand;
+    use super::{Error, InterruptMask, Redirect, Strand, frame};
     use crate::{
         gc::arena::{Header, Visit},
         object::tuple,
@@ -1926,14 +2232,19 @@ mod scan_tests {
         out
     }
 
-    /// The header of a heap value.
-    fn header(value: &Value<'_>) -> NonNull<Header> {
+    /// The header of `value`, if it is on the heap.
+    fn heap_header(value: &Value<'_>) -> Option<NonNull<Header>> {
         let mut out = None;
         let _ = value.accept(&mut |header| {
             out = Some(header);
             ControlFlow::Continue(())
         });
-        out.expect("heap value")
+        out
+    }
+
+    /// The header of a heap value.
+    fn header(value: &Value<'_>) -> NonNull<Header> {
+        heap_header(value).expect("heap value")
     }
 
     /// Take a fresh one-element tuple out of `slot`, leaving the slot nil.
@@ -1959,28 +2270,61 @@ mod scan_tests {
     }
 
     #[test]
-    fn with_scan_visits_across_await_and_nested_slots() {
+    fn dropped_scopes_restore_strand_state() {
+        with_vm(async |strand, [tmp]| {
+            let sink = make_tuple(strand, tmp);
+            let mask = strand.interrupt_mask();
+            let output = heap_header(&strand.inner.output());
+            let mut rooted = None;
+            {
+                let mut body = pin!(async {
+                    with_interrupt_mask!(strand, InterruptMask::all(), {
+                        with_slots!(strand, |mut inner| {
+                            let item = Value::from_i64(strand, 2);
+                            tuple::create(strand, [item], Slot::reborrow(&mut inner));
+                            rooted = Some(header(&inner));
+                            redirect!(strand, Redirect::new(strand).output(&sink), {
+                                assert_eq!(strand.interrupt_mask(), InterruptMask::all());
+                                assert_eq!(
+                                    heap_header(&strand.inner.output()),
+                                    Some(header(&sink))
+                                );
+                                future::pending::<()>().await;
+                                Ok::<_, Error<'_, '_>>(())
+                            })
+                        })
+                    })
+                });
+                assert!(futures::poll!(body.as_mut()).is_pending());
+            }
+            assert_eq!(strand.interrupt_mask(), mask);
+            assert_eq!(heap_header(&strand.inner.output()), output);
+            assert!(!scanned(strand).contains(&rooted.unwrap()));
+        });
+    }
+
+    #[test]
+    fn scan_frame_visits_across_await_and_nested_slots() {
         with_vm(async |strand, [tmp]| {
             let held = make_tuple(strand, tmp);
             let target = header(&held);
             let visit = |visitor: &mut dyn Visit| held.accept(visitor);
-            // Safety: `held` owns one reference, which `visit` visits
-            unsafe {
-                strand.with_scan(visit, async |strand| {
-                    strand
-                        .with_slots(async |strand, [mut inner]| {
-                            let item = Value::from_i64(strand, 2);
-                            tuple::create(strand, [item], Slot::reborrow(&mut inner));
-                            let slot_target = header(&inner);
-                            futures::future::ready(()).await;
-                            let seen = scanned(strand);
-                            assert!(seen.contains(&target));
-                            assert!(seen.contains(&slot_target));
-                        })
-                        .await
+            let frame = frame::Scan::new(Some(strand.fp), &visit);
+            {
+                // Safety: `held` owns one reference, which `visit` visits; the scope is
+                // dropped before `frame`
+                let mut scope = unsafe { strand.enter_scan(&frame) };
+                let strand = &mut *scope;
+                with_slots!(strand, |mut inner| {
+                    let item = Value::from_i64(strand, 2);
+                    tuple::create(strand, [item], Slot::reborrow(&mut inner));
+                    let slot_target = header(&inner);
+                    futures::future::ready(()).await;
+                    let seen = scanned(strand);
+                    assert!(seen.contains(&target));
+                    assert!(seen.contains(&slot_target));
                 })
             }
-            .await;
             assert!(!scanned(strand).contains(&target));
         });
     }
@@ -2048,9 +2392,7 @@ mod constructor_tests {
                 Slot::reborrow(&mut func),
             );
             Output::set(strand, Slot::reborrow(&mut arg), "kept");
-            call!(strand, &func, Slot::reborrow(&mut result), &mut arg)
-                .await
-                .unwrap();
+            call!(strand, &func, Slot::reborrow(&mut result), &mut arg).unwrap();
             assert_eq!(text(strand, &result), "kept");
             assert_eq!(text(strand, &arg), "kept");
         });
@@ -2077,9 +2419,7 @@ mod constructor_tests {
                 "bound",
                 Slot::reborrow(&mut func),
             );
-            call!(strand, &func, Slot::reborrow(&mut result))
-                .await
-                .unwrap();
+            call!(strand, &func, Slot::reborrow(&mut result)).unwrap();
             assert_eq!(text(strand, &result), "bound");
         });
     }
