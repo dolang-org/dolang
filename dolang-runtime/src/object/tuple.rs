@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ops::ControlFlow};
+use std::{cell::RefCell, marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -10,7 +10,7 @@ use crate::{
     gc::{self, Collect, arena::Visit, with_pin},
     object::protocol::{Protocol, Recv, instance_get_fallback, members},
     sig::{Unpack, UnpackKeyKind},
-    strand::Strand,
+    strand::{Strand, with_scan},
     sym::{self, Sym},
     unpack,
     value::{Input, Output, Slot, Slots, TypeObject, Value},
@@ -115,54 +115,83 @@ impl<'v, 'a> GcObjPin<'v, 'a, TupleObj<'v>> {
     }
 }
 
+/// Store a tuple of `args`, which must all be positional, into `out`.
 pub(crate) fn from_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
     args: Args<'v, '_>,
-) -> Result<'v, 's, Vec<Value<'v>>> {
-    let mut values = Vec::new();
-
-    for (index, arg) in args.enumerate() {
-        if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
-            strand.check_trap_gc()?;
-        }
-        match arg {
-            Arg::Pos(mut value) => values.push(value.take()),
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        }
-    }
-
-    Ok(values)
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let args = args.positional(strand)?;
+    let embryo = embryo(strand, args.len());
+    embryo.finish(strand, args.map(|mut value| value.take()), out);
+    Ok(())
 }
 
+/// Store a tuple of `args` into `out`, expanding `...` spreads (keyed `ITER`).
 pub(crate) async fn from_builtin_args<'v, 's>(
     strand: &mut Strand<'v, 's>,
     mut args: Args<'v, '_>,
-) -> Result<'v, 's, Vec<Value<'v>>> {
-    let mut values = Vec::new();
-    let mut counter = 0;
-
-    loop {
-        counter += 1;
-        if counter % crate::INTERRUPT_INTERVAL == 0 {
-            strand.check_trap_gc()?;
-        }
-        match args.next() {
-            Some(Arg::Pos(mut item)) => values.push(item.take()),
-            Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
-                let mut sink = TupleSpread(&mut values);
-                expand
-                    .op_spread(strand, SpreadContext::Sequence, &mut sink)
-                    .await?;
-            }
-            Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
-            None => break,
-        }
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let spreads = args
+        .reborrow()
+        .any(|arg| matches!(arg, Arg::Key(sym, _) if sym.tag() == sym::ITER));
+    if !spreads {
+        return from_args(strand, args, out);
     }
-
-    Ok(values)
+    gather(strand, out, async |strand, sink| {
+        let mut counter = 0;
+        loop {
+            counter += 1;
+            if counter % crate::INTERRUPT_INTERVAL == 0 {
+                strand.check_trap_gc()?;
+            }
+            match args.next() {
+                Some(Arg::Pos(mut item)) => sink.0.borrow_mut().push(item.take()),
+                Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    expand
+                        .op_spread(strand, SpreadContext::Sequence, sink)
+                        .await?;
+                }
+                Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
+                None => return Ok(()),
+            }
+        }
+    })
+    .await
 }
 
-struct TupleSpread<'a, 'v>(&'a mut Vec<Value<'v>>);
+/// Store a tuple of the values `fill` gathers into its sink, whose number is known only
+/// once it returns, into `out`.
+///
+/// The values gather in a list that an ad-hoc frame roots until the tuple is allocated.
+async fn gather<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    out: impl Output<'v>,
+    fill: impl AsyncFnOnce(&mut Strand<'v, 's>, &mut TupleSpread<'_, 'v>) -> Result<'v, 's, ()>,
+) -> Result<'v, 's, ()> {
+    let values = RefCell::new(Vec::<Value<'v>>::new());
+    let visit = |visitor: &mut dyn Visit| {
+        // Never borrowed mutably across an allocation
+        values
+            .borrow()
+            .iter()
+            .try_for_each(|value| value.accept(visitor))
+    };
+    // SAFETY: `visit` visits each gathered value once; the list changes only by pushes,
+    // which do not allocate, and by the final drain, which follows the last allocation
+    unsafe {
+        with_scan!(strand, visit, {
+            fill(strand, &mut TupleSpread(&values)).await?;
+            let len = values.borrow().len();
+            let embryo = embryo(strand, len);
+            embryo.finish(strand, values.borrow_mut().drain(..), out);
+            Ok(())
+        })
+    }
+}
+
+struct TupleSpread<'a, 'v>(&'a RefCell<Vec<Value<'v>>>);
 
 impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
     fn positional(
@@ -170,7 +199,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
         _strand: &mut Strand<'v, 's>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.0.push(value.take());
+        self.0.borrow_mut().push(value.take());
         Ok(())
     }
 
@@ -823,13 +852,10 @@ impl<'v> Protocol<'v> for Type {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => items);
-        let mut values = Vec::new();
-        let mut sink = TupleSpread(&mut values);
-        items
-            .op_spread(strand, SpreadContext::Sequence, &mut sink)
-            .await?;
-        create(strand, values, out);
-        Ok(())
+        gather(strand, out, async |strand, sink| {
+            items.op_spread(strand, SpreadContext::Sequence, sink).await
+        })
+        .await
     }
 
     fn op_type<'a, 's>(

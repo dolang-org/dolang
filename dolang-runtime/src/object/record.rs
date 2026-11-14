@@ -124,6 +124,13 @@ impl<'v> Record<'v> {
         }
     }
 
+    /// Store a record of `args` into `out`.
+    pub(crate) fn from_args(strand: &mut Strand<'v, '_>, args: Args<'v, '_>, out: impl Output<'v>) {
+        let embryo = strand.builtin_types().record.embryo(strand);
+        let vm = strand.vm();
+        embryo.finish(strand, Self::from_items(pack::pack_items(vm, args)), out);
+    }
+
     pub(crate) fn from_items(items: Vec<ArgItem<'v>>) -> Self {
         let mut record = Self::new();
         for item in items {
@@ -277,8 +284,20 @@ impl<'v> Record<'v> {
     }
 
     /// Removes a positional item, shifting the later ones, or an instance of a
-    /// key, by default its first.
-    fn remove(&mut self, key: &Key<'v>, instance: Option<i64>) -> Option<Value<'v>> {
+    /// key, by default its first, moving its value into `out`. False if there
+    /// was none.
+    fn remove(&mut self, key: &Key<'v>, instance: Option<i64>, mut out: impl Output<'v>) -> bool {
+        let Some(slot) = self.remove_index(key, instance) else {
+            return false;
+        };
+        let (_, value) = self.order[slot].take().expect("live entry");
+        Slot::from_output(&mut out).store(value);
+        true
+    }
+
+    /// Unlinks a positional item or an instance of a key, as for [`Self::remove`],
+    /// returning its index in `order`, which still holds it.
+    fn remove_index(&mut self, key: &Key<'v>, instance: Option<i64>) -> Option<usize> {
         let slot = match key {
             Key::Pos(i) => {
                 if instance.is_some_and(|instance| index::element(1, instance).is_none()) {
@@ -299,14 +318,17 @@ impl<'v> Record<'v> {
             }
         };
         self.epoch += 1;
-        self.order[slot].take().map(|(_, value)| value)
+        Some(slot)
     }
 
     /// Removes a positional item, or every instance of a key. False if there
     /// was none.
     fn delete(&mut self, key: &Key<'v>) -> bool {
         match key {
-            Key::Pos(_) => self.remove(key, None).is_some(),
+            Key::Pos(_) => self
+                .remove_index(key, None)
+                .map(|slot| self.order[slot] = None)
+                .is_some(),
             Key::Sym(key) => {
                 let Some(slots) = self.keys.remove(&key.tag()) else {
                     return false;
@@ -585,19 +607,13 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
                 let key = Key::new(strand, &key)?;
                 let instance = instance(strand, instance_arg)?;
-                let removed = this.borrow_mut(strand)?.remove(&key, instance);
-                match removed {
-                    Some(value) => {
-                        out.store(value);
-                        Ok(())
-                    }
-                    None => {
-                        fallback(strand, default, or_else, out, |strand| {
-                            Err(Error::index(strand))
-                        })
-                        .await
-                    }
+                if this.borrow_mut(strand)?.remove(&key, instance, &mut out) {
+                    return Ok(());
                 }
+                fallback(strand, default, or_else, out, |strand| {
+                    Err(Error::index(strand))
+                })
+                .await
             }
             sym::DELETE => {
                 unpack!(strand, args => key);
@@ -684,8 +700,9 @@ impl<'v> Protocol<'v> for Record<'v> {
                         call!(strand, &ty, &receiver, out)
                     });
                 }
-                let copy = Record::from_items(this.borrow(strand)?.snapshot());
-                strand.builtin_types().record.create(strand, copy, out);
+                let borrow = this.borrow(strand)?;
+                let embryo = strand.builtin_types().record.embryo(strand);
+                embryo.finish(strand, Record::from_items(borrow.snapshot()), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -1066,11 +1083,12 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => source);
-        let items = pack::source_items(strand, &source).await?;
-        strand
-            .builtin_types()
-            .record
-            .create(strand, Record::from_items(items), out);
-        Ok(())
+        with_slots!(strand, |mut acc| {
+            pack::source_items(strand, &source, Slot::reborrow(&mut acc)).await?;
+            let embryo = strand.builtin_types().record.embryo(strand);
+            let items = pack::take_source_items(strand, &acc);
+            embryo.finish(strand, Record::from_items(items), out);
+            Ok(())
+        })
     }
 }

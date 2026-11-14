@@ -3101,18 +3101,20 @@ impl<'v> Weak<'v> {
         Self(self.0.clone(), PhantomData)
     }
 
+    /// Store the referent into `out` if it is still alive. False if it was released.
     #[expect(dead_code)]
-    pub(crate) fn upgrade(&self) -> Option<Value<'v>> {
-        if unsafe {
+    pub(crate) fn upgrade(&self, mut out: impl Output<'v>) -> bool {
+        let live = unsafe {
             match self.0.decode() {
                 Decode::Object(base) => base.cast::<arena::Header>().as_ref().try_retain(),
                 Decode::Prim(_) => true,
             }
-        } {
-            Some(Value(self.0.clone(), PhantomData))
-        } else {
-            None
+        };
+        if live {
+            // The retained reference moves straight into `out`
+            Slot::from_output(&mut out).store(Value(self.0.clone(), PhantomData));
         }
+        live
     }
 
     #[expect(dead_code)]
@@ -3609,8 +3611,8 @@ impl<'v> Input<'v> for &mut Root<'v> {
 /// Interior-mutable [`Value`] holder.
 ///
 /// A holder that is reachable while other code runs (frame slots, strand state, object
-/// slots) keeps its value here. Reading is by [`dup`](Value::dup), either safely through
-/// [`Input`] or with [`get`](Self::get). Writing goes through a [`Slot`] from
+/// slots) keeps its value here. Reading is by [`dup`](Value::dup) through [`Input`], or
+/// by borrowing with [`as_ref`](Self::as_ref). Writing goes through a [`Slot`] from
 /// [`slot`](Self::slot), which replaces the old value and drops it only after the
 /// write: a drop can run native code that reaches the same cell.
 #[repr(transparent)]
@@ -3641,16 +3643,6 @@ impl<'v> ValueCell<'v> {
         // Safety: a `Slot` into the cell never keeps a `&mut` alive, and no write is
         // in progress while the collector runs.
         unsafe { (*self.0.get()).accept(visit) }
-    }
-
-    /// Duplicate the stored value.
-    ///
-    /// # Safety
-    /// No `&mut` into the cell may be alive. An owned transient [`Value`] is sound only
-    /// under reference counting; prefer passing the cell as an [`Input`].
-    #[inline]
-    pub(crate) unsafe fn get(&self) -> Value<'v> {
-        unsafe { (*self.0.get()).dup() }
     }
 
     /// Borrow the stored value.
@@ -3696,7 +3688,8 @@ impl<'v> Input<'v> for &ValueCell<'v> {
     ) -> Option<Slot<'v, 'b>> {
         // Dup rather than peek: the same cell may be written through a `Slot` while
         // the input is in use.
-        out.store(unsafe { self.get() });
+        // Safety: a `Slot` into the cell never keeps a `&mut` alive across this read
+        out.store(unsafe { (*self.0.get()).dup() });
         None
     }
 }

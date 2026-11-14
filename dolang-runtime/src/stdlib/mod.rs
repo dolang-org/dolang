@@ -184,41 +184,24 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("TimedOutError", &error_timed_out)
         // Collection factories
         .function("array", async move |strand, args, out| {
-            let array = Array::from_args(strand, args)?;
-            strand.builtin_types().array.create(strand, array, out);
-            Ok(())
+            Array::from_args(strand, args, out)
         })
         .function("dict", async move |strand, args, out| {
-            let dict = Dict::from_args(strand, args)?;
-            strand.builtin_types().dict.create(strand, dict, out);
-            Ok(())
+            Dict::from_args(strand, args, out)
         })
         .function("tuple", async move |strand, args, out| {
-            let values = tuple::from_args(strand, args)?;
-            tuple::create(strand, values, out);
-            Ok(())
+            tuple::from_args(strand, args, out)
         })
         .function("pack", async move |strand, args, out| {
-            let value = pack::Pack::from_args(strand, args);
-            strand.builtin_types().pack.create_imm(strand, value, out);
+            pack::Pack::from_args(strand, args, out);
             Ok(())
         })
         .function("record", async move |strand, args, out| {
-            let items = pack::pack_items(strand, args);
-            strand
-                .builtin_types()
-                .record
-                .create(strand, Record::from_items(items), out);
+            Record::from_args(strand, args, out);
             Ok(())
         })
         .function("struct", async move |strand, args, out| {
-            let items = pack::pack_items(strand, args);
-            let structure = Struct::new(strand, items)?;
-            strand
-                .builtin_types()
-                .structure
-                .create(strand, structure, out);
-            Ok(())
+            Struct::from_args(strand, args, out)
         })
         .function("type", async move |strand, args, out| {
             unpack!(strand, args => obj, ?ty);

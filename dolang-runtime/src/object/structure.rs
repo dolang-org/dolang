@@ -7,7 +7,7 @@ use std::{
 use crate::value::fmt::Format;
 
 use crate::{
-    arg::Args,
+    arg::{Arg, Args},
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit, with_pin},
@@ -59,23 +59,42 @@ unsafe impl<'v> Collect for Struct<'v> {
 }
 
 impl<'v> Struct<'v> {
-    /// Builds a struct from `items`, whose symbol keys must be unique.
-    pub(crate) fn new<'s>(
-        strand: &mut Strand<'v, 's>,
-        items: Vec<ArgItem<'v>>,
-    ) -> Result<'v, 's, Self> {
+    /// The name of the first repeated key among a struct's symbol `keys`, given as tags
+    /// and names.
+    fn duplicate_key<'k>(keys: impl IntoIterator<Item = (sym::Tag, &'k str)>) -> Option<&'k str> {
         let mut seen = HashSet::new();
-        for (key, _) in &items {
-            if let Some(key) = key
-                && !seen.insert(key.tag())
-            {
-                return Err(Error::value(
-                    strand,
-                    format!("duplicate struct key: {}", key.name()),
-                ));
-            }
+        keys.into_iter()
+            .find(|(tag, _)| !seen.insert(*tag))
+            .map(|(_, name)| name)
+    }
+
+    fn duplicate_key_error<'s>(strand: &mut Strand<'v, 's>, name: &str) -> Error<'v, 's> {
+        Error::value(strand, format!("duplicate struct key: {name}"))
+    }
+
+    /// Store a struct of `args`, whose keys must be unique, into `out`.
+    pub(crate) fn from_args<'s>(
+        strand: &mut Strand<'v, 's>,
+        mut args: Args<'v, '_>,
+        out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        let vm = strand.vm();
+        let keys = args.reborrow().filter_map(|arg| match arg {
+            Arg::Key(key, _) => Some((key.tag(), key.as_str(vm))),
+            Arg::Pos(_) => None,
+        });
+        if let Some(name) = Self::duplicate_key(keys) {
+            return Err(Self::duplicate_key_error(strand, name));
         }
-        Ok(Self { items })
+        let embryo = strand.builtin_types().structure.embryo(strand);
+        embryo.finish(
+            strand,
+            Self {
+                items: pack::pack_items(vm, args),
+            },
+            out,
+        );
+        Ok(())
     }
 
     pub(crate) fn items(&self) -> &[ArgItem<'v>] {
@@ -497,13 +516,27 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => source);
-        let items = pack::source_items(strand, &source).await?;
-        let structure = Struct::new(strand, items)?;
-        strand
-            .builtin_types()
-            .structure
-            .create(strand, structure, out);
-        Ok(())
+        with_slots!(strand, |mut acc| {
+            pack::source_items(strand, &source, Slot::reborrow(&mut acc)).await?;
+            let duplicate = with_pin!(
+                strand,
+                acc.downcast_ref(strand.builtin_types().arg_acc)
+                    .expect("source accumulator"),
+                |acc| {
+                    let acc = acc.borrow().expect("private accumulator");
+                    let keys = acc.items().iter().filter_map(|(key, _)| key.as_ref());
+                    Struct::duplicate_key(keys.map(|key| (key.tag(), key.name())))
+                        .map(str::to_owned)
+                }
+            );
+            if let Some(name) = duplicate {
+                return Err(Struct::duplicate_key_error(strand, &name));
+            }
+            let embryo = strand.builtin_types().structure.embryo(strand);
+            let items = pack::take_source_items(strand, &acc);
+            embryo.finish(strand, Struct { items }, out);
+            Ok(())
+        })
     }
 }
 

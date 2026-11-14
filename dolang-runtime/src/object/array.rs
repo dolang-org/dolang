@@ -34,16 +34,34 @@ pub(crate) struct Iter<'v> {
     index: usize,
 }
 
-struct ArraySpread<'a, 'v>(&'a mut Vec<Value<'v>>);
+/// Appends spread values to an array object that is already allocated, so each value is
+/// rooted as soon as it arrives.
+struct ArraySpread<'a, 'v>(&'a Value<'v>);
+
+impl<'v> ArraySpread<'_, 'v> {
+    fn push<'s>(&self, strand: &mut Strand<'v, 's>, mut value: Slot<'v, '_>) -> Result<'v, 's, ()> {
+        let array = self
+            .0
+            .downcast_ref(strand.builtin_types().array)
+            .expect("array accumulator");
+        with_pin!(strand, array, |array| {
+            array
+                .borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .inner
+                .push(value.take());
+            Ok(())
+        })
+    }
+}
 
 impl<'a, 'v, 's> Spread<'v, 's> for ArraySpread<'a, 'v> {
     fn positional(
         &mut self,
-        _strand: &mut Strand<'v, 's>,
-        mut value: Slot<'v, '_>,
+        strand: &mut Strand<'v, 's>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.0.push(value.take());
-        Ok(())
+        self.push(strand, value)
     }
 
     fn symbol(
@@ -547,52 +565,55 @@ impl<'v> Array<'v> {
         }
     }
 
+    /// Store an array of `args`, which must all be positional, into `out`.
     pub(crate) fn from_args<'s>(
         strand: &mut Strand<'v, 's>,
         args: Args<'v, '_>,
-    ) -> Result<'v, 's, Self> {
-        let mut this = Self::new();
-
-        for (index, arg) in args.enumerate() {
-            if (index + 1) % crate::INTERRUPT_INTERVAL == 0 {
-                strand.check_trap_gc()?;
-            }
-            match arg {
-                Arg::Pos(mut value) => this.inner.push(value.take()),
-                Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-            }
-        }
-
-        Ok(this)
+        out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        let args = args.positional(strand)?;
+        let embryo = strand.builtin_types().array.embryo(strand);
+        let inner = args.map(|mut value| value.take()).collect();
+        embryo.finish(strand, Self { inner }, out);
+        Ok(())
     }
 
+    /// Store an array of `args` into `out`, expanding `...` spreads (keyed `ITER`).
     pub(crate) async fn from_builtin_args<'s>(
         strand: &mut Strand<'v, 's>,
         mut args: Args<'v, '_>,
-    ) -> Result<'v, 's, Self> {
-        let mut this = Self::new();
+        mut out: impl Output<'v>,
+    ) -> Result<'v, 's, ()> {
+        let spreads = args
+            .reborrow()
+            .any(|arg| matches!(arg, Arg::Key(sym, _) if sym.tag() == sym::ITER));
+        if !spreads {
+            return Self::from_args(strand, args, out);
+        }
+        // Spreading runs arbitrary code, so the values go straight into the allocated array
+        let mut array = Slot::from_output(&mut out);
+        strand
+            .builtin_types()
+            .array
+            .create(strand, Self::new(), Slot::reborrow(&mut array));
+        let mut sink = ArraySpread(&array);
         let mut counter = 0;
-
         loop {
             counter += 1;
             if counter % crate::INTERRUPT_INTERVAL == 0 {
                 strand.check_trap_gc()?;
             }
             match args.next() {
-                Some(Arg::Pos(mut item)) => this.inner.push(item.take()),
+                Some(Arg::Pos(item)) => sink.push(strand, item)?,
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
-                    let mut sink = ArraySpread(&mut this.inner);
                     expand
                         .op_spread(strand, SpreadContext::Sequence, &mut sink)
                         .await?;
-                    continue;
                 }
                 Some(Arg::Key(sym, _)) => return Err(Error::unexpected_key(strand, sym)),
-                None => break,
-            };
+                None => return Ok(()),
+            }
         }
-
-        Ok(this)
     }
 
     async fn sort<'a, 's>(
@@ -1292,18 +1313,18 @@ impl<'v> Protocol<'v> for Type {
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => items);
-        let mut array = Array::new();
-        let mut sink = ArraySpread(&mut array.inner);
-        // FIXME: `Array` is not GC-scannable, but then again if it were it would also
-        // be mutably borrowed, which would inhibit GC.  This needs a resolution.
+        // Spreading runs arbitrary code, so the values go straight into the allocated
+        // array, which is borrowed only for each push
+        strand
+            .builtin_types()
+            .array
+            .create(strand, Array::new(), Slot::reborrow(&mut out));
         items
-            .op_spread(strand, SpreadContext::Sequence, &mut sink)
-            .await?;
-        strand.builtin_types().array.create(strand, array, out);
-        Ok(())
+            .op_spread(strand, SpreadContext::Sequence, &mut ArraySpread(&out))
+            .await
     }
 
     fn op_type<'a, 's>(

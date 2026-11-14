@@ -26,7 +26,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell, with_u8_slice},
-    vm::{ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
+    vm::{Alloc, ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
     with_interrupt_mask, with_slots, with_str,
 };
 use dolang_bytecode::{Opcode, builtin};
@@ -69,17 +69,12 @@ impl<'v> CallFrame<'v> {
         }
     }
 
-    unsafe fn dup(&self) {
-        unsafe {
-            let value = self.slots.get_unchecked(self.sp.get() - 1).get();
-            self.push(value)
-        }
+    unsafe fn dup(&self, alloc: &mut impl Alloc<'v>) {
+        unsafe { self.pick(alloc, 0) }
     }
 
-    unsafe fn pick(&self, depth: usize) {
-        unsafe {
-            self.push(self.slots.get_unchecked(self.sp.get() - 1 - depth).get());
-        }
+    unsafe fn pick(&self, alloc: &mut impl Alloc<'v>, depth: usize) {
+        unsafe { self.push_local(alloc, self.sp.get() - 1 - depth) }
     }
 
     unsafe fn swap(&self, i: usize, j: usize) {
@@ -91,8 +86,12 @@ impl<'v> CallFrame<'v> {
         }
     }
 
-    unsafe fn load(&self, index: usize) -> Value<'v> {
-        unsafe { self.slots.get_unchecked(index).get() }
+    /// Push a copy of slot `index`.
+    unsafe fn push_local(&self, alloc: &mut impl Alloc<'v>, index: usize) {
+        unsafe {
+            let cell = self.slots.get_unchecked(index);
+            Output::set(alloc, self.push_slot(), cell)
+        }
     }
 
     unsafe fn take(&self, index: usize) -> Value<'v> {
@@ -291,9 +290,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let array = Array::from_builtin_args(strand, args).await?;
-        strand.builtin_types().array.create(strand, array, out);
-        Ok(())
+        Array::from_builtin_args(strand, args, out).await
     }
 
     async fn tuple<'a, 's>(
@@ -302,9 +299,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let values = tuple::from_builtin_args(strand, args).await?;
-        tuple::create(strand, values, out);
-        Ok(())
+        tuple::from_builtin_args(strand, args, out).await
     }
 
     fn args<'s>(
@@ -313,8 +308,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let value = pack::Pack::from_args(strand, args);
-        strand.builtin_types().pack.create_imm(strand, value, out);
+        pack::Pack::from_args(strand, args, out);
         Ok(())
     }
 
@@ -324,8 +318,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let value = Record::from_items(pack::pack_items(strand.vm(), args));
-        strand.builtin_types().record.create(strand, value, out);
+        Record::from_args(strand, args, out);
         Ok(())
     }
 
@@ -335,9 +328,7 @@ impl<'v> Vm<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let dict = Dict::from_builtin_args(strand, args).await?;
-        strand.builtin_types().dict.create(strand, dict, out);
-        Ok(())
+        Dict::from_builtin_args(strand, args, out).await
     }
 
     fn range<'s>(
@@ -357,13 +348,14 @@ impl<'v> Vm<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        mut out: Slot<'v, '_>,
+        out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => ?obj);
         if let Some(obj) = obj {
             obj.op_iter(strand, out).await
         } else {
-            out.store(strand.inner.input());
+            let inner = strand.inner;
+            Output::set(strand, out, inner.input());
             Ok(())
         }
     }
@@ -430,12 +422,9 @@ impl<'v> Vm<'v> {
         args: Args<'v, '_>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let arg_acc = ArgAcc::from_args(strand, args);
-        strand
-            .vm()
-            .builtin_types()
-            .arg_acc
-            .create(strand, arg_acc, out);
+        let embryo = strand.builtin_types().arg_acc.embryo(strand);
+        let vm = strand.vm();
+        embryo.finish(strand, ArgAcc::new(pack::pack_items(vm, args)), out);
         Ok(())
     }
 
@@ -788,8 +777,8 @@ impl<'v> Vm<'v> {
                 Pop => {
                     mem::drop(frame.pop());
                 }
-                Dup => frame.dup(),
-                Pick => frame.pick(reader.usize()),
+                Dup => frame.dup(strand),
+                Pick => frame.pick(strand, reader.usize()),
                 Swap => {
                     let i = reader.usize();
                     let j = reader.usize();
@@ -801,13 +790,12 @@ impl<'v> Vm<'v> {
                 }
                 LoadLocal => {
                     let index = reader.usize();
-                    let value = frame.load(index);
-                    frame.push(value)
+                    frame.push_local(strand, index)
                 }
                 LoadUpvar => {
                     let index = reader.usize();
                     let depth = reader.usize();
-                    frame.get_upvar(index, depth, frame.push_slot())
+                    frame.get_upvar(strand, index, depth, frame.push_slot())
                 }
                 StoreLocal => {
                     let index = reader.usize();

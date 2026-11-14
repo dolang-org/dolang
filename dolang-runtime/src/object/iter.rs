@@ -417,31 +417,28 @@ pub(crate) async fn iter_next<'v, 'a, 's>(
     Err(Error::iter_stop(strand))
 }
 
-/// Collect the sources for a `chain` or `zip`.
+/// Collect the sources for a `chain` or `zip` into `sources`, one slot per argument.
 ///
 /// The leading argument is the method receiver, which arrives already
 /// materialized as an `Iter`. The rest are arbitrary iterables passed by the
 /// caller, so each needs an `iter` of its own.
-async fn collect_sources<'v, 'a, 's>(
-    strand: &'a mut Strand<'v, 's>,
-    mut args: Args<'v, 'a>,
-) -> Result<'v, 's, Vec<Value<'v>>> {
+async fn collect_sources<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    mut args: Args<'v, '_>,
+    sources: &mut Slots<'v, '_>,
+) -> Result<'v, 's, ()> {
     let Some(Arg::Pos(rcvr)) = args.next() else {
         return Err(Error::type_error(strand, "expected receiver argument"));
     };
-    let sources = vec![rcvr.dup()];
-    with_slots!(strand, |mut tmp| {
-        let mut sources = sources;
-        for arg in args {
-            let slot = match arg {
-                Arg::Pos(slot) => slot,
-                Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
-            };
-            slot.iter(strand, &mut tmp).await?;
-            sources.push(tmp.take());
-        }
-        Ok(sources)
-    })
+    Output::set(strand, sources.at(0), &rcvr);
+    for (i, arg) in args.enumerate() {
+        let slot = match arg {
+            Arg::Pos(slot) => slot,
+            Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
+        };
+        slot.iter(strand, sources.at(i + 1)).await?;
+    }
+    Ok(())
 }
 
 pub(crate) struct Iter;
@@ -3006,9 +3003,12 @@ pub(crate) async fn create_chain_from_args<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let sources = collect_sources(strand, args).await?;
-    create_chain(strand, sources, out);
-    Ok(())
+    let len = args.len();
+    with_slots_dynamic!(strand, len, |mut sources| {
+        collect_sources(strand, args, &mut sources).await?;
+        create_chain(strand, (0..len).map(|i| sources.at(i).take()), out);
+        Ok(())
+    })
 }
 
 pub(crate) async fn create_zip_from_args<'v, 'a, 's>(
@@ -3016,9 +3016,12 @@ pub(crate) async fn create_zip_from_args<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let sources = collect_sources(strand, args).await?;
-    create_zip(strand, sources, out);
-    Ok(())
+    let len = args.len();
+    with_slots_dynamic!(strand, len, |mut sources| {
+        collect_sources(strand, args, &mut sources).await?;
+        create_zip(strand, (0..len).map(|i| sources.at(i).take()), out);
+        Ok(())
+    })
 }
 
 /// The `std.Null` type object. `std.null` is its sole instance -- the same

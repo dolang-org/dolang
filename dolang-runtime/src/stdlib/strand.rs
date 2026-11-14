@@ -13,7 +13,6 @@ use crate::{
     arg::Arg,
     call,
     error::{Error, ErrorKind, Result},
-    frame,
     gc::arena::Visit,
     method,
     object::{
@@ -26,7 +25,7 @@ use crate::{
     redirect,
     strand::{
         InheritKind, InterruptMask, InterruptToken, Local, LocalKey, LocalRootKey, Strand,
-        with_slots_dynamic,
+        with_scan, with_slots_dynamic,
     },
     unpack,
     value::{Output, Singleton, Slot, Value},
@@ -646,24 +645,27 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     }
                     ControlFlow::Continue(())
                 };
-                let scan = frame::Scan::new(Some(strand.fp), &visit);
                 // Safety: `visit` visits each staged entry's program reference;
                 // an entry leaves its cell only after its object is allocated
-                let mut scope = unsafe { strand.enter_scan(&scan) };
-                let strand = &mut *scope;
-                with_slots_dynamic!(strand, raw.len(), |mut infos| {
-                    for (i, raw) in raw.iter().enumerate() {
-                        let embryo = ty.embryo(strand);
-                        embryo.finish_imm(
-                            strand,
-                            StrandInfo::new(raw.take().expect("taken once")),
-                            infos.at(i),
-                        );
-                    }
-                    let len = infos.len();
-                    let embryo = tuple::embryo(strand, len);
-                    embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
-                });
+                unsafe {
+                    with_scan!(
+                        strand,
+                        visit,
+                        with_slots_dynamic!(strand, raw.len(), |mut infos| {
+                            for (i, raw) in raw.iter().enumerate() {
+                                let embryo = ty.embryo(strand);
+                                embryo.finish_imm(
+                                    strand,
+                                    StrandInfo::new(raw.take().expect("taken once")),
+                                    infos.at(i),
+                                );
+                            }
+                            let len = infos.len();
+                            let embryo = tuple::embryo(strand, len);
+                            embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
+                        })
+                    )
+                };
                 Ok(())
             })
             .function_without_frame("error_backtrace", async move |strand, args, out| {

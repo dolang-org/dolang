@@ -78,8 +78,15 @@ impl<'v> Pack<'v> {
         }
     }
 
-    pub(crate) fn from_args(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Self {
-        Self::new(pack_items(vm, args))
+    /// Store a pack of `args` into `out`.
+    pub(crate) fn from_args(
+        strand: &mut Strand<'v, '_>,
+        args: arg::Args<'v, '_>,
+        out: impl Output<'v>,
+    ) {
+        let embryo = strand.builtin_types().pack.embryo(strand);
+        let vm = strand.vm();
+        embryo.finish_imm(strand, Self::new(pack_items(vm, args)), out);
     }
 
     /// Builds a `Pack` of symbol-keyed entries, such as the leftovers for a `**name` rest.
@@ -102,7 +109,10 @@ impl<'v> Pack<'v> {
     }
 }
 
-/// The items of `args`, in order
+/// The items of `args`, in order, taken from their slots.
+///
+/// The items are unrooted, so build them between allocating the target's embryo and
+/// finishing it.
 pub(crate) fn pack_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
     args.map(|arg| match arg {
         Arg::Pos(mut value) => (None, value.take()),
@@ -669,17 +679,12 @@ impl<'v> Rest<'v> {
         }
     }
 
-    /// The next item not yet consumed, and its index
-    fn next_item(&self) -> Option<(usize, Option<GcObj<'v, SymObj>>, Value<'v>)> {
+    /// The first item at or after `pos` not yet consumed, borrowed, and its index
+    fn next_item(&self, pos: usize) -> Option<(usize, Option<&GcObj<'v, SymObj>>, &Value<'v>)> {
         let items = self.args.items();
-        first_visible_index(items, &self.skip, self.pos).map(|index| {
+        first_visible_index(items, &self.skip, pos).map(|index| {
             let (key, value) = &items[index];
-            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-            (
-                index,
-                key.as_ref().map(|key| unsafe { key.dup() }),
-                value.dup(),
-            )
+            (index, key.as_ref(), value)
         })
     }
 }
@@ -794,20 +799,19 @@ impl<'v> Protocol<'v> for Rest<'v> {
         _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
+        // The borrow holds the rest, and so its immutable pack, across the sink
         let borrow = this.borrow(strand)?;
-        // SAFETY: TODO(#1707): the cursor's reference is loose across the spread
-        let args = unsafe { borrow.args.dup() };
-        let mut iter = Rest::new(args, borrow.skip.clone(), borrow.pos, borrow.int);
+        let mut pos = borrow.pos;
         with_slots!(strand, |mut slot| {
-            while let Some((index, key, value)) = iter.next_item() {
+            while let Some((index, key, value)) = borrow.next_item(pos) {
                 Output::set(strand, &mut slot, value);
                 if let Some(key) = key {
-                    let key = unsafe { Sym::from_obj(&key) };
+                    let key = unsafe { Sym::from_obj(key) };
                     sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
                 } else {
                     sink.positional(strand, Slot::reborrow(&mut slot))?;
                 }
-                iter.pos = index + 1;
+                pos = index + 1;
             }
             Ok(())
         })
@@ -1284,45 +1288,44 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => source);
-        let items = source_items(strand, &source).await?;
-        strand
-            .builtin_types()
-            .pack
-            .create_imm(strand, Pack::new(items), out);
-        Ok(())
+        with_slots!(strand, |mut acc| {
+            source_items(strand, &source, Slot::reborrow(&mut acc)).await?;
+            let embryo = strand.builtin_types().pack.embryo(strand);
+            embryo.finish_imm(strand, Pack::new(take_source_items(strand, &acc)), out);
+            Ok(())
+        })
     }
 }
 
-/// Collects the items of `source` for `Pack src`.
+/// Collects the items of `source` for `Pack src` into a fresh accumulator in `acc`.
 ///
-/// The items are unrooted, so the caller must store them before anything can
-/// collect.
+/// Spreading can run arbitrary code, so the items collect in an object the GC can see.
+/// Take them with [`take_source_items`].
 pub(crate) async fn source_items<'v, 's>(
     strand: &mut Strand<'v, 's>,
     source: &Value<'v>,
-) -> Result<'v, 's, Vec<ArgItem<'v>>> {
-    with_slots!(strand, |mut pack| {
-        // Spreading can run arbitrary code, so the items collect in a
-        // pack the GC can see
-        strand.builtin_types().arg_acc.create(
-            strand,
-            ArgAcc::new(Vec::new()),
-            Slot::reborrow(&mut pack),
-        );
-        let mut sink = PackPairs { pack: &pack };
-        source
-            .op_spread(strand, SpreadContext::Pairs, &mut sink)
-            .await?;
-        with_pin!(
-            strand,
-            pack.downcast_ref(strand.builtin_types().arg_acc)
-                .expect("source accumulator"),
-            |pack| {
-                Ok(pack
-                    .borrow_mut()
-                    .ok_or_else(|| Error::concurrency(strand))?
-                    .take())
-            }
-        )
+    mut acc: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    strand.builtin_types().arg_acc.create(
+        strand,
+        ArgAcc::new(Vec::new()),
+        Slot::reborrow(&mut acc),
+    );
+    let mut sink = PackPairs { pack: &acc };
+    source
+        .op_spread(strand, SpreadContext::Pairs, &mut sink)
+        .await
+}
+
+/// The items [`source_items`] collected into `acc`, taken.
+///
+/// The items are unrooted, so take them between allocating the target's embryo and
+/// finishing it.
+pub(crate) fn take_source_items<'v>(strand: &Strand<'v, '_>, acc: &Value<'v>) -> Vec<ArgItem<'v>> {
+    let acc = acc
+        .downcast_ref(strand.builtin_types().arg_acc)
+        .expect("source accumulator");
+    with_pin!(strand, acc, |acc| {
+        acc.borrow_mut().expect("private accumulator").take()
     })
 }

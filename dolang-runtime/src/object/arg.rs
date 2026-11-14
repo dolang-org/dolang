@@ -9,7 +9,6 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     value::{Output, Slot, Value},
-    vm::Vm,
     with_slots,
 };
 
@@ -27,19 +26,12 @@ impl<'v> ArgAcc<'v> {
         Self { inner }
     }
 
-    pub(crate) fn from_args(vm: &Vm<'v>, args: Args<'v, '_>) -> Self {
-        let mut inner = Vec::new();
-        for arg in args {
-            match arg {
-                Arg::Pos(mut slot) => inner.push((None, slot.take())),
-                Arg::Key(sym, mut slot) => inner.push((Some(vm.sym_obj(sym)), slot.take())),
-            }
-        }
-        Self::new(inner)
-    }
-
     pub(crate) fn push(&mut self, item: ArgItem<'v>) {
         self.inner.push(item);
+    }
+
+    pub(crate) fn items(&self) -> &[ArgItem<'v>] {
+        &self.inner
     }
 
     /// Removes and returns every item.
