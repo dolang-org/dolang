@@ -5,7 +5,7 @@ use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
-    value::TypeObject,
+    value::TypeObject, with_instance,
 };
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{
@@ -163,12 +163,12 @@ pub(crate) fn path_with_entry<'v, 's>(
     entry: &Value<'v>,
 ) -> Result<'v, 's, vfs_path::PathBuf> {
     if let Some(entry) = global.types.unix_dir_entry.cast(entry) {
-        return Ok(entry.enter_sync(strand, |_strand, entry| {
+        return Ok(with_instance!(strand, entry, |entry| {
             path.join(entry.annex().name.as_str())
         }));
     }
     if let Some(entry) = global.types.windows_dir_entry.cast(entry) {
-        return Ok(entry.enter_sync(strand, |_strand, entry| {
+        return Ok(with_instance!(strand, entry, |entry| {
             path.join(entry.annex().name.as_str())
         }));
     }

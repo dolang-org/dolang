@@ -17,7 +17,7 @@ use crate::{
         fmt::{Align, Fill, Format, Kind, Pad, Sign, Spec},
     },
     vm::{AllocExt, Builder, State, StateTag, Vm},
-    with_slots,
+    with_instance, with_slots, with_str,
 };
 
 /// Every symbol this module needs: the keyword parameter names, and the symbol
@@ -347,11 +347,11 @@ impl<'v> Object<'v> for FmtValue {
         let Some(other) = this.annex().global.types.value.cast(other) else {
             return Ok(false);
         };
-        if other.enter_sync(strand, |_, other| other.annex().spec) != this.annex().spec {
+        if with_instance!(strand, other, |other| other.annex().spec) != this.annex().spec {
             return Ok(false);
         }
         let this_borrow = this.borrow(strand)?;
-        other.enter_sync(strand, |strand, other| {
+        with_instance!(strand, other, |other| {
             let other_borrow = other.borrow(strand)?;
             if !Ref::slot::<1>(&this_borrow)
                 .op_eq(strand, Ref::slot::<1>(&other_borrow))?
@@ -460,11 +460,11 @@ impl<'v> Object<'v> for FmtParam {
         let Some(other) = this.annex().global.types.param.cast(other) else {
             return Ok(false);
         };
-        if other.enter_sync(strand, |_, other| other.annex().spec) != this.annex().spec {
+        if with_instance!(strand, other, |other| other.annex().spec) != this.annex().spec {
             return Ok(false);
         }
         let this_borrow = this.borrow(strand)?;
-        other.enter_sync(strand, |strand, other| {
+        with_instance!(strand, other, |other| {
             let other_borrow = other.borrow(strand)?;
             if !Ref::slot::<1>(&this_borrow)
                 .op_eq(strand, Ref::slot::<1>(&other_borrow))?
@@ -503,7 +503,7 @@ fn write_param<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let borrow = this.borrow(strand)?;
     if let Some(source) = Ref::slot::<1>(&borrow).as_str(strand) {
-        return source.with_str(strand, |strand, source| out.write_str(strand, source));
+        return with_str!(strand, source, |source| out.write_str(strand, source));
     }
     let name = Ref::slot::<0>(&borrow).dup();
     let name = param_name(strand, &name);
@@ -631,7 +631,7 @@ impl<'v> Object<'v> for Fmt {
                     reject_unused(strand, &bindings, &consumed)?;
                     // A hole left unfilled raises when rendering reaches it.
                     let filled = global.types.fmt.cast(&filled).unwrap();
-                    filled.enter_sync(strand, |strand, filled| {
+                    with_instance!(strand, filled, |filled| {
                         let mut embryo = StrEmbryo::new();
                         render(filled, strand, &mut embryo)?;
                         embryo.finish(strand, out);
@@ -742,7 +742,7 @@ impl<'v> Object<'v> for Fmt {
         let Some(other) = this.annex().global.types.fmt.cast(other) else {
             return Ok(false);
         };
-        other.enter_sync(strand, |strand, other| eq_segments(this, other, strand))
+        with_instance!(strand, other, |other| eq_segments(this, other, strand))
     }
 
     fn hash<'a, 's>(
@@ -784,14 +784,14 @@ fn render_segment<'v, 's>(
     w: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
     if let Some(text) = segment.as_str(strand) {
-        return text.with_str(strand, |strand, text| w.write_str(strand, text));
+        return with_str!(strand, text, |text| w.write_str(strand, text));
     }
     if let Some(param) = global.types.param.cast(segment) {
         // An unfilled hole has no rendering. The template is unfinished, so
         // there is nothing to emit that would not be a guess at what belongs
         // there. That is a parameter the caller never supplied, and it is
         // reported as one, exactly as filling reports it.
-        let name = param.enter_sync(strand, |strand, param| {
+        let name = with_instance!(strand, param, |param| {
             let borrow = param.borrow(strand)?;
             Ok(Ref::slot::<0>(&borrow).dup())
         })?;
@@ -802,7 +802,7 @@ fn render_segment<'v, 's>(
         .value
         .cast(segment)
         .expect("a segment is a Str, a FmtValue, or a FmtParam");
-    bound.enter_sync(strand, |strand, bound| {
+    with_instance!(strand, bound, |bound| {
         let mut spec = bound.annex().spec;
         let kind = *spec.kind.get_or_insert(Kind::Str);
         let borrow = bound.borrow(strand)?;
@@ -814,7 +814,7 @@ fn render_segment<'v, 's>(
             // lays out what it expanded to. Asking for another kind — the
             // source form, say — is the bound value's business as usual.
             let mut buffer = String::new();
-            nested.enter_sync(strand, |strand, nested| render(nested, strand, &mut buffer))?;
+            with_instance!(strand, nested, |nested| render(nested, strand, &mut buffer))?;
             let mut pad = Pad::new(spec, w);
             pad.write_str(strand, &buffer)?;
             return pad.finish(strand);
@@ -833,17 +833,17 @@ fn debug_segment<'v, 's>(
     w: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
     if let Some(text) = segment.as_str(strand) {
-        return text.with_str(strand, |strand, text| w.write_str(strand, text));
+        return with_str!(strand, text, |text| w.write_str(strand, text));
     }
     if let Some(cast) = global.types.value.cast(segment) {
-        let written = cast.enter_sync(strand, |strand, this| {
+        let written = with_instance!(strand, cast, |this| 'body: {
             let borrow = this.borrow(strand)?;
             let Some(source) = Ref::slot::<1>(&borrow).as_str(strand) else {
-                return Ok(false);
+                break 'body false;
             };
-            source.with_str(strand, |strand, source| w.write_str(strand, source))?;
-            Ok(true)
-        })?;
+            with_str!(strand, source, |source| w.write_str(strand, source))?;
+            true
+        });
         if written {
             return Ok(());
         }
@@ -859,7 +859,7 @@ fn each_segment<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let borrow = this.borrow(strand)?;
     let segments = Ref::slot::<0>(&borrow).as_array(strand).unwrap();
-    strand.with_slots_sync(|strand, [mut item]| {
+    with_slots!(strand, |mut item| {
         for index in 0..segments.len(strand)? {
             segments.get(strand, index, &mut item)?;
             visit(strand, &item)?;
@@ -881,7 +881,7 @@ fn eq_segments<'v, 's>(
     if len != other_segments.len(strand)? {
         return Ok(false);
     }
-    strand.with_slots_sync(|strand, [mut left, mut right]| {
+    with_slots!(strand, |mut left, mut right| {
         for index in 0..len {
             this_segments.get(strand, index, &mut left)?;
             other_segments.get(strand, index, &mut right)?;
@@ -909,16 +909,15 @@ fn substitute<'v, 's>(
 ) -> Result<'v, 's, ()> {
     // A bound value may carry a sequence of its own, so substitution recurses.
     // Bound by the ordinary call depth rather than a mechanism of its own.
-    strand.recursion_guard_sync(|strand| {
-        strand.with_slots_sync(|strand, [mut segments, mut built]| {
-            strand.new_array(&mut segments);
-            each_segment(this, strand, |strand, segment| {
-                substitute_segment(strand, global, bindings, consumed, &segments, segment)
-            })?;
-            create_from_segments(strand, global, &segments, Slot::reborrow(&mut built));
-            Output::set(strand, out, &built);
-            Ok(())
-        })
+    let _depth = strand.inner.push_call_depth()?;
+    with_slots!(strand, |mut segments, mut built| {
+        strand.new_array(&mut segments);
+        each_segment(this, strand, |strand, segment| {
+            substitute_segment(strand, global, bindings, consumed, &segments, segment)
+        })?;
+        create_from_segments(strand, global, &segments, Slot::reborrow(&mut built));
+        Output::set(strand, out, &built);
+        Ok(())
     })
 }
 
@@ -932,8 +931,8 @@ fn substitute_segment<'v, 's>(
     segment: &Value<'v>,
 ) -> Result<'v, 's, ()> {
     if let Some(param) = global.types.param.cast(segment) {
-        return strand.with_slots_sync(|strand, [mut name, mut source, mut value, mut filled]| {
-            let spec = param.enter_sync(strand, |strand, param| {
+        return with_slots!(strand, |mut name, mut source, mut value, mut filled| {
+            let spec = with_instance!(strand, param, |param| {
                 let borrow = param.borrow(strand)?;
                 Output::set(strand, &mut name, Ref::slot::<0>(&borrow));
                 Output::set(strand, &mut source, Ref::slot::<1>(&borrow));
@@ -964,34 +963,32 @@ fn substitute_segment<'v, 's>(
     let Some(bound) = global.types.value.cast(segment) else {
         return append_segment(strand, global, segments, segment);
     };
-    strand.with_slots_sync(
-        |strand, [mut inner, mut source, mut rebuilt, mut wrapped]| {
-            let spec = bound.enter_sync(strand, |strand, bound| {
-                let borrow = bound.borrow(strand)?;
-                Output::set(strand, &mut inner, Ref::slot::<0>(&borrow));
-                Output::set(strand, &mut source, Ref::slot::<1>(&borrow));
-                Ok(bound.annex().spec)
-            })?;
-            // A sequence bound inside a sequence has holes of its own, and they are
-            // reached before anything past the binding — so the order holes are
-            // visited is depth first, matching the order they read in.
-            let Some(nested) = global.types.fmt.cast(&inner) else {
-                return append_segment(strand, global, segments, segment);
-            };
-            nested.enter_sync(strand, |strand, nested| {
-                substitute(strand, global, nested, bindings, consumed, &mut rebuilt)
-            })?;
-            create_value(
-                strand,
-                global,
-                spec,
-                &rebuilt,
-                Some(&source),
-                Slot::reborrow(&mut wrapped),
-            );
-            append_segment(strand, global, segments, &wrapped)
-        },
-    )
+    with_slots!(strand, |mut inner, mut source, mut rebuilt, mut wrapped| {
+        let spec = with_instance!(strand, bound, |bound| {
+            let borrow = bound.borrow(strand)?;
+            Output::set(strand, &mut inner, Ref::slot::<0>(&borrow));
+            Output::set(strand, &mut source, Ref::slot::<1>(&borrow));
+            Ok(bound.annex().spec)
+        })?;
+        // A sequence bound inside a sequence has holes of its own, and they are
+        // reached before anything past the binding — so the order holes are
+        // visited is depth first, matching the order they read in.
+        let Some(nested) = global.types.fmt.cast(&inner) else {
+            return append_segment(strand, global, segments, segment);
+        };
+        with_instance!(strand, nested, |nested| {
+            substitute(strand, global, nested, bindings, consumed, &mut rebuilt)
+        })?;
+        create_value(
+            strand,
+            global,
+            spec,
+            &rebuilt,
+            Some(&source),
+            Slot::reborrow(&mut wrapped),
+        );
+        append_segment(strand, global, segments, &wrapped)
+    })
 }
 
 /// Reports the first binding no parameter consumed.
@@ -1005,7 +1002,7 @@ fn reject_unused<'v, 's>(
     consumed: &Value<'v>,
 ) -> Result<'v, 's, ()> {
     let mut pairs = bindings.as_dict(strand).unwrap().pairs();
-    strand.with_slots_sync(|strand, [mut key, mut value]| {
+    with_slots!(strand, |mut key, mut value| {
         while pairs.next(strand, &mut key, &mut value)? {
             if !consumed.as_set(strand).unwrap().contains(strand, &key)? {
                 return Err(unmatched_error(strand, &key, false));
@@ -1044,7 +1041,7 @@ pub(crate) fn create_fmt<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut segments]| {
+    with_slots!(strand, |mut segments| {
         strand.new_array(&mut segments);
         for arg in args {
             match arg {
@@ -1089,7 +1086,7 @@ fn create_from_segments<'v>(
 ) {
     let ty = global.types.fmt;
     ty.create_with_annex(strand, Fmt, FmtAnnex { global }, &mut out);
-    ty.cast(&out).unwrap().enter_sync(strand, |strand, this| {
+    with_instance!(strand, ty.cast(&out).unwrap(), |this| {
         let mut borrow = this.borrow_mut_unwrap();
         Output::set(strand, Mut::slot_mut::<0>(&mut borrow), segments);
     });
@@ -1181,7 +1178,7 @@ where
             let spec = this.annex().spec;
             let mut embryo = StrEmbryo::new();
             let mut pad = Pad::new(spec, &mut embryo);
-            value.with_str(strand, |strand, value| pad.write_str(strand, value))?;
+            with_str!(strand, value, |value| pad.write_str(strand, value))?;
             pad.finish(strand)?;
             embryo.finish(strand, out);
             Ok(())
@@ -1263,10 +1260,10 @@ pub(crate) fn spec_of<'v, 's>(
 ) -> Result<'v, 's, Spec> {
     let global = strand.vm().state::<Tag>();
     if let Some(cast) = global.types.spec.cast(value) {
-        return Ok(cast.enter_sync(strand, |_, this| this.annex().spec));
+        return Ok(with_instance!(strand, cast, |this| this.annex().spec));
     }
     if let Some(cast) = global.types.value.cast(value) {
-        return Ok(cast.enter_sync(strand, |_, this| this.annex().spec));
+        return Ok(with_instance!(strand, cast, |this| this.annex().spec));
     }
     Err(Error::type_error(strand, "expected FmtSpec"))
 }
@@ -1327,15 +1324,13 @@ fn create_param<'v, 's>(
     }
     let ty = global.types.param;
     ty.create_with_annex(strand, FmtParam, SpecAnnex { global, spec }, &mut out);
-    ty.cast(&out)
-        .unwrap()
-        .enter_sync(strand, |strand, instance| {
-            let mut borrow = instance.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), name);
-            if let Some(source) = source {
-                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), source);
-            }
-        });
+    with_instance!(strand, ty.cast(&out).unwrap(), |instance| {
+        let mut borrow = instance.borrow_mut_unwrap();
+        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), name);
+        if let Some(source) = source {
+            Output::set(strand, Mut::slot_mut::<1>(&mut borrow), source);
+        }
+    });
     Ok(())
 }
 
@@ -1349,15 +1344,13 @@ fn create_value<'v>(
 ) {
     let ty = global.types.value;
     ty.create_with_annex(strand, FmtValue, SpecAnnex { global, spec }, &mut out);
-    ty.cast(&out)
-        .unwrap()
-        .enter_sync(strand, |strand, instance| {
-            let mut borrow = instance.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), value);
-            if let Some(source) = source {
-                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), source);
-            }
-        });
+    with_instance!(strand, ty.cast(&out).unwrap(), |instance| {
+        let mut borrow = instance.borrow_mut_unwrap();
+        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), value);
+        if let Some(source) = source {
+            Output::set(strand, Mut::slot_mut::<1>(&mut borrow), source);
+        }
+    });
 }
 
 /// Merges the keyword options in `args` over `base`.
@@ -1435,7 +1428,7 @@ fn parse_fill<'v, 's>(
     let value = value
         .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "fill: expected Str, :ZERO:, or nil"))?;
-    let ch = value.with_str(strand, |_, value| {
+    let ch = with_str!(strand, value, |value| {
         let mut chars = value.chars();
         chars.next().filter(|_| chars.next().is_none())
     });

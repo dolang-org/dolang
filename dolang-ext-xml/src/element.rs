@@ -9,6 +9,7 @@ use dolang::runtime::{
     object::{ArrayLike, ArrayView, DictLike, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
+    with_instance, with_slots,
 };
 
 use crate::{
@@ -264,7 +265,7 @@ impl<'v> DictLike<'v> for Attrs {
         let node = this.borrow(strand)?;
         for attr in &node.attrs {
             match &attr.name.namespace {
-                Some(namespace) => strand.with_slots_sync(|strand, [mut key]| {
+                Some(namespace) => with_slots!(strand, |mut key| {
                     strand.tuple([namespace.as_str(), attr.name.local.as_str()], &mut key);
                     sink.push(strand, &key, attr.value.as_str())
                 }),
@@ -440,13 +441,10 @@ pub(crate) fn create_element<'v, 's>(
         namespaces: declarations,
     };
     element_type.create_with_annex(strand, node, ElementAnnex, &mut out);
-    element_type
-        .cast(&out)
-        .unwrap()
-        .enter_sync(strand, |strand, inst| {
-            let mut borrow = inst.borrow_mut_unwrap();
-            strand.new_array(Mut::slot_mut::<CHILDREN>(&mut borrow));
-        });
+    with_instance!(strand, element_type.cast(&out).unwrap(), |inst| {
+        let mut borrow = inst.borrow_mut_unwrap();
+        strand.new_array(Mut::slot_mut::<CHILDREN>(&mut borrow));
+    });
     Ok(())
 }
 
@@ -462,9 +460,9 @@ fn dict_pairs<'v, 's>(
     let mut pairs = dict.pairs();
     let mut out = Vec::new();
     loop {
-        let pair = strand.with_slots_sync(|strand, [mut key, mut value]| {
+        let pair = with_slots!(strand, |mut key, mut value| 'body: {
             if !pairs.next(strand, &mut key, &mut value)? {
-                return Ok(None);
+                break 'body None;
             }
             let Some(key) = key_string(strand, &key)? else {
                 return Err(Error::type_error(
@@ -473,8 +471,8 @@ fn dict_pairs<'v, 's>(
                 ));
             };
             let value = required_string(strand, &value, what)?;
-            Ok(Some((key, value)))
-        })?;
+            Some((key, value))
+        });
         match pair {
             Some(pair) => out.push(pair),
             None => return Ok(out),
@@ -493,9 +491,9 @@ fn constructor_attrs<'v, 's>(
     let mut pairs = dict.pairs();
     let mut attrs = Vec::new();
     loop {
-        let attr = strand.with_slots_sync(|strand, [mut key, mut value]| {
+        let attr = with_slots!(strand, |mut key, mut value| 'body: {
             if !pairs.next(strand, &mut key, &mut value)? {
-                return Ok(None);
+                break 'body None;
             }
             let name = if key.as_sym(strand).is_some() {
                 Name {
@@ -506,8 +504,8 @@ fn constructor_attrs<'v, 's>(
                 attr_key(strand, &key)?
             };
             let value = required_string(strand, &value, "attribute value")?;
-            Attr::checked(name, value).or_value(strand).map(Some)
-        })?;
+            Some(Attr::checked(name, value).or_value(strand)?)
+        });
         let Some(attr) = attr else { break };
         check_new_attrs(&attrs, None, std::slice::from_ref(&attr)).or_value(strand)?;
         attrs.push(attr);
@@ -571,7 +569,7 @@ impl<'v> Object<'v> for Element {
             Slot::reborrow(&mut out),
         )?;
         let node = this.cast(&out).expect("freshly created node");
-        node.enter_sync(strand, |strand, node| {
+        with_instance!(strand, node, |node| {
             for item in items {
                 check_child(strand, &item)?;
                 let borrow = node.borrow(strand)?;
@@ -696,11 +694,10 @@ impl<'v> Object<'v> for Element {
                 global
                     .traverse_iter_type
                     .create(strand, TraverseIter, &mut out);
-                global
-                    .traverse_iter_type
-                    .cast(&out)
-                    .unwrap()
-                    .enter_sync(strand, |strand, inst| {
+                with_instance!(
+                    strand,
+                    global.traverse_iter_type.cast(&out).unwrap(),
+                    |inst| {
                         {
                             let mut borrow = inst.borrow_mut_unwrap();
                             strand.new_array(Mut::slot_mut::<STACK>(&mut borrow));
@@ -709,7 +706,8 @@ impl<'v> Object<'v> for Element {
                         let stack = Ref::slot::<STACK>(&borrow).as_array(strand).unwrap();
                         stack.push(strand, this)?;
                         Ok(())
-                    })
+                    }
+                )
             })
     }
 }
@@ -746,12 +744,12 @@ impl<'v> Object<'v> for TraverseIter {
         let global = strand.state::<Tag>();
         let borrow = this.borrow(strand)?;
         let stack = Ref::slot::<STACK>(&borrow).as_array(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut tmp]| {
+        with_slots!(strand, |mut tmp| {
             if !stack.pop(strand, &mut out)? {
                 return Ok(false);
             }
             if let Some(node_cast) = global.element_type.cast(&out) {
-                node_cast.enter_sync(strand, |strand, node_inst| {
+                with_instance!(strand, node_cast, |node_inst| {
                     let node_borrow = node_inst.borrow(strand)?;
                     let children = Ref::slot::<CHILDREN>(&node_borrow)
                         .as_array(strand)

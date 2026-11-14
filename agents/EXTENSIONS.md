@@ -309,7 +309,7 @@ strand.range(0i64, len, &mut out);          // Strand
 
 `AllocExt` methods need only an `Alloc` (a `Register` or `Builder` too);
 `tuple` and `range` need a `Strand`. To pass a built value as a call argument,
-build it into a slot from `with_slots_sync` first.
+build it into a slot from `with_slots!` first.
 
 ### Scoped Helpers
 
@@ -602,9 +602,9 @@ Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this); // regex
 Slots are accessed via `Ref::slot::<N>` (read) and `Mut::slot_mut::<N>` (write).
 The const generic `N` is bounds-checked at compile time against `SLOTS`.
 
-For text needed only within a call, use `Str::with_str`/`Bin::with_slice`
-(or their `_async` forms) to borrow it while keeping the strand, or
-`Str::as_str` with a `Strand::access` token; neither needs a stored pin.
+For text needed only within a call, use `with_str!`/`with_slice!` to borrow it
+while keeping the strand, or `Str::as_str` with a `Strand::access` token;
+neither needs a stored pin.
 
 **Key invariant**: the transmuted references are only valid as long as their
 referents are alive and pinned. Never clear or overwrite a slot that backs a

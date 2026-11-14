@@ -1,5 +1,5 @@
 use crate::global::MacosSecurityTag;
-use dolang::runtime::with_slots;
+use dolang::runtime::{with_instance, with_slots};
 
 use super::*;
 
@@ -119,7 +119,7 @@ impl<'v> Object<'v> for MacosAclObject {
             let ace = global.types.macos_ace.cast(&iterable).ok_or_else(|| {
                 Error::type_error(strand, "Acl: iterable must contain security.macos.Ace")
             })?;
-            entries.push(ace.enter_sync(strand, |_strand, ace| *ace.annex()));
+            entries.push(with_instance!(strand, ace, |ace| *ace.annex()));
         }
         let acl = VfsMacosAcl::new(entries);
         this.create_with_annex(strand, MacosAclObject, acl, out);
@@ -295,7 +295,7 @@ async fn coerce_ace<'v, 's>(
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsMacosAce> {
     if let Some(ace) = global.types.macos_ace.cast(value) {
-        return Ok(ace.enter_sync(strand, |_strand, ace| *ace.annex()));
+        return Ok(with_instance!(strand, ace, |ace| *ace.annex()));
     }
     let dict = value.as_dict(strand.vm()).ok_or_else(|| {
         Error::type_error(
@@ -383,7 +383,7 @@ pub(super) async fn coerce_acl<'v, 's>(
     path: &SpecPath<'_>,
 ) -> Result<'v, 's, VfsMacosAcl> {
     if let Some(acl) = global.types.macos_acl.cast(value) {
-        return Ok(acl.enter_sync(strand, |_strand, acl| acl.annex().clone()));
+        return Ok(with_instance!(strand, acl, |acl| acl.annex().clone()));
     }
     let mut entries = Vec::new();
     with_slots!(strand, |mut iter, mut item| {
@@ -584,7 +584,7 @@ pub(crate) fn configure_vm<'v>(
                     ));
                 }
             };
-            strand.with_slots_sync(|strand, [mut kind_slot, mut id_slot]| {
+            with_slots!(strand, |mut kind_slot, mut id_slot| {
                 Output::set(strand, &mut kind_slot, kind);
                 Output::set(strand, &mut id_slot, id);
                 strand.tuple([&kind_slot, &id_slot], out)

@@ -13,6 +13,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, Str},
     vm::Register,
+    with_instance,
 };
 use percent_encoding::percent_decode_str;
 
@@ -49,9 +50,10 @@ impl<'v, 'a> UrlOrStr<'v, 'a> {
 
     fn to_url<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, url::Url> {
         match self {
-            Self::Url(url) => {
-                Ok(url.enter_sync(strand, |_strand, inst| inst.annex().inner.clone()))
-            }
+            Self::Url(url) => Ok(with_instance!(strand, url, |inst| inst
+                .annex()
+                .inner
+                .clone())),
             Self::Str(str) => strand
                 .access(|x| url::Url::parse(str.as_str(x)))
                 .into_do_data(strand),
@@ -379,7 +381,7 @@ impl<'v> Object<'v> for Url {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.url.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().inner == other.annex().inner
             }))
         } else {
@@ -402,7 +404,7 @@ impl<'v> Object<'v> for Url {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         if let Some(other) = this.annex().global.types.url.cast(other) {
-            Ok(other.enter_sync(strand, |_strand, other| {
+            Ok(with_instance!(strand, other, |other| {
                 this.annex().inner < other.annex().inner
             }))
         } else {

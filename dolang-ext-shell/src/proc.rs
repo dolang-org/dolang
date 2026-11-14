@@ -1,3 +1,4 @@
+use dolang::runtime::with_slots;
 use dolang::{
     compile::Config,
     runtime::{
@@ -140,7 +141,7 @@ pub(crate) fn parse_policy_dict<'v, 's>(
     };
     let mut policy = base;
     let mut pairs = dict.pairs();
-    strand.with_slots_sync(|strand, [mut key, mut value]| {
+    with_slots!(strand, |mut key, mut value| {
         while pairs.next(strand, &mut key, &mut value)? {
             let key = key
                 .as_sym(strand)

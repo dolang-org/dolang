@@ -12,6 +12,7 @@ use crate::{
     strand::{Strand, with_slots_dynamic},
     sym::Sym,
     value::{Output, Slot, Slots, TypeObject, Value},
+    with_slots,
 };
 use dolang_bytecode::{Rest, Variadic};
 
@@ -245,7 +246,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        strand.with_slots_sync(|strand, [mut value]| {
+        with_slots!(strand, |mut value| {
             for symbol in &iter.symbols {
                 let receiver = iter.receiver.dup();
                 resolve(strand, &receiver, symbol, Slot::reborrow(&mut value))?;
@@ -266,7 +267,7 @@ pub(crate) fn create<'v, 's>(
     receiver: &Value<'v>,
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut ty]| {
+    with_slots!(strand, |mut ty| {
         receiver.op_type(strand, Slot::reborrow(&mut ty));
         let inspect = ty
             .op_inspect(strand)
@@ -377,7 +378,7 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
             return Ok(false);
         };
         let receiver = iter.fields.receiver.dup();
-        strand.with_slots_sync(|strand, [mut value]| {
+        with_slots!(strand, |mut value| {
             resolve(strand, &receiver, &symbol, Slot::reborrow(&mut value))?;
             tuple::create(strand, [Value::from_object(symbol), value.take()], out);
             Ok(())

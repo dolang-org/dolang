@@ -450,7 +450,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut receiver]| {
+        with_slots!(strand, |mut receiver| {
             Output::set(strand, &mut receiver, this);
             other.op_lt_direct(strand, &receiver)
         })
@@ -461,7 +461,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut receiver]| {
+        with_slots!(strand, |mut receiver| {
             Output::set(strand, &mut receiver, this);
             other.op_lte_direct(strand, &receiver)
         })
@@ -1041,7 +1041,7 @@ impl<'v, T: Protocol<'v, Annex: Sized>> ObjEmbryo<'v, T> {
 
 impl<'v, T: ?Sized + Protocol<'v>> TypeHandle<'v, T> {
     /// Downcast `value` to this type, returning a [`RecvCast`] that must be entered via
-    /// [`with_instance!`](crate::with_instance) or [`RecvCast::enter_sync`] to obtain a
+    /// [`with_instance!`](crate::with_instance) to obtain a
     /// [`Recv`]. This scopes the resulting borrow to a block or closure rather than handing
     /// back an indefinitely-long-lived one, mirroring [`Type::cast`](super::native::Type::cast)
     /// in the public extension API.
@@ -1071,19 +1071,8 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> RecvCast<'v, 'a, T> {
     where
         'a: 'p,
     {
-        // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+        // SAFETY: scoped to the caller's block, as for `GcObj::scoped_pin`
         Recv::new(unsafe { self.obj.pin_unchecked() })
-    }
-
-    /// Obtain a [`Recv`] for the duration of `f`.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn enter_sync<'s, R>(
-        self,
-        strand: &mut Strand<'v, 's>,
-        f: impl for<'x> FnOnce(&mut Strand<'v, 's>, Recv<'v, 'x, T>) -> R,
-    ) -> R {
-        self.obj
-            .pin_sync(strand, |strand, pin| f(strand, Recv::new(pin)))
     }
 }
 
@@ -2501,7 +2490,7 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
                     Some(&*this),
                 )
             } else {
-                strand.with_slots_sync(|strand, [mut tmp]| {
+                with_slots!(strand, |mut tmp| {
                     this.op_type(strand, Slot::reborrow(&mut tmp));
                     if !tmp.repr_eq(ty) {
                         return Err(Error::type_error(strand, "invalid native object type"));

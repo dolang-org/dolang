@@ -21,6 +21,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, Nil, TypeObject, View, fmt::Format},
     vm::Register,
+    with_instance, with_slots,
 };
 
 use crate::global::{Global, Tag};
@@ -346,7 +347,7 @@ impl<'v, F: JsonFormatter, S: Sink<'v>> Encoder<'_, 'v, '_, F, S> {
     ) -> EncodeResult<'v, 's> {
         self.enter(id, kind)?;
         self.emit(strand, |f, w| f.begin_array(w))?;
-        strand.with_slots_sync(|strand, [mut elem]| {
+        with_slots!(strand, |mut elem| {
             for i in 0..len {
                 if !get(strand, i, &mut elem)? {
                     break;
@@ -376,7 +377,7 @@ impl<'v, F: JsonFormatter, S: Sink<'v>> Encoder<'_, 'v, '_, F, S> {
     ) -> EncodeResult<'v, 's> {
         self.enter(id, kind)?;
         self.emit(strand, |f, w| f.begin_object(w))?;
-        strand.with_slots_sync(|strand, [mut key, mut val]| {
+        with_slots!(strand, |mut key, mut val| {
             let mut first = true;
             while next(strand, &mut key, &mut val)? {
                 self.emit(strand, |f, w| f.begin_object_key(w, first))?;
@@ -405,7 +406,7 @@ fn encode<'v, 's>(
     formatter: impl JsonFormatter,
     sink: &mut impl Sink<'v>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [path, mut tuple, mut error]| {
+    with_slots!(strand, |path, mut tuple, mut error| {
         let mut encoder = Encoder {
             formatter,
             sink,
@@ -427,12 +428,10 @@ fn encode<'v, 's>(
         }
         let ty = strand.state::<Tag>().types.encode_error;
         ty.create_with_annex(strand, EncodeError, annex, &mut error);
-        ty.cast(&error)
-            .unwrap()
-            .enter_sync(strand, |strand, instance| {
-                let mut borrow = instance.borrow_mut_unwrap();
-                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
-            });
+        with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
+            let mut borrow = instance.borrow_mut_unwrap();
+            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+        });
         Err(Error::from_value(strand, &error))
     })
 }
@@ -535,7 +534,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         let Seed(strand, mut out, stash) = self;
         strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut elem]| {
+        with_slots!(strand, |mut elem| {
             while let Some(()) =
                 seq.next_element_seed(Seed(strand, Slot::reborrow(&mut elem), &mut *stash))?
             {
@@ -554,7 +553,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
         let Seed(strand, mut out, stash) = self;
         strand.new_dict(&mut out);
         let dict = out.as_dict(strand).unwrap();
-        strand.with_slots_sync(|strand, [mut key, mut value]| {
+        with_slots!(strand, |mut key, mut value| {
             while let Some(()) =
                 map.next_key_seed(Seed(strand, Slot::reborrow(&mut key), &mut *stash))?
             {

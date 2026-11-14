@@ -82,7 +82,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .function("run", async move |strand, args, out| {
             let ([bytecode], [importer]) = unpack!(strand, args, 1, 0, importer_sym = None)?;
             let bytecode = match global.types.bytecode.cast(&bytecode) {
-                Some(cast) => cast.enter_sync(strand, |strand, inst| take(strand, inst))?,
+                Some(cast) => with_instance!(strand, cast, |inst| take(strand, inst))?,
                 None => decode(strand, &bytecode)?,
             };
             run(strand, bytecode, importer, out).await
@@ -100,7 +100,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
 
             let handlers = global.handlers.as_array(strand).unwrap();
             if global.executors.get() == 0 && global.gravestones.get() {
-                strand.with_slots_sync(|strand, [mut item]| {
+                with_slots!(strand, |mut item| {
                     for index in (0..handlers.len(strand)?).rev() {
                         handlers.get(strand, index, &mut item)?;
                         if item.is_nil() {
@@ -122,18 +122,17 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 },
                 &mut out,
             );
-            global
-                .types
-                .import_handler
-                .cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, inst| {
+            with_instance!(
+                strand,
+                global.types.import_handler.cast(&out).unwrap(),
+                |inst| {
                     Output::set(
                         strand,
                         Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
                         callback,
                     );
-                });
+                }
+            );
             handlers.push(strand, &out)?;
 
             Ok(())

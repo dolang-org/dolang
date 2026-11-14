@@ -38,6 +38,7 @@ use crate::{
     unpack,
     value::{Output, Slot, Value},
     vm::Register,
+    with_instance, with_slots,
 };
 
 /// Which related flags types a [`Flags`] constructor accepts, by nominal
@@ -433,7 +434,7 @@ fn is_supertype_of<'v, F: FlagLike>(
     strand: &mut Strand<'v, '_>,
     value: &Value<'v>,
 ) -> bool {
-    strand.with_slots_sync(|strand, [mut source_ty, mut target_ty]| {
+    with_slots!(strand, |mut source_ty, mut target_ty| {
         value.op_type(strand, Slot::reborrow(&mut source_ty));
         Output::set(strand, &mut target_ty, ty);
         target_ty.op_subtype(strand, &source_ty)
@@ -592,7 +593,7 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
     ) -> Result<'v, 's, bool> {
         let ty = this.ty(strand.vm());
         Ok(match ty.cast(other) {
-            Some(cast) => cast.enter_sync(strand, |_strand, inst| *inst.annex()) == *this.annex(),
+            Some(cast) => with_instance!(strand, cast, |inst| *inst.annex()) == *this.annex(),
             None => false,
         })
     }
@@ -760,7 +761,7 @@ fn binop<'v, 'a, 's, F: FlagLike>(
             format!("expected `{}.{}`", F::MODULE, F::NAME),
         ));
     };
-    let other_bits = cast.enter_sync(strand, |_strand, inst| *inst.annex());
+    let other_bits = with_instance!(strand, cast, |inst| *inst.annex());
     ty.create_flags(strand, op(*this.annex(), other_bits), out);
     Ok(())
 }

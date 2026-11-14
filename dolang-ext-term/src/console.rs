@@ -8,7 +8,7 @@ use dolang::runtime::{
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
     value::{Nil, TypeObject, View},
-    with_slots,
+    with_instance, with_slots,
 };
 
 use crate::geometry::create_geometry;
@@ -305,16 +305,15 @@ pub(crate) fn create_io_console<'v, 's>(
         },
         &mut out,
     );
-    global
-        .types
-        .io_console
-        .cast(&out)
-        .unwrap()
-        .enter_sync(strand, |strand, inst| {
+    with_instance!(
+        strand,
+        global.types.io_console.cast(&out).unwrap(),
+        |inst| {
             let mut borrow = inst.borrow_mut(strand)?;
             Output::set(strand, Mut::slot_mut::<0>(&mut borrow), target);
             Ok(())
-        })
+        }
+    )
 }
 
 /// Stores an [`IoConsole`]'s inner stream in `out`, raising once it is closed.
@@ -603,7 +602,7 @@ pub(crate) async fn flush<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's,
 
 /// The ambient console's line ending, as bytes to append.
 pub(crate) fn ambient_line_ending<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, Vec<u8>> {
-    strand.with_slots_sync(|strand, [mut ending]| {
+    with_slots!(strand, |mut ending| {
         route_line_ending(strand, &mut ending);
         if ending.is_nil() {
             return Err(Error::state_error(strand, "no console installed"));
@@ -662,7 +661,7 @@ pub(crate) fn can_style<'v, 's>(
     console: &Value<'v>,
 ) -> Result<'v, 's, bool> {
     let sym = strand.state::<Tag>().syms.can_style;
-    strand.with_slots_sync(|strand, [mut value]| {
+    with_slots!(strand, |mut value| {
         console.get(strand, sym, &mut value)?;
         value
             .as_bool(strand)
@@ -694,7 +693,7 @@ pub(crate) fn line_ending<'v, 's>(
 /// being usable as a terminal while an extension has taken it over.
 pub(crate) fn is_tty<'v, 's>(strand: &mut Strand<'v, 's>) -> Result<'v, 's, bool> {
     let sym = strand.state::<Tag>().syms.is_tty;
-    strand.with_slots_sync(|strand, [mut rcvr, mut value]| {
+    with_slots!(strand, |mut rcvr, mut value| {
         route(strand, &mut rcvr)?;
         rcvr.get(strand, sym, &mut value)?;
         value

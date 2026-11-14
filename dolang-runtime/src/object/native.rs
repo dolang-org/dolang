@@ -16,6 +16,7 @@ use crate::{
     gc::{
         self, Base, Collect,
         arena::{self, Upcast, Visit},
+        with_pin,
     },
     object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
     sig,
@@ -423,6 +424,8 @@ impl<'v, 'a, T: Object<'v>> Copy for Instance<'v, 'a, T> {}
 macro_rules! with_instance {
     ($strand:ident, $cast:expr, |$this:pat_param| $body:expr) => {{
         let cast = $cast;
+        // The pin is tied to the strand, as a moving collector's pin list would be
+        let _: &$crate::strand::Strand<'_, '_> = $strand;
         let scope = $crate::strand::PinScope;
         // Safety: `scope` is a local of this block
         #[allow(unused_unsafe)]
@@ -433,7 +436,7 @@ macro_rules! with_instance {
 
 /// Witness that a [`Value`] has dynamic type `T`, obtained from [`Type::downcast`].
 ///
-/// Use [`with_instance!`](crate::with_instance) or [`Cast::enter_sync`] to obtain an
+/// Use [`with_instance!`](crate::with_instance) to obtain an
 /// [`Instance`] for a bounded scope.
 #[must_use]
 pub struct Cast<'v, 'a, T: Object<'v>> {
@@ -467,33 +470,13 @@ impl<'v, 'a, T: Object<'v>> Cast<'v, 'a, T> {
         'a: 'p,
     {
         Instance {
-            // SAFETY: scoped to the caller's block, as for `GcObj::pin`
+            // SAFETY: scoped to the caller's block, as for `GcObj::scoped_pin`
             receiver: unsafe { self.receiver.pin_unchecked() },
             delegator: self.delegator,
         }
     }
 
-    /// Synchronous counterpart to [`with_instance!`](crate::with_instance), for call sites
-    /// that don't need to hold the instance across an `.await`.
-    #[inline]
-    pub fn enter_sync<'s, R>(
-        self,
-        strand: &mut Strand<'v, 's>,
-        f: impl for<'x> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'x, T>) -> R,
-    ) -> R {
-        let delegator = self.delegator;
-        self.receiver.pin_sync(strand, |strand, receiver| {
-            f(
-                strand,
-                Instance {
-                    receiver,
-                    delegator,
-                },
-            )
-        })
-    }
-
-    /// [`Cast::enter_sync`] without a `strand` argument, for the rare contexts —
+    /// [`with_instance!`](crate::with_instance) without a strand, for the rare contexts —
     /// namely [`Object::finalize`] — that have no live [`Strand`] available.
     /// May be more expensive.
     #[inline]
@@ -683,7 +666,7 @@ impl<'v, 'a, T: Object<'v>> Instance<'v, 'a, T> {
         let obj = value
             .downcast_native(strand, ty.vtbl)
             .expect("native view owner has wrong type");
-        obj.pin_sync(strand, |strand, receiver| {
+        with_pin!(strand, obj, |receiver| {
             f(
                 strand,
                 Instance {
@@ -1554,7 +1537,7 @@ pub trait Object<'v>: Sized + 'v {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        strand.with_slots_sync(|strand, [mut receiver]| {
+        with_slots!(strand, |mut receiver| {
             Output::set(strand, &mut receiver, this);
             match other.op_lt_direct(strand, &receiver) {
                 Ok(value) => value.op_bool(strand),
@@ -1575,7 +1558,7 @@ pub trait Object<'v>: Sized + 'v {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
-        strand.with_slots_sync(|strand, [mut receiver]| {
+        with_slots!(strand, |mut receiver| {
             Output::set(strand, &mut receiver, this);
             match other.op_lte_direct(strand, &receiver) {
                 Ok(value) => value.op_bool(strand),
@@ -1783,12 +1766,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         spec: &Spec,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(fmt)")),
-            |strand| T::fmt(Instance::from_recv(&this), strand, spec, w),
+            T::fmt(Instance::from_recv(&this), strand, spec, w)
         )
     }
 
@@ -1797,12 +1780,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(str)")),
-            |strand| T::display(Instance::from_recv(&this), strand, w),
+            T::display(Instance::from_recv(&this), strand, w)
         )
     }
 
@@ -1811,12 +1794,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(verbatim)")),
-            |strand| T::verbatim(Instance::from_recv(&this), strand, w),
+            T::verbatim(Instance::from_recv(&this), strand, w)
         )
     }
 
@@ -1825,12 +1808,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(dbg)")),
-            |strand| T::debug(Instance::from_recv(&this), strand, w),
+            T::debug(Instance::from_recv(&this), strand, w)
         )
     }
 
@@ -1846,24 +1829,24 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         request: &mut Request<'v, 's, '_>,
     ) -> Result<'v, 's, ()> {
         let (strand, answer) = request.parts();
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(provide)")),
-            |strand| {
+            {
                 T::provide(
                     Instance::from_recv(&this),
                     &mut Request::new(strand, &mut *answer),
                 )
-            },
+            }
         )?;
         if answer.is_done() {
             return Ok(());
         }
         // Unanswered: fall through to the abstract supertypes, as a class instance does.
         let supertypes = instance_supertypes::<T>(this.clone(), strand);
-        strand.with_slots_sync(|strand, [mut delegator]| {
+        with_slots!(strand, |mut delegator| {
             Output::set(strand, Slot::reborrow(&mut delegator), &this);
             for supertype in supertypes {
                 if answer.is_done() {
@@ -1938,12 +1921,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(get)")),
-            |strand| match this.entry(field) {
+            match this.entry(field) {
                 Some(Entry::Getter(handler) | Entry::Property(handler, _)) => unsafe {
                     handler.call(this.as_header(), this.delegator(), strand, out)
                 },
@@ -1953,14 +1936,14 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                 }
                 Some(Entry::Delegate(idx, MemberKind::Getter | MemberKind::Property)) => {
                     let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(supertype, &delegator).op_get(strand, field, out)
                     })
                 }
                 Some(Entry::Setter(_) | Entry::Delegate(_, _)) => Err(Error::field(strand, field)),
                 None => T::get(Instance::from_recv(&this), strand, field, out),
-            },
+            }
         )
     }
 
@@ -1970,18 +1953,18 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(set)")),
-            |strand| match this.entry(field) {
+            match this.entry(field) {
                 Some(Entry::Setter(handler) | Entry::Property(_, handler)) => unsafe {
                     handler.call(this.as_header(), this.delegator(), strand, value)
                 },
                 Some(Entry::Getter(_)) => Err(Error::immutable(strand)),
                 _ => T::set(Instance::from_recv(&this), strand, field, value),
-            },
+            }
         )
     }
 
@@ -1991,12 +1974,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(index)")),
-            |strand| T::index(Instance::from_recv(&this), strand, index, out),
+            T::index(Instance::from_recv(&this), strand, index, out)
         )
     }
 
@@ -2006,12 +1989,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         index: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(assign)")),
-            |strand| T::assign(Instance::from_recv(&this), strand, index, value),
+            T::assign(Instance::from_recv(&this), strand, index, value)
         )
     }
 
@@ -2102,12 +2085,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(eq)")),
-            |strand| T::eq(Instance::from_recv(&this), strand, other),
+            T::eq(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2117,12 +2100,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(req)")),
-            |strand| T::req(Instance::from_recv(&this), strand, other),
+            T::req(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2132,12 +2115,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(ne)")),
-            |strand| T::ne(Instance::from_recv(&this), strand, other),
+            T::ne(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2146,12 +2129,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(rne)")),
-            |strand| T::rne(Instance::from_recv(&this), strand, other),
+            T::rne(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2160,13 +2143,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(neg)")),
-                |strand| T::neg(Instance::from_recv(&this), strand, Slot::reborrow(&mut out)),
+                T::neg(Instance::from_recv(&this), strand, Slot::reborrow(&mut out))
             )?;
             Ok(out.take())
         })
@@ -2176,13 +2159,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(bnot)")),
-                |strand| T::bnot(Instance::from_recv(&this), strand, Slot::reborrow(&mut out)),
+                T::bnot(Instance::from_recv(&this), strand, Slot::reborrow(&mut out))
             )?;
             Ok(out.take())
         })
@@ -2193,20 +2176,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(band)")),
-                |strand| {
+                {
                     T::band(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2216,20 +2199,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rband)")),
-                |strand| {
+                {
                     T::rband(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2240,20 +2223,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(bor)")),
-                |strand| {
+                {
                     T::bor(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2263,20 +2246,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rbor)")),
-                |strand| {
+                {
                     T::rbor(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2287,20 +2270,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(bxor)")),
-                |strand| {
+                {
                     T::bxor(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2310,20 +2293,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rbxor)")),
-                |strand| {
+                {
                     T::rbxor(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2334,20 +2317,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(shl)")),
-                |strand| {
+                {
                     T::shl(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2357,20 +2340,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rshl)")),
-                |strand| {
+                {
                     T::rshl(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2381,20 +2364,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(shr)")),
-                |strand| {
+                {
                     T::shr(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2404,20 +2387,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rshr)")),
-                |strand| {
+                {
                     T::rshr(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2428,20 +2411,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(add)")),
-                |strand| {
+                {
                     T::add(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2451,20 +2434,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(radd)")),
-                |strand| {
+                {
                     T::radd(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2475,20 +2458,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(sub)")),
-                |strand| {
+                {
                     T::sub(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2499,20 +2482,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rsub)")),
-                |strand| {
+                {
                     T::rsub(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2523,20 +2506,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(mul)")),
-                |strand| {
+                {
                     T::mul(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2546,20 +2529,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rmul)")),
-                |strand| {
+                {
                     T::rmul(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2570,20 +2553,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(div)")),
-                |strand| {
+                {
                     T::div(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2594,20 +2577,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rdiv)")),
-                |strand| {
+                {
                     T::rdiv(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2618,20 +2601,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(ediv)")),
-                |strand| {
+                {
                     T::ediv(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2642,20 +2625,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rediv)")),
-                |strand| {
+                {
                     T::redv(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2666,20 +2649,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(mod)")),
-                |strand| {
+                {
                     T::rem(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2690,20 +2673,20 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        strand.with_slots_sync(|strand, [mut out]| {
-            Strand::for_native_frame(
+        with_slots!(strand, |mut out| {
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(rmod)")),
-                |strand| {
+                {
                     T::rrem(
                         Instance::from_recv(&this),
                         strand,
                         other,
                         Slot::reborrow(&mut out),
                     )
-                },
+                }
             )?;
             Ok(out.take())
         })
@@ -2714,12 +2697,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(lt)")),
-            |strand| T::lt(Instance::from_recv(&this), strand, other),
+            T::lt(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2729,12 +2712,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(lte)")),
-            |strand| T::lte(Instance::from_recv(&this), strand, other),
+            T::lte(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2744,12 +2727,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(gt)")),
-            |strand| T::gt(Instance::from_recv(&this), strand, other),
+            T::gt(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -2759,12 +2742,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
-        let result = Strand::for_native_frame(
+        let result = in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(gte)")),
-            |strand| T::gte(Instance::from_recv(&this), strand, other),
+            T::gte(Instance::from_recv(&this), strand, other)
         )?;
         Ok(Value::from_bool(result))
     }
@@ -3578,7 +3561,10 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.get(name, move |this, strand, out| {
-            strand.with_slots_sync(|strand, slots| f(this, strand, out, slots))
+            let frame = SlotFrame::<N>::new();
+            // Safety: the scope is a local that nothing can move or forget
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(this, &mut scope, out, slots)
         })
     }
 
@@ -3596,7 +3582,10 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.set(name, move |this, strand, val| {
-            strand.with_slots_sync(|strand, slots| f(this, strand, val, slots))
+            let frame = SlotFrame::<N>::new();
+            // Safety: the scope is a local that nothing can move or forget
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(this, &mut scope, val, slots)
         })
     }
 
@@ -3689,7 +3678,10 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.type_get(name, move |this, strand, out| {
-            strand.with_slots_sync(|strand, slots| f(this, strand, out, slots))
+            let frame = SlotFrame::<N>::new();
+            // Safety: the scope is a local that nothing can move or forget
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(this, &mut scope, out, slots)
         })
     }
 
@@ -3705,7 +3697,10 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.type_set(name, move |this, strand, val| {
-            strand.with_slots_sync(|strand, slots| f(this, strand, val, slots))
+            let frame = SlotFrame::<N>::new();
+            // Safety: the scope is a local that nothing can move or forget
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(this, &mut scope, val, slots)
         })
     }
 
@@ -3980,14 +3975,12 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
     ) -> Result<'v, 's, ()> {
         if let Some(entry) = this.entry(field) {
             return match entry {
-                Entry::Getter(handler) | Entry::Property(handler, _) => Strand::for_native_frame(
+                Entry::Getter(handler) | Entry::Property(handler, _) => in_native_frame!(
                     strand,
                     Cow::Borrowed(T::MODULE),
                     Cow::Borrowed(T::NAME),
                     Some(Cow::Borrowed("(get)")),
-                    |strand| unsafe {
-                        handler.call(this.as_header(), this.delegator(), strand, out)
-                    },
+                    unsafe { handler.call(this.as_header(), this.delegator(), strand, out) }
                 ),
                 Entry::Method(_) => {
                     Self::bind_type_method(this, strand, field, out);
@@ -4001,12 +3994,12 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
             Self::bind_type_method(this, strand, field, out);
             Ok(())
         } else {
-            Strand::for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(get)")),
-                |strand| T::type_get(this.ty(strand.vm()), strand, field, out),
+                T::type_get(this.ty(strand.vm()), strand, field, out)
             )
         }
     }
@@ -4019,25 +4012,23 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
     ) -> Result<'v, 's, ()> {
         if let Some(entry) = this.entry(field) {
             match entry {
-                Entry::Setter(handler) | Entry::Property(_, handler) => Strand::for_native_frame(
+                Entry::Setter(handler) | Entry::Property(_, handler) => in_native_frame!(
                     strand,
                     Cow::Borrowed(T::MODULE),
                     Cow::Borrowed(T::NAME),
                     Some(Cow::Borrowed("(set)")),
-                    |strand| unsafe {
-                        handler.call(this.as_header(), this.delegator(), strand, value)
-                    },
+                    unsafe { handler.call(this.as_header(), this.delegator(), strand, value) }
                 ),
                 Entry::Getter(_) => Err(Error::immutable(strand)),
                 _ => Err(Error::field(strand, field)),
             }
         } else {
-            Strand::for_native_frame(
+            in_native_frame!(
                 strand,
                 Cow::Borrowed(T::MODULE),
                 Cow::Borrowed(T::NAME),
                 Some(Cow::Borrowed("(set)")),
-                |strand| T::type_set(this.ty(strand.vm()), strand, field, value),
+                T::type_set(this.ty(strand.vm()), strand, field, value)
             )
         }
     }
@@ -4057,7 +4048,7 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
             ty: this.ty(strand.vm()),
             receiver: receiver.dup(),
         };
-        strand.with_slots_sync(|strand, [mut namespace]| {
+        with_slots!(strand, |mut namespace| {
             this.annex()
                 .scope
                 .create_imm(strand, scope, Slot::reborrow(&mut namespace));
@@ -4244,12 +4235,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Strand::for_native_frame(
+        in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(index)")),
-            |strand| T::type_index(this.ty(strand.vm()), strand, index, out),
+            T::type_index(this.ty(strand.vm()), strand, index, out)
         )
     }
 
@@ -4471,7 +4462,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
-                strand.with_slots_sync(|strand, [mut slot]| {
+                with_slots!(strand, |mut slot| {
                     Output::set(strand, Slot::reborrow(&mut slot), value);
                     TypeObjectWrap::type_set(native, strand, field, slot)
                 })
@@ -5201,7 +5192,7 @@ mod tests {
             });
 
             // Exhaustive matching did not call unmatched getters.
-            strand.with_slots_sync(|strand, [mut tmp]| {
+            with_slots!(strand, |mut tmp| {
                 owner
                     .op_get(strand, state.counter_sym, Slot::reborrow(&mut tmp))
                     .unwrap();
@@ -5271,58 +5262,53 @@ mod tests {
             make_slot_fixture(strand, 3, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .slot_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter_sync(strand, |strand, recv| {
-                    ObjectWrap::<SlotFixture>::op_get(
-                        recv.clone(),
-                        strand,
-                        state.counter_sym,
-                        Slot::reborrow(&mut out),
-                    )
-                    .unwrap();
-                    assert_eq!(out.to_i64(strand).unwrap(), 3);
+            with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
+                ObjectWrap::<SlotFixture>::op_get(
+                    recv.clone(),
+                    strand,
+                    state.counter_sym,
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap();
+                assert_eq!(out.to_i64(strand).unwrap(), 3);
 
-                    let prop_sym = state.prop_sym;
-                    ObjectWrap::<SlotFixture>::op_get(
-                        recv.clone(),
-                        strand,
-                        prop_sym,
-                        Slot::reborrow(&mut out),
-                    )
-                    .unwrap();
-                    assert_eq!(out.to_i64(strand).unwrap(), 11);
+                let prop_sym = state.prop_sym;
+                ObjectWrap::<SlotFixture>::op_get(
+                    recv.clone(),
+                    strand,
+                    prop_sym,
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap();
+                assert_eq!(out.to_i64(strand).unwrap(), 11);
 
-                    ObjectWrap::<SlotFixture>::op_get(
-                        recv.clone(),
-                        strand,
-                        state.bump_sym,
-                        Slot::reborrow(&mut out),
-                    )
-                    .unwrap();
+                ObjectWrap::<SlotFixture>::op_get(
+                    recv.clone(),
+                    strand,
+                    state.bump_sym,
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap();
 
-                    let write_only_sym = state.write_only_sym;
-                    let err = ObjectWrap::<SlotFixture>::op_get(
-                        recv.clone(),
-                        strand,
-                        write_only_sym,
-                        Slot::reborrow(&mut out),
-                    )
-                    .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Field);
+                let write_only_sym = state.write_only_sym;
+                let err = ObjectWrap::<SlotFixture>::op_get(
+                    recv.clone(),
+                    strand,
+                    write_only_sym,
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Field);
 
-                    let err = ObjectWrap::<SlotFixture>::op_get(
-                        recv,
-                        strand,
-                        Sym::well_known(sym::LEN),
-                        Slot::reborrow(&mut out),
-                    )
-                    .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Field);
-                });
+                let err = ObjectWrap::<SlotFixture>::op_get(
+                    recv,
+                    strand,
+                    Sym::well_known(sym::LEN),
+                    Slot::reborrow(&mut out),
+                )
+                .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Field);
+            });
         });
     }
 
@@ -5332,49 +5318,44 @@ mod tests {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .slot_ty
-                .vtbl
-                .cast(value)
-                .unwrap()
-                .enter_sync(strand, |strand, recv| {
-                    Output::set(strand, Slot::reborrow(&mut val), 1_i64);
-                    let prop_sym = state.prop_sym;
-                    ObjectWrap::<SlotFixture>::op_set(
-                        recv.clone(),
-                        strand,
-                        prop_sym,
-                        Slot::reborrow(&mut val),
-                    )
-                    .unwrap();
+            with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
+                Output::set(strand, Slot::reborrow(&mut val), 1_i64);
+                let prop_sym = state.prop_sym;
+                ObjectWrap::<SlotFixture>::op_set(
+                    recv.clone(),
+                    strand,
+                    prop_sym,
+                    Slot::reborrow(&mut val),
+                )
+                .unwrap();
 
-                    let write_only_sym = state.write_only_sym;
-                    ObjectWrap::<SlotFixture>::op_set(
-                        recv.clone(),
-                        strand,
-                        write_only_sym,
-                        Slot::reborrow(&mut val),
-                    )
-                    .unwrap();
+                let write_only_sym = state.write_only_sym;
+                ObjectWrap::<SlotFixture>::op_set(
+                    recv.clone(),
+                    strand,
+                    write_only_sym,
+                    Slot::reborrow(&mut val),
+                )
+                .unwrap();
 
-                    let err = ObjectWrap::<SlotFixture>::op_set(
-                        recv.clone(),
-                        strand,
-                        state.counter_sym,
-                        Slot::reborrow(&mut val),
-                    )
-                    .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Immutable);
+                let err = ObjectWrap::<SlotFixture>::op_set(
+                    recv.clone(),
+                    strand,
+                    state.counter_sym,
+                    Slot::reborrow(&mut val),
+                )
+                .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Immutable);
 
-                    let err = ObjectWrap::<SlotFixture>::op_set(
-                        recv,
-                        strand,
-                        Sym::well_known(sym::LEN),
-                        Slot::reborrow(&mut val),
-                    )
-                    .unwrap_err();
-                    assert_eq!(err.kind(), ErrorKind::Field);
-                });
+                let err = ObjectWrap::<SlotFixture>::op_set(
+                    recv,
+                    strand,
+                    Sym::well_known(sym::LEN),
+                    Slot::reborrow(&mut val),
+                )
+                .unwrap_err();
+                assert_eq!(err.kind(), ErrorKind::Field);
+            });
         });
     }
 
@@ -5529,12 +5510,10 @@ mod tests {
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             let ty_value: &Value = &ty_slot;
 
-            state
-                .slot_ty
-                .type_vtbl
-                .cast(ty_value)
-                .unwrap()
-                .enter_sync(strand, |strand, recv| {
+            with_instance!(
+                strand,
+                state.slot_ty.type_vtbl.cast(ty_value).unwrap(),
+                |recv| {
                     let inspect =
                         TypeObjectWrap::<SlotFixture>::op_inspect(recv.clone(), strand.vm())
                             .unwrap();
@@ -5582,7 +5561,8 @@ mod tests {
                         TypeObjectWrap::<SlotFixture>::op_inspect(recv, strand.vm()).unwrap();
                     assert!(std::ptr::eq(members, again.members));
                     assert!(std::ptr::eq(type_members, again.type_members));
-                });
+                }
+            );
         });
     }
 
@@ -5660,12 +5640,10 @@ mod tests {
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             let ty_value: &Value = &ty_slot;
 
-            state
-                .slot_ty
-                .type_vtbl
-                .cast(ty_value)
-                .unwrap()
-                .enter_sync(strand, |strand, recv| {
+            with_instance!(
+                strand,
+                state.slot_ty.type_vtbl.cast(ty_value).unwrap(),
+                |recv| {
                     let meta_sym = state.meta_sym;
                     // Registered type-level getter.
                     TypeObjectWrap::<SlotFixture>::op_get(
@@ -5743,7 +5721,8 @@ mod tests {
                     )
                     .unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Field);
-                });
+                }
+            );
         });
     }
 
@@ -5756,12 +5735,10 @@ mod tests {
             let ty_value: &Value = &ty_slot;
             let other_ty_value: &Value = &other_ty_slot;
 
-            state
-                .slot_ty
-                .type_vtbl
-                .cast(ty_value)
-                .unwrap()
-                .enter_sync(strand, |strand, recv| {
+            with_instance!(
+                strand,
+                state.slot_ty.type_vtbl.cast(ty_value).unwrap(),
+                |recv| {
                     use std::{collections::hash_map::DefaultHasher, hash::Hasher};
                     let mut h1 = DefaultHasher::new();
                     TypeObjectWrap::<SlotFixture>::op_hash(recv.clone(), strand, &mut h1).unwrap();
@@ -5796,7 +5773,8 @@ mod tests {
                         strand,
                         other_ty_value
                     ));
-                });
+                }
+            );
         });
     }
 
@@ -5808,20 +5786,16 @@ mod tests {
             make_slot_fixture(strand, 3, "hello", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .slot_ty
-                .cast(value)
-                .unwrap()
-                .enter_sync(strand, |strand, instance| {
-                    assert_eq!(instance.borrow(strand).unwrap().counter, 3);
-                    assert_eq!(instance.borrow_unwrap().counter, 3);
-                    {
-                        let mut m = instance.borrow_mut(strand).unwrap();
-                        m.counter = 9;
-                    }
-                    assert_eq!(instance.borrow_mut_unwrap().counter, 9);
-                    assert_eq!(instance.annex().tag, "hello");
-                });
+            with_instance!(strand, state.slot_ty.cast(value).unwrap(), |instance| {
+                assert_eq!(instance.borrow(strand).unwrap().counter, 3);
+                assert_eq!(instance.borrow_unwrap().counter, 3);
+                {
+                    let mut m = instance.borrow_mut(strand).unwrap();
+                    m.counter = 9;
+                }
+                assert_eq!(instance.borrow_mut_unwrap().counter, 9);
+                assert_eq!(instance.annex().tag, "hello");
+            });
         });
     }
 
@@ -5831,21 +5805,17 @@ mod tests {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .slot_ty
-                .cast(value)
-                .unwrap()
-                .enter_sync(strand, |strand, instance| {
-                    {
-                        let mut m = instance.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut m), 77_i64);
-                    }
-                    let r = instance.borrow_unwrap();
-                    assert_eq!(Ref::slot::<0>(&r).to_i64(strand).unwrap(), 77);
-                    drop(r);
-                    let m = instance.borrow_mut_unwrap();
-                    assert_eq!(Mut::slot::<0>(&m).to_i64(strand).unwrap(), 77);
-                });
+            with_instance!(strand, state.slot_ty.cast(value).unwrap(), |instance| {
+                {
+                    let mut m = instance.borrow_mut_unwrap();
+                    Output::set(strand, Mut::slot_mut::<0>(&mut m), 77_i64);
+                }
+                let r = instance.borrow_unwrap();
+                assert_eq!(Ref::slot::<0>(&r).to_i64(strand).unwrap(), 77);
+                drop(r);
+                let m = instance.borrow_mut_unwrap();
+                assert_eq!(Mut::slot::<0>(&m).to_i64(strand).unwrap(), 77);
+            });
         });
     }
 
@@ -5855,14 +5825,10 @@ mod tests {
             make_fixture(strand, Slot::reborrow(&mut owner));
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
-            state
-                .fixture_ty
-                .cast(value)
-                .unwrap()
-                .enter_sync(strand, |strand, instance| {
-                    let ty = instance.ty(strand.vm());
-                    assert!(ty.cast(value).is_some());
-                });
+            with_instance!(strand, state.fixture_ty.cast(value).unwrap(), |instance| {
+                let ty = instance.ty(strand.vm());
+                assert!(ty.cast(value).is_some());
+            });
         });
     }
 

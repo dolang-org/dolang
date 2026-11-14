@@ -9,13 +9,13 @@ use crate::{
     arg::Args,
     error::{Error, ErrorKind, Result},
     frame::Upvars,
-    gc::{Collect, Gc, arena::Visit},
+    gc::{Collect, Gc, arena::Visit, with_pin},
     object::{
         iter,
         protocol::{GcObj, Protocol, Recv, instance_get_fallback, is_universal_member},
         tuple,
     },
-    strand::Strand,
+    strand::{Strand, in_native_frame},
     sym::Sym,
     value::{Output, Slot, TypeObject, Value},
     vm::Vm,
@@ -215,11 +215,13 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut this_borrow = this.borrow_mut(strand)?;
         let index = this_borrow.index;
-        let entry = this_borrow.module.pin_sync(strand, |_, module| {
+        let entry = with_pin!(strand, this_borrow.module, |module| {
             let module = module.get();
             // Safety: nothing borrows across a write to an upvar
-            let &(sym, var) = module.map.get(index)?;
-            Some((sym, unsafe { module.upvars.var(var) }))
+            module
+                .map
+                .get(index)
+                .map(|&(sym, var)| (sym, unsafe { module.upvars.var(var) }))
         });
         let Some((sym, value)) = entry else {
             return Ok(false);
@@ -341,12 +343,12 @@ impl<'v> Protocol<'v> for NativeObj<'v> {
                     Output::set(strand, out, value);
                     Ok(())
                 }
-                NativeField::Getter(getter) => Strand::for_native_frame(
+                NativeField::Getter(getter) => in_native_frame!(
                     strand,
                     Cow::Borrowed(name),
                     Cow::Borrowed(name),
                     Some(Cow::Borrowed("(get)")),
-                    |strand| getter(strand, out),
+                    getter(strand, out)
                 ),
             },
             Err(_) => instance_get_fallback(strand, &this, field, out),
@@ -409,23 +411,23 @@ impl<'v> Namespace<'v> {
         match components.split_first() {
             Some((&first, rest)) => {
                 let sym = Value::from_object(strand.sym_register_obj(first));
-                let inserted = self.dict.pin_sync(strand, |strand, dict| {
+                let inserted = with_pin!(strand, self.dict, |dict| 'body: {
                     let dict = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     let Some(value) = dict.get(strand, &sym, Some(0))? else {
-                        return Ok(false);
+                        break 'body false;
                     };
                     let ns = value
                         .downcast_ref(strand.builtin_types().namespace)
                         .ok_or_else(|| {
                             Error::type_error(strand, "can't import into non-namespace")
                         })?;
-                    ns.pin_sync(strand, |strand, ns| {
+                    with_pin!(strand, ns, |ns| {
                         ns.borrow_mut()
                             .ok_or_else(|| Error::concurrency(strand))?
                             .insert(strand, rest, Slot::reborrow(&mut slot))
                     })?;
-                    Ok(true)
-                })?;
+                    true
+                });
                 if inserted {
                     return Ok(());
                 }
@@ -439,7 +441,7 @@ impl<'v> Namespace<'v> {
                     strand.builtin_types().namespace,
                     ns,
                 ));
-                self.dict.pin_sync(strand, |strand, dict| {
+                with_pin!(strand, self.dict, |dict| {
                     dict.borrow_mut()
                         .ok_or_else(|| Error::concurrency(strand))?
                         .insert(strand, sym, ns, hv, true)
@@ -531,7 +533,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Empty => (),
         };
         let key = Value::from_object(strand.sym_obj(field));
-        re.dict.pin_sync(strand, |strand, dict| {
+        with_pin!(strand, re.dict, |dict| {
             match dict
                 .borrow()
                 .ok_or_else(|| Error::concurrency(strand))?
@@ -572,7 +574,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         let mut hasher = strand.vm().hasher();
         key.op_hash(strand, &mut hasher).unwrap();
         let hv = hasher.finish();
-        re.dict.pin_sync(strand, |strand, dict| {
+        with_pin!(strand, re.dict, |dict| {
             dict.borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?
                 .insert(strand, key, value.take(), hv, true)

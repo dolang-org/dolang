@@ -5,7 +5,7 @@ use dolang::runtime::{
     unpack,
     value::{BinEmbryo, View},
     vm::Register,
-    with_interrupt_mask,
+    with_instance, with_interrupt_mask,
 };
 use dolang_vfs::file::File as VfsFile;
 use dolang_vfs::path as vfs_path;
@@ -962,7 +962,7 @@ fn parse_ownership_identity<'v, 's>(
         .and_then(|windows| windows.types.sid.cast(value))
     {
         Ok(dolang_vfs::security::OwnershipIdentity::Sid(
-            value.enter_sync(strand, |_strand, value| value.annex().clone()),
+            with_instance!(strand, value, |value| value.annex().clone()),
         ))
     } else {
         Err(Error::type_error(

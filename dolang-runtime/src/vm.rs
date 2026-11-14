@@ -950,7 +950,10 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         + 'v,
     ) -> Self {
         self.get(name, move |strand, out| {
-            strand.with_slots_sync(|strand, slots| f(strand, out, slots))
+            let frame = SlotFrame::<N>::new();
+            // Safety: the scope is a local that nothing can move or forget
+            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
+            f(&mut scope, out, slots)
         })
     }
 

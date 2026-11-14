@@ -7,7 +7,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 use dolang::runtime::{
     AllocExt, Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
-    object::TypeBuilder, unpack,
+    object::TypeBuilder, unpack, with_instance,
 };
 use dolang_vfs::target::OperatingSystem;
 
@@ -317,22 +317,22 @@ pub(crate) fn extract_system_code<'v, 's>(
 ) -> Option<(OperatingSystem, i32)> {
     let global = strand.try_state::<ErrorTag>()?;
     if let Some(value) = global.types.freebsd_errno.cast(value) {
-        return value.enter_sync(strand, |_strand, value| {
+        return with_instance!(strand, value, |value| {
             Some((OperatingSystem::FreeBsd, value.annex().value as i32))
         });
     }
     if let Some(value) = global.types.linux_errno.cast(value) {
-        return value.enter_sync(strand, |_strand, value| {
+        return with_instance!(strand, value, |value| {
             Some((OperatingSystem::Linux, value.annex().value as i32))
         });
     }
     if let Some(value) = global.types.macos_errno.cast(value) {
-        return value.enter_sync(strand, |_strand, value| {
+        return with_instance!(strand, value, |value| {
             Some((OperatingSystem::Macos, value.annex().value as i32))
         });
     }
     if let Some(value) = global.types.win_error.cast(value) {
-        return value.enter_sync(strand, |_strand, value| {
+        return with_instance!(strand, value, |value| {
             Some((OperatingSystem::Windows, value.annex().value as u32 as i32))
         });
     }

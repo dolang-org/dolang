@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use dolang::runtime::{
     Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
-    value::TypeObject,
+    value::TypeObject, with_instance,
 };
 use dolang_vfs::file::{XattrEntry as VfsXattrEntry, XattrNamespace};
 use dolang_vfs::metadata::Resolve;
@@ -65,7 +65,7 @@ pub(crate) fn parse_name<'v, 's>(
         if namespace.is_some() {
             return Err(Error::unexpected_key(strand, global.syms.namespace));
         }
-        let (name, namespace) = entry.enter_sync(strand, |_strand, entry| {
+        let (name, namespace) = with_instance!(strand, entry, |entry| {
             let entry = &entry.annex().inner;
             (
                 entry.name().to_owned(),

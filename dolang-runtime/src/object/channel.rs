@@ -11,7 +11,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{self, Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit, with_pin},
     strand::{Strand, StrandInner},
     sym::{self, Sym},
     unpack,
@@ -401,7 +401,7 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
                 };
                 let poison_err = err.map(|mut err| err.take());
                 let poison_backtrace = poison_backtrace.map(|mut s| s.take());
-                this.get().receiver.pin_sync(strand, |strand, receiver| {
+                with_pin!(strand, this.get().receiver, |receiver| {
                     let mut borrow = receiver
                         .borrow_mut()
                         .ok_or_else(|| Error::concurrency(strand))?;

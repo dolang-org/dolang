@@ -1,4 +1,5 @@
 use crate::global::Tag;
+use dolang::runtime::with_instance;
 
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::{self as fmt_spec, Fill, Format, Kind, Pad, Spec};
@@ -865,7 +866,7 @@ fn text_encoding<'v, 's>(
             "suffix: expected `Str` or `term.Text`",
         ));
     };
-    text.enter_sync(strand, |strand, text| {
+    with_instance!(strand, text, |text| {
         let borrow = text.borrow(strand)?;
         let text = Ref::slot::<0>(&borrow).as_str(strand).unwrap().pin();
         Ok(String::from(&*text))
@@ -955,7 +956,7 @@ fn append_value<'v, 's>(
         FilterMode::Plain
     };
     if let Some(text) = global.types.text.cast(value) {
-        return text.enter_sync(strand, |strand, text| {
+        return with_instance!(strand, text, |text| {
             let borrow = text.borrow(strand)?;
             let text = Ref::slot::<0>(&borrow).as_str(strand).unwrap().pin();
             let mut filter = Filter::new(out, mode);
@@ -996,7 +997,7 @@ fn append_segments<'v, 's>(
     argument: bool,
     value: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut len, mut segment]| {
+    with_slots!(strand, |mut len, mut segment| {
         value.get(strand, global.syms.len, &mut len)?;
         let len = len.to_usize(strand)?;
         for index in 0..len {
@@ -1049,7 +1050,7 @@ fn bound_layout<'v, 's>(
     {
         return Ok(None);
     }
-    strand.with_slots_sync(|strand, [mut bound]| {
+    with_slots!(strand, |mut bound| {
         value.get(strand, global.syms.value, &mut bound)?;
         if global.types.text.cast(&bound).is_none()
             && !bound.is_instance_of(strand, TypeObject::Fmt)
@@ -1138,7 +1139,7 @@ fn color<'v, 's>(
                     format!("{name}: expected 3 color components"),
                 ));
             }
-            strand.with_slots_sync(|strand, [mut red, mut green, mut blue]| {
+            with_slots!(strand, |mut red, mut green, mut blue| {
                 value.get(strand, 0, &mut red)?;
                 value.get(strand, 1, &mut green)?;
                 value.get(strand, 2, &mut blue)?;
@@ -1152,7 +1153,7 @@ fn color<'v, 's>(
                     format!("{name}: expected 3 color components"),
                 ));
             }
-            strand.with_slots_sync(|strand, [mut red, mut green, mut blue]| {
+            with_slots!(strand, |mut red, mut green, mut blue| {
                 value.get(strand, 0, &mut red)?;
                 value.get(strand, 1, &mut green)?;
                 value.get(strand, 2, &mut blue)?;
@@ -1208,14 +1209,9 @@ fn create_text<'v>(
     mut out: Slot<'v, '_>,
 ) {
     global.types.text.create(strand, Text, &mut out);
-    global
-        .types
-        .text
-        .cast(&out)
-        .unwrap()
-        .enter_sync(strand, |strand, this| {
-            text.finish(strand, Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()));
-        });
+    with_instance!(strand, global.types.text.cast(&out).unwrap(), |this| {
+        text.finish(strand, Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()));
+    });
 }
 
 pub(crate) fn create_preformatted_text<'v, 's>(
@@ -1643,9 +1639,10 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     async move |strand| call!(strand, func, &mut tmp),
                 )
                 .await?;
-                global.types.sub_console.cast(&console).unwrap().enter_sync(
+                with_instance!(
                     strand,
-                    |strand, inst| {
+                    global.types.sub_console.cast(&console).unwrap(),
+                    |inst| {
                         let sub = inst.borrow(strand)?;
                         let mut value = sub.text();
                         if chomp {
@@ -1653,7 +1650,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         }
                         Output::set(strand, out, value);
                         Ok(())
-                    },
+                    }
                 )
             },
         )

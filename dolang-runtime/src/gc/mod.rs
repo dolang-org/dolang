@@ -12,11 +12,31 @@ use std::{
 use dolang_util::alias;
 
 use crate::{
-    strand::{Access, Strand},
+    strand::{Access, PinScope},
     value::repr::tag,
 };
 
 pub(crate) mod arena;
+
+/// Run a block with a GC object's contents pinned for its duration.
+///
+/// Invoke as `with_pin!(strand, obj, |pin| body)`.  The closure-like pattern binds the
+/// [`BasePin`], which can't outlive the body.  `strand` must be the name of the current
+/// [`Strand`].  The body runs inline, as for [`with_slots!`](crate::with_slots): `?` and
+/// `return` leave the enclosing function.
+macro_rules! with_pin {
+    ($strand:ident, $obj:expr, |$pin:pat_param| $body:expr) => {{
+        let obj = &$obj;
+        // The pin is tied to the strand, as a moving collector's pin list would be
+        let _: &$crate::strand::Strand<'_, '_> = $strand;
+        let scope = $crate::strand::PinScope;
+        // Safety: `scope` is a local of this block
+        #[allow(unused_unsafe)]
+        let $pin = unsafe { obj.scoped_pin(&scope) };
+        $body
+    }};
+}
+pub(crate) use with_pin;
 
 use arena::{Arena, Header, Upcast, Visit, Vtbl};
 
@@ -366,34 +386,18 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
         unsafe { self.pin_unchecked() }
     }
 
-    /// Pin this object's contents for the duration of `f`, which may allocate.
+    /// Pin this object's contents for the borrow of `scope`.
     ///
-    /// A no-op under the current collector; under a moving one this would push and
-    /// pop an entry on the strand's pin list.
-    #[inline]
-    pub(crate) fn pin_sync<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl for<'p> FnOnce(&mut Strand<'v, 's>, BasePin<'v, 'p, T>) -> R,
-    ) -> R {
-        // SAFETY: the pin is scoped to `f`, whose higher-ranked lifetime keeps it from
-        // escaping
-        f(strand, unsafe { self.pin_unchecked() })
-    }
-
-    /// Async counterpart to [`Self::pin_sync`], for pins held across `.await`.
+    /// This backs [`with_pin!`].  A no-op under the current collector; under a moving
+    /// one the scope would push and pop an entry on the strand's pin list.
     ///
-    /// Each layer of async wrapping deepens the compiler's layout queries for the
-    /// futures above it, so wrappers that only forward a scoped pin to a closure
-    /// mint it inline with [`Self::pin_unchecked`] instead of calling this.
+    /// # Safety
+    ///
+    /// `scope` must be a local of the block that uses the pin.
     #[inline]
-    pub(crate) async fn pin<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl for<'p> AsyncFnOnce(&mut Strand<'v, 's>, BasePin<'v, 'p, T>) -> R,
-    ) -> R {
-        // SAFETY: as for `pin_sync`
-        f(strand, unsafe { self.pin_unchecked() }).await
+    pub(crate) unsafe fn scoped_pin<'p>(&'p self, _scope: &'p PinScope) -> BasePin<'v, 'p, T> {
+        // SAFETY: the caller's contract bounds the pin to its block
+        unsafe { self.pin_unchecked() }
     }
 }
 
@@ -612,10 +616,9 @@ impl<'v, T: Upcast<Header>> Drop for BaseWeak<'v, T> {
 ///
 /// - [`Base::pin_access`] mints pins for the lifetime of an [`Access`], since nothing
 ///   can await or collect inside it.
-/// - [`Base::pin_sync`] and [`Base::pin`] scope a pin to a closure that may allocate
-///   and await.  Under a moving collector they would push and pop a
-///   strand-local pin list, whose entries a stop-the-world collection promotes to
-///   live pins.
+/// - [`with_pin!`] scopes a pin to a block that may allocate and await.  Under a
+///   moving collector it would push and pop a strand-local pin list, whose entries
+///   a stop-the-world collection promotes to live pins.
 /// - [`Base::pin_unchecked`] is for low-level code, such as protocol dispatch and
 ///   transient accesses with no possible collection before the pin's last use.
 pub(crate) struct BasePin<'v, 'p, T> {

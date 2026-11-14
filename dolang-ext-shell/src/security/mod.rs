@@ -1,3 +1,4 @@
+use dolang::runtime::with_instance;
 use std::{
     hash::{Hash, Hasher},
     ops::{BitAnd, BitOr, BitXor, Not},
@@ -195,25 +196,25 @@ fn built_acl_from_value<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> O
         .try_state::<UnixSecurityTag>()
         .and_then(|global| global.types.posix_acl.cast(value))
     {
-        return Some(VfsAnyAcl::Posix(
-            acl.enter_sync(strand, |_strand, acl| acl.annex().clone()),
-        ));
+        return Some(VfsAnyAcl::Posix(with_instance!(strand, acl, |acl| acl
+            .annex()
+            .clone())));
     }
     if let Some(acl) = strand
         .try_state::<Nfs4SecurityTag>()
         .and_then(|global| global.types.nfs4_acl.cast(value))
     {
-        return Some(VfsAnyAcl::Nfs4(
-            acl.enter_sync(strand, |_strand, acl| acl.annex().clone()),
-        ));
+        return Some(VfsAnyAcl::Nfs4(with_instance!(strand, acl, |acl| acl
+            .annex()
+            .clone())));
     }
     if let Some(acl) = strand
         .try_state::<MacosSecurityTag>()
         .and_then(|global| global.types.macos_acl.cast(value))
     {
-        return Some(VfsAnyAcl::Macos(
-            acl.enter_sync(strand, |_strand, acl| acl.annex().clone()),
-        ));
+        return Some(VfsAnyAcl::Macos(with_instance!(strand, acl, |acl| acl
+            .annex()
+            .clone())));
     }
     None
 }

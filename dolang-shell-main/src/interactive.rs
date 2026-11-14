@@ -1,4 +1,5 @@
 use dolang::runtime::with_interrupt_mask;
+use dolang::runtime::{with_instance, with_slots};
 use std::{
     borrow::Cow,
     io,
@@ -181,15 +182,13 @@ impl<'v> Object<'v> for LineEditor {
             &mut out,
         );
         if let Some(prelude) = prelude {
-            this.cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, editor| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<0>(&mut editor.borrow_mut_unwrap()),
-                        prelude,
-                    );
-                });
+            with_instance!(strand, this.cast(&out).unwrap(), |editor| {
+                Output::set(
+                    strand,
+                    Mut::slot_mut::<0>(&mut editor.borrow_mut_unwrap()),
+                    prelude,
+                );
+            });
         }
         Ok(())
     }
@@ -207,7 +206,7 @@ impl<'v> Object<'v> for LineEditor {
                 let names = names
                     .as_array(strand)
                     .ok_or_else(|| Error::type_error(strand, "names must be Array"))?;
-                let names = strand.with_slots_sync(|strand, [mut name]| {
+                let names = with_slots!(strand, |mut name| {
                     let mut result = Vec::new();
                     for i in 0..names.len(strand)? {
                         names.get(strand, i, &mut name)?;

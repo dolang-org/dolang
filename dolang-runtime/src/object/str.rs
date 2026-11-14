@@ -13,7 +13,7 @@ use crate::{
     arg::Args,
     bytecode::Rest,
     error::{Error, Result},
-    gc::{self, Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit, with_pin},
     object::protocol::{GcObjPin, instance_get_fallback, members},
     sig,
     strand::Strand,
@@ -21,7 +21,7 @@ use crate::{
     unpack,
     value::{Nil, Output, Slot, Slots, StrEmbryo, Value, view::PinStr},
     vm::Vm,
-    with_slots,
+    with_slice, with_slots, with_str,
 };
 
 use super::{
@@ -140,7 +140,7 @@ impl<'v> Protocol<'v> for StrObj {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
-            let eq = ostr.pin_sync(strand, |_, ostr| ostr.str() == this.str());
+            let eq = with_pin!(strand, ostr, |ostr| ostr.str() == this.str());
             Ok(Value::from_bool(eq))
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -153,7 +153,7 @@ impl<'v> Protocol<'v> for StrObj {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
-            let lt = ostr.pin_sync(strand, |_, ostr| this.str() < ostr.str());
+            let lt = with_pin!(strand, ostr, |ostr| this.str() < ostr.str());
             Ok(Value::from_bool(lt))
         } else {
             Err(Error::unsupported(strand, "`<`"))
@@ -233,7 +233,7 @@ impl<'v> Protocol<'v> for StrObj {
                 let prefix = prefix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
-                let input = prefix.with_str(strand, |_, prefix| this.str().starts_with(prefix));
+                let input = with_str!(strand, prefix, |prefix| this.str().starts_with(prefix));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -243,7 +243,7 @@ impl<'v> Protocol<'v> for StrObj {
                 let prefix = prefix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.without_prefix: not a string"))?;
-                prefix.with_str(strand, |strand, prefix| {
+                with_str!(strand, prefix, |prefix| {
                     Output::set(strand, out, borrow.strip_prefix(prefix).unwrap_or(borrow))
                 });
                 Ok(())
@@ -253,7 +253,7 @@ impl<'v> Protocol<'v> for StrObj {
                 let suffix = suffix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
-                let input = suffix.with_str(strand, |_, suffix| this.str().ends_with(suffix));
+                let input = with_str!(strand, suffix, |suffix| this.str().ends_with(suffix));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -263,7 +263,7 @@ impl<'v> Protocol<'v> for StrObj {
                 let suffix = suffix
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.without_suffix: not a string"))?;
-                suffix.with_str(strand, |strand, suffix| {
+                with_str!(strand, suffix, |suffix| {
                     Output::set(strand, out, borrow.strip_suffix(suffix).unwrap_or(borrow))
                 });
                 Ok(())
@@ -429,7 +429,7 @@ impl<'v> Protocol<'v> for StrObj {
                 let window = me
                     .get(start..end)
                     .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
-                let found = needle.with_str(strand, |_, needle| {
+                let found = with_str!(strand, needle, |needle| {
                     if method.tag() == sym::FIND {
                         window.find(needle)
                     } else {
@@ -455,8 +455,8 @@ impl<'v> Protocol<'v> for StrObj {
                 let window = me
                     .get(start..end)
                     .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
-                from.with_str(strand, |strand, from| {
-                    to.with_str(strand, |strand, to| {
+                with_str!(strand, from, |from| {
+                    with_str!(strand, to, |to| {
                         let mut acc = StrEmbryo::new_with_capacity(strand, me.len());
                         acc.extend(strand, &me[..start]);
                         let mut last = 0;
@@ -494,7 +494,7 @@ impl<'v> Protocol<'v> for StrObj {
                 let needle = needle
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
-                let input = needle.with_str(strand, |_, needle| this.str().contains(needle));
+                let input = with_str!(strand, needle, |needle| this.str().contains(needle));
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -1047,10 +1047,10 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         let ([value], []) = unpack!(strand, args, 1, 0)?;
         if let Some(value) = value.as_str(strand) {
-            value.with_str(strand, |strand, value| Output::set(strand, out, value));
+            with_str!(strand, value, |value| Output::set(strand, out, value));
             Ok(())
         } else if let Some(value) = value.as_bin(strand) {
-            value.with_slice(strand, |strand, value| {
+            with_slice!(strand, value, |value| {
                 let value = std::str::from_utf8(value)
                     .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
                 Output::set(strand, out, value);
@@ -1165,9 +1165,9 @@ impl<'v> Protocol<'v> for Type {
             sym::INIT_METHOD => {
                 let ([self_val, value], []) = unpack!(strand, args, 2, 0)?;
                 if let Some(value) = value.as_str(strand) {
-                    value.with_str(strand, |strand, value| Output::set(strand, &mut out, value));
+                    with_str!(strand, value, |value| Output::set(strand, &mut out, value));
                 } else if let Some(value) = value.as_bin(strand) {
-                    value.with_slice(strand, |strand, value| {
+                    with_slice!(strand, value, |value| {
                         let value = std::str::from_utf8(value)
                             .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
                         Output::set(strand, &mut out, value);

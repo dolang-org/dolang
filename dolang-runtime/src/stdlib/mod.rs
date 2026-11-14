@@ -8,6 +8,7 @@ use crate::{
     unpack,
     value::{Output, StrEmbryo, Value},
     vm::Builder,
+    with_str,
 };
 
 pub(crate) mod fmt;
@@ -269,7 +270,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 Output::set(strand, out, value);
                 Ok(())
             } else if let Some(value) = value.as_str(strand) {
-                let sym = value.with_str(strand, |strand, value| strand.sym_register_obj(value));
+                let sym = with_str!(strand, value, |value| strand.sym_register_obj(value));
                 Output::set(strand, out, Value::from_object(sym));
                 Ok(())
             } else {

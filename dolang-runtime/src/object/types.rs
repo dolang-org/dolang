@@ -7,7 +7,7 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{self, Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit, with_pin},
     object::{
         BoundMethod, class,
         protocol::{
@@ -202,11 +202,9 @@ impl<'v> Protocol<'v> for Type {
                 }
                 match receiver.downcast_ref(strand.builtin_types().class_object) {
                     Some(class) => {
-                        class
-                            .pin(strand, async |strand, class| {
-                                class::instantiate(Recv::new(class), strand, trailing, out).await
-                            })
-                            .await
+                        with_pin!(strand, class, |class| {
+                            class::instantiate(Recv::new(class), strand, trailing, out).await
+                        })
                     }
                     // A native type object has no overridable `(call)`, so its
                     // own `op_call` is already the default.

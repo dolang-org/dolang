@@ -6,6 +6,7 @@ use crate::{
     call,
     error::{Error, ErrorKind, Result},
     frame::CallFrame,
+    gc::with_pin,
     object::{
         arg::ArgAcc,
         array::Array,
@@ -24,7 +25,7 @@ use crate::{
     strand::{InterruptMask, Redirect, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell},
+    value::{Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell, with_u8_slice},
     vm::{ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
     with_interrupt_mask, with_slots, with_str,
 };
@@ -261,7 +262,7 @@ impl<'v> Vm<'v> {
                                     .ok_or_else(|| {
                                         Error::type_error(strand, "import root must be a namespace")
                                     })?;
-                                ns.pin_sync(strand, |strand, ns| {
+                                with_pin!(strand, ns, |ns| {
                                     ns.borrow_mut()
                                         .ok_or_else(|| Error::concurrency(strand))?
                                         .insert(strand, components.get(1..).unwrap_or(&[]), raw)
@@ -399,11 +400,9 @@ impl<'v> Vm<'v> {
                 Arg::Pos(mut slot) => slot.take(),
                 Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
             };
-            value
-                .with_u8_slice(strand, |_, bytes| acc.extend_from_slice(bytes))
-                .ok_or_else(|| {
-                    Error::type_error(strand, "expected binary or string value in binary concat")
-                })?;
+            with_u8_slice!(strand, value, |bytes| acc.extend_from_slice(bytes)).ok_or_else(
+                || Error::type_error(strand, "expected binary or string value in binary concat"),
+            )?;
         }
         out.store(Value::from_u8_slice(strand, &acc));
         Ok(())
@@ -453,7 +452,7 @@ impl<'v> Vm<'v> {
         let ([value, class], []) = unpack!(strand, args, 2, 0)?;
         // The class is an ordinary runtime name, which may hold anything
         if !class.is_instance_of(strand, &strand.singletons().type_obj) {
-            return strand.with_slots_sync(|strand, [mut actual]| {
+            return with_slots!(strand, |mut actual| {
                 class.op_type(strand, Slot::reborrow(&mut actual));
                 let actual = actual.to_string(strand)?;
                 Err(Error::type_error(
@@ -464,7 +463,7 @@ impl<'v> Vm<'v> {
         }
         let matches = value.is_instance_of(strand, &class);
         if assert && !matches {
-            return strand.with_slots_sync(|strand, [mut actual]| {
+            return with_slots!(strand, |mut actual| {
                 value.op_type(strand, Slot::reborrow(&mut actual));
                 let expected = class.to_string(strand)?;
                 let actual = actual.to_string(strand)?;

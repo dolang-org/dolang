@@ -16,7 +16,7 @@ use crate::{
     arg::{Arg, Args},
     call,
     error::{Error, ErrorKind, Result},
-    gc::{self, Annex, Collect, arena::Visit},
+    gc::{self, Annex, Collect, arena::Visit, with_pin},
     object::{
         BoundMethod,
         interface::Request,
@@ -34,7 +34,7 @@ use crate::{
     unpack,
     value::{Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
     vm::{Builder, StateTag, Vm},
-    with_slots,
+    with_instance, with_slots, with_str,
 };
 
 use super::protocol::{GcObj, Protocol};
@@ -68,12 +68,12 @@ fn unwrap_member_scope<'v, 's>(
 ) -> Result<'v, 's, MemberScope> {
     let scopes = strand.vm().state::<crate::object::class::MemberScopeTag>();
     let (scope, inner) = if let Some(cast) = scopes.class.cast(value) {
-        let inner = cast.enter_sync(strand, |strand, inst| {
+        let inner = with_instance!(strand, cast, |inst| {
             Ok(native::Ref::slot::<0>(&inst.borrow(strand)?).dup())
         })?;
         (MemberScope::Class, inner)
     } else if let Some(cast) = scopes.statik.cast(value) {
-        let inner = cast.enter_sync(strand, |strand, inst| {
+        let inner = with_instance!(strand, cast, |inst| {
             Ok(native::Ref::slot::<0>(&inst.borrow(strand)?).dup())
         })?;
         (MemberScope::Static, inner)
@@ -184,17 +184,17 @@ pub(crate) async fn create<'v, 's>(
     };
 
     // Extract class name
-    let name: alias::Box<str> = name
+    let name = name
         .as_str(strand)
-        .ok_or_else(|| Error::type_error(strand, "class_create: expected string name"))?
-        .with_str(strand, |_, name| name.into());
+        .ok_or_else(|| Error::type_error(strand, "class_create: expected string name"))?;
+    let name: alias::Box<str> = with_str!(strand, name, |name| name.into());
     let module_name = module_name
         .as_str(strand)
         .ok_or_else(|| Error::type_error(strand, "class_create: expected string module name"))?;
     let module_name = if module_name.is_empty() {
         None
     } else {
-        Some(module_name.with_str(strand, |_, module_name| {
+        Some(with_str!(strand, module_name, |module_name| {
             alias::Box::<str>::from(module_name)
         }))
     };
@@ -852,7 +852,7 @@ macro_rules! member_marker {
             ) -> Result<'v, 's, ()> {
                 let ([member], []) = unpack!(strand, args, 1, 0)?;
                 this.create(strand, $ty, &mut out);
-                this.cast(&out).unwrap().enter_sync(strand, |strand, inst| {
+                with_instance!(strand, this.cast(&out).unwrap(), |inst| {
                     let mut borrow = inst.borrow_mut_unwrap();
                     Output::set(strand, native::Mut::slot_mut::<0>(&mut borrow), member);
                 });
@@ -1218,7 +1218,7 @@ impl<'v> ClassObject<'v> {
             }),
             Some(ClassTypeEntry::Property { .. }) => Err(Error::field(strand, field)),
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(type_obj, &delegator).op_get(strand, field, out)
                 })
@@ -1309,7 +1309,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         ..
                     },
                 inherited,
-            }) => strand.with_slots_sync(|strand, [mut discard]| {
+            }) => with_slots!(strand, |mut discard| {
                 strand.sync(async |strand| {
                     isolated!(strand, {
                         if *inherited {
@@ -1321,7 +1321,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 })
             }),
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(type_obj, &delegator).op_set(strand, field, value)
                 })
@@ -1452,7 +1452,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     Some(ClassEntry::Property(Property {
                         setter: Some(setter),
                         ..
-                    })) => strand.with_slots_sync(move |strand, [mut tmp]| {
+                    })) => with_slots!(strand, |mut tmp| {
                         strand.sync(async |strand| {
                             isolated!(strand, call!(strand, setter, &mut tmp, obj, &value))
                         })
@@ -1475,7 +1475,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     }
                     _ => match me.entry_by_tag(sym::SET_METHOD) {
                         Some(ClassEntry::Method(v)) => {
-                            strand.with_slots_sync(move |strand, [mut tmp]| {
+                            with_slots!(strand, |mut tmp| {
                                 strand.sync(async |strand| {
                                     call!(strand, v, &mut tmp, obj, field, &value)
                                 })
@@ -1771,7 +1771,7 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().class_type_proxy) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        let same = other.pin_sync(strand, |_, other| {
+        let same = with_pin!(strand, other, |other| {
             other.get().class.repr_eq(&this.get().class)
         });
         Ok(Value::from_bool(same))
@@ -1844,14 +1844,14 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
             if method.tag() == sym::GET_METHOD {
                 let ([], []) = unpack!(strand, trailing, 0, 0)?;
-                return class.pin_sync(strand, |strand, class| {
+                return with_pin!(strand, class, |class| {
                     ClassObject::type_get(Recv::new(class), strand, field, out)
                 });
             }
             let ([value], []) = unpack!(strand, trailing, 1, 0)?;
-            return strand.with_slots_sync(|strand, [mut slot]| {
+            return with_slots!(strand, |mut slot| {
                 Output::set(strand, Slot::reborrow(&mut slot), value);
-                class.pin_sync(strand, |strand, class| {
+                with_pin!(strand, class, |class| {
                     ClassObject::op_set(Recv::new(class), strand, field, slot)
                 })
             });
@@ -2089,7 +2089,7 @@ fn class_sync_binary_op_entry<'v, 'a, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let annex = this.annex();
     match entry {
-        ClassEntry::Method(v) => strand.with_slots_sync(move |strand, [mut result]| {
+        ClassEntry::Method(v) => with_slots!(strand, |mut result| {
             strand.sync(async |strand| call!(strand, v, &mut result, &this, other))?;
             Ok(result.take())
         }),
@@ -2097,13 +2097,13 @@ fn class_sync_binary_op_entry<'v, 'a, 's>(
             let native = annex
                 .native(*slot)
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-            strand.with_slots_sync(|strand, [mut delegator]| {
+            with_slots!(strand, |mut delegator| {
                 Output::set(strand, Slot::reborrow(&mut delegator), &this);
                 let native = Delegated::new(native, &delegator);
                 class_dispatch_binary_op(native, strand, method_sym, other)
             })
         }
-        ClassEntry::Abstract(type_obj, _) => strand.with_slots_sync(|strand, [mut delegator]| {
+        ClassEntry::Abstract(type_obj, _) => with_slots!(strand, |mut delegator| {
             Output::set(strand, Slot::reborrow(&mut delegator), &this);
             let abstract_type = Delegated::new(type_obj, &delegator);
             class_dispatch_binary_op(abstract_type, strand, method_sym, other)
@@ -2150,7 +2150,7 @@ fn class_sync_reverse_comparison<'v, 'a, 's>(
         let native = annex
             .native(*slot)
             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-        return strand.with_slots_sync(|strand, [mut delegator]| {
+        return with_slots!(strand, |mut delegator| {
             Output::set(strand, Slot::reborrow(&mut delegator), &this);
             let native = Delegated::new(native, &delegator);
             if inclusive {
@@ -2160,7 +2160,7 @@ fn class_sync_reverse_comparison<'v, 'a, 's>(
             }
         });
     }
-    strand.with_slots_sync(|strand, [mut receiver]| {
+    with_slots!(strand, |mut receiver| {
         Output::set(strand, &mut receiver, this);
         if inclusive {
             other.op_lte_direct(strand, &receiver)
@@ -2177,7 +2177,7 @@ fn class_sync_unary_op<'v, 'a, 's>(
 ) -> Result<'v, 's, Value<'v>> {
     let annex = this.annex();
     match annex.prefix.class.annex().entry_by_tag(method_sym) {
-        Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
+        Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
             strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
             Ok(result.take())
         }),
@@ -2185,7 +2185,7 @@ fn class_sync_unary_op<'v, 'a, 's>(
             let native = annex
                 .native(*slot)
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-            strand.with_slots_sync(|strand, [mut delegator]| {
+            with_slots!(strand, |mut delegator| {
                 Output::set(strand, Slot::reborrow(&mut delegator), &this);
                 let native = Delegated::new(native, &delegator);
                 match method_sym {
@@ -2242,20 +2242,20 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::FMT_METHOD) {
             Some(ClassEntry::Method(v)) => {
-                strand.with_slots_sync(|strand, [mut result, mut reified]| {
+                with_slots!(strand, |mut result, mut reified| {
                     crate::stdlib::fmt::reify_spec(strand, *spec, Slot::reborrow(&mut reified));
                     strand.sync(async |strand| call!(strand, v, &mut result, &this, &reified))?;
                     let result = result
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                    result.with_str(strand, |strand, result| crate::fmt!(strand, w, "{result}"))
+                    with_str!(strand, result, |result| crate::fmt!(strand, w, "{result}"))
                 })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
                     .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_fmt(strand, spec, w)
                 })
@@ -2304,7 +2304,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         request: &mut Request<'v, 's, '_>,
     ) -> Result<'v, 's, ()> {
         let (strand, answer) = request.parts();
-        strand.with_slots_sync(|strand, [mut delegator]| {
+        with_slots!(strand, |mut delegator| {
             Output::set(strand, Slot::reborrow(&mut delegator), &this);
             for native in this.annex().natives() {
                 if answer.is_done() {
@@ -2345,19 +2345,19 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             let w = &mut *w;
             let annex = this.annex();
             match annex.prefix.class.annex().entry_by_tag(sym::STR_METHOD) {
-                Some(ClassEntry::Method(v)) => strand.with_slots_sync(|strand, [mut result]| {
+                Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
                     strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
                     let result = result
                         .as_str(strand)
                         .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                    result.with_str(strand, |strand, result| crate::fmt!(strand, w, "{result}"))?;
+                    with_str!(strand, result, |result| crate::fmt!(strand, w, "{result}"))?;
                     Ok(false)
                 })?,
                 Some(ClassEntry::Delegate(slot, _)) => {
                     let native = annex
                         .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator).op_display(strand, w)
                     })?;
@@ -2380,18 +2380,18 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::DBG_METHOD) {
-            Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
+            Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
                 strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
                 let result = result
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                result.with_str(strand, |strand, result| crate::fmt!(strand, w, "{result}"))
+                with_str!(strand, result, |result| crate::fmt!(strand, w, "{result}"))
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
                     .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_debug(strand, w)
                 })
@@ -2421,23 +2421,21 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 .annex()
                 .entry_by_tag(sym::VERBATIM_METHOD)
             {
-                Some(ClassEntry::Method(v)) => {
-                    strand.with_slots_sync(move |strand, [mut result]| {
-                        strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
-                        let result = result
-                            .as_str(strand)
-                            .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
-                        result.with_str(strand, |strand, result| {
-                            crate::fmt!(strand, w, "{result}")
-                        })?;
-                        Ok(false)
-                    })?
-                }
+                Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
+                    strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                    let result = result
+                        .as_str(strand)
+                        .ok_or_else(|| Error::type_error(strand, "expected Str result"))?;
+                    with_str!(strand, result, |result| {
+                        crate::fmt!(strand, w, "{result}")
+                    })?;
+                    Ok(false)
+                })?,
                 Some(ClassEntry::Delegate(slot, _)) => {
                     let native = annex
                         .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator).op_verbatim(strand, w)
                     })?;
@@ -2474,7 +2472,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 Ok(())
             }
             Some(ClassEntry::Abstract(type_obj, _)) => {
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(type_obj, &delegator).op_get(strand, field, out)
                 })
@@ -2483,7 +2481,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 let native = annex
                     .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_get(strand, field, out)
                 })
@@ -2496,7 +2494,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     let native = annex
                         .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator).op_get(strand, field, out)
                     })
@@ -2521,7 +2519,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Property(Property {
                 setter: Some(setter),
                 ..
-            })) => strand.with_slots_sync(move |strand, [mut tmp]| {
+            })) => with_slots!(strand, |mut tmp| {
                 strand.sync(async |strand| {
                     isolated!(strand, call!(strand, setter, &mut tmp, &this, &value))
                 })
@@ -2530,20 +2528,20 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 let native = annex
                     .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_set(strand, field, value)
                 })
             }
             _ => match annex.prefix.class.annex().entry_by_tag(sym::SET_METHOD) {
-                Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut tmp]| {
+                Some(ClassEntry::Method(v)) => with_slots!(strand, |mut tmp| {
                     strand.sync(async |strand| call!(strand, v, &mut tmp, &this, field, &value))
                 }),
                 Some(ClassEntry::Delegate(slot, _)) => {
                     let native = annex
                         .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator).op_set(strand, field, value)
                     })
@@ -3108,14 +3106,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let this = this.clone();
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::BOOL_METHOD) {
-            Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut result]| {
+            Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
                 strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
                 result.op_bool(strand)
             }),
             Some(ClassEntry::Delegate(slot, _)) => annex
                 .native(*slot)
                 .map(|native| {
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator).op_bool(strand)
                     })
@@ -3145,7 +3143,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 let native = annex
                     .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_index(strand, index, out)
                 })
@@ -3167,14 +3165,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             .annex()
             .entry(Sym::well_known(sym::ASSIGN_METHOD))
         {
-            Some(ClassEntry::Method(v)) => strand.with_slots_sync(move |strand, [mut tmp]| {
+            Some(ClassEntry::Method(v)) => with_slots!(strand, |mut tmp| {
                 strand.sync(async |strand| call!(strand, v, &mut tmp, &this, &index, &value))
             }),
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
                     .native(*slot)
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                strand.with_slots_sync(|strand, [mut delegator]| {
+                with_slots!(strand, |mut delegator| {
                     Output::set(strand, Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator).op_assign(strand, index, value)
                 })
@@ -3199,21 +3197,19 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 .annex()
                 .entry(Sym::well_known(sym::HASH_METHOD))
             {
-                Some(ClassEntry::Method(v)) => {
-                    strand.with_slots_sync(move |strand, [mut result]| {
-                        strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
-                        let v = result.to_int(strand).map_err(|_| {
-                            Error::type_error(strand, "expected Int result from (hash)")
-                        })?;
-                        v.hash(hasher);
-                        Ok(true)
-                    })?
-                }
+                Some(ClassEntry::Method(v)) => with_slots!(strand, |mut result| {
+                    strand.sync(async |strand| call!(strand, v, &mut result, &this))?;
+                    let v = result.to_int(strand).map_err(|_| {
+                        Error::type_error(strand, "expected Int result from (hash)")
+                    })?;
+                    v.hash(hasher);
+                    Ok(true)
+                })?,
                 Some(ClassEntry::Delegate(slot, _)) => {
                     let native = annex
                         .native(*slot)
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                    strand.with_slots_sync(|strand, [mut delegator]| {
+                    with_slots!(strand, |mut delegator| {
                         Output::set(strand, Slot::reborrow(&mut delegator), &this);
                         Delegated::new(native, &delegator).op_hash(strand, hasher)
                     })?;

@@ -19,6 +19,7 @@ use crate::{
         prim::Prim,
     },
     vm::Vm,
+    with_str,
 };
 
 unsafe impl crate::gc::ImmState for i128 {
@@ -734,7 +735,7 @@ pub(crate) fn coerce<'v, 's>(
     base: Option<u32>,
 ) -> Result<'v, 's, i128> {
     if let Some(text) = value.as_str(strand) {
-        text.with_str(strand, |strand, text| {
+        with_str!(strand, text, |text| {
             parse_integer(text, base).map_err(|error| {
                 if matches!(error, IntErrorKind::PosOverflow | IntErrorKind::NegOverflow) {
                     Error::overflow(strand)

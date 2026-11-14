@@ -23,7 +23,7 @@ use dolang::runtime::{
     unpack,
     value::{Nil, Singleton, TypeObject},
     vm::Register,
-    with_interrupt_mask, with_slots,
+    with_instance, with_interrupt_mask, with_slots,
 };
 use dolang_vfs::path as vfs_path;
 use dolang_vfs::{process::ProcessControl, target::OperatingSystem};
@@ -639,7 +639,7 @@ where
         let mut reader = reader;
         let mut value = String::new();
         reader.read_to_string(&mut value).await.into_sys(strand)?;
-        return capture.enter_sync(strand, |strand, capture| {
+        return with_instance!(strand, capture, |capture| {
             capture.borrow_mut(strand)?.append(&value);
             Ok(())
         });

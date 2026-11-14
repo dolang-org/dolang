@@ -55,7 +55,10 @@ use crate::{
     strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, ValueCell, fmt::Format},
+    value::{
+        BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, ValueCell, fmt::Format,
+        with_u8_slice,
+    },
     vm::Vm,
     with_slots,
 };
@@ -446,7 +449,7 @@ async fn write_all<'v, 's>(
         let mut left = BinEmbryo::new_with_capacity(strand, len - skip);
         for arg in args {
             let Arg::Pos(piece) = arg else { continue };
-            piece.with_u8_slice(strand, |strand, bytes| {
+            with_u8_slice!(strand, piece, |bytes| {
                 if skip >= bytes.len() {
                     skip -= bytes.len();
                 } else {
@@ -462,8 +465,7 @@ async fn write_all<'v, 's>(
 
 /// The length of a `write` piece, which must be a `Str` or `Bin`.
 fn piece_len<'v, 's>(strand: &mut Strand<'v, 's>, piece: &Value<'v>) -> Result<'v, 's, usize> {
-    piece
-        .with_u8_slice(strand, |_, bytes| bytes.len())
+    with_u8_slice!(strand, piece, |bytes| bytes.len())
         .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))
 }
 
@@ -482,7 +484,7 @@ async fn write_all_value<'v, 's>(
             if offset == 0 {
                 method!(strand, stream, write, &mut written_count, data)?;
             } else {
-                data.with_u8_slice(strand, |strand, bytes| {
+                with_u8_slice!(strand, data, |bytes| {
                     Output::set(strand, &mut rest, &bytes[offset..])
                 })
                 .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
@@ -646,7 +648,7 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
             (sym::SEEKABLE, IoCaps::SEEK),
             (sym::FORKABLE, IoCaps::FORK),
         ] {
-            let set = strand.with_slots_sync(|strand, [mut value]| {
+            let set = with_slots!(strand, |mut value| {
                 self.stream
                     .get(strand, Sym::well_known(field), &mut value)?;
                 value.to_bool(strand)

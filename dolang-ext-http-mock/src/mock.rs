@@ -155,7 +155,7 @@ impl<'v> DictLike<'v> for Headers {
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         for (name, value) in &annex.headers {
-            strand.with_slots_sync(|strand, [mut tmp]| {
+            with_slots!(strand, |mut tmp| {
                 header_value_or_datetime(strand, value, Slot::reborrow(&mut tmp))?;
                 sink.push(strand, name.as_str(), &tmp);
                 Ok(())
@@ -172,7 +172,7 @@ fn copy_array<'v, 's>(
     src: &Value<'v>,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut item]| {
+    with_slots!(strand, |mut item| {
         strand.new_array(&mut out);
         let dst = out.as_array(strand).unwrap();
         if let Some(src) = src.as_array(strand) {
@@ -229,7 +229,7 @@ fn parse_expect<'v, 's>(
             u64::try_from(n).map_err(|_| Error::value(strand, "expect must not be negative"))?;
         return Ok((n, Some(n)));
     }
-    strand.with_slots_sync(|strand, [mut start, mut end, mut step]| {
+    with_slots!(strand, |mut start, mut end, mut step| {
         let range = value
             .as_range(strand)
             .ok_or_else(|| Error::type_error(strand, "expect must be an integer or a range"))?;
@@ -682,12 +682,10 @@ async fn respond<'v, 's>(
             .types
             .request
             .create_with_annex(strand, RequestObject, request.clone(), &mut req);
-        global
-            .types
-            .server
-            .cast(server)
-            .unwrap()
-            .enter_sync(strand, |strand, server| {
+        with_instance!(
+            strand,
+            global.types.server.cast(server).unwrap(),
+            |server| {
                 let borrow = server.borrow(strand)?;
                 // Mocks can unmount while a callback runs, so walk a copy.
                 copy_array(
@@ -697,7 +695,8 @@ async fn respond<'v, 's>(
                 )?;
                 Output::set(strand, &mut received, Ref::slot::<2>(&borrow));
                 Ok(())
-            })?;
+            }
+        )?;
         if let Some(received) = received.as_array(strand) {
             received.push(strand, &req)?;
         }
@@ -892,15 +891,13 @@ async fn start_server<'v, 's>(
             &mut dispatcher,
             async move |strand, server, _out| run_dispatcher(strand, server, dispatch_rx).await,
         )?;
-        this.cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, instance| {
-                let mut borrow = instance.borrow_mut(strand)?;
-                strand.new_array(Mut::slot_mut::<0>(&mut borrow));
-                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
-                strand.new_array(Mut::slot_mut::<2>(&mut borrow));
-                Ok(())
-            })
+        with_instance!(strand, this.cast(&out).unwrap(), |instance| {
+            let mut borrow = instance.borrow_mut(strand)?;
+            strand.new_array(Mut::slot_mut::<0>(&mut borrow));
+            Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
+            strand.new_array(Mut::slot_mut::<2>(&mut borrow));
+            Ok(())
+        })
     })?;
     strand
         .vm()
@@ -974,7 +971,7 @@ impl<'v> Object<'v> for Server {
                 let ([], []) = unpack!(strand, args, 0, 0)?;
                 let global = this.annex().global;
                 this.borrow(strand)?.check_open(strand)?;
-                strand.with_slots_sync(|strand, [mut mounted, mut item]| {
+                with_slots!(strand, |mut mounted, mut item| {
                     {
                         let mut borrow = this.borrow_mut(strand)?;
                         Output::set(strand, &mut mounted, Mut::slot::<0>(&borrow));
@@ -985,14 +982,11 @@ impl<'v> Object<'v> for Server {
                     if let Some(mounted) = mounted.as_array(strand) {
                         for i in 0..mounted.len(strand)? {
                             mounted.get(strand, i, &mut item)?;
-                            let next = global
-                                .types
-                                .mock
-                                .cast(&item)
-                                .unwrap()
-                                .enter_sync(strand, |strand, instance| {
-                                    unmount_mock(strand, instance, global)
-                                });
+                            let next = with_instance!(
+                                strand,
+                                global.types.mock.cast(&item).unwrap(),
+                                |instance| unmount_mock(strand, instance, global)
+                            );
                             result = combine_results(strand, result, next);
                         }
                     }
@@ -1071,16 +1065,13 @@ impl<'v> Object<'v> for Server {
                         .types
                         .mock
                         .create_with_annex(strand, mock_object, global, &mut item);
-                    global.types.mock.cast(&item).unwrap().enter_sync(
-                        strand,
-                        |strand, instance| {
-                            let mut mock_borrow = instance.borrow_mut(strand)?;
-                            Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
-                            Output::set(strand, Mut::slot_mut::<1>(&mut mock_borrow), &callbacks);
-                            strand.new_array(Mut::slot_mut::<2>(&mut mock_borrow));
-                            Ok(())
-                        },
-                    )?;
+                    with_instance!(strand, global.types.mock.cast(&item).unwrap(), |instance| {
+                        let mut mock_borrow = instance.borrow_mut(strand)?;
+                        Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
+                        Output::set(strand, Mut::slot_mut::<1>(&mut mock_borrow), &callbacks);
+                        strand.new_array(Mut::slot_mut::<2>(&mut mock_borrow));
+                        Ok(())
+                    })?;
                     {
                         let server_borrow = this.borrow(strand)?;
                         let array = Ref::slot::<0>(&server_borrow).as_array(strand).unwrap();
@@ -1090,15 +1081,15 @@ impl<'v> Object<'v> for Server {
                     if let Some(block) = block {
                         let result = call!(strand, block, out, &item);
                         let cleanup = with_interrupt_mask!(strand, InterruptMask::all(), {
-                            let (failure, unmounted) =
-                                global.types.mock.cast(&item).unwrap().enter_sync(
-                                    strand,
-                                    |strand, instance| {
-                                        let failure = verify_mock(strand, instance);
-                                        let unmounted = unmount_mock(strand, instance, global);
-                                        (failure, unmounted)
-                                    },
-                                );
+                            let (failure, unmounted) = with_instance!(
+                                strand,
+                                global.types.mock.cast(&item).unwrap(),
+                                |instance| {
+                                    let failure = verify_mock(strand, instance);
+                                    let unmounted = unmount_mock(strand, instance, global);
+                                    (failure, unmounted)
+                                }
+                            );
                             let verified = raise_verify_failure(strand, global, failure).await;
                             combine_results(strand, verified, unmounted)
                         });
@@ -1120,7 +1111,7 @@ fn unmount_mock<'v, 's>(
     this: Instance<'v, '_, MockObject>,
     global: State<'v, Global<'v>>,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut server]| {
+    with_slots!(strand, |mut server| {
         {
             let mut borrow = this.borrow_mut(strand)?;
             borrow.mounted = false;
@@ -1128,7 +1119,7 @@ fn unmount_mock<'v, 's>(
             Output::set(strand, &mut server, Mut::slot::<0>(&borrow));
         }
         if let Some(server) = global.types.server.cast(&server) {
-            server.enter_sync(strand, |strand, server| {
+            with_instance!(strand, server, |server| {
                 let server_borrow = server.borrow(strand)?;
                 if let Some(array) = Ref::slot::<0>(&server_borrow).as_array(strand) {
                     remove_identical(strand, &array, this)?;
@@ -1147,7 +1138,7 @@ fn remove_identical<'v, 's>(
     array: &Array<'v, '_>,
     target: impl Input<'v> + Copy,
 ) -> Result<'v, 's, ()> {
-    strand.with_slots_sync(|strand, [mut tmp]| {
+    with_slots!(strand, |mut tmp| {
         let len = array.len(strand)?;
         for i in 0..len {
             array.get(strand, i, &mut tmp)?;

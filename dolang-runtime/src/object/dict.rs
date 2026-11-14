@@ -12,7 +12,7 @@ use crate::{
     bytecode::{Rest, Variadic},
     call,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     object::protocol::members,
     sig::{self, UnpackKeyKind},
     strand::Strand,
@@ -638,7 +638,7 @@ impl<'v> Dict<'v> {
         value: impl Input<'v>,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        strand.with_slots_sync(|strand, [mut key_slot, mut value_slot]| {
+        with_slots!(strand, |mut key_slot, mut value_slot| {
             Output::set(strand, &mut key_slot, key);
             Output::set(strand, &mut value_slot, value);
             if let Some(sym) = key_slot.as_sym(strand) {
@@ -655,7 +655,7 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         f: impl FnOnce(&Dict<'v>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
-        container.pin_sync(strand, |strand, container| {
+        with_pin!(strand, container, |container| {
             let dict = container
                 .borrow()
                 .ok_or_else(|| Error::concurrency(strand))?;
@@ -809,7 +809,7 @@ impl<'v> Protocol<'v> for Values<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let next_index = {
-            borrow.container.pin_sync(strand, |strand, container| {
+            with_pin!(strand, borrow.container, |container| {
                 let dict = container
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?;
@@ -911,7 +911,7 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let next_index = {
-            borrow.container.pin_sync(strand, |strand, container| {
+            with_pin!(strand, borrow.container, |container| {
                 let dict = container
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?;
@@ -1022,7 +1022,7 @@ impl<'v> Protocol<'v> for Keys<'v> {
         let borrow = this.borrow(strand)?;
         let mut visited = borrow.visited.borrow().clone();
         let next_index = {
-            borrow.container.pin_sync(strand, |strand, container| {
+            with_pin!(strand, borrow.container, |container| {
                 let dict = container
                     .borrow()
                     .ok_or_else(|| Error::concurrency(strand))?;
@@ -1255,7 +1255,7 @@ unsafe impl<'v> Collect for Unpack<'v> {
 
 impl<'v> Unpack<'v> {
     fn check_epoch<'s>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ()> {
-        self.dict.pin_sync(strand, |strand, dict| {
+        with_pin!(strand, self.dict, |dict| {
             let dict = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if dict.epoch != self.epoch {
                 return Err(Error::concurrency_msg(
@@ -1313,7 +1313,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         let borrow = this.borrow(strand)?;
         borrow.check_epoch(strand)?;
         let container = borrow.dict.clone();
-        let (epoch, resume, skip) = container.pin_sync(strand, |strand, pinned| {
+        let (epoch, resume, skip) = with_pin!(strand, container, |pinned| {
             let dict = pinned.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let resume = borrow.state.index;
 
@@ -1335,7 +1335,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         let container = borrow.dict.clone();
-        let epoch = container.pin_sync(strand, |strand, container| {
+        let epoch = with_pin!(strand, container, |container| {
             Ok(container
                 .borrow()
                 .ok_or_else(|| Error::concurrency(strand))?
@@ -1352,7 +1352,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                 strand.check_trap()?;
             }
             let pair = {
-                container.pin_sync(strand, |strand, container| {
+                with_pin!(strand, container, |container| {
                     let dict = container
                         .borrow()
                         .ok_or_else(|| Error::concurrency(strand))?;
@@ -1450,7 +1450,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let dict_obj = borrow.dict.clone();
-        dict_obj.pin_sync(strand, |strand, dict_obj| {
+        with_pin!(strand, dict_obj, |dict_obj| {
             let dict = dict_obj
                 .borrow()
                 .ok_or_else(|| Error::concurrency(strand))?;
@@ -1620,7 +1620,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let left = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             // Equal pair counts make both walks end together
             if left.total_pairs != right.total_pairs {
@@ -1662,7 +1662,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let left = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             unsafe {
                 let mut i = 0usize;
@@ -2097,7 +2097,7 @@ impl<'v> Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        container.pin_sync(strand, |strand, container| {
+        with_pin!(strand, container, |container| {
             let dict = container
                 .borrow()
                 .ok_or_else(|| Error::concurrency(strand))?;

@@ -9,13 +9,13 @@ use crate::value::fmt::Format;
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
+    gc::{Collect, arena::Visit, with_pin},
     io::IoCaps,
     object::{interface::Request, protocol::members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Output, Slot, TypeObject, Value},
+    value::{BinEmbryo, Output, Slot, TypeObject, Value, with_u8_slice},
     vm::Vm,
 };
 
@@ -253,7 +253,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             return Err(Error::unsupported(strand, "`==`"));
         };
         let this_borrow = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             Ok(Value::from_bool(
                 this_borrow.as_slice() == other_borrow.as_slice(),
@@ -270,7 +270,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             return Err(Error::unsupported(strand, "`<`"));
         };
         let this_borrow = this.borrow(strand)?;
-        other.pin_sync(strand, |strand, other| {
+        with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             Ok(Value::from_bool(
                 this_borrow.as_slice() < other_borrow.as_slice(),
@@ -479,8 +479,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 let pieces: Vec<_> = pieces.collect();
                 let mut total = 0;
                 for piece in &pieces {
-                    total += piece
-                        .with_u8_slice(strand, |_, bytes| bytes.len())
+                    total += with_u8_slice!(strand, piece, |bytes| bytes.len())
                         .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
                 }
                 let mut borrow = this.borrow_mut(strand)?;
@@ -497,18 +496,19 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             sym::STARTS_WITH => {
                 let ([prefix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = prefix
-                    .with_u8_slice(strand, |_, prefix| borrow.as_slice().starts_with(prefix))
-                    .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
+                let input = with_u8_slice!(strand, prefix, |prefix| borrow
+                    .as_slice()
+                    .starts_with(prefix))
+                .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
                 Output::set(strand, out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
                 let ([suffix], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = suffix
-                    .with_u8_slice(strand, |_, suffix| borrow.as_slice().ends_with(suffix))
-                    .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
+                let input =
+                    with_u8_slice!(strand, suffix, |suffix| borrow.as_slice().ends_with(suffix))
+                        .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -516,9 +516,10 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 use bstr::ByteSlice;
                 let ([needle], []) = unpack!(strand, args, 1, 0)?;
                 let borrow = this.borrow(strand)?;
-                let input = needle
-                    .with_u8_slice(strand, |_, needle| borrow.as_slice().contains_str(needle))
-                    .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
+                let input = with_u8_slice!(strand, needle, |needle| borrow
+                    .as_slice()
+                    .contains_str(needle))
+                .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
                 Output::set(strand, out, input);
                 Ok(())
             }
@@ -851,7 +852,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let borrow = this.borrow(strand)?;
-        borrow.buf.pin_sync(strand, |strand, buf| {
+        with_pin!(strand, borrow.buf, |buf| {
             let mut buf = buf.borrow_mut().ok_or_else(|| Error::concurrency(strand))?;
             let len = buf.len();
             if len == 0 {

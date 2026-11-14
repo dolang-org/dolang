@@ -402,13 +402,10 @@ impl<'v> Object<'v> for Archive {
                         global,
                         &mut file,
                     );
-                    global.types.file.cast(&file).unwrap().enter_sync(
-                        strand,
-                        |strand, file_obj| {
-                            let mut file_borrow = file_obj.borrow_mut_unwrap();
-                            Output::set(strand, Mut::slot_mut::<0>(&mut file_borrow), this);
-                        },
-                    );
+                    with_instance!(strand, global.types.file.cast(&file).unwrap(), |file_obj| {
+                        let mut file_borrow = file_obj.borrow_mut_unwrap();
+                        Output::set(strand, Mut::slot_mut::<0>(&mut file_borrow), this);
+                    });
 
                     if let Some(block) = block {
                         let result = call!(strand, block, out, &file);
@@ -554,13 +551,15 @@ fn with_entry<'v, 's, R>(
 ) -> Result<'v, 's, R> {
     let annex = this.annex();
     let borrow = this.borrow(strand)?;
-    annex
-        .global
-        .types
-        .archive
-        .cast(Ref::slot::<0>(&borrow))
-        .expect("Entry always roots its Archive in slot 0")
-        .enter_sync(strand, |strand, archive| {
+    with_instance!(
+        strand,
+        annex
+            .global
+            .types
+            .archive
+            .cast(Ref::slot::<0>(&borrow))
+            .expect("Entry always roots its Archive in slot 0"),
+        |archive| {
             let archive_annex = archive.annex();
             if archive_annex.closed.get() {
                 return Err(Error::state_error(strand, "archive closed"));
@@ -574,7 +573,8 @@ fn with_entry<'v, 's, R>(
                 .get(annex.index)
                 .expect("entry count is fixed for the archive's lifetime");
             f(strand, entry)
-        })
+        }
+    )
 }
 
 fn compression_sym<'v>(
@@ -734,16 +734,17 @@ impl<'v> Object<'v> for Entry {
                                 global,
                                 &mut file,
                             );
-                            global.types.file.cast(&file).unwrap().enter_sync(
+                            with_instance!(
                                 strand,
-                                |strand, file_obj| {
+                                global.types.file.cast(&file).unwrap(),
+                                |file_obj| {
                                     let mut file_borrow = file_obj.borrow_mut_unwrap();
                                     Output::set(
                                         strand,
                                         Mut::slot_mut::<0>(&mut file_borrow),
                                         archive,
                                     );
-                                },
+                                }
                             );
 
                             if let Some(block) = block {
@@ -802,15 +803,14 @@ impl<'v> ArrayLike<'v> for Entries {
             .types
             .entry
             .create_with_annex(strand, Entry, EntryAnnex { global, index }, &mut out);
-        global
-            .types
-            .entry
-            .cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, entry_obj| {
+        with_instance!(
+            strand,
+            global.types.entry.cast(&out).unwrap(),
+            |entry_obj| {
                 let mut entry_borrow = entry_obj.borrow_mut_unwrap();
                 Output::set(strand, Mut::slot_mut::<0>(&mut entry_borrow), this);
-            });
+            }
+        );
         Ok(())
     }
 }

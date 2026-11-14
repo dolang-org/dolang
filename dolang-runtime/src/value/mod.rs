@@ -33,7 +33,7 @@ use crate::{
     },
     sig::Unpack,
     stdlib::fmt as fmt_obj,
-    strand::Strand,
+    strand::{PinScope, Strand},
     sym::{self, Sym},
     vm::{Alloc, Vm},
     with_slots,
@@ -46,6 +46,25 @@ use view::{
 };
 
 use self::fmt::{Format, Spec};
+
+/// Run a block with the bytes of a `Bin` or `Str` value pinned for its duration.
+///
+/// Invoke as `with_u8_slice!(strand, value, |bytes| body)`.  Evaluates to `Some` of the
+/// body's value, or `None` without running the body if `value` is neither.  The body runs
+/// inline, as for [`with_slots!`](crate::with_slots).
+macro_rules! with_u8_slice {
+    ($strand:ident, $value:expr, |$bytes:pat_param| $body:expr) => {{
+        let value = &$value;
+        let scope = $crate::strand::PinScope;
+        // Safety: `scope` is a local of this block
+        #[allow(unused_unsafe)]
+        match unsafe { value.scoped_u8_slice($strand.vm(), &scope) } {
+            Some($bytes) => Some($body),
+            None => None,
+        }
+    }};
+}
+pub(crate) use with_u8_slice;
 
 pub(crate) enum Case<'v, 'a> {
     Prim(Prim),
@@ -219,7 +238,7 @@ impl<'v> Value<'v> {
     /// Tests whether this value is an instance of a type, following nominal
     /// supertypes as the `isa` operator does.
     pub fn is_instance_of(&self, strand: &mut Strand<'v, '_>, input: impl Input<'v>) -> bool {
-        strand.with_slots_sync(|strand, [mut self_ty, mut ty]| {
+        with_slots!(strand, |mut self_ty, mut ty| {
             self.op_type(strand, Slot::reborrow(&mut self_ty));
             Output::set(strand, &mut ty, input);
             self_ty.op_subtype(strand, &ty)
@@ -1374,7 +1393,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        strand.with_slots_sync(|strand, [mut operand, mut result]| {
+        with_slots!(strand, |mut operand, mut result| {
             Output::set(strand, &mut operand, other);
             result.store(self.op_eq(strand, &operand)?);
             result.op_bool(strand)
@@ -1388,7 +1407,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
-        strand.with_slots_sync(|strand, [mut operand, mut result]| {
+        with_slots!(strand, |mut operand, mut result| {
             Output::set(strand, &mut operand, other);
             result.store(self.op_ne(strand, &operand)?);
             result.op_bool(strand)
@@ -1459,7 +1478,7 @@ impl<'v> Value<'v> {
         field: Sym<'v, 'a>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        strand.with_slots_sync(|strand, [mut slot]| {
+        with_slots!(strand, |mut slot| {
             Output::set(strand, &mut slot, value);
             self.op_set(strand, field, slot)
         })
@@ -1486,7 +1505,7 @@ impl<'v> Value<'v> {
         index: impl Input<'v>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        strand.with_slots_sync(|strand, [mut slot]| {
+        with_slots!(strand, |mut slot| {
             Output::set(strand, &mut slot, index);
             self.op_index(strand, &slot, Output::as_slot(&mut out, private::Sealed))
         })
@@ -1505,7 +1524,7 @@ impl<'v> Value<'v> {
         index: impl Input<'v>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
-        strand.with_slots_sync(|strand, [mut sloti, mut slotv]| {
+        with_slots!(strand, |mut sloti, mut slotv| {
             Output::set(strand, &mut sloti, index);
             Output::set(strand, &mut slotv, value);
             self.op_assign(strand, sloti, slotv)
@@ -1698,19 +1717,27 @@ impl<'v> Value<'v> {
         ))
     }
 
-    /// Call `f` with the bytes of a `Bin` or `Str`, or return `None` for any other
-    /// value.
+    /// The bytes of a `Bin` or `Str`, pinned for the borrow of `scope`, or `None` for any
+    /// other value.
+    ///
+    /// This backs [`with_u8_slice!`].
+    ///
+    /// # Safety
+    ///
+    /// `scope` must be a local of the block that uses the slice.
     // FIXME: there should probably be a "buffer" protocol to make this generic
-    pub(crate) fn with_u8_slice<'s, R>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        f: impl FnOnce(&mut Strand<'v, 's>, &[u8]) -> R,
-    ) -> Option<R> {
-        if let Some(bin) = self.as_bin(strand) {
-            Some(bin.with_slice(strand, f))
+    #[inline]
+    pub(crate) unsafe fn scoped_u8_slice<'p>(
+        &'p self,
+        vm: &Vm<'v>,
+        scope: &'p PinScope,
+    ) -> Option<&'p [u8]> {
+        if let Some(bin) = self.as_bin(vm) {
+            // Safety: the caller's contract
+            Some(unsafe { bin.scoped_slice(scope) })
         } else {
-            let str = self.as_str(strand)?;
-            Some(str.with_str(strand, |strand, str| f(strand, str.as_bytes())))
+            // Safety: as above
+            Some(unsafe { self.as_str(vm)?.scoped_str(scope) }.as_bytes())
         }
     }
 

@@ -1,3 +1,4 @@
+use dolang::runtime::with_instance;
 use std::{
     fmt::{self, Debug, Display},
     path::PathBuf,
@@ -269,7 +270,7 @@ impl<'v> Object<'v> for Stdin {
             let this = this.borrow(strand)?;
             (this.mode, this.chunk)
         };
-        other.enter_sync(strand, |strand, other| {
+        with_instance!(strand, other, |other| {
             let other = other.borrow(strand)?;
             Ok(other.mode == mode && (mode == IoMode::Line || other.chunk == chunk))
         })
@@ -611,7 +612,7 @@ impl<'v> Object<'v> for Vfs {
             // single `arg` value `spawn_background` keeps alive until
             // the background strand starts running.
             let close_sym = global.syms.close;
-            strand.with_slots_sync(|strand, [mut arg]| {
+            with_slots!(strand, |mut arg| {
                 strand.tuple([&callable, &to_bg_recv, &from_bg_send], &mut arg);
                 strand.spawn_background(&arg, None, &mut handle, async move |strand, arg, out| {
                     let Some(tuple) = arg.as_tuple(strand) else {
@@ -665,18 +666,13 @@ impl<'v> Object<'v> for Vfs {
                 },
                 &mut out,
             );
-            global
-                .types
-                .vfs
-                .cast(&out)
-                .unwrap()
-                .enter_sync(strand, |strand, this| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
-                        &handle,
-                    );
-                });
+            with_instance!(strand, global.types.vfs.cast(&out).unwrap(), |this| {
+                Output::set(
+                    strand,
+                    Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
+                    &handle,
+                );
+            });
             Ok(())
         })
     }
@@ -789,7 +785,7 @@ impl<'v> Object<'v> for Vfs {
                         return Err(Error::type_error(strand, "env: expected Dict"));
                     };
                     let mut pairs = env_value.pairs();
-                    strand.with_slots_sync(|strand, [mut key, mut value]| {
+                    with_slots!(strand, |mut key, mut value| {
                         while pairs.next(strand, &mut key, &mut value)? {
                             let key = match key.view(strand) {
                                 View::Str(key) => key.to_string(),
@@ -1173,18 +1169,15 @@ pub(crate) fn configure_vm<'v>(
                 Redirect::new(strand).output(&cap),
                 call!(strand, func, tmp)
             )?;
-            capture_ty
-                .cast(&cap)
-                .unwrap()
-                .enter_sync(strand, |strand, inst| {
-                    let capture = inst.borrow(strand)?;
-                    let mut value = capture.0.as_str();
-                    if chomp {
-                        value = strip_line_ending(value)
-                    }
-                    Output::set(strand, out, value);
-                    Ok(())
-                })
+            with_instance!(strand, capture_ty.cast(&cap).unwrap(), |inst| {
+                let capture = inst.borrow(strand)?;
+                let mut value = capture.0.as_str();
+                if chomp {
+                    value = strip_line_ending(value)
+                }
+                Output::set(strand, out, value);
+                Ok(())
+            })
         })
         .function("cd", async move |strand, mut args, out| {
             let dir = match args.next() {

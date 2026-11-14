@@ -1,3 +1,4 @@
+use dolang::runtime::with_slots;
 use dolang::runtime::{Error, Result, Strand, Sym, Value};
 use indicatif as ix;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -827,7 +828,7 @@ fn parse_attrs<'v, 's>(
     let len = arr.len(strand)?;
     let mut attrs = Vec::with_capacity(len);
     for i in 0..len {
-        strand.with_slots_sync(|strand, [mut elem]| {
+        with_slots!(strand, |mut elem| {
             arr.get(strand, i, &mut elem)?;
             let sym = elem
                 .as_sym(strand)
@@ -857,7 +858,7 @@ fn parse_element_style<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let dict = as_style_dict(strand, cat)?;
     let mut pairs = dict.pairs();
-    strand.with_slots_sync(|strand, [mut key, mut val]| {
+    with_slots!(strand, |mut key, mut val| {
         while pairs.next(strand, &mut key, &mut val)? {
             let sym = key
                 .as_sym(strand)
@@ -888,7 +889,7 @@ fn parse_width_category<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let dict = as_style_dict(strand, cat)?;
     let mut pairs = dict.pairs();
-    strand.with_slots_sync(|strand, [mut key, mut val]| {
+    with_slots!(strand, |mut key, mut val| {
         while pairs.next(strand, &mut key, &mut val)? {
             let sym = key
                 .as_sym(strand)
@@ -927,7 +928,7 @@ fn parse_width_only<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let dict = as_style_dict(strand, cat)?;
     let mut pairs = dict.pairs();
-    strand.with_slots_sync(|strand, [mut key, mut val]| {
+    with_slots!(strand, |mut key, mut val| {
         while pairs.next(strand, &mut key, &mut val)? {
             let sym = key
                 .as_sym(strand)
@@ -954,7 +955,7 @@ pub(crate) fn parse_style<'v, 's>(
 
     let dict = as_style_dict(strand, style_val)?;
     let mut pairs = dict.pairs();
-    strand.with_slots_sync(|strand, [mut key, mut val]| {
+    with_slots!(strand, |mut key, mut val| {
         while pairs.next(strand, &mut key, &mut val)? {
             let sym = key
                 .as_sym(strand)

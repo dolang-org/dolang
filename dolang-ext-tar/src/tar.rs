@@ -391,39 +391,45 @@ async fn append_metadata_only_entry<'v, 's>(
 macro_rules! active_entry {
     ($this:expr, $strand:ident, $entry:ident, $body:block) => {{
         let child = $this.borrow($strand)?;
-        $this
-            .annex()
-            .types
-            .reader
-            .cast(Ref::slot::<0>(&child))
-            .ok_or_else(|| Error::state_error($strand, "tar entry is invalid"))?
-            .enter_sync($strand, |$strand, reader_inst| {
+        with_instance!(
+            $strand,
+            $this
+                .annex()
+                .types
+                .reader
+                .cast(Ref::slot::<0>(&child))
+                .ok_or_else(|| Error::state_error($strand, "tar entry is invalid"))?,
+            |reader_inst| {
                 let $entry = reader_inst.borrow($strand)?;
                 if $entry.generation != child.generation {
                     return Err(Error::state_error($strand, "tar entry is no longer active"));
                 }
                 $body
-            })
+            }
+        )
     }};
 }
 
 macro_rules! validate_entry_writer {
     ($this:expr, $strand:ident) => {{
         let child = $this.borrow($strand)?;
-        $this
-            .annex()
-            .types
-            .writer
-            .cast(Ref::slot::<0>(&child))
-            .ok_or_else(|| Error::state_error($strand, "tar entry writer is invalid"))?
-            .enter_sync($strand, |$strand, writer_inst| {
+        with_instance!(
+            $strand,
+            $this
+                .annex()
+                .types
+                .writer
+                .cast(Ref::slot::<0>(&child))
+                .ok_or_else(|| Error::state_error($strand, "tar entry writer is invalid"))?,
+            |writer_inst| {
                 let parent = writer_inst.borrow($strand)?;
                 if !parent.active || parent.generation != child.generation || child.stream.is_none()
                 {
                     return Err(Error::state_error($strand, "tar entry writer is closed"));
                 }
                 Ok(())
-            })?
+            }
+        )?
     }};
 }
 
@@ -484,15 +490,10 @@ impl<'v> Object<'v> for TarReader {
             global,
             Slot::reborrow(&mut out),
         );
-        global
-            .types
-            .entry
-            .cast(&out)
-            .unwrap()
-            .enter_sync(strand, |strand, entry| {
-                let mut entry_borrow = entry.borrow_mut_unwrap();
-                Output::set(strand, Mut::slot_mut::<0>(&mut entry_borrow), this);
-            });
+        with_instance!(strand, global.types.entry.cast(&out).unwrap(), |entry| {
+            let mut entry_borrow = entry.borrow_mut_unwrap();
+            Output::set(strand, Mut::slot_mut::<0>(&mut entry_borrow), this);
+        });
         Ok(true)
     }
 }
@@ -514,16 +515,18 @@ impl<'v> Object<'v> for TarEntry {
             .get("readable", |this, strand, out| {
                 let child = this.borrow(strand)?;
                 let generation = child.generation;
-                let active = this
-                    .annex()
-                    .types
-                    .reader
-                    .cast(Ref::slot::<0>(&child))
-                    .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?
-                    .enter_sync(strand, |strand, reader| {
+                let active = with_instance!(
+                    strand,
+                    this.annex()
+                        .types
+                        .reader
+                        .cast(Ref::slot::<0>(&child))
+                        .ok_or_else(|| Error::state_error(strand, "tar entry is invalid"))?,
+                    |reader| {
                         let reader = reader.borrow(strand)?;
                         Ok(!reader.closed && reader.generation == generation)
-                    })?;
+                    }
+                )?;
                 Output::set(strand, out, active);
                 Ok(())
             })
@@ -952,7 +955,7 @@ impl<'v> Object<'v> for TarWriter {
                         &mut handle,
                     );
                     let handle_cast = global.types.entry_writer.cast(&handle).unwrap();
-                    handle_cast.enter_sync(strand, |strand, handle_obj| {
+                    with_instance!(strand, handle_cast, |handle_obj| {
                         let mut handle_borrow = handle_obj.borrow_mut_unwrap();
                         Output::set(strand, Mut::slot_mut::<0>(&mut handle_borrow), this);
                     });
@@ -965,7 +968,7 @@ impl<'v> Object<'v> for TarWriter {
                     };
                     let invoke = async {
                         let result = call!(strand, block, out, &handle);
-                        let stream = handle_cast.enter_sync(strand, |strand, handle_obj| {
+                        let stream = with_instance!(strand, handle_cast, |handle_obj| {
                             Ok(handle_obj.borrow_mut(strand)?.stream.take())
                         })?;
                         // Closing waits for a write in progress on a lent handle.
@@ -1209,15 +1212,16 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     &mut reader,
                 );
                 let result = call!(strand, block, out, &reader);
-                global.types.reader.cast(&reader).unwrap().enter_sync(
+                with_instance!(
                     strand,
-                    |strand, reader_obj| {
+                    global.types.reader.cast(&reader).unwrap(),
+                    |reader_obj| {
                         let mut borrow = reader_obj.borrow_mut(strand)?;
                         borrow.current = None;
                         borrow.closed = true;
                         borrow.generation = borrow.generation.wrapping_add(1);
                         Ok(())
-                    },
+                    }
                 )?;
                 result
             })
@@ -1252,14 +1256,14 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     &mut writer,
                 );
                 let result = call!(strand, block, out, &writer);
-                let (builder, poisoned, active) =
-                    global.types.writer.cast(&writer).unwrap().enter_sync(
-                        strand,
-                        |strand, writer_obj| {
-                            let mut borrow = writer_obj.borrow_mut(strand)?;
-                            Ok((borrow.builder.take(), borrow.poisoned, borrow.active))
-                        },
-                    )?;
+                let (builder, poisoned, active) = with_instance!(
+                    strand,
+                    global.types.writer.cast(&writer).unwrap(),
+                    |writer_obj| {
+                        let mut borrow = writer_obj.borrow_mut(strand)?;
+                        Ok((borrow.builder.take(), borrow.poisoned, borrow.active))
+                    }
+                )?;
                 let cleanup = if active || poisoned {
                     Err(Error::state_error(
                         strand,

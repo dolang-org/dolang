@@ -7,7 +7,7 @@ use crate::{
     bytecode::Rest,
     call,
     error::{Error, Result},
-    gc::{self, Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit, with_pin},
     object::protocol::{Protocol, Recv, instance_get_fallback, members},
     sig::{Unpack, UnpackKeyKind},
     strand::Strand,
@@ -267,7 +267,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
-            other.pin_sync(strand, |strand, other| {
+            with_pin!(strand, other, |other| {
                 let left = this.items();
                 let right = other.items();
                 if left.len() != right.len() {
@@ -294,7 +294,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         other: &Value<'v>,
     ) -> Result<'v, 's, Value<'v>> {
         if let Some(other) = other.downcast_ref(strand.builtin_types().tuple) {
-            other.pin_sync(strand, |strand, other| {
+            with_pin!(strand, other, |other| {
                 let left = this.items();
                 let right = other.items();
                 for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
@@ -388,7 +388,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.items();
-        strand.with_slots_sync(|strand, [mut tmp]| {
+        with_slots!(strand, |mut tmp| {
             for item in borrow.iter() {
                 Output::set(strand, &mut tmp, item);
                 sink.positional(strand, Slot::reborrow(&mut tmp))?;
@@ -550,7 +550,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let count = borrow.tuple.pin_sync(strand, |strand, tuple| {
+        let count = with_pin!(strand, borrow.tuple, |tuple| {
             unpack_from(strand, sig, &mut out, tuple.items(), borrow.index, false)
         })?;
         if let Some(i) = sig.pos_rest_slot() {
@@ -574,7 +574,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        let found = borrow.tuple.pin_sync(strand, |strand, tuple| {
+        let found = with_pin!(strand, borrow.tuple, |tuple| {
             let value = tuple.items().get(index);
             if let Some(value) = value {
                 Output::set(strand, out, value);
@@ -665,7 +665,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let count = borrow.tuple.pin_sync(strand, |strand, tuple| {
+        let count = with_pin!(strand, borrow.tuple, |tuple| {
             unpack_from(strand, sig, &mut out, tuple.items(), borrow.index, true)
         })?;
         if let Some(i) = sig.pos_rest_slot() {
@@ -689,9 +689,10 @@ impl<'v> Protocol<'v> for Pairs<'v> {
     ) -> Result<'v, 's, bool> {
         let mut borrow = this.borrow_mut(strand)?;
         let index = borrow.index;
-        let value = borrow
-            .tuple
-            .pin_sync(strand, |_, tuple| tuple.items().get(index).map(Value::dup));
+        let value = with_pin!(strand, borrow.tuple, |tuple| tuple
+            .items()
+            .get(index)
+            .map(Value::dup));
         let Some(value) = value else {
             return Ok(false);
         };
