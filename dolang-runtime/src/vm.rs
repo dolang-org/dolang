@@ -8,9 +8,10 @@ use std::{
     io,
     marker::PhantomData,
     mem,
-    ops::{Deref, DerefMut},
+    ops::{ControlFlow, Deref, DerefMut},
     pin::Pin,
     ptr::NonNull,
+    rc::Rc,
     task::{Poll, Waker},
 };
 
@@ -28,7 +29,7 @@ use crate::{
     frame::{self, CallFrame, Native},
     gc::{
         self, Boxable, Gc,
-        arena::{Arena, Header},
+        arena::{Arena, Header, Scan, Visit},
     },
     object::{
         BuiltinTypes, Singletons, TypeTable, array,
@@ -509,7 +510,7 @@ impl<'v> Vm<'v> {
     }
 
     /// Insert a native module, enforcing ownership of names declared by lazy units.
-    fn insert_native_module(&self, name: &'v str, module: Value<'v>) {
+    fn insert_native_module(&self, name: &'v str, mut module: Slot<'v, '_>) {
         {
             let lazy = self.lazy.borrow();
             let owner = lazy.by_module.get(name).copied();
@@ -527,7 +528,7 @@ impl<'v> Vm<'v> {
                 (None, None) => unreachable!(),
             }
         }
-        let replaced = self.native_modules.borrow_mut().insert(name, module);
+        let replaced = self.native_modules.borrow_mut().insert(name, module.take());
         drop(replaced);
     }
 
@@ -836,13 +837,53 @@ pub(crate) fn root_slot<'v, 'a>(roots: &'a MonoVec<ValueCell<'v>>) -> Slot<'v, '
 pub struct ModuleBuilder<'v, 'a> {
     name: &'v str,
     vm: &'a mut Register<'v>,
-    contents: Vec<(Sym<'v, 'v>, NativeField<'v>)>,
+    staging: Rc<Staging<'v>>,
+    _scan: Scan<'v>,
+}
+
+/// A native module's members while it is built, and the cell it is created into.
+#[derive(Default)]
+struct Staging<'v> {
+    contents: RefCell<Vec<(Sym<'v, 'v>, NativeField<'v>)>>,
+    module: ValueCell<'v>,
+}
+
+impl<'v> Staging<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.contents
+            .borrow()
+            .iter()
+            .try_for_each(|(_, field)| field.accept(visit))?;
+        self.module.accept(visit)
+    }
 }
 
 impl<'v, 'a> ModuleBuilder<'v, 'a> {
     #[inline(never)]
     fn push(&mut self, sym: Sym<'v, 'v>, field: NativeField<'v>) {
-        self.contents.push((sym, field));
+        self.staging.contents.borrow_mut().push((sym, field));
+    }
+
+    /// Stage a value member, created by `create` into its rooted cell.
+    #[inline(never)]
+    fn push_value(
+        &mut self,
+        sym: Sym<'v, 'v>,
+        create: impl FnOnce(&mut Register<'v>, Slot<'v, '_>),
+    ) {
+        let index = {
+            let mut contents = self.staging.contents.borrow_mut();
+            contents.push((sym, NativeField::Value(ValueCell::default())));
+            contents.len() - 1
+        };
+        // No mutable borrow of the list is held while `create` allocates, so a collection
+        // can scan it.
+        let contents = self.staging.contents.borrow();
+        let NativeField::Value(cell) = &contents[index].1 else {
+            unreachable!()
+        };
+        // SAFETY: the cell was just staged, and nothing else reaches it while the slot lives
+        create(self.vm, unsafe { cell.slot() });
     }
 
     /// Create a native function in the module with the given name.
@@ -883,17 +924,10 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
             + 'v,
     {
         let sym = self.vm.sym(name);
-        let vtbl = self.vm.inner.builtin_types.native_function;
+        let handle = self.vm.inner.builtin_types.native_function;
         let name = self.vm.inner.string(name);
         let func = NativeFunction::new(f, self.name, name);
-        self.push(
-            sym,
-            NativeField::Value(Value::from_object(GcObj::new_imm(
-                self.vm.inner.arena(),
-                vtbl,
-                func,
-            ))),
-        );
+        self.push_value(sym, |vm, out| handle.create_imm(vm, func, out));
         self
     }
 
@@ -907,17 +941,10 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
             + 'v,
     {
         let sym = self.vm.sym(name);
-        let vtbl = self.vm.inner.builtin_types.native_function;
+        let handle = self.vm.inner.builtin_types.native_function;
         let name = self.vm.inner.string(name);
         let func = NativeFunction::without_frame(f, self.name, name);
-        self.push(
-            sym,
-            NativeField::Value(Value::from_object(GcObj::new_imm(
-                self.vm.inner.arena(),
-                vtbl,
-                func,
-            ))),
-        );
+        self.push_value(sym, |vm, out| handle.create_imm(vm, func, out));
         self
     }
 
@@ -963,8 +990,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     /// ```
     pub fn value(mut self, name: &str, value: impl Input<'v>) -> Self {
         let sym = self.vm.sym(name);
-        let value = Value::from_input(self.vm, value);
-        self.push(sym, NativeField::Value(value));
+        self.push_value(sym, |vm, out| Output::set(vm, out, value));
         self
     }
 
@@ -1005,12 +1031,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         T::Annex: Default,
     {
         let sym = self.vm.sym(name);
-        let mut field = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        ty.create(self.vm, value, unsafe {
-            Slot::new(NonNull::from(&mut field))
-        });
-        self.push(sym, NativeField::Value(field));
+        self.push_value(sym, |vm, out| ty.create(vm, value, out));
         self
     }
 
@@ -1023,12 +1044,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         annex: T::Annex,
     ) -> Self {
         let sym = self.vm.sym(name);
-        let mut field = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        ty.create_with_annex(self.vm, value, annex, unsafe {
-            Slot::new(NonNull::from(&mut field))
-        });
-        self.push(sym, NativeField::Value(field));
+        self.push_value(sym, |vm, out| ty.create_with_annex(vm, value, annex, out));
         self
     }
 
@@ -1048,26 +1064,35 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     /// // Module is now available to Do code
     /// ```
     pub fn commit(self) -> &'a mut Register<'v> {
-        let mut items = self.contents;
-        items.sort_by_key(|(sym, _)| *sym);
-        for pair in items.windows(2) {
-            if pair[0].0 == pair[1].0 {
-                panic!(
-                    "duplicate native module member {}.{}",
-                    self.name,
-                    pair[0].0.as_str(self.vm.inner),
-                );
+        let ModuleBuilder {
+            name,
+            vm,
+            staging,
+            _scan,
+        } = self;
+        {
+            let mut items = staging.contents.borrow_mut();
+            items.sort_by_key(|(sym, _)| *sym);
+            for pair in items.windows(2) {
+                if pair[0].0 == pair[1].0 {
+                    panic!(
+                        "duplicate native module member {name}.{}",
+                        pair[0].0.as_str(vm.inner),
+                    );
+                }
             }
         }
 
-        let module = NativeModule::new(self.name, items);
-        let module = Value::from_object(GcObj::new_imm(
-            self.vm.inner.arena(),
-            self.vm.inner.builtin_types.native_module,
-            module,
-        ));
-        self.vm.inner.insert_native_module(self.name, module);
-        self.vm
+        let embryo = vm.inner.builtin_types.native_module.embryo(vm);
+        let items = mem::take(&mut *staging.contents.borrow_mut());
+        // SAFETY: the module cell is reached only through this slot while it lives
+        embryo.finish_imm(vm, NativeModule::new(name, items), unsafe {
+            staging.module.slot()
+        });
+        // SAFETY: as above
+        vm.inner
+            .insert_native_module(name, unsafe { staging.module.slot() });
+        vm
     }
 }
 
@@ -1302,10 +1327,16 @@ impl<'v> Register<'v> {
     ///
     /// The contents of native modules are immutable.
     pub fn module<'a>(&'a mut self, name: &'a str) -> ModuleBuilder<'v, 'a> {
+        let staging = Rc::new(Staging::default());
+        let rooted = Rc::clone(&staging);
+        // SAFETY: the staging owns every value it visits, and changes only through its
+        // `RefCell` and value cells, never during a collection
+        let scan = unsafe { self.inner.arena().scan(move |visit| rooted.accept(visit)) };
         ModuleBuilder {
             name: self.inner.string(name),
             vm: self,
-            contents: Default::default(),
+            staging,
+            _scan: scan,
         }
     }
 
@@ -1322,12 +1353,15 @@ impl<'v> Register<'v> {
         T::Annex: Default,
     {
         let name = self.inner.string(name);
-        let mut module = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        ty.create(self, value, unsafe {
-            Slot::new(NonNull::from(&mut module))
-        });
-        self.inner.insert_native_module(name, module);
+        let module = Rc::new(ValueCell::default());
+        let rooted = Rc::clone(&module);
+        // SAFETY: the closure visits the one cell, which owns its value
+        let _scan = unsafe { self.inner.arena().scan(move |visit| rooted.accept(visit)) };
+        // SAFETY: the cell is reached only through this slot while it lives
+        ty.create(self, value, unsafe { module.slot() });
+        // SAFETY: as above
+        self.inner
+            .insert_native_module(name, unsafe { module.slot() });
         self
     }
 
@@ -1340,12 +1374,15 @@ impl<'v> Register<'v> {
         annex: T::Annex,
     ) -> &mut Self {
         let name = self.inner.string(name);
-        let mut module = Value::NIL;
-        // Safety: written by the last allocation; see `Slot::new`.
-        ty.create_with_annex(self, value, annex, unsafe {
-            Slot::new(NonNull::from(&mut module))
-        });
-        self.inner.insert_native_module(name, module);
+        let module = Rc::new(ValueCell::default());
+        let rooted = Rc::clone(&module);
+        // SAFETY: the closure visits the one cell, which owns its value
+        let _scan = unsafe { self.inner.arena().scan(move |visit| rooted.accept(visit)) };
+        // SAFETY: the cell is reached only through this slot while it lives
+        ty.create_with_annex(self, value, annex, unsafe { module.slot() });
+        // SAFETY: as above
+        self.inner
+            .insert_native_module(name, unsafe { module.slot() });
         self
     }
 }
