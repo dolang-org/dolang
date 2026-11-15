@@ -759,8 +759,7 @@ impl<'v> Protocol<'v> for Class {
                     .builtin_types()
                     .binbuf
                     .create(strand, buf, Slot::reborrow(&mut out));
-                let native = out.take();
-                self_val.op_fill(strand, &strand.singletons().binbuf, native)?;
+                self_val.op_fill(strand, &strand.singletons().binbuf, out)?;
                 Ok(())
             }
             _ => type_mcall_fallback(strand, &strand.singletons().binbuf, method, args, out).await,

@@ -944,7 +944,11 @@ impl<'v> Protocol<'v> for Type {
                 with_slots!(strand, |mut native| {
                     let set = strand.builtin_types().set;
                     set.create(strand, Set::new(), Slot::reborrow(&mut native));
-                    self_val.op_fill(strand, &strand.singletons().set, native.take())
+                    self_val.op_fill(
+                        strand,
+                        &strand.singletons().set,
+                        Slot::reborrow(&mut native),
+                    )
                 })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().set, method, args, out).await,

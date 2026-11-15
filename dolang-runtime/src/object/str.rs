@@ -1175,8 +1175,7 @@ impl<'v> Protocol<'v> for Type {
                 } else {
                     return Err(Error::type_error(strand, "Str: expected Str or Bin"));
                 }
-                let native = out.take();
-                self_val.op_fill(strand, &strand.singletons().str, native)?;
+                self_val.op_fill(strand, &strand.singletons().str, out)?;
                 Ok(())
             }
             _ => {

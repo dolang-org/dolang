@@ -3994,9 +3994,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
                     unpack!(strand, args => inst, ...trailing);
                     let ty = this.ty(strand.vm());
                     T::new(ty, strand, trailing, Slot::reborrow(&mut out)).await?;
-                    let native = out.take();
                     let singleton = this.singleton(strand.vm());
-                    inst.op_fill(strand, singleton, native)
+                    inst.op_fill(strand, singleton, out)
                 }
                 .await,
             )

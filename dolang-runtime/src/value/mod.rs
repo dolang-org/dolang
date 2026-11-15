@@ -289,7 +289,7 @@ impl<'v> Value<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_fill(strand, type_obj, native),
@@ -2152,7 +2152,7 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self.receiver.case() {
             Case::Object(receiver) => {
