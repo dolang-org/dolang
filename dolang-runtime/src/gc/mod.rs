@@ -235,7 +235,9 @@ unsafe impl<T: ImmState> Collect for Imm<T> {
 #[repr(transparent)]
 pub(crate) struct Base<'v, T: Upcast<Header>> {
     ptr: NonNull<T>,
-    phantom: PhantomData<(&'v mut &'v (), T)>,
+    // A handle points at its target rather than owning it inline: moving the handle
+    // never moves the target, so the handle is `Unpin` whatever `T` is.
+    phantom: PhantomData<(&'v mut &'v (), &'v T)>,
 }
 
 impl<'v, T: Upcast<Header>> Base<'v, T> {
@@ -541,8 +543,17 @@ impl<'v, T: Upcast<Header>> Drop for Base<'v, T> {
 /// Intended to be wrapped by something exposing fewer details
 pub(crate) struct BaseWeak<'v, T: Upcast<Header>> {
     ptr: NonNull<T>,
-    phantom: PhantomData<(&'v mut &'v (), T)>,
+    // A handle points at its target rather than owning it inline: moving the handle
+    // never moves the target, so the handle is `Unpin` whatever `T` is.
+    phantom: PhantomData<(&'v mut &'v (), &'v T)>,
 }
+
+// Handles are `Unpin` even over a `!Unpin` target such as `Upvars`.
+const _: () = {
+    const fn assert_unpin<T: Unpin>() {}
+    assert_unpin::<Gc<'static, crate::frame::Upvars<'static>>>();
+    assert_unpin::<Weak<'static, crate::frame::Upvars<'static>>>();
+};
 
 impl<'v, T: Upcast<Header>> std::fmt::Debug for BaseWeak<'v, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

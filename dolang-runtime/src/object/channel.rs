@@ -24,8 +24,8 @@ use super::{
     protocol::{GcObj, Header, Protocol, Recv},
 };
 
-enum RecvResult<'v> {
-    Ok(Value<'v>),
+enum RecvResult {
+    Ok,
     Poisoned,
     Pending,
     Closed,
@@ -68,14 +68,16 @@ pub(crate) struct Receiver<'v> {
 }
 
 impl<'v> Receiver<'v> {
-    fn recv(&mut self, cx: Option<&mut task::Context<'_>>) -> RecvResult<'v> {
+    fn recv(&mut self, cx: Option<&mut task::Context<'_>>, mut out: Slot<'v, '_>) -> RecvResult {
         if self.recv_closed {
             RecvResult::Closed
         } else if let Some(value) = self.queue.pop_front() {
+            // Polling has no `Alloc`, so the value moves straight into the output
+            out.store(value);
             if let Some(wake) = self.senders.pop_front() {
                 wake.wake();
             }
-            RecvResult::Ok(value)
+            RecvResult::Ok
         } else if self.send_closed {
             match &self.poison {
                 Some(_) => RecvResult::Poisoned,
@@ -119,7 +121,7 @@ impl<'v, 's, 'a> Future for RecvFuture<'v, 's, 'a> {
                 let Some(mut borrow) = recv.borrow_mut() else {
                     return Poll::Ready(Err(Error::concurrency_raw(strand)));
                 };
-                let res = borrow.recv(Some(cx));
+                let res = borrow.recv(Some(cx), Slot::reborrow(out));
                 if let RecvResult::Poisoned = res {
                     let (value, backtrace) = borrow.poison.as_ref().unwrap();
                     let err = Error::from_value_backtrace_raw(strand, value, backtrace);
@@ -127,10 +129,7 @@ impl<'v, 's, 'a> Future for RecvFuture<'v, 's, 'a> {
                 }
                 mem::drop(borrow);
                 match res {
-                    RecvResult::Ok(value) => {
-                        out.store(value);
-                        Poll::Ready(Ok(true))
-                    }
+                    RecvResult::Ok => Poll::Ready(Ok(true)),
                     RecvResult::Poisoned => unreachable!(),
                     RecvResult::Pending => Poll::Pending,
                     RecvResult::Stop => Poll::Ready(Ok(false)),
@@ -231,7 +230,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
         let Ok(mut borrow) = this.borrow_mut(strand) else {
             return RecvFuture::Ready(Err(Error::concurrency(strand)));
         };
-        let res = borrow.recv(None);
+        let res = borrow.recv(None, Slot::reborrow(&mut out));
         if let RecvResult::Poisoned = res {
             let (value, backtrace) = borrow.poison.as_ref().unwrap();
             let err = Error::from_value_backtrace(strand, value, backtrace);
@@ -239,10 +238,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
         }
         mem::drop(borrow);
         match res {
-            RecvResult::Ok(value) => {
-                out.store(value);
-                RecvFuture::Ready(Ok(true))
-            }
+            RecvResult::Ok => RecvFuture::Ready(Ok(true)),
             RecvResult::Poisoned => unreachable!(),
             RecvResult::Pending => RecvFuture::Pend {
                 strand: strand.inner,
