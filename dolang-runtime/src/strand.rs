@@ -30,7 +30,7 @@ use crate::{
     method,
     object::{BuiltinTypes, Singletons, protocol::GcObj, range, strand::Handle, tuple},
     sym::{self, Sym},
-    value::{Input, Output, Slot, Value, ValueCell},
+    value::{Input, Output, Singleton, Slot, Value, ValueCell},
     vm::{Alloc, Vm},
 };
 
@@ -740,7 +740,7 @@ pub(crate) struct StrandInner<'v> {
     // Logical callable frame depth (Do + native frames only)
     call_depth: Cell<u32>,
     sp: Cell<Option<frame::Ptr<'v>>>,
-    pub(crate) start: Value<'v>,
+    start: ValueCell<'v>,
     is_leader: Cell<bool>,
     leader: Cell<*const StrandGroup>,
     /// Scoped parent; null for group leaders.  A scoped parent always outlives
@@ -856,7 +856,7 @@ impl<'v> StrandInner<'v> {
             interrupt_mask: Cell::new(InterruptMask::empty()),
             call_depth: Cell::new(0),
             sp: Cell::new(None),
-            start: Value::NIL,
+            start: ValueCell::default(),
             is_leader: Cell::new(false),
             leader: Cell::new(std::ptr::null()),
             parent: Cell::new(null()),
@@ -906,8 +906,8 @@ impl<'v> StrandInner<'v> {
             vm: strand.inner.vm,
             // Safety: nothing writes the cells during the reads; see the caller's contract
             // for the copies
-            input: unsafe { strand.inner.input.as_ref() }.dup().into(),
-            output: unsafe { strand.inner.output.as_ref() }.dup().into(),
+            input: unsafe { ValueCell::from_value(strand.inner.input.as_ref().dup()) },
+            output: unsafe { ValueCell::from_value(strand.inner.output.as_ref().dup()) },
             errors: ErrorTable::new(),
             error_focus: Cell::new(None),
             locals: locals.into(),
@@ -916,7 +916,7 @@ impl<'v> StrandInner<'v> {
                 .local_roots
                 .iter()
                 // Safety: as for the streams above
-                .map(|cell| unsafe { cell.as_ref() }.dup().into())
+                .map(|cell| unsafe { ValueCell::from_value(cell.as_ref().dup()) })
                 .collect::<Vec<_>>()
                 .into(),
             arena: Arena::new(ARENA_DEFAULT_SIZE),
@@ -926,7 +926,7 @@ impl<'v> StrandInner<'v> {
             interrupt_mask: Cell::new(InterruptMask::empty()),
             call_depth: Cell::new(strand.inner.call_depth.get()),
             sp: Cell::new(None),
-            start: Value::NIL,
+            start: ValueCell::default(),
             is_leader: Cell::new(false),
             leader: Cell::new(null()),
             parent: Cell::new(null()),
@@ -1054,18 +1054,16 @@ impl<'v> StrandInner<'v> {
         &self.output
     }
 
-    /// Replace the strand's input, returning the old value for the caller to drop.
-    #[must_use]
-    pub(crate) fn replace_input(&self, value: Value<'v>) -> Value<'v> {
+    /// Exchange the strand's input with the value in `slot`.
+    pub(crate) fn swap_input(&self, slot: &mut Slot<'v, '_>) {
         // Safety: see the field
-        unsafe { self.input.slot() }.replace(value)
+        Output::swap(unsafe { self.input.slot() }, slot)
     }
 
-    /// Replace the strand's output, returning the old value for the caller to drop.
-    #[must_use]
-    pub(crate) fn replace_output(&self, value: Value<'v>) -> Value<'v> {
+    /// Exchange the strand's output with the value in `slot`.
+    pub(crate) fn swap_output(&self, slot: &mut Slot<'v, '_>) {
         // Safety: see the field
-        unsafe { self.output.slot() }.replace(value)
+        Output::swap(unsafe { self.output.slot() }, slot)
     }
 
     pub(crate) fn errors(&self) -> &ErrorTable<'v> {
@@ -1651,16 +1649,16 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Get current iterator.
     pub fn input(&self, mut out: impl Output<'v>) {
-        // Safety: nothing writes the cell during the read, and the copy moves straight
+        // SAFETY: nothing writes the cell during the read, and the copy moves straight
         // into `out`
-        Slot::from_output(&mut out).store(unsafe { self.inner.input().as_ref() }.dup());
+        Slot::from_output(&mut out).store(unsafe { self.inner.input().as_ref().dup() });
     }
 
     /// Get current sink.
     pub fn output(&self, mut out: impl Output<'v>) {
-        // Safety: nothing writes the cell during the read, and the copy moves straight
+        // SAFETY: nothing writes the cell during the read, and the copy moves straight
         // into `out`
-        Slot::from_output(&mut out).store(unsafe { self.inner.output().as_ref() }.dup());
+        Slot::from_output(&mut out).store(unsafe { self.inner.output().as_ref().dup() });
     }
 
     /// Spawn a new strand scoped to this strand which executes `f`.
@@ -1756,7 +1754,7 @@ impl<'v, 's> Strand<'v, 's> {
 
         // Create StrandInner
         // Safety: not upheld yet; see the FIXME below, which covers these copies too
-        let mut inner =
+        let inner =
             unsafe { StrandInner::derived(self, Some(interrupt.clone()), InheritKind::Background) };
         inner.call_depth.set(0);
 
@@ -1775,20 +1773,31 @@ impl<'v, 's> Strand<'v, 's> {
         );
         let weak_handle = GcObj::downgrade(out.downcast_ref(ty).expect("strand handle"));
 
-        // Keeps `arg` rooted (via `scan_stack`) for as long as the strand exists,
-        // including before `f` first runs.
+        // Until first poll nothing scans `inner`, so the start value and stream
+        // endpoints wait in `pending`, rooted by an arena scan, and move into `inner`
+        // once it is linked into the VM ring. `inner.start` then keeps `arg` rooted (via
+        // `scan_stack`) for as long as the strand exists.
         //
-        // FIXME: until first poll nothing scans `inner`, so `start`, the stream
-        // endpoints below and the state `derived` copied above are loose (sound only under refcounting). Root them
-        // elsewhere until then, e.g. in an actual root or the global root
-        // registration (#1728), and drop that root on first poll once the strand is
-        // linked into the VM ring, or make some other special arrangement.
-        inner.start = Value::from_input(self, arg);
-
+        // FIXME: the state `derived` copied above is still loose until first poll (sound
+        // only under refcounting).
+        let pending = Rc::new(<[ValueCell<'v>; 3]>::default());
+        let pending_scan = {
+            let pending = pending.clone();
+            // SAFETY: visits each pending cell, which holds every reference it owns
+            unsafe {
+                vm.arena()
+                    .scan(move |visit| pending.iter().try_for_each(|cell| cell.accept(visit)))
+            }
+        };
+        // SAFETY: the cells are distinct, and nothing else reaches them before the
+        // future takes them over
+        let [mut start, mut input, mut output] =
+            pending.each_ref().map(|cell| unsafe { cell.slot() });
+        Output::set(self, &mut start, arg);
         // Set strand-side I/O if this is a stream strand
         if let Some((recv, send)) = stream {
-            *inner.input.get_mut() = recv.dup();
-            *inner.output.get_mut() = send.dup();
+            Output::set(self, &mut input, recv);
+            Output::set(self, &mut output, send);
         }
 
         // Create the background strand future
@@ -1816,6 +1825,20 @@ impl<'v, 's> Strand<'v, 's> {
             let group = StrandGroup::new();
             let _guard = unsafe { inner.init_group_leader(&group) };
             unsafe { inner.link_top_level() };
+            // `inner` is scanned from here on: take over the pending values
+            {
+                // SAFETY: the future owns `inner`, and no other slot over `pending` lives
+                let [mut start, mut input, mut output] =
+                    pending.each_ref().map(|cell| unsafe { cell.slot() });
+                Output::swap(unsafe { inner.start.slot() }, &mut start);
+                // Without a stream the strand keeps the channels `derived` copied
+                if close_on_exit {
+                    inner.swap_input(&mut input);
+                    inner.swap_output(&mut output);
+                }
+            }
+            drop(pending_scan);
+            drop(pending);
             let _sp = unsafe { inner.push_sp(frame::Ptr::Native(NonNull::from_ref(&native))) };
             // Safety: native outlives strand
             let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
@@ -1823,7 +1846,13 @@ impl<'v, 's> Strand<'v, 's> {
             with_slots!(strand, |mut out, mut tmp, mut poison_err, mut poison_bt| {
                 let result = strand
                     .pin_future_call(async |strand| {
-                        f(strand, &inner.start, Slot::reborrow(&mut out)).await
+                        // SAFETY: nothing writes the start value once the strand runs
+                        f(
+                            strand,
+                            unsafe { inner.start.as_ref() },
+                            Slot::reborrow(&mut out),
+                        )
+                        .await
                     })
                     .await;
                 // The error, if any, is rooted in slots across the close calls below
@@ -1857,11 +1886,13 @@ impl<'v, 's> Strand<'v, 's> {
                 if close_on_exit {
                     let close = Sym::well_known(sym::CLOSE);
                     let backtrace_key = Sym::well_known(sym::BACKTRACE);
-                    tmp.store(strand.inner.replace_input(Value::NIL));
+                    Output::set(strand, &mut tmp, Singleton::Null);
+                    strand.inner.swap_input(&mut tmp);
                     if !tmp.is_nil() {
                         let _ = method!(strand, &tmp, close, &mut out);
                     }
-                    tmp.store(strand.inner.replace_output(Value::NIL));
+                    Output::set(strand, &mut tmp, Singleton::Null);
+                    strand.inner.swap_output(&mut tmp);
                     if !tmp.is_nil() {
                         let _ = if poisoned {
                             method!(
@@ -2053,9 +2084,16 @@ macro_rules! redirect {
     (@emit $strand:ident, $input:expr, $output:expr, $body:expr) => {{
         let input = $input;
         let output = $output;
-        let mut guard = $crate::strand::RedirectGuard::new(&mut *$strand, input, output);
-        let $strand = &mut *guard;
-        $body
+        $crate::with_slots!($strand, |saved_input, saved_output| {
+            let mut guard = $crate::strand::RedirectGuard::new(
+                &mut *$strand,
+                input,
+                output,
+                [saved_input, saved_output],
+            );
+            let $strand = &mut *guard;
+            $body
+        })
     }};
     ($strand:ident, input: $input:expr, $($rest:tt)+) => {
         $crate::redirect!(@out $strand, ::core::option::Option::Some($input), $($rest)+)
@@ -2078,28 +2116,33 @@ macro_rules! redirect {
 #[doc(hidden)]
 pub struct RedirectGuard<'v, 'a, 's> {
     strand: &'a mut Strand<'v, 's>,
-    input: Option<Value<'v>>,
-    output: Option<Value<'v>>,
+    input: Option<Slot<'v, 'a>>,
+    output: Option<Slot<'v, 'a>>,
 }
 
 impl<'v, 'a, 's> RedirectGuard<'v, 'a, 's> {
     /// Replace the channels that are given, keeping the old values to restore.
     ///
-    /// Each new value goes straight from its input into the strand, so no new value is
-    /// held unrooted across an allocation.
+    /// Each new value is written into its slot of `saved`, then exchanged with the
+    /// strand's channel, so the slot holds the old value until the guard drops. Both
+    /// values stay rooted throughout.
     #[inline]
     pub fn new(
         strand: &'a mut Strand<'v, 's>,
         input: Option<impl Input<'v>>,
         output: Option<impl Input<'v>>,
+        saved: [Slot<'v, 'a>; 2],
     ) -> Self {
+        let [mut saved_input, mut saved_output] = saved;
         let input = input.map(|input| {
-            let value = Value::from_input(strand, input);
-            strand.inner.replace_input(value)
+            Output::set(strand, &mut saved_input, input);
+            strand.inner.swap_input(&mut saved_input);
+            saved_input
         });
         let output = output.map(|output| {
-            let value = Value::from_input(strand, output);
-            strand.inner.replace_output(value)
+            Output::set(strand, &mut saved_output, output);
+            strand.inner.swap_output(&mut saved_output);
+            saved_output
         });
         Self {
             strand,
@@ -2127,11 +2170,11 @@ impl<'v, 's> DerefMut for RedirectGuard<'v, '_, 's> {
 
 impl Drop for RedirectGuard<'_, '_, '_> {
     fn drop(&mut self) {
-        if let Some(input) = self.input.take() {
-            drop(self.strand.inner.replace_input(input));
+        if let Some(input) = &mut self.input {
+            self.strand.inner.swap_input(input);
         }
-        if let Some(output) = self.output.take() {
-            drop(self.strand.inner.replace_output(output));
+        if let Some(output) = &mut self.output {
+            self.strand.inner.swap_output(output);
         }
     }
 }

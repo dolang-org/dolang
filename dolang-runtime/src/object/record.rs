@@ -37,7 +37,6 @@ use super::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
         instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
     },
-    sym::SymObj,
     tuple,
 };
 
@@ -82,15 +81,15 @@ unsafe impl<'v> Collect for Record<'v> {
 }
 
 /// A record key: a position, as given, or a symbol
-enum Key<'v> {
+enum Key<'v, 'k> {
     Pos(i64),
-    Sym(GcObj<'v, SymObj>),
+    Sym(Sym<'v, 'k>),
 }
 
-impl<'v> Key<'v> {
-    fn new<'s>(strand: &mut Strand<'v, 's>, key: &Value<'v>) -> Result<'v, 's, Self> {
+impl<'v, 'k> Key<'v, 'k> {
+    fn new<'s>(strand: &mut Strand<'v, 's>, key: &'k Value<'v>) -> Result<'v, 's, Self> {
         if let Some(sym) = key.as_sym(strand) {
-            Ok(Self::Sym(strand.sym_obj(sym)))
+            Ok(Self::Sym(sym))
         } else if key.is_int(strand) {
             // An integer too big for `i64` is no position
             Ok(Self::Pos(key.to_i64(strand).unwrap_or(i64::MAX)))
@@ -128,7 +127,9 @@ impl<'v> Record<'v> {
     pub(crate) fn from_args(strand: &mut Strand<'v, '_>, args: Args<'v, '_>, out: impl Output<'v>) {
         let embryo = strand.builtin_types().record.embryo(strand);
         let vm = strand.vm();
-        embryo.finish(strand, Self::from_items(pack::pack_items(vm, args)), out);
+        // SAFETY: the record is allocated; the items move straight into it
+        let items = unsafe { pack::pack_items(vm, args) };
+        embryo.finish(strand, Self::from_items(items), out);
     }
 
     pub(crate) fn from_items(items: Vec<ArgItem<'v>>) -> Self {
@@ -154,10 +155,15 @@ impl<'v> Record<'v> {
         self.order.iter().flatten()
     }
 
-    fn snapshot(&self) -> Vec<ArgItem<'v>> {
+    /// Copies of the items, in order.
+    ///
+    /// # Safety
+    /// The copies are loose: the caller must store them in an allocated object's payload
+    /// with no allocation in between.
+    unsafe fn snapshot(&self) -> Vec<ArgItem<'v>> {
         self.items()
-            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-            .map(|(key, value)| (key.as_ref().map(|key| unsafe { key.dup() }), value.dup()))
+            // SAFETY: the caller's contract
+            .map(|(key, value)| unsafe { (key.as_ref().map(|key| key.dup()), value.dup()) })
             .collect()
     }
 
@@ -198,7 +204,7 @@ impl<'v> Record<'v> {
 
     /// The slot `key` selects: a position, or an instance of a key. Without an
     /// instance, a key selects its latest one. A position has only instance 0.
-    fn slot(&self, key: &Key<'v>, instance: Option<i64>) -> Option<usize> {
+    fn slot(&self, key: &Key<'v, '_>, instance: Option<i64>) -> Option<usize> {
         match key {
             Key::Pos(i) => {
                 if instance.is_some_and(|instance| index::element(1, instance).is_none()) {
@@ -216,14 +222,14 @@ impl<'v> Record<'v> {
         }
     }
 
-    fn get(&self, key: &Key<'v>, instance: Option<i64>) -> Option<&Value<'v>> {
+    fn get(&self, key: &Key<'v, '_>, instance: Option<i64>) -> Option<&Value<'v>> {
         let slot = self.slot(key, instance)?;
         self.order[slot].as_ref().map(|(_, value)| value)
     }
 
     /// Overwrites a position, or replaces every instance of a key, appending
     /// it if absent. False if the position is out of range.
-    fn assign(&mut self, key: Key<'v>, value: Value<'v>) -> bool {
+    fn assign(&mut self, vm: &Vm<'v>, key: Key<'v, '_>, value: Value<'v>) -> bool {
         match key {
             Key::Pos(i) => {
                 let Some(slot) = self.slot(&Key::Pos(i), None) else {
@@ -241,7 +247,8 @@ impl<'v> Record<'v> {
                     let slot = slots[0];
                     *self.value_mut(slot) = value;
                 }
-                None => self.push_item((Some(key), value)),
+                // SAFETY: the symbol moves straight into this record's payload
+                None => self.push_item((Some(unsafe { vm.sym_obj(key) }), value)),
             },
         }
         self.epoch += 1;
@@ -251,9 +258,10 @@ impl<'v> Record<'v> {
     /// Appends an instance of a key, or inserts a positional item before
     /// position `i`, shifting the later ones. False if the position is out of
     /// range.
-    fn insert(&mut self, key: Key<'v>, value: Value<'v>) -> bool {
+    fn insert(&mut self, vm: &Vm<'v>, key: Key<'v, '_>, value: Value<'v>) -> bool {
         match key {
-            Key::Sym(key) => self.push_item((Some(key), value)),
+            // SAFETY: the symbol moves straight into this record's payload
+            Key::Sym(key) => self.push_item((Some(unsafe { vm.sym_obj(key) }), value)),
             Key::Pos(i) => {
                 let Some(at) = index::position(self.pos.len(), i) else {
                     return false;
@@ -286,7 +294,12 @@ impl<'v> Record<'v> {
     /// Removes a positional item, shifting the later ones, or an instance of a
     /// key, by default its first, moving its value into `out`. False if there
     /// was none.
-    fn remove(&mut self, key: &Key<'v>, instance: Option<i64>, mut out: impl Output<'v>) -> bool {
+    fn remove(
+        &mut self,
+        key: &Key<'v, '_>,
+        instance: Option<i64>,
+        mut out: impl Output<'v>,
+    ) -> bool {
         let Some(slot) = self.remove_index(key, instance) else {
             return false;
         };
@@ -297,7 +310,7 @@ impl<'v> Record<'v> {
 
     /// Unlinks a positional item or an instance of a key, as for [`Self::remove`],
     /// returning its index in `order`, which still holds it.
-    fn remove_index(&mut self, key: &Key<'v>, instance: Option<i64>) -> Option<usize> {
+    fn remove_index(&mut self, key: &Key<'v, '_>, instance: Option<i64>) -> Option<usize> {
         let slot = match key {
             Key::Pos(i) => {
                 if instance.is_some_and(|instance| index::element(1, instance).is_none()) {
@@ -323,7 +336,7 @@ impl<'v> Record<'v> {
 
     /// Removes a positional item, or every instance of a key. False if there
     /// was none.
-    fn delete(&mut self, key: &Key<'v>) -> bool {
+    fn delete(&mut self, key: &Key<'v, '_>) -> bool {
         match key {
             Key::Pos(_) => self
                 .remove_index(key, None)
@@ -353,7 +366,7 @@ impl<'v> Record<'v> {
 
     /// The number of distinct keys, counting each position as one, or the
     /// number of instances of `key`
-    fn count(&self, key: Option<&Key<'v>>) -> usize {
+    fn count(&self, key: Option<&Key<'v, '_>>) -> usize {
         match key {
             None => self.pos.len() + self.keys.len(),
             Some(key @ Key::Pos(_)) => usize::from(self.slot(key, None).is_some()),
@@ -362,17 +375,19 @@ impl<'v> Record<'v> {
     }
 }
 
-/// A `Pack` holding the items of `this` as they are now, for unpacking.
+/// Store a `Pack` holding the items of `this` as they are now into `out`, for unpacking
+/// and display.
 fn snapshot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, Record<'v>>,
-) -> Result<'v, 's, GcObj<'v, pack::PackObj<'v>>> {
-    let items = this.borrow(strand)?.snapshot();
-    Ok(GcObj::new_imm(
-        strand.vm().arena(),
-        strand.builtin_types().pack,
-        pack::Pack::new(items),
-    ))
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let borrow = this.borrow(strand)?;
+    let embryo = strand.builtin_types().pack.embryo(strand);
+    // SAFETY: the pack is allocated; the copies move straight into it
+    let items = unsafe { borrow.snapshot() };
+    embryo.finish_imm(strand, pack::Pack::new(items), out);
+    Ok(())
 }
 
 /// Settles a lookup that found nothing: the default, the `else:` callback's
@@ -410,16 +425,19 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        // The borrow keeps the snapshot's values alive
-        let borrow = this.borrow(strand)?;
-        let items = borrow.snapshot();
         // With a positional item, the brace literal makes a record; otherwise,
         // it would make a dict
-        let braces = !borrow.pos.is_empty();
-        if !braces {
-            crate::fmt!(strand, w, "Record")?;
-        }
-        pack::debug_items(strand, &items, braces, w)
+        let braces = !this.borrow(strand)?.pos.is_empty();
+        with_slots!(strand, |mut items| {
+            snapshot(strand, &this, &mut items)?;
+            let items = items
+                .downcast_ref(strand.builtin_types().pack)
+                .expect("pack");
+            if !braces {
+                crate::fmt!(strand, w, "Record")?;
+            }
+            pack::debug_items(strand, items.items(), braces, w)
+        })
     }
 
     fn op_bool<'a, 's>(
@@ -508,7 +526,10 @@ impl<'v> Protocol<'v> for Record<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let key = Key::new(strand, &key)?;
-        if this.borrow_mut(strand)?.assign(key, value.take()) {
+        if this
+            .borrow_mut(strand)?
+            .assign(strand.vm(), key, value.take())
+        {
             Ok(())
         } else {
             Err(Error::index(strand))
@@ -565,7 +586,10 @@ impl<'v> Protocol<'v> for Record<'v> {
             sym::INSERT => {
                 unpack!(strand, args => key, mut value);
                 let key = Key::new(strand, &key)?;
-                if this.borrow_mut(strand)?.insert(key, value.take()) {
+                if this
+                    .borrow_mut(strand)?
+                    .insert(strand.vm(), key, value.take())
+                {
                     Ok(())
                 } else {
                     Err(Error::index(strand))
@@ -591,13 +615,18 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
                 let key = Key::new(strand, &key)?;
                 let instance = instance(strand, instance_arg)?;
-                let found = this.borrow(strand)?.get(&key, instance).map(Value::dup);
-                match found {
-                    Some(value) => {
-                        out.store(value);
-                        Ok(())
+                let found = {
+                    let record = this.borrow(strand)?;
+                    let found = record.get(&key, instance);
+                    if let Some(value) = found {
+                        Output::set(strand, &mut out, value);
                     }
-                    None => fallback(strand, default, or_else, out, |_| Ok(())).await,
+                    found.is_some()
+                };
+                if found {
+                    Ok(())
+                } else {
+                    fallback(strand, default, or_else, out, |_| Ok(())).await
                 }
             }
             sym::POP => {
@@ -632,7 +661,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             }
             sym::VALUES => {
                 unpack!(strand, args => ?key);
-                let mode = match key.map(|key| Key::new(strand, &key)).transpose()? {
+                let mode = match key.as_ref().map(|key| Key::new(strand, key)).transpose()? {
                     None => Mode::Values,
                     Some(Key::Sym(key)) => Mode::KeyValues(key.tag()),
                     Some(key @ Key::Pos(_)) => {
@@ -641,7 +670,9 @@ impl<'v> Protocol<'v> for Record<'v> {
                             let record = this.borrow(strand)?;
                             let found = record.get(&key, None);
                             let embryo = tuple::embryo(strand, found.is_some() as usize);
-                            embryo.finish(strand, found.map(Value::dup), &mut values);
+                            // SAFETY: the tuple is allocated; the copy moves straight into it
+                            let found = found.map(|value| unsafe { value.dup() });
+                            embryo.finish(strand, found, &mut values);
                             drop(record);
                             values.op_iter(strand, out).await
                         });
@@ -651,7 +682,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             }
             sym::COUNT => {
                 unpack!(strand, args => ?key);
-                let key = key.map(|key| Key::new(strand, &key)).transpose()?;
+                let key = key.as_ref().map(|key| Key::new(strand, key)).transpose()?;
                 let count = this.borrow(strand)?.count(key.as_ref());
                 let count = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
                 Output::set(strand, out, count);
@@ -702,7 +733,9 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
                 let borrow = this.borrow(strand)?;
                 let embryo = strand.builtin_types().record.embryo(strand);
-                embryo.finish(strand, Record::from_items(borrow.snapshot()), out);
+                // SAFETY: the record is allocated; the copies move straight into it
+                let items = unsafe { borrow.snapshot() };
+                embryo.finish(strand, Record::from_items(items), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -751,8 +784,13 @@ impl<'v> Protocol<'v> for Record<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let snapshot = snapshot(strand, &this)?;
-        pack::unpack(strand, snapshot, sig, out)
+        with_slots!(strand, |mut items| {
+            snapshot(strand, &this, &mut items)?;
+            let items = items
+                .downcast_ref(strand.builtin_types().pack)
+                .expect("pack");
+            pack::unpack(strand, items, sig, out)
+        })
     }
 }
 
@@ -802,15 +840,17 @@ impl<'v> Iter<'v> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let epoch = this.borrow(strand)?.epoch;
+        let embryo = strand.builtin_types().record_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
         let iter = Iter {
-            record: this.to_strong(),
+            record: unsafe { this.to_strong() },
             epoch,
             mode,
             slot: Cell::new(0),
             int: Cell::new(0),
             seen: RefCell::new(HashSet::new()),
         };
-        strand.builtin_types().record_iter.create(strand, iter, out);
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 }

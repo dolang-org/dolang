@@ -205,7 +205,8 @@ impl<'v> Protocol<'v> for StrObj {
                 strand.builtin_types().str_unicode_iter.create(
                     strand,
                     UnicodeIter::new(
-                        PinStr::new(this.to_strong()),
+                        // SAFETY: the pin owns its reference as a root
+                        PinStr::new(unsafe { this.to_strong() }),
                         if matches!(method.tag(), sym::SCALARS | sym::SCALAR_BOUNDS) {
                             UnicodeKind::Scalar
                         } else {
@@ -342,7 +343,8 @@ impl<'v> Protocol<'v> for StrObj {
                 strand.builtin_types().str_split.create(
                     strand,
                     Split {
-                        str: PinStr::new(this.to_strong()),
+                        // SAFETY: the pin owns its reference as a root
+                        str: PinStr::new(unsafe { this.to_strong() }),
                         delim: delim_gc,
                         state,
                         forward,
@@ -662,13 +664,13 @@ fn fill_unpack<'v, 's>(
     }
     for (i, default) in sig.optional.iter().enumerate() {
         if !next(strand, out.at(sig.required + i)) {
-            out.at(sig.required + i).store(default.dup());
+            Output::set(strand, out.at(sig.required + i), default);
         }
     }
     let pos_count = sig.required + sig.optional.len();
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            out.at(pos_count + i).store(default.dup());
+            Output::set(strand, out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -937,8 +939,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         // Fill keys with defaults
         let pos_count = sig.required + sig.optional.len();
         for (i, key) in sig.keys.iter().enumerate() {
-            out.at(pos_count + i)
-                .store(key.default.as_ref().unwrap().dup());
+            Output::set(strand, out.at(pos_count + i), key.default.as_ref().unwrap());
         }
 
         let mut borrow = this.borrow(strand)?.clone();
@@ -956,7 +957,7 @@ impl<'v> Protocol<'v> for Split<'v> {
             if let Some((start, end)) = borrow.next_segment() {
                 Output::set(strand, out.at(sig.required + i), &borrow.str[start..end]);
             } else {
-                out.at(sig.required + i).store(sig.optional[i].dup());
+                Output::set(strand, out.at(sig.required + i), &sig.optional[i]);
             }
         }
 

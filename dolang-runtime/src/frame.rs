@@ -533,7 +533,8 @@ impl<'v> CallFrame<'v> {
     ///
     /// # Safety
     ///
-    /// The chain must not be empty.
+    /// The chain must not be empty. The result is loose, as for [`gc::Base::dup`]: it
+    /// must be dropped, or moved into a scanned location, before anything allocates.
     pub(crate) unsafe fn pop_upvars(&self) -> Gc<'v, Upvars<'v>> {
         unsafe {
             // SAFETY: nothing borrows the chain across these writes

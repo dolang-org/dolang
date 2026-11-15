@@ -269,7 +269,9 @@ pub(crate) fn create<'v, I: DictLike<'v>>(
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
     let ty = owner.ty(vm);
     let embryo = vm.builtin_types().dict_view.embryo(alloc);
-    let owner = Value::from_input(alloc, owner);
+    // SAFETY: the view is allocated; the owner, rooted as an instance, is copied
+    // straight into its payload
+    let owner = unsafe { Value::from_input(alloc, owner) };
     embryo.finish_imm(
         alloc,
         View {
@@ -732,12 +734,12 @@ fn store_unconsumed<'v>(
     out: impl Output<'v>,
 ) {
     let embryo = strand.builtin_types().dict_view_rest.embryo(strand);
-    // The copies move straight into the allocated rest
+    // SAFETY: the rest is allocated; the copies move straight into it
     let pairs = pairs
         .iter()
         .zip(consumed.iter().by_vals())
         .filter(|(_, consumed)| !*consumed)
-        .map(|((key, value), _)| (key.dup(), value.dup()))
+        .map(|((key, value), _)| unsafe { (key.dup(), value.dup()) })
         .collect();
     embryo.finish_imm(strand, Rest { pairs }, out);
 }
@@ -811,7 +813,7 @@ fn unpack_sig_pairs<'v, 's>(
     }
     let pos_count = sig.optional.len();
     for (index, default) in sig.optional.iter().enumerate() {
-        out.at(index).store(default.dup());
+        Output::set(strand, out.at(index), default);
     }
     for (offset, spec) in sig.keys.iter().enumerate() {
         let found = with_slots!(strand, |mut key| {
@@ -820,9 +822,9 @@ fn unpack_sig_pairs<'v, 's>(
         });
         if let Some((found, (_, value))) = found {
             consumed.set(found, true);
-            out.at(pos_count + offset).store(value.dup());
+            Output::set(strand, out.at(pos_count + offset), value);
         } else if let Some(default) = &spec.default {
-            out.at(pos_count + offset).store(default.dup());
+            Output::set(strand, out.at(pos_count + offset), default);
         } else {
             return Err(Error::missing_key(strand, &spec.kind));
         }
@@ -1260,8 +1262,8 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let embryo = strand.builtin_types().dict_view_iter.embryo(strand);
-        // The handle moves straight into the allocated iterator
-        let rest = this.to_strong();
+        // SAFETY: the handle moves straight into the allocated iterator
+        let rest = unsafe { this.to_strong() };
         embryo.finish(strand, Iter { rest, index: 0 }, out);
         Ok(())
     }

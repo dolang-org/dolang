@@ -414,7 +414,8 @@ impl<'v> Input<'v> for &ErrorRoot<'v, '_> {
         mut out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(self.dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.dup() });
         None
     }
 }
@@ -1134,7 +1135,8 @@ impl<'v, 's> Error<'v, 's> {
         backtrace: &Value<'v>,
     ) -> Result<'v, 's, Self> {
         let mut root = ErrorRoot::new(strand);
-        Output::as_slot(&mut root, Sealed).store(err.dup());
+        // SAFETY: the copy is stored into the scanned root at once
+        Output::as_slot(&mut root, Sealed).store(unsafe { err.dup() });
         if !backtrace.is_nil() && !root.fill_backtrace(strand.vm(), backtrace) {
             return Err(Error::type_error_raw(strand, "expected inspect.Backtrace"));
         }

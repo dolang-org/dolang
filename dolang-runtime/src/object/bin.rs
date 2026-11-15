@@ -381,7 +381,8 @@ impl<'v> Protocol<'v> for BinObj {
                 strand.builtin_types().bin_split.create(
                     strand,
                     Split {
-                        str: PinBin::new(this.to_strong()),
+                        // SAFETY: the pin owns its reference as a root
+                        str: PinBin::new(unsafe { this.to_strong() }),
                         delim: delim_gc,
                         state,
                         forward,
@@ -749,8 +750,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         // Fill keys with defaults
         let pos_count = sig.required + sig.optional.len();
         for (i, key) in sig.keys.iter().enumerate() {
-            out.at(pos_count + i)
-                .store(key.default.as_ref().unwrap().dup());
+            Output::set(strand, out.at(pos_count + i), key.default.as_ref().unwrap());
         }
 
         let mut borrow = this.borrow(strand)?.clone();
@@ -768,7 +768,7 @@ impl<'v> Protocol<'v> for Split<'v> {
             if let Some((start, end)) = borrow.next_segment() {
                 Output::set(strand, out.at(sig.required + i), &borrow.str[start..end]);
             } else {
-                out.at(sig.required + i).store(sig.optional[i].dup());
+                Output::set(strand, out.at(sig.required + i), &sig.optional[i]);
             }
         }
 

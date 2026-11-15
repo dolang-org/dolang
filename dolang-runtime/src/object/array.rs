@@ -864,22 +864,32 @@ impl<'v> Protocol<'v> for Array<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         if let Some(slice) = range::slice(index, strand, borrow.inner.len())? {
+            if let range::Slice::Contiguous { start, end } = slice
+                && borrow.inner.get(start..end).is_none()
+            {
+                return Err(Error::index(strand));
+            }
+            let embryo = strand.builtin_types().array.embryo(strand);
             let mut array = Array::new();
+            // SAFETY (both arms): the array is allocated; the copies move straight into
+            // its payload
             match slice {
                 range::Slice::Contiguous { start, end } => {
-                    let slice = borrow
-                        .inner
-                        .get(start..end)
-                        .ok_or_else(|| Error::index(strand))?;
-                    array.inner.extend(slice.iter().map(Value::dup));
+                    array.inner.extend(
+                        borrow.inner[start..end]
+                            .iter()
+                            .map(|value| unsafe { value.dup() }),
+                    );
                 }
                 range::Slice::Stepped(indices) => {
-                    array
-                        .inner
-                        .extend(indices.into_iter().map(|i| borrow.inner[i].dup()));
+                    array.inner.extend(
+                        indices
+                            .into_iter()
+                            .map(|i| unsafe { borrow.inner[i].dup() }),
+                    );
                 }
             }
-            strand.builtin_types().array.create(strand, array, out);
+            embryo.finish(strand, array, out);
             return Ok(());
         }
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
@@ -910,28 +920,50 @@ impl<'v> Protocol<'v> for Array<'v> {
                     let source_borrow =
                         source.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     if let Some(mut target_borrow) = this.receiver.borrow_mut() {
-                        target_borrow
-                            .inner
-                            .splice(start..end, source_borrow.inner.iter().map(Value::dup));
+                        // SAFETY: the copies move straight into the target's payload
+                        target_borrow.inner.splice(
+                            start..end,
+                            source_borrow
+                                .inner
+                                .iter()
+                                .map(|value| unsafe { value.dup() }),
+                        );
                         return Ok(());
                     }
                     // Assigning an array into itself: splice from a snapshot
-                    let snapshot =
-                        tuple::tuple(strand.vm(), source_borrow.inner.iter().map(Value::dup));
-                    drop(source_borrow);
-                    with_pin!(strand, snapshot, |snapshot| {
-                        this.borrow_mut(strand)?
-                            .inner
-                            .splice(start..end, snapshot.items().iter().map(Value::dup));
-                        Ok(())
+                    with_slots!(strand, |mut snapshot| {
+                        // SAFETY: the tuple is allocated before the iterator runs, so the
+                        // copies move straight into it
+                        tuple::create(
+                            strand,
+                            source_borrow
+                                .inner
+                                .iter()
+                                .map(|value| unsafe { value.dup() }),
+                            &mut snapshot,
+                        );
+                        drop(source_borrow);
+                        let snapshot = snapshot
+                            .downcast_ref(strand.builtin_types().tuple)
+                            .expect("tuple");
+                        with_pin!(strand, snapshot, |snapshot| {
+                            // SAFETY: the copies move straight into the target's payload
+                            this.borrow_mut(strand)?.inner.splice(
+                                start..end,
+                                snapshot.items().iter().map(|value| unsafe { value.dup() }),
+                            );
+                            Ok(())
+                        })
                     })
                 });
             }
             if let Some(source) = value.downcast_ref(strand.builtin_types().tuple) {
                 return with_pin!(strand, source, |source| {
-                    this.borrow_mut(strand)?
-                        .inner
-                        .splice(start..end, source.items().iter().map(Value::dup));
+                    // SAFETY: the copies move straight into the target's payload
+                    this.borrow_mut(strand)?.inner.splice(
+                        start..end,
+                        source.items().iter().map(|value| unsafe { value.dup() }),
+                    );
                     Ok(())
                 });
             }
@@ -1034,7 +1066,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 match index::element(borrow.inner.len(), index)
                     .and_then(|index| borrow.inner.get(index))
                 {
-                    Some(value) => out.store(value.dup()),
+                    Some(value) => Output::set(strand, &mut out, value),
                     None => {
                         if let Some(mut default) = default {
                             out.store(default.take())
@@ -1103,19 +1135,27 @@ impl<'v> Protocol<'v> for Array<'v> {
                     });
                 }
                 let borrow = this.borrow(strand)?;
+                let embryo = strand.builtin_types().array.embryo(strand);
+                // SAFETY: the array is allocated; the copies move straight into its payload
                 let array = Array {
-                    inner: borrow.inner.iter().map(Value::dup).collect(),
+                    inner: borrow
+                        .inner
+                        .iter()
+                        .map(|value| unsafe { value.dup() })
+                        .collect(),
                 };
-                strand.builtin_types().array.create(strand, array, out);
+                embryo.finish(strand, array, out);
                 Ok(())
             }
             sym::SORT => Self::sort(this, strand, args).await,
             sym::PAIRS => {
                 unpack!(strand, args =>);
-                strand.builtin_types().array_pairs.create(
+                let embryo = strand.builtin_types().array_pairs.embryo(strand);
+                // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+                embryo.finish(
                     strand,
                     Pairs {
-                        array: this.to_strong(),
+                        array: unsafe { this.to_strong() },
                         index: 0,
                     },
                     out,
@@ -1184,10 +1224,12 @@ impl<'v> Protocol<'v> for Array<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().array_iter.create(
+        let embryo = strand.builtin_types().array_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+        embryo.finish(
             strand,
             Iter {
-                array: this.to_strong(),
+                array: unsafe { this.to_strong() },
                 index: 0,
             },
             out,
@@ -1220,7 +1262,9 @@ impl<'v> Protocol<'v> for Array<'v> {
         let borrow = this.borrow(strand)?;
         let index = unpack_from(strand, sig, &mut out, &borrow, 0, false)?;
         if let Some(i) = sig.pos_rest_slot() {
-            make_rest(strand, || this.to_strong(), index, out.at(i));
+            // SAFETY: `make_rest` calls this after allocating the rest, whose payload
+            // the copy of the pinned receiver becomes at once
+            make_rest(strand, || unsafe { this.to_strong() }, index, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -1231,12 +1275,10 @@ impl<'v> Protocol<'v> for Array<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let array = this.to_strong();
-        strand
-            .vm()
-            .builtin_types()
-            .array_sink
-            .create_imm(strand, Sink { array }, out);
+        let embryo = strand.builtin_types().array_sink.embryo(strand);
+        // SAFETY: the sink is allocated; the pinned receiver is copied straight into it
+        let array = unsafe { this.to_strong() };
+        embryo.finish_imm(strand, Sink { array }, out);
         Ok(())
     }
 
@@ -1272,17 +1314,17 @@ fn unpack_from<'v, 's>(
             let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
             tuple::create_pair(strand, index, elem, out.at(i))
         } else {
-            out.at(i).store(elem.dup())
+            Output::set(strand, out.at(i), elem)
         }
     }
     if len < pos_count {
         for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            out.at(min + i).store(default.dup());
+            Output::set(strand, out.at(min + i), default);
         }
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            out.at(pos_count + i).store(default.dup());
+            Output::set(strand, out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),

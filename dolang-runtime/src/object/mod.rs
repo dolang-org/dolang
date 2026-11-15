@@ -457,14 +457,17 @@ impl<'v> Singletons<'v> {
         arena: &crate::gc::arena::Arena<'v>,
         builtin_types: &BuiltinTypes<'v>,
     ) -> Self {
+        // SAFETY (both macros): the singletons are permanent: the VM owns them for its
+        // whole life and nothing ever releases them, so they are built before anything
+        // can run a collection and are never candidates for one afterwards
         macro_rules! v {
             ($vtbl:expr, $data:expr) => {
-                Value::from_object(GcObj::new(arena, $vtbl, $data))
+                unsafe { Value::from_object(GcObj::new(arena, $vtbl, $data)) }
             };
         }
         macro_rules! imm {
             ($vtbl:expr, $data:expr) => {
-                Value::from_object(GcObj::new_imm(arena, $vtbl, $data))
+                unsafe { Value::from_object(GcObj::new_imm(arena, $vtbl, $data)) }
             };
         }
 
@@ -701,10 +704,13 @@ impl<'v> BoundMethod<'v> {
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let embryo = vm.builtin_types().bound_method.embryo(alloc);
-        let rcvr = Value::from_input(alloc, rcvr);
+        // SAFETY: the bound method is allocated; the receiver moves from its input
+        // straight into the payload
+        let rcvr = unsafe { Value::from_input(alloc, rcvr) };
         let bound = BoundMethod {
             rcvr,
-            method: vm.sym_obj(method),
+            // SAFETY: as for the receiver
+            method: unsafe { vm.sym_obj(method) },
         };
         embryo.finish_imm(alloc, bound, out);
     }

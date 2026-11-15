@@ -16,7 +16,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Value},
-    vm::Vm,
+    vm::Alloc,
 };
 
 use super::{
@@ -97,7 +97,8 @@ impl<'v> Receiver<'v> {
         } else if self.recv_closed {
             SendResult::Stop
         } else if self.queue.len() < self.limit {
-            self.queue.push_back(value.dup());
+            // SAFETY: the copy moves straight into the scanned queue
+            self.queue.push_back(unsafe { value.dup() });
             if let Some(wake) = self.receivers.pop_front() {
                 wake.wake();
             }
@@ -434,10 +435,19 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
     }
 }
 
+/// Create a channel with room for `limit` queued values, storing its sending end into
+/// `send` and its receiving end into `recv`.
+///
+/// The receiver is created into `recv` first, then copied from there into the sender
+/// once the sender is allocated.
 pub(crate) fn pair<'v>(
-    vm: &Vm<'v>,
+    alloc: &mut impl Alloc<'v>,
     limit: usize,
-) -> (GcObj<'v, SenderObj<'v>>, GcObj<'v, Receiver<'v>>) {
+    send: impl Output<'v>,
+    mut recv: impl Output<'v>,
+) {
+    let types = alloc.alloc_vm(crate::vm::private::Sealed).builtin_types();
+    let mut recv = Slot::from_output(&mut recv);
     let receiver = Receiver {
         queue: VecDeque::new(),
         senders: VecDeque::new(),
@@ -447,11 +457,17 @@ pub(crate) fn pair<'v>(
         poison: None,
         limit,
     };
-    let receiver = GcObj::new(vm.arena(), vm.builtin_types().channel_recv, receiver);
-    // SAFETY: TODO(#1707): the pair is loose, fresh from `GcObj::new`
+    types
+        .channel_recv
+        .create(alloc, receiver, Slot::reborrow(&mut recv));
+    let embryo = types.channel_send.embryo(alloc);
+    let receiver = recv
+        .downcast_ref(types.channel_recv)
+        .expect("channel receiver");
+    // SAFETY: the sender is allocated; the receiver, rooted in `recv`, is copied straight
+    // into its payload
     let sender = Sender {
         receiver: unsafe { receiver.dup() },
     };
-    let sender = GcObj::new_imm(vm.arena(), vm.builtin_types().channel_send, sender);
-    (sender, receiver)
+    embryo.finish_imm(alloc, sender, send);
 }

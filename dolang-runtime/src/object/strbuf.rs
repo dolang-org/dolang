@@ -427,14 +427,13 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 if chunk_size == 0 {
                     return Err(Error::value(strand, "chunk size must be positive"));
                 }
+                let embryo = strand.builtin_types().strbuf_chunks.embryo(strand);
+                // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
                 let chunks = Chunks {
-                    buf: this.to_strong(),
+                    buf: unsafe { this.to_strong() },
                     chunk_size,
                 };
-                strand
-                    .builtin_types()
-                    .strbuf_chunks
-                    .create(strand, chunks, out);
+                embryo.finish(strand, chunks, out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(

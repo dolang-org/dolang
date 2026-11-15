@@ -146,16 +146,17 @@ impl<'v> Vm<'v> {
             input: Singleton::Null,
             output: Singleton::Null,
             {
-                let mut module = self.native_modules.borrow().get(name).map(Value::dup);
-                if module.is_none() {
+                let mut found = self.native_modules.borrow().contains_key(name);
+                if !found {
                     let unit = self.lazy.borrow().by_module.get(name).copied();
                     if let Some(unit) = unit {
                         force_lazy_unit(strand, unit);
-                        module = self.native_modules.borrow().get(name).map(Value::dup);
+                        found = self.native_modules.borrow().contains_key(name);
                     }
                 }
-                if let Some(module) = module {
-                    out.store(module);
+                if found {
+                    let modules = self.native_modules.borrow();
+                    Output::set(strand, &mut out, &modules[name]);
                     return Ok(());
                 }
                 loop {
@@ -166,7 +167,7 @@ impl<'v> Vm<'v> {
                             }
                         }
                         Some(ImportCacheEntry::Ready(value)) => {
-                            out.store(value.dup());
+                            Output::set(strand, &mut out, value);
                             return Ok(());
                         }
                         None => break,
@@ -208,9 +209,12 @@ impl<'v> Vm<'v> {
                         self.import_cache.borrow_mut().remove(name);
                         return Err(e);
                     }
+                    // SAFETY: the copy moves straight into the import cache, which, like
+                    // `native_modules`, holds it for the VM's lifetime
+                    let module = unsafe { out.dup() };
                     self.import_cache
                         .borrow_mut()
-                        .insert(name.to_owned(), ImportCacheEntry::Ready(out.dup()));
+                        .insert(name.to_owned(), ImportCacheEntry::Ready(module));
                     return Ok(());
                 }
                 self.import_cache.borrow_mut().remove(name);
@@ -441,7 +445,9 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         let embryo = strand.builtin_types().arg_acc.embryo(strand);
         let vm = strand.vm();
-        embryo.finish(strand, ArgAcc::new(pack::pack_items(vm, args)), out);
+        // SAFETY: the accumulator is allocated; the items move straight into it
+        let items = unsafe { pack::pack_items(vm, args) };
+        embryo.finish(strand, ArgAcc::new(items), out);
         Ok(())
     }
 
@@ -631,9 +637,12 @@ impl<'v> Vm<'v> {
                 strand: &mut Strand<'v, 's>,
                 value: Slot<'v, '_>,
             ) -> Result<'v, 's, ()> {
-                let value = ValueCell::new(strand, value);
-                // SAFETY: nothing else borrows the buffer during the push
-                unsafe { self.frame.items() }.push((None, value));
+                // SAFETY: the value moves from its slot into the frame's scanned item
+                // buffer, and nothing else borrows the buffer during the push
+                unsafe {
+                    let value = ValueCell::new(strand, value);
+                    self.frame.items().push((None, value));
+                }
                 Ok(())
             }
 
@@ -643,10 +652,12 @@ impl<'v> Vm<'v> {
                 key: Sym<'v, '_>,
                 value: Slot<'v, '_>,
             ) -> Result<'v, 's, ()> {
-                let key = strand.sym_obj(key);
-                let value = ValueCell::new(strand, value);
-                // SAFETY: nothing else borrows the buffer during the push
-                unsafe { self.frame.items() }.push((Some(key), value));
+                // SAFETY: as for `positional`; making the symbol object does not allocate
+                unsafe {
+                    let key = strand.sym_obj(key);
+                    let value = ValueCell::new(strand, value);
+                    self.frame.items().push((Some(key), value));
+                }
                 Ok(())
             }
 
@@ -881,6 +892,7 @@ impl<'v> Vm<'v> {
                     let count = reader.usize();
                     frame.push_upvars(self.arena(), count)
                 }
+                // SAFETY: the popped frame is dropped at once
                 PopUpvars => drop(frame.pop_upvars()),
                 Call => {
                     // Set current PC in frame header in case a backtrace is needed
@@ -1236,6 +1248,8 @@ impl<'v> Vm<'v> {
                     func.store(Value::NIL);
                     // Pop the guard's upvar frame and mark it stale so future jumps to
                     // it fail
+                    // SAFETY: the popped frame is only compared and dropped below; nothing
+                    // allocates while it is held
                     let guard = frame.pop_upvars();
                     guard.read(|p| p.annex().prefix.stale.set(true));
                     // Check if this was a normal return or a caught NlBranch

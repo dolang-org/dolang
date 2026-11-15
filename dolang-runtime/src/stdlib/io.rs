@@ -624,9 +624,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         reg.register_state::<ConcatType>(concat);
         let cursor = reg.register_type::<Cursor>();
         let window = reg.register_type::<Window>();
-        let io = reg.singletons().io.dup();
+        let io = &reg.singletons().io;
         reg.module("io")
-            .value("Io", &io)
+            .value("Io", io)
             .value("Buffered", buffered)
             .value("Concat", concat)
             .value("Cursor", cursor)

@@ -1001,28 +1001,33 @@ impl<'v, T, P, E> TypeHandle<'v, T>
 where
     T: Protocol<'v, Annex = gc::Tail<P, [E]>>,
 {
-    /// Creates an object whose annex holds `prefix` and the elements of `iter`,
-    /// and places it into `out`.
+    /// Creates an object whose annex holds the prefix `prefix` returns and the elements
+    /// of `iter`, and places it into `out`.
+    ///
+    /// The object is allocated before `prefix` is called or `iter` is advanced, so both
+    /// can move references from rooted locations straight into the annex.
     pub(crate) fn create_tail(
         &self,
         alloc: &mut impl Alloc<'v>,
         value: T,
-        prefix: P,
+        prefix: impl FnOnce() -> P,
         iter: impl IntoIterator<Item = E, IntoIter: ExactSizeIterator>,
         out: impl Output<'v>,
     ) {
         let iter = iter.into_iter();
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let arena = vm.arena();
-        let obj: GcObj<'v, T> = unsafe {
-            gc::Embryo::new_tail(arena, iter.len()).finish_tail(
+        let embryo = unsafe { gc::Embryo::new_tail(arena, iter.len()) };
+        // SAFETY: the object is stored into `out` at once
+        let obj = unsafe {
+            Value::from_object::<T>(embryo.finish_tail(
                 Header::new(arena, self.vtbl),
                 value,
-                prefix,
+                prefix(),
                 iter,
-            )
+            ))
         };
-        Output::set(alloc, out, Value::from_object(obj));
+        Output::set(alloc, out, obj);
     }
 }
 
@@ -1073,11 +1078,15 @@ impl<'v, T: Protocol<'v, Annex: Sized>> ObjEmbryo<'v, T> {
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let arena = vm.arena();
-        let obj: GcObj<'v, T> = unsafe {
-            self.embryo
-                .finish_sized(Header::new(arena, self.handle.vtbl), value, annex)
+        // SAFETY: the finished object is stored into `out` at once
+        let obj = unsafe {
+            Value::from_object::<T>(self.embryo.finish_sized(
+                Header::new(arena, self.handle.vtbl),
+                value,
+                annex,
+            ))
         };
-        Output::set(alloc, out, Value::from_object(obj));
+        Output::set(alloc, out, obj);
     }
 }
 
@@ -1232,11 +1241,17 @@ impl<'v, 'a, T: ?Sized + Boxable<Header>> Recv<'v, 'a, T> {
             .ok_or_else(|| Error::concurrency(strand))
     }
 
-    pub(crate) fn to_strong(&self) -> GcObj<'v, T>
+    /// A new reference to the receiver.
+    ///
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn to_strong(&self) -> GcObj<'v, T>
     where
         <T as Boxable<Header>>::Inner: Upcast<Header>,
     {
-        self.receiver.to_strong()
+        // SAFETY: the caller's contract
+        unsafe { self.receiver.to_strong() }
     }
 }
 
@@ -1264,9 +1279,12 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for Recv<'v, 'a, T> {
         mut out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(match self.delegator {
-            Some(delegator) => delegator.dup(),
-            None => Value::from_object(self.receiver.to_strong()),
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe {
+            match self.delegator {
+                Some(delegator) => delegator.dup(),
+                None => Value::from_object(self.receiver.to_strong()),
+            }
         });
         None
     }
@@ -1280,9 +1298,12 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for &Recv<'v, 'a, T> {
         mut out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(match self.delegator {
-            Some(delegator) => delegator.dup(),
-            None => Value::from_object(self.receiver.to_strong()),
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe {
+            match self.delegator {
+                Some(delegator) => delegator.dup(),
+                None => Value::from_object(self.receiver.to_strong()),
+            }
         });
         None
     }
@@ -1297,7 +1318,7 @@ impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the duplicate moves straight into the output slot
-        out.store(Value::from_object(unsafe { self.dup() }));
+        out.store(unsafe { Value::from_object(self.dup()) });
         None
     }
 }
@@ -1652,19 +1673,27 @@ impl<'v, T: Upcast<Header>> AsHeader for gc::Base<'v, T> {
 }
 
 impl<'v, T: Protocol<'v, Annex: Sized>> GcObj<'v, T> {
-    pub(crate) fn new(arena: &Arena<'v>, handle: TypeHandle<'v, T>, value: T) -> Self
+    /// # Safety
+    /// The new object is loose: it must move straight into a scanned location, with no
+    /// allocation or strand access in between.
+    pub(crate) unsafe fn new(arena: &Arena<'v>, handle: TypeHandle<'v, T>, value: T) -> Self
     where
         T::Annex: Default,
     {
+        // SAFETY: the caller's contract
         unsafe { gc::Base::from_parts(arena, Header::new(arena, handle.vtbl), value) }
     }
 
-    pub(crate) fn new_annex(
+    /// # Safety
+    /// The new object is loose: it must move straight into a scanned location, with no
+    /// allocation or strand access in between.
+    pub(crate) unsafe fn new_annex(
         arena: &Arena<'v>,
         handle: TypeHandle<'v, T>,
         value: T,
         annex: T::Annex,
     ) -> Self {
+        // SAFETY: the caller's contract
         unsafe { gc::Base::from_parts_annex(arena, Header::new(arena, handle.vtbl), value, annex) }
     }
 }
@@ -1673,8 +1702,16 @@ impl<'v, T: gc::ImmState> GcObj<'v, gc::Imm<T>>
 where
     gc::Imm<T>: Protocol<'v, Annex = T>,
 {
-    pub(crate) fn new_imm(arena: &Arena<'v>, handle: TypeHandle<'v, gc::Imm<T>>, state: T) -> Self {
-        Self::new_annex(arena, handle, gc::Imm::UNIT, state)
+    /// # Safety
+    /// The new object is loose: it must move straight into a scanned location, with no
+    /// allocation or strand access in between.
+    pub(crate) unsafe fn new_imm(
+        arena: &Arena<'v>,
+        handle: TypeHandle<'v, gc::Imm<T>>,
+        state: T,
+    ) -> Self {
+        // SAFETY: the caller's contract
+        unsafe { Self::new_annex(arena, handle, gc::Imm::UNIT, state) }
     }
 }
 

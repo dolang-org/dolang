@@ -127,12 +127,13 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
     ) -> Result<'v, 's, ()> {
         let fields = this.borrow(strand)?;
         let embryo = strand.builtin_types().field_pairs.embryo(strand);
-        // SAFETY: the symbols move straight into the allocated iterator
+        // SAFETY: the symbols and the receiver move straight into the allocated iterator
         let symbols = fields.symbols.iter().map(|s| unsafe { s.dup() }).collect();
+        let receiver = unsafe { fields.receiver.dup() };
         embryo.finish(
             strand,
             FieldPairs {
-                fields: FieldIter::new(fields.receiver.dup(), symbols),
+                fields: FieldIter::new(receiver, symbols),
                 index: 0,
             },
             out,
@@ -169,7 +170,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
 
         with_slots_dynamic!(strand, sig.len(), |mut staged| {
             for (index, default) in sig.optional.iter().enumerate() {
-                staged.at(index).store(default.dup());
+                Output::set(strand, staged.at(index), default);
             }
 
             let iter = this.borrow(strand)?;
@@ -187,7 +188,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 if let Some(index) = found {
                     resolve(strand, receiver, &symbols[index], staged.at(dest))?;
                 } else if let Some(default) = &key.default {
-                    staged.at(dest).store(default.dup());
+                    Output::set(strand, staged.at(dest), default);
                 } else {
                     return Err(match &key.kind {
                         UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -228,11 +229,9 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                     .filter(|(index, _)| !consumed.as_ref().is_some_and(|bits| bits[*index]))
                     .map(|(_, symbol)| unsafe { symbol.dup() })
                     .collect();
-                embryo.finish(
-                    strand,
-                    FieldIter::new(receiver.dup(), symbols),
-                    staged.at(i),
-                );
+                // SAFETY: as for the symbols
+                let receiver = unsafe { receiver.dup() };
+                embryo.finish(strand, FieldIter::new(receiver, symbols), staged.at(i));
             }
             for index in 0..sig.len() {
                 out.at(index).store(staged.at(index).take());
@@ -250,8 +249,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         let iter = this.borrow(strand)?;
         with_slots!(strand, |mut value| {
             for symbol in &iter.symbols {
-                let receiver = iter.receiver.dup();
-                resolve(strand, &receiver, symbol, Slot::reborrow(&mut value))?;
+                resolve(strand, &iter.receiver, symbol, Slot::reborrow(&mut value))?;
                 sink.symbol(
                     strand,
                     unsafe { Sym::from_obj(symbol) },
@@ -278,19 +276,23 @@ pub(crate) fn create<'v, 's>(
         let mut symbols = VecDeque::new();
         let mut writable = Vec::new();
         for member in inspect.members {
-            if strand.sym_obj(member.sym).private() {
+            if strand.sym_private(member.sym) {
                 continue;
             }
+            // SAFETY (both): the iterator is allocated, and nothing allocates before
+            // the names move into it below
             if matches!(member.kind, MemberKind::Getter | MemberKind::Property) {
-                symbols.push_back(strand.sym_obj(member.sym));
+                symbols.push_back(unsafe { strand.sym_obj(member.sym) });
             }
             if matches!(member.kind, MemberKind::Setter | MemberKind::Property) {
-                writable.push(strand.sym_obj(member.sym));
+                writable.push(unsafe { strand.sym_obj(member.sym) });
             }
         }
         symbols.make_contiguous().sort_by_key(|key| key.tag());
+        // SAFETY: the iterator is allocated; the receiver and member names move straight
+        // into it
         let fields = FieldIter {
-            receiver: receiver.dup(),
+            receiver: unsafe { receiver.dup() },
             symbols,
             writable,
         };

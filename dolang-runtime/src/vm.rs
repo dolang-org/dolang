@@ -189,7 +189,8 @@ pub trait AllocExt<'v>: Alloc<'v> {
     /// Intern `name` and store the symbol into `out`, as the `sym` function does.
     fn intern_sym(&mut self, name: &str, mut out: impl Output<'v>) {
         let vm = self.alloc_vm(private::Sealed);
-        Slot::from_output(&mut out).store(Value::from_object(vm.sym_register_obj(name)));
+        // SAFETY: stored into the scanned `out` at once
+        Slot::from_output(&mut out).store(unsafe { Value::from_object(vm.sym_register_obj(name)) });
     }
 
     /// Store a callable wrapping the async Rust function `func` into `out`.
@@ -236,7 +237,9 @@ pub trait AllocExt<'v>: Alloc<'v> {
         );
         let types = alloc.alloc_vm(private::Sealed).builtin_types();
         let embryo = types.native_function.embryo(&mut alloc);
-        let bound = ValueCell::from(out.take());
+        // SAFETY: the function is allocated; the bound value moves from the rooted `out`
+        // into its payload with no allocation in between
+        let bound = unsafe { ValueCell::from_value(out.take()) };
         embryo.finish_imm(
             &mut alloc,
             NativeFunction::bound(func).with_bound(bound),
@@ -540,18 +543,39 @@ impl<'v> Vm<'v> {
         self.symtab.name(sym)
     }
 
-    pub(crate) fn sym_register_obj(&self, name: &str) -> GcObj<'v, SymObj> {
-        self.symtab
-            .register(self.arena(), self.builtin_types.sym, name)
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn sym_register_obj(&self, name: &str) -> GcObj<'v, SymObj> {
+        // SAFETY: the caller's contract
+        unsafe {
+            self.symtab
+                .register(self.arena(), self.builtin_types.sym, name)
+        }
     }
 
-    pub(crate) fn sym_register_unique_obj(&self, name: &str) -> GcObj<'v, SymObj> {
-        self.symtab
-            .register_unique(self.arena(), self.builtin_types.sym, name)
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn sym_register_unique_obj(&self, name: &str) -> GcObj<'v, SymObj> {
+        // SAFETY: the caller's contract
+        unsafe {
+            self.symtab
+                .register_unique(self.arena(), self.builtin_types.sym, name)
+        }
     }
 
-    pub(crate) fn sym_obj(&self, sym: Sym<'v, '_>) -> GcObj<'v, SymObj> {
-        self.symtab.obj(sym)
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn sym_obj(&self, sym: Sym<'v, '_>) -> GcObj<'v, SymObj> {
+        // SAFETY: the caller's contract
+        unsafe { self.symtab.obj(sym) }
+    }
+
+    /// Whether `sym` is a private-field symbol.
+    pub(crate) fn sym_private(&self, sym: Sym<'v, '_>) -> bool {
+        self.symtab.private(sym)
     }
 
     /// Collect cycles if enough allocations have accumulated, pruning dead
@@ -603,7 +627,10 @@ impl<'v> Vm<'v> {
     /// - `packtab`: Argument patterns → sig::Pack specifications
     /// - `unpacktab`: Function signatures → sig::Unpack with default values
     /// - `sourcemap`: Delta-encoded offsets → (offset, line, file) tuples
-    fn load_bytecode(
+    ///
+    /// # Safety
+    /// The program is loose: the caller must move it straight into a scanned location.
+    unsafe fn load_bytecode(
         strand: &mut Strand<'v, '_>,
         bytecode: Bytecode,
         importer: impl Input<'v>,
@@ -635,33 +662,35 @@ impl<'v> Vm<'v> {
             })
             .collect();
 
-        // TODO(#1707): the symbol roots are loose until the program holds them.
-        let symroots: Vec<_> = verified
-            .symtab
-            .content
-            .iter()
-            .map(|s| {
-                let name = std::str::from_utf8(&main[s.name.clone()]).expect("verified UTF-8");
-                if s.private {
-                    strand.sym_register_unique_obj(name)
-                } else {
-                    strand.sym_register_obj(name)
-                }
-            })
-            .collect();
-
-        let symtab: Vec<_> = symroots
-            .iter()
-            .map(|s| unsafe { Sym::from_obj(s) })
-            .collect();
-
-        // Constants build in rooted slots, with the importer in the last one, and move into
-        // the program once its allocation exists.
+        // The symbol roots, then the constants, then the importer build in rooted slots,
+        // and move into the program once its allocation exists.
+        let nsyms = verified.symtab.content.len();
         let nconsts = verified.consttab.content.len();
-        with_slots_dynamic!(strand, nconsts + 1, |mut slots| {
-            Output::set(strand, slots.at(nconsts), importer);
+        with_slots_dynamic!(strand, nsyms + nconsts + 1, |mut slots| {
+            Output::set(strand, slots.at(nsyms + nconsts), importer);
+            let sym_ty = strand.builtin_types().sym;
+            for (i, s) in verified.symtab.content.iter().enumerate() {
+                let name = std::str::from_utf8(&main[s.name.clone()]).expect("verified UTF-8");
+                // SAFETY: the new symbol is stored into its rooted slot at once
+                let sym = unsafe {
+                    if s.private {
+                        strand.sym_register_unique_obj(name)
+                    } else {
+                        strand.sym_register_obj(name)
+                    }
+                };
+                Output::set(strand, slots.at(i), &sym);
+            }
+            // SAFETY: the symbol cells stay rooted, unwritten, until the program owns their
+            // symbols, which then root the `Sym`s for the program's life
+            let cells = slots.as_inner();
+            let symroot =
+                |i: usize| unsafe { cells[i].as_ref().downcast_ref(sym_ty).expect("symbol") };
+            let symtab: Vec<Sym<'v, 'v>> = (0..nsyms)
+                .map(|i| unsafe { Sym::from_obj(symroot(i)) })
+                .collect();
             for (i, c) in verified.consttab.content.iter().enumerate() {
-                let out = slots.at(i);
+                let out = slots.at(nsyms + i);
                 match c {
                     file::Const::Nil => Output::set(strand, out, Nil),
                     file::Const::Int(v) => Output::set(strand, out, *v),
@@ -685,15 +714,17 @@ impl<'v> Vm<'v> {
                     file::Const::Bin(file::BinId { start, end }) => {
                         Output::set(strand, out, &main[*start..*end]);
                     }
-                    file::Const::Sym(idx) => {
-                        Output::set(strand, out, unsafe { Sym::from_obj(&symroots[*idx]) })
-                    }
+                    file::Const::Sym(idx) => Output::set(strand, out, symtab[*idx]),
                 }
             }
 
             let embryo = unsafe { gc::Embryo::<Header, Program>::new_sized(strand.arena()) };
-            let importer = slots.at(nconsts).take();
-            let consttab: alias::Box<_> = (0..nconsts).map(|i| slots.at(i).take()).collect();
+            // SAFETY (from here to the finish): the program is allocated, and nothing
+            // allocates before its tables move into it
+            let symroots: Vec<_> = (0..nsyms).map(|i| unsafe { symroot(i).dup() }).collect();
+            let importer = slots.at(nsyms + nconsts).take();
+            let consttab: alias::Box<_> =
+                (0..nconsts).map(|i| slots.at(nsyms + i).take()).collect();
 
             let packtab: alias::Box<_> = verified
                 .packtab
@@ -718,9 +749,7 @@ impl<'v> Vm<'v> {
                                 .map(|p| match p {
                                     dolang_bytecode::Arg::Value => None,
                                     dolang_bytecode::Arg::Pack => unreachable!(),
-                                    dolang_bytecode::Arg::Key(id) => {
-                                        Some(unsafe { Sym::from_obj(&symroots[*id]) })
-                                    }
+                                    dolang_bytecode::Arg::Key(id) => Some(symtab[*id]),
                                 })
                                 .collect(),
                         )
@@ -735,7 +764,10 @@ impl<'v> Vm<'v> {
                 .map(|u| {
                     sig::Unpack::new(
                         u.required,
-                        u.optional.iter().map(|d| consttab[*d].dup()).collect(),
+                        u.optional
+                            .iter()
+                            .map(|d| unsafe { consttab[*d].dup() })
+                            .collect(),
                         u.keys
                             .iter()
                             .map(
@@ -743,7 +775,7 @@ impl<'v> Vm<'v> {
                                     UnpackKey {
                                         kind: match kind {
                                             dolang_bytecode::file::UnpackKeyKind::Sym(idx) => {
-                                                UnpackKeyKind::Sym(Sym::from_obj(&symroots[*idx]))
+                                                UnpackKeyKind::Sym(symtab[*idx])
                                             }
                                             dolang_bytecode::file::UnpackKeyKind::Const(idx) => {
                                                 UnpackKeyKind::Const(consttab[*idx].dup())
@@ -780,8 +812,6 @@ impl<'v> Vm<'v> {
                 })
                 .collect();
 
-            // TODO(#1707): the program annex does not visit its tables, so the constants
-            // and symbol roots are reachable only by reference count.
             // Safety: the header belongs to the embryo's arena and carries `Program`'s
             // vtable.
             unsafe {
@@ -1115,6 +1145,12 @@ impl<'v> Register<'v> {
     pub(crate) unsafe fn new(vm: &'v Vm<'v>) -> Self {
         Self { inner: vm }
     }
+
+    /// The VM's singletons, borrowed for the VM's lifetime rather than the register's, so
+    /// registration code can pass them by reference while building.
+    pub(crate) fn singletons(&self) -> &'v Singletons<'v> {
+        &self.inner.singletons
+    }
 }
 
 impl<'v> Alloc<'v> for Register<'v> {
@@ -1241,10 +1277,13 @@ impl<'v> Register<'v> {
     /// Resolve a name to a symbol. The returned symbol will live for the life of the VM.
     #[inline(never)]
     pub fn sym(&mut self, name: &str) -> Sym<'v, 'v> {
-        let root =
+        // SAFETY: the symbol moves straight into `symroots`, which keeps it for the VM's
+        // lifetime (a permanent root, like the singletons)
+        let root = unsafe {
             self.inner
                 .symtab
-                .register(self.inner.arena(), self.inner.builtin_types().sym, name);
+                .register(self.inner.arena(), self.inner.builtin_types().sym, name)
+        };
         // SAFETY: symroots keeps symbol rooted indefinitely (until VM is dropped).
         let sym = unsafe { Sym::from_obj(&root) };
         self.inner.symroots.push(root);
@@ -1704,8 +1743,12 @@ impl Bytecode {
         importer: impl Input<'v>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let loaded = Vm::load_bytecode(strand, self, importer);
-        let frame = unsafe { CallFrame::new(loaded, 0, None, Some(strand.fp)) };
+        // SAFETY: the program moves straight into the frame, which `run` links into the
+        // strand's scanned stack before anything allocates
+        let frame = unsafe {
+            let loaded = Vm::load_bytecode(strand, self, importer);
+            CallFrame::new(loaded, 0, None, Some(strand.fp))
+        };
         // SAFETY: no arguments to unpack
         unsafe {
             strand

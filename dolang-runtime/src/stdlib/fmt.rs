@@ -409,8 +409,7 @@ impl<'v> Object<'v> for FmtParam {
         let global = annex.global;
         let spec = merge_spec(strand, global, annex.spec, args)?;
         let borrow = this.borrow(strand)?;
-        let name = Ref::slot::<0>(&borrow).dup();
-        create_param(strand, global, spec, &name, None, out)
+        create_param(strand, global, spec, Ref::slot::<0>(&borrow), None, out)
     }
 
     /// A hole shows itself as the text it was written as.
@@ -494,8 +493,7 @@ fn write_param<'v, 's>(
     if let Some(source) = Ref::slot::<1>(&borrow).as_str(strand) {
         return with_str!(strand, source, |source| out.write_str(strand, source));
     }
-    let name = Ref::slot::<0>(&borrow).dup();
-    let name = param_name(strand, &name);
+    let name = param_name(strand, Ref::slot::<0>(&borrow));
     out.write_str(strand, &format!("${{#{name}}}"))
 }
 
@@ -776,11 +774,10 @@ fn render_segment<'v, 's>(
         // there is nothing to emit that would not be a guess at what belongs
         // there. That is a parameter the caller never supplied, and it is
         // reported as one, exactly as filling reports it.
-        let name = with_instance!(strand, param, |param| {
+        return with_instance!(strand, param, |param| {
             let borrow = param.borrow(strand)?;
-            Ok(Ref::slot::<0>(&borrow).dup())
-        })?;
-        return Err(unmatched_error(strand, &name, true));
+            Err(unmatched_error(strand, Ref::slot::<0>(&borrow), true))
+        });
     }
     let bound = global
         .types

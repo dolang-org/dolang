@@ -28,7 +28,7 @@ use crate::{
     },
     redirect,
     sig::Unpack,
-    strand::{Strand, with_scan},
+    strand::{Strand, with_scan, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
     value::{Nil, Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
@@ -335,7 +335,8 @@ async fn build<'v, 's>(
                         })?
                         .into_static_scope_unchecked()
                 };
-                let sym_obj = strand.sym_obj(sym);
+                // SAFETY: the symbol moves straight into the scanned tables
+                let sym_obj = unsafe { strand.sym_obj(sym) };
                 tables.symbols.borrow_mut().push(sym_obj);
                 let Some(Arg::Pos(mut default)) = args.next() else {
                     return Err(Error::type_error(
@@ -386,7 +387,8 @@ async fn build<'v, 's>(
                         })?
                         .into_static_scope_unchecked()
                 };
-                let sym_obj = strand.sym_obj(sym);
+                // SAFETY: the symbol moves straight into the scanned tables
+                let sym_obj = unsafe { strand.sym_obj(sym) };
                 tables.symbols.borrow_mut().push(sym_obj);
                 let Some(Arg::Pos(mut value)) = args.next() else {
                     return Err(Error::type_error(
@@ -479,6 +481,8 @@ async fn build<'v, 's>(
 
     // Every class ends its MRO with `Value`, which supplies the members every
     // value has, unless it names `Value` itself.
+    // SAFETY (every `dup` in this pass): the tables are rooted by the scan above, so
+    // each copy moves straight into a scanned table
     let value = TypeObject::Value.value(strand.vm());
     {
         let supers = tables.supers.borrow();
@@ -498,13 +502,13 @@ async fn build<'v, 's>(
                     if native_supers.iter().any(|s| s.repr_eq(type_obj)) {
                         continue;
                     }
-                    native_supers.push(type_obj.dup());
+                    native_supers.push(unsafe { type_obj.dup() });
                 }
                 for type_obj in cls.abstract_supers.iter() {
                     if abstract_supers.iter().any(|s| s.repr_eq(type_obj)) {
                         continue;
                     }
-                    abstract_supers.push(type_obj.dup());
+                    abstract_supers.push(unsafe { type_obj.dup() });
                 }
                 // Merge parent's entries (left-wins). Abstract entries copy the value directly.
                 for (sym, entry) in cls.entries.iter() {
@@ -514,13 +518,13 @@ async fn build<'v, 's>(
                     let new_entry = match entry {
                         ClassEntry::Field(old_slot) => {
                             let new_slot = field_defaults.len();
-                            field_defaults.push(cls.field_defaults[*old_slot].dup());
+                            field_defaults.push(unsafe { cls.field_defaults[*old_slot].dup() });
                             ClassEntry::Field(new_slot)
                         }
-                        ClassEntry::Method(v) => ClassEntry::Method(v.dup()),
+                        ClassEntry::Method(v) => ClassEntry::Method(unsafe { v.dup() }),
                         ClassEntry::Property(property) => ClassEntry::Property(Property {
-                            getter: property.getter.as_ref().map(Value::dup),
-                            setter: property.setter.as_ref().map(Value::dup),
+                            getter: property.getter.as_ref().map(|v| unsafe { v.dup() }),
+                            setter: property.setter.as_ref().map(|v| unsafe { v.dup() }),
                         }),
                         ClassEntry::Delegate(parent_slot, kind) => {
                             // Remap via parent's native_supers → our native_supers.
@@ -532,7 +536,7 @@ async fn build<'v, 's>(
                             ClassEntry::Delegate(our_slot, *kind)
                         }
                         ClassEntry::Abstract(type_obj, kind) => {
-                            ClassEntry::Abstract(type_obj.dup(), *kind)
+                            ClassEntry::Abstract(unsafe { type_obj.dup() }, *kind)
                         }
                     };
                     entries.insert(*sym, new_entry);
@@ -549,13 +553,14 @@ async fn build<'v, 's>(
                         // the parent's cell.
                         ClassTypeEntry::Field { slot: old_slot, .. } => {
                             let slot = type_field_defaults.len();
-                            type_field_defaults.push(cls.type_field_defaults[*old_slot].dup());
+                            type_field_defaults
+                                .push(unsafe { cls.type_field_defaults[*old_slot].dup() });
                             ClassTypeEntry::Field {
                                 slot,
                                 inherited: true,
                             }
                         }
-                        other => other.dup(),
+                        other => unsafe { other.dup() },
                     };
                     type_entries.insert(*sym, new_entry);
                 }
@@ -570,9 +575,9 @@ async fn build<'v, 's>(
                 {
                     let mut type_entries = tables.type_entries.borrow_mut();
                     for member in inspect.type_members {
-                        type_entries
-                            .entry(member_sym(member))
-                            .or_insert_with(|| ClassTypeEntry::Delegate(sup.dup(), member.kind));
+                        type_entries.entry(member_sym(member)).or_insert_with(|| {
+                            ClassTypeEntry::Delegate(unsafe { sup.dup() }, member.kind)
+                        });
                     }
                 }
 
@@ -589,17 +594,20 @@ async fn build<'v, 's>(
                 let mut entries = tables.entries.borrow_mut();
                 if inspect.is_abstract {
                     // Abstract super: store the type-object directly in each entry.
-                    tables.abstract_supers.borrow_mut().push(sup.dup());
+                    tables
+                        .abstract_supers
+                        .borrow_mut()
+                        .push(unsafe { sup.dup() });
                     for member in inspect.members {
-                        entries
-                            .entry(member_sym(member))
-                            .or_insert_with(|| ClassEntry::Abstract(sup.dup(), member.kind));
+                        entries.entry(member_sym(member)).or_insert_with(|| {
+                            ClassEntry::Abstract(unsafe { sup.dup() }, member.kind)
+                        });
                     }
                 } else {
                     // Concrete native super: members dispatched via instance native slot.
                     let mut native_supers = tables.native_supers.borrow_mut();
                     let our_slot = native_supers.len();
-                    native_supers.push(sup.dup());
+                    native_supers.push(unsafe { sup.dup() });
                     for member in inspect.members {
                         entries
                             .entry(member_sym(member))
@@ -621,7 +629,10 @@ async fn build<'v, 's>(
         for member in inspect.members {
             // SAFETY: as for the native super members above
             let sym = unsafe { member.sym.into_static_scope_unchecked() };
-            type_entries.insert(sym, ClassTypeEntry::Delegate(metatype.dup(), member.kind));
+            type_entries.insert(
+                sym,
+                ClassTypeEntry::Delegate(unsafe { metatype.dup() }, member.kind),
+            );
         }
     }
 
@@ -651,7 +662,7 @@ async fn build<'v, 's>(
         .entries
         .borrow()
         .iter()
-        .filter(|(sym, _)| !strand.sym_obj(**sym).private())
+        .filter(|(sym, _)| !strand.sym_private(**sym))
         .map(|(sym, entry)| {
             Member::new(
                 *sym,
@@ -669,7 +680,7 @@ async fn build<'v, 's>(
         .type_entries
         .borrow()
         .iter()
-        .filter(|(sym, _)| !strand.sym_obj(**sym).private())
+        .filter(|(sym, _)| !strand.sym_private(**sym))
         .map(|(sym, entry)| {
             Member::new(
                 *sym,
@@ -1017,10 +1028,15 @@ impl<'v> FieldDefault<'v> {
         }
     }
 
-    fn dup(&self) -> Self {
-        match self {
-            Self::Value(v) => Self::Value(v.dup()),
-            Self::Thunk(v) => Self::Thunk(v.dup()),
+    /// # Safety
+    /// As for [`Value::dup`]: the copy is loose.
+    unsafe fn dup(&self) -> Self {
+        // SAFETY: the caller's contract
+        unsafe {
+            match self {
+                Self::Value(v) => Self::Value(v.dup()),
+                Self::Thunk(v) => Self::Thunk(v.dup()),
+            }
         }
     }
 }
@@ -1090,14 +1106,17 @@ impl<'v> ClassTypeEntry<'v> {
         }
     }
 
-    fn dup(&self) -> Self {
+    /// # Safety
+    /// As for [`Value::dup`]: the copy is loose.
+    unsafe fn dup(&self) -> Self {
+        // SAFETY (throughout): the caller's contract
         match self {
             Self::Field { slot, inherited } => Self::Field {
                 slot: *slot,
                 inherited: *inherited,
             },
             Self::Method { value, inherited } => Self::Method {
-                value: value.dup(),
+                value: unsafe { value.dup() },
                 inherited: *inherited,
             },
             Self::Property {
@@ -1105,12 +1124,12 @@ impl<'v> ClassTypeEntry<'v> {
                 inherited,
             } => Self::Property {
                 property: Property {
-                    getter: property.getter.as_ref().map(Value::dup),
-                    setter: property.setter.as_ref().map(Value::dup),
+                    getter: property.getter.as_ref().map(|v| unsafe { v.dup() }),
+                    setter: property.setter.as_ref().map(|v| unsafe { v.dup() }),
                 },
                 inherited: *inherited,
             },
-            Self::Delegate(type_obj, kind) => Self::Delegate(type_obj.dup(), *kind),
+            Self::Delegate(type_obj, kind) => Self::Delegate(unsafe { type_obj.dup() }, *kind),
         }
     }
 }
@@ -1334,7 +1353,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         // Instance methods take priority, unbound
         match me.entry(field) {
             Some(ClassEntry::Method(v)) => {
-                out.store(v.dup());
+                Output::set(strand, &mut out, v);
                 return Ok(());
             }
             // An inherited native method has no function of its own. Bind it to
@@ -1629,11 +1648,11 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         });
                     }
                     Some(ClassTypeEntry::Delegate(type_obj, _)) => {
-                        let type_obj = type_obj.dup();
                         let delegator_obj = this.clone();
-                        return with_slots!(strand, |mut delegator| {
+                        return with_slots!(strand, |mut ty, mut delegator| {
+                            Output::set(strand, Slot::reborrow(&mut ty), type_obj);
                             Output::set(strand, Slot::reborrow(&mut delegator), &delegator_obj);
-                            Delegated::new(&type_obj, &delegator)
+                            Delegated::new(&*ty, &delegator)
                                 .op_mcall(strand, method, args, out)
                                 .await
                         });
@@ -1687,32 +1706,38 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
 ) -> Result<'v, 's, ()> {
     let me = this.annex();
     let native_slot_count = me.native_supers.len();
-    let class_obj = this.to_strong();
+    let field_count = me.field_defaults.len();
 
-    with_slots!(strand, |mut inst, mut tmp| {
-        // Native super slots come first, uninitialized; the fields follow
-        let mut cells = Vec::with_capacity(me.field_defaults.len());
-        for default in me.field_defaults.iter() {
-            match default {
-                FieldDefault::Value(value) => cells.push(value.dup().into()),
-                FieldDefault::Thunk(thunk) => {
-                    call!(strand, thunk, &mut tmp)?;
-                    cells.push(tmp.take().into());
+    with_slots!(strand, |mut inst, tmp| {
+        // The field values are rooted in slots while the thunks run
+        with_slots_dynamic!(strand, field_count, |mut fields| {
+            for (index, default) in me.field_defaults.iter().enumerate() {
+                match default {
+                    FieldDefault::Value(value) => Output::set(strand, fields.at(index), value),
+                    FieldDefault::Thunk(thunk) => call!(strand, thunk, fields.at(index))?,
                 }
             }
-        }
-        strand.builtin_types().class_instance.create_tail(
-            strand,
-            ClassInstance(PhantomData),
-            ClassInstancePrefix {
-                class: class_obj,
-                natives: (0..native_slot_count)
-                    .map(|_| ValueCell::default())
-                    .collect(),
-            },
-            cells,
-            &mut inst,
-        );
+            // Native super slots come first, uninitialized; the fields follow
+            let ty = strand.builtin_types().class_instance;
+            ty.create_tail(
+                strand,
+                ClassInstance(PhantomData),
+                || ClassInstancePrefix {
+                    // SAFETY: the instance is allocated, and the class, pinned as the
+                    // receiver, is copied straight into its prefix
+                    class: unsafe { this.to_strong() },
+                    natives: (0..native_slot_count)
+                        .map(|_| ValueCell::default())
+                        .collect(),
+                },
+                // SAFETY: the instance is allocated; each field moves from its rooted
+                // slot into the annex with no allocation in between
+                (0..field_count).map(|index| unsafe {
+                    ValueCell::from_value(fields.unchecked_at(index).take())
+                }),
+                &mut inst,
+            );
+        });
 
         let init = Sym::well_known(sym::INIT_METHOD);
         match me.entry(init) {
@@ -1769,7 +1794,9 @@ impl<'v> ClassTypeProxy<'v> {
         out: Slot<'v, '_>,
     ) {
         let embryo = strand.vm().builtin_types().class_type_proxy.embryo(strand);
-        let class = Value::from_object(class.to_strong());
+        // SAFETY: the proxy is allocated; the class, pinned as the receiver, is copied
+        // straight into its payload
+        let class = unsafe { Value::from_object(class.to_strong()) };
         embryo.finish_imm(strand, ClassTypeProxy { class }, out);
     }
 
@@ -3333,7 +3360,6 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
 mod tests {
     use super::*;
     use crate::{
-        strand::with_slots_dynamic,
         test_support::{args_from_slots, with_vm},
         vm::AllocExt,
     };
@@ -3342,17 +3368,10 @@ mod tests {
     fn create_roots_its_tables_across_collections() {
         with_vm::<4, _>(
             async |strand, [mut method, mut field, mut class, mut out]| {
-                let vm = strand.vm();
-                Output::set(
-                    strand,
-                    Slot::reborrow(&mut method),
-                    Value::from_object(vm.sym_register_obj("m")),
-                );
-                Output::set(
-                    strand,
-                    Slot::reborrow(&mut field),
-                    Value::from_object(vm.sym_register_obj("x")),
-                );
+                strand.intern_sym("m", Slot::reborrow(&mut method));
+
+                strand.intern_sym("x", Slot::reborrow(&mut field));
+
                 with_slots_dynamic!(strand, 7, |mut slots| {
                     Output::set(strand, slots.at(1), "C");
                     Output::set(strand, slots.at(2), "test");

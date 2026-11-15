@@ -65,17 +65,19 @@ impl<'v> Handle<'v> {
 
     /// Store the value of a background strand that succeeded and wake any joiner.
     pub(crate) fn complete_ok(&mut self, value: &Value<'v>) {
-        // The value is duplicated straight into this scanned handle
-        self.complete(Completion::Ok(value.dup()));
+        // SAFETY: the value is duplicated straight into this scanned handle
+        self.complete(Completion::Ok(unsafe { value.dup() }));
     }
 
     /// Store the error value and backtrace object of a background strand that failed
     /// and wake any joiner.
     pub(crate) fn complete_err(&mut self, value: &Value<'v>, backtrace: &Value<'v>) {
-        // The values are duplicated straight into this scanned handle
-        self.complete(Completion::Err {
-            value: value.dup(),
-            backtrace: backtrace.dup(),
+        // SAFETY: the values are duplicated straight into this scanned handle
+        self.complete(unsafe {
+            Completion::Err {
+                value: value.dup(),
+                backtrace: backtrace.dup(),
+            }
         });
     }
 
@@ -229,7 +231,13 @@ impl<'v> Protocol<'v> for Handle<'v> {
         match method.tag() {
             sym::JOIN => {
                 unpack!(strand, args =>);
-                join_handle(&this.to_strong(), strand, out).await
+                with_slots!(strand, |mut handle| {
+                    Output::set(strand, &mut handle, &this);
+                    let handle = handle
+                        .downcast_ref(strand.builtin_types().strand_handle)
+                        .expect("strand handle");
+                    join_handle(handle, strand, out).await
+                })
             }
             sym::CANCEL => {
                 unpack!(strand, args =>);
@@ -239,7 +247,13 @@ impl<'v> Protocol<'v> for Handle<'v> {
             }
             sym::WAIT => {
                 unpack!(strand, args =>);
-                wait_handle(&this.to_strong(), strand).await
+                with_slots!(strand, |mut handle| {
+                    Output::set(strand, &mut handle, &this);
+                    let handle = handle
+                        .downcast_ref(strand.builtin_types().strand_handle)
+                        .expect("strand handle");
+                    wait_handle(handle, strand).await
+                })
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
             tag if is_observe_method(tag) => {
@@ -369,8 +383,13 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let value = this.borrow(strand)?.value.dup();
-        value.next(strand, out).await
+        with_slots!(strand, |mut value| {
+            {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, &mut value, &borrow.value);
+            }
+            value.next(strand, out).await
+        })
     }
 
     // `close` isn't part of the `Iter` surface (`iter::classify`), but the
@@ -384,8 +403,13 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if field.tag() == sym::CLOSE {
-            let value = this.borrow(strand)?.value.dup();
-            value.op_get(strand, field, out)
+            with_slots!(strand, |mut value| {
+                {
+                    let borrow = this.borrow(strand)?;
+                    Output::set(strand, &mut value, &borrow.value);
+                }
+                value.op_get(strand, field, out)
+            })
         } else {
             iter::iter_get(strand, &this, field, out)
         }
@@ -399,8 +423,13 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if method.tag() == sym::CLOSE {
-            let value = this.borrow(strand)?.value.dup();
-            value.op_mcall(strand, method, args, out).await
+            with_slots!(strand, |mut value| {
+                {
+                    let borrow = this.borrow(strand)?;
+                    Output::set(strand, &mut value, &borrow.value);
+                }
+                value.op_mcall(strand, method, args, out).await
+            })
         } else {
             iter::iter_mcall(strand, &this, method, args, out).await
         }
@@ -475,8 +504,13 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
         strand: &'a mut Strand<'v, 's>,
         item: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let value = this.borrow(strand)?.value.dup();
-        value.put(strand, item).await
+        with_slots!(strand, |mut value| {
+            {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, &mut value, &borrow.value);
+            }
+            value.put(strand, item).await
+        })
     }
 
     // See the matching comment on `StreamIter::op_get`.
@@ -487,8 +521,13 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if field.tag() == sym::CLOSE {
-            let value = this.borrow(strand)?.value.dup();
-            value.op_get(strand, field, out)
+            with_slots!(strand, |mut value| {
+                {
+                    let borrow = this.borrow(strand)?;
+                    Output::set(strand, &mut value, &borrow.value);
+                }
+                value.op_get(strand, field, out)
+            })
         } else {
             iter::sink_get(strand, &this, field, out)
         }
@@ -502,8 +541,13 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if method.tag() == sym::CLOSE {
-            let value = this.borrow(strand)?.value.dup();
-            value.op_mcall(strand, method, args, out).await
+            with_slots!(strand, |mut value| {
+                {
+                    let borrow = this.borrow(strand)?;
+                    Output::set(strand, &mut value, &borrow.value);
+                }
+                value.op_mcall(strand, method, args, out).await
+            })
         } else {
             iter::sink_mcall(strand, &this, method, args, out).await
         }
@@ -556,14 +600,14 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         match method.tag() {
             sym::JOIN => {
                 unpack!(strand, args =>);
+                // The stream, pinned as the receiver, keeps its endpoints alive
                 let borrow = this.get();
-                let (input, output, handle) =
-                    (borrow.input.dup(), borrow.output.dup(), &borrow.handle);
                 let close = Sym::well_known(sym::CLOSE);
                 with_slots!(strand, |mut tmp| {
-                    let _ = method!(strand, &input, close, &mut tmp);
-                    let _ = method!(strand, &output, close, &mut tmp);
+                    let _ = method!(strand, &borrow.input, close, &mut tmp);
+                    let _ = method!(strand, &borrow.output, close, &mut tmp);
                 });
+                let handle = &borrow.handle;
                 join_handle(handle, strand, out).await
             }
             sym::CANCEL => {
@@ -601,8 +645,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let output = this.get().output.dup();
-        Output::set(strand, out, &output);
+        Output::set(strand, out, &this.get().output);
         Ok(())
     }
 
@@ -611,8 +654,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let input = this.get().input.dup();
-        Output::set(strand, out, &input);
+        Output::set(strand, out, &this.get().input);
         Ok(())
     }
 
@@ -1161,7 +1203,8 @@ impl<'v> Protocol<'v> for StrandInfoObj<'v> {
                     backtrace::Backtrace::new(mem::take(entries)),
                     &mut out,
                 );
-                *state = InfoBacktrace::Built(out.dup());
+                // SAFETY: the copy moves straight into the info object's scanned state
+                *state = InfoBacktrace::Built(unsafe { out.dup() });
                 Ok(())
             }
             _ => instance_get_fallback(strand, &this, field, out),

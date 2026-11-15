@@ -117,7 +117,9 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
                     match arg {
                         Arg::Pos(mut value) => pack.push((None, value.take())),
                         Arg::Key(key, mut value) => {
-                            pack.push((Some(strand.sym_obj(key)), value.take()));
+                            // SAFETY: the symbol and the value move straight into the
+                            // borrowed pack
+                            pack.push((Some(unsafe { strand.sym_obj(key) }), value.take()));
                         }
                     }
                 }

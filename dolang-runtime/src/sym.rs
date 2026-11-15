@@ -302,7 +302,8 @@ impl<'v, 'a> Input<'v> for Sym<'v, 'a> {
         _: value::private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_object(vm.sym_obj(*self)));
+        // SAFETY: stored into the scanned `out` at once
+        out.store(unsafe { Value::from_object(vm.sym_obj(*self)) });
         None
     }
 }
@@ -322,7 +323,8 @@ impl<'v> Table<'v> {
         };
 
         for name in WELL_KNOWN[1..].iter() {
-            mem::forget(this.register(arena, vtbl, name));
+            // SAFETY: the well-known symbols are leaked, so they are permanent
+            mem::forget(unsafe { this.register(arena, vtbl, name) });
         }
 
         this
@@ -340,7 +342,9 @@ impl<'v> Table<'v> {
         self.by_id.get_mut().clear();
     }
 
-    pub(crate) fn register(
+    /// # Safety
+    /// The result is loose, as for [`Vm::sym_register_obj`](crate::vm::Vm::sym_register_obj).
+    pub(crate) unsafe fn register(
         &self,
         arena: &Arena<'v>,
         vtbl: TypeHandle<'v, SymObj>,
@@ -354,15 +358,18 @@ impl<'v> Table<'v> {
         let next = self.next.get();
         self.next
             .set(next.checked_add(1).expect("are you kidding?"));
-        let obj = GcObj::new_imm(
-            arena,
-            vtbl,
-            SymData {
-                tag: next,
-                name: name.to_owned(),
-                private: false,
-            },
-        );
+        // SAFETY: the caller's contract
+        let obj = unsafe {
+            GcObj::new_imm(
+                arena,
+                vtbl,
+                SymData {
+                    tag: next,
+                    name: name.to_owned(),
+                    private: false,
+                },
+            )
+        };
         self.by_name
             .borrow_mut()
             .insert(name.to_owned(), GcObj::downgrade(&obj));
@@ -384,14 +391,26 @@ impl<'v> Table<'v> {
         }
     }
 
-    pub(crate) fn obj(&self, sym: Sym<'v, '_>) -> GcObj<'v, SymObj> {
+    /// Whether `sym` is a private-field symbol.
+    pub(crate) fn private(&self, sym: Sym<'v, '_>) -> bool {
+        let borrow = self.by_id.borrow();
+        let weak = borrow.get(&sym.0).unwrap();
+        // SAFETY: the `Sym` borrow keeps the symbol alive
+        unsafe { weak.get_unchecked().private }
+    }
+
+    /// # Safety
+    /// The result is a loose owned reference, as for [`Vm::sym_obj`](crate::vm::Vm::sym_obj).
+    pub(crate) unsafe fn obj(&self, sym: Sym<'v, '_>) -> GcObj<'v, SymObj> {
         BoxWeak::upgrade(&self.by_id.borrow()[&sym.0]).unwrap()
     }
 
     /// Register a symbol without inserting into `by_name`, ensuring
     /// it remains globally unique even if another module uses the same name.
     /// Used for private-field symbols loaded from bytecode (`#`-prefixed names).
-    pub(crate) fn register_unique(
+    /// # Safety
+    /// The result is loose, as for [`Vm::sym_register_obj`](crate::vm::Vm::sym_register_obj).
+    pub(crate) unsafe fn register_unique(
         &self,
         arena: &Arena<'v>,
         vtbl: TypeHandle<'v, SymObj>,
@@ -400,15 +419,18 @@ impl<'v> Table<'v> {
         let next = self.next.get();
         self.next
             .set(next.checked_add(1).expect("are you kidding?"));
-        let obj = GcObj::new_imm(
-            arena,
-            vtbl,
-            SymData {
-                tag: next,
-                name: name.to_owned(),
-                private: true,
-            },
-        );
+        // SAFETY: the caller's contract
+        let obj = unsafe {
+            GcObj::new_imm(
+                arena,
+                vtbl,
+                SymData {
+                    tag: next,
+                    name: name.to_owned(),
+                    private: true,
+                },
+            )
+        };
         // Insert into by_id only — NOT by_name — to preserve uniqueness across modules
         self.by_id.borrow_mut().insert(next, GcObj::downgrade(&obj));
         obj

@@ -86,7 +86,9 @@ impl<'v> Pack<'v> {
     ) {
         let embryo = strand.builtin_types().pack.embryo(strand);
         let vm = strand.vm();
-        embryo.finish_imm(strand, Self::new(pack_items(vm, args)), out);
+        // SAFETY: the pack is allocated; the items move straight into it
+        let items = unsafe { pack_items(vm, args) };
+        embryo.finish_imm(strand, Self::new(items), out);
     }
 
     /// Builds a `Pack` of symbol-keyed entries, such as the leftovers for a `**name` rest.
@@ -111,12 +113,14 @@ impl<'v> Pack<'v> {
 
 /// The items of `args`, in order, taken from their slots.
 ///
-/// The items are unrooted, so build them between allocating the target's embryo and
+/// # Safety
+/// The items are loose, so build them between allocating the target's embryo and
 /// finishing it.
-pub(crate) fn pack_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
+pub(crate) unsafe fn pack_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
     args.map(|arg| match arg {
         Arg::Pos(mut value) => (None, value.take()),
-        Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take()),
+        // SAFETY: the caller's contract
+        Arg::Key(key, mut value) => (Some(unsafe { vm.sym_obj(key) }), value.take()),
     })
     .collect()
 }
@@ -426,7 +430,11 @@ fn store_split_rests<'v, 'a>(
     }
     if let Some(i) = sig.pos_rest_slot() {
         let embryo = tuple::embryo(strand, plan.pos_rest.len());
-        let values = plan.pos_rest.iter().map(|&index| items[index].1.dup());
+        // SAFETY: the tuple is allocated; the copies move straight into it
+        let values = plan
+            .pos_rest
+            .iter()
+            .map(|&index| unsafe { items[index].1.dup() });
         embryo.finish(strand, values, out.at(i));
     }
     if let Some(i) = sig.key_rest_slot() {
@@ -434,10 +442,7 @@ fn store_split_rests<'v, 'a>(
         // SAFETY: the entries move straight into the allocated pack
         let entries = plan.key_rest.iter().map(|&index| {
             let (key, value) = &items[index];
-            (
-                unsafe { key.as_ref().unwrap_unchecked().dup() },
-                value.dup(),
-            )
+            unsafe { (key.as_ref().unwrap_unchecked().dup(), value.dup()) }
         });
         embryo.finish_imm(strand, Pack::from_sym_entries(entries), out.at(i));
     }
@@ -453,7 +458,7 @@ fn fill_unpack_defaults<'v, 'a>(
     for (pos, default) in
         (positional_matched..).zip(sig.optional[(positional_matched - sig.required)..].iter())
     {
-        out.at(pos).store(default.dup());
+        Output::set(strand, out.at(pos), default);
     }
 
     let pos_count = sig.required + sig.optional.len();
@@ -471,7 +476,7 @@ fn fill_unpack_defaults<'v, 'a>(
 /// the items left over.
 pub(crate) fn unpack<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
-    args: GcObj<'v, PackObj<'v>>,
+    args: &GcObj<'v, PackObj<'v>>,
     sig: &sig::Unpack<'v, 'a>,
     mut out: Slots<'v, 'a>,
 ) -> Result<'v, 's, ()> {
@@ -479,8 +484,11 @@ pub(crate) fn unpack<'v, 'a, 's>(
     let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
 
     for action in &plan.actions {
-        out.at(action.dest_slot)
-            .store(items[action.source_index].1.dup())
+        Output::set(
+            strand,
+            out.at(action.dest_slot),
+            &items[action.source_index].1,
+        );
     }
 
     fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
@@ -495,7 +503,11 @@ pub(crate) fn unpack<'v, 'a, 's>(
         let pos = first_visible_index(items, &skip, 0).unwrap_or(items.len());
         let positional_matched =
             i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
-        strand.builtin_types().pack_rest.create(
+        let embryo = strand.builtin_types().pack_rest.embryo(strand);
+        // SAFETY: the rest is allocated; the copy of the rooted `args` moves straight
+        // into it
+        let args = unsafe { args.dup() };
+        embryo.finish(
             strand,
             Rest::new(args, skip, pos, positional_matched),
             out.at(sig.len() - 1),
@@ -503,6 +515,35 @@ pub(crate) fn unpack<'v, 'a, 's>(
     }
 
     Ok(())
+}
+
+/// The key of an item gathered for a new pack: one an existing pack holds, or a new
+/// symbol.
+enum ItemKey<'v, 'a> {
+    Held(&'a GcObj<'v, SymObj>),
+    New(Sym<'v, 'a>),
+}
+
+/// Copy gathered items for a new pack's payload.
+///
+/// Call it only once the pack is allocated, and finish the pack with the result at
+/// once: the copies are loose until then.
+fn copy_items<'v>(
+    vm: &Vm<'v>,
+    items: Vec<(Option<ItemKey<'v, '_>>, &Value<'v>)>,
+) -> Vec<ArgItem<'v>> {
+    items
+        .into_iter()
+        // SAFETY: the caller has allocated the pack, which takes the copies at once;
+        // the gathered references are rooted where they were found
+        .map(|(key, value)| unsafe {
+            let key = key.map(|key| match key {
+                ItemKey::Held(key) => key.dup(),
+                ItemKey::New(key) => vm.sym_obj(key),
+            });
+            (key, value.dup())
+        })
+        .collect()
 }
 
 // ── Iter ────────────────────────────────────────────────────────────
@@ -751,8 +792,11 @@ impl<'v> Protocol<'v> for Rest<'v> {
 
         for action in &plan.actions {
             iter.skip.insert(action.source_index);
-            out.at(action.dest_slot)
-                .store(items[action.source_index].1.dup());
+            Output::set(
+                strand,
+                out.at(action.dest_slot),
+                &items[action.source_index].1,
+            );
         }
         fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
         // The rests take their items
@@ -953,9 +997,8 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
                 let borrow = this.get();
-                let found = find(strand, &borrow.items, &key).map(Value::dup);
-                if let Some(value) = found {
-                    out.store(value);
+                if let Some(value) = find(strand, &borrow.items, &key) {
+                    Output::set(strand, &mut out, value);
                     Ok(())
                 } else if let Some(mut default) = default {
                     out.store(default.take());
@@ -969,8 +1012,9 @@ impl<'v> Protocol<'v> for PackObj<'v> {
             }
             sym::WITH => {
                 unpack!(strand, args => **updates);
-                // Keep argument slots intact so updates remain rooted. This path
-                // checks interrupts but never collects while building the result.
+                // The updates stay rooted in their argument slots and the items in this
+                // pack, so the result is gathered as references and copied only once
+                // the new pack is allocated, after the last interrupt check.
                 let mut replacements = Vec::new();
                 let mut indices = HashMap::new();
                 for (i, (key, value)) in updates.enumerate() {
@@ -981,7 +1025,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                         replacements.push((key, None));
                         replacements.len() - 1
                     });
-                    replacements[index].1 = Some(value.dup());
+                    replacements[index].1 = Some(value.into_ref());
                 }
                 let borrow = this.get();
                 let mut items = Vec::with_capacity(borrow.items.len());
@@ -991,12 +1035,10 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     }
                     if let Some(index) = key.as_ref().and_then(|key| indices.get(&key.tag())) {
                         if let Some(value) = replacements[*index].1.take() {
-                            // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-                            items.push((key.as_ref().map(|key| unsafe { key.dup() }), value));
+                            items.push((key.as_ref().map(ItemKey::Held), value));
                         }
                     } else {
-                        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-                        items.push((key.as_ref().map(|key| unsafe { key.dup() }), value.dup()));
+                        items.push((key.as_ref().map(ItemKey::Held), value));
                     }
                 }
                 for (i, (key, value)) in replacements.into_iter().enumerate() {
@@ -1004,13 +1046,12 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                         strand.check_trap()?;
                     }
                     if let Some(value) = value {
-                        items.push((Some(strand.sym_obj(key)), value));
+                        items.push((Some(ItemKey::New(key)), value));
                     }
                 }
-                strand
-                    .builtin_types()
-                    .pack
-                    .create_imm(strand, Pack::new(items), out);
+                let embryo = strand.builtin_types().pack.embryo(strand);
+                let items = copy_items(strand.vm(), items);
+                embryo.finish_imm(strand, Pack::new(items), out);
                 Ok(())
             }
             sym::WITHOUT => {
@@ -1032,14 +1073,12 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                         strand.check_trap()?;
                     }
                     if !key.as_ref().is_some_and(|key| removed.contains(&key.tag())) {
-                        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-                        items.push((key.as_ref().map(|key| unsafe { key.dup() }), value.dup()));
+                        items.push((key.as_ref().map(ItemKey::Held), value));
                     }
                 }
-                strand
-                    .builtin_types()
-                    .pack
-                    .create_imm(strand, Pack::new(items), out);
+                let embryo = strand.builtin_types().pack.embryo(strand);
+                let items = copy_items(strand.vm(), items);
+                embryo.finish_imm(strand, Pack::new(items), out);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -1067,9 +1106,11 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().pack_iter.create(
+        let embryo = strand.builtin_types().pack_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+        embryo.finish(
             strand,
-            Iter::new(this.to_strong(), HashSet::new(), 0, 0),
+            Iter::new(unsafe { this.to_strong() }, HashSet::new(), 0, 0),
             out,
         );
         Ok(())
@@ -1091,7 +1132,13 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        unpack(strand, this.to_strong(), sig, out)
+        with_slots!(strand, |mut args| {
+            Output::set(strand, &mut args, &this);
+            let args = args
+                .downcast_ref(strand.builtin_types().pack)
+                .expect("pack");
+            unpack(strand, args, sig, out)
+        })
     }
 }
 
@@ -1104,20 +1151,28 @@ struct PackPairs<'b, 'v> {
 }
 
 impl<'v> PackPairs<'_, 'v> {
+    /// Push the value in `value`, under `key` if it has one, onto the accumulator.
+    ///
+    /// The accumulator is borrowed first, so the item is made only once nothing is left
+    /// that could fail or allocate.
     fn push<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        key: Option<GcObj<'v, SymObj>>,
-        value: Value<'v>,
+        key: Option<Sym<'v, '_>>,
+        mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let pack = self
             .pack
             .downcast_ref(strand.builtin_types().arg_acc)
             .expect("source accumulator");
         with_pin!(strand, pack, |pack| {
-            pack.borrow_mut()
-                .ok_or_else(|| Error::concurrency(strand))?
-                .push((key, value));
+            let mut pack = pack
+                .borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            // SAFETY: the symbol and the value move straight into the borrowed
+            // accumulator
+            let key = key.map(|key| unsafe { strand.sym_obj(key) });
+            pack.push((key, value.take()));
             Ok(())
         })
     }
@@ -1127,19 +1182,18 @@ impl<'v, 's> Spread<'v, 's> for PackPairs<'_, 'v> {
     fn positional(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut value: Slot<'v, '_>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.push(strand, None, value.take())
+        self.push(strand, None, value)
     }
 
     fn symbol(
         &mut self,
         strand: &mut Strand<'v, 's>,
         key: Sym<'v, '_>,
-        mut value: Slot<'v, '_>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let key = strand.sym_obj(key);
-        self.push(strand, Some(key), value.take())
+        self.push(strand, Some(key), value)
     }
 
     // Pairs from an iterable all arrive here. Only a symbol key fits, since

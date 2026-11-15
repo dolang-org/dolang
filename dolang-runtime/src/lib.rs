@@ -98,7 +98,6 @@ pub(crate) struct ProgramAnnex<'v> {
     pub(crate) funcdebugs: alias::Box<[FuncDebug]>,
     pub(crate) module_name: Option<Range<usize>>,
     /// Safety: this roots symbols used by above fields, which are thus implicitly self-referential
-    #[allow(dead_code)]
     pub(crate) symroots: Vec<GcObj<'v, SymObj>>,
 }
 
@@ -162,9 +161,19 @@ unsafe impl<'v> gc::Collect for Program<'v> {
 }
 
 impl gc::Annex for ProgramAnnex<'_> {
-    fn accept(&self, _visit: &mut dyn gc::arena::Visit) -> ControlFlow<()> {
+    fn accept(&self, visit: &mut dyn gc::arena::Visit) -> ControlFlow<()> {
+        for value in &self.consttab {
+            value.accept(visit)?;
+        }
+        for unpack in &self.unpacktab {
+            unpack.accept(visit)?;
+        }
+        for sym in &self.symroots {
+            sym.accept(visit)?;
+        }
         ControlFlow::Continue(())
     }
 
+    // The tables are immutable, so they need no clearing; see `gc::Annex::clear`
     fn clear(&self) {}
 }

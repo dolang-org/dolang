@@ -297,8 +297,10 @@ async fn helper_mcall<'v, 'a, 's>(
                     .ok_or_else(|| Error::type_error(strand, "size must be a positive integer"))?,
                 None => CHUNK,
             };
-            let stream = stream.dup();
-            strand.builtin_types().io_chunks.create_imm(
+            let embryo = strand.builtin_types().io_chunks.embryo(strand);
+            // SAFETY: the iterator is allocated; the stream is copied straight into it
+            let stream = unsafe { stream.dup() };
+            embryo.finish_imm(
                 strand,
                 Chunks {
                     stream,

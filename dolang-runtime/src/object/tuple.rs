@@ -27,7 +27,11 @@ use super::{
     range,
 };
 
-pub(crate) fn tuple<'v, I: IntoIterator<Item = Value<'v>>>(
+/// A new tuple of the values `iter` yields, which it runs once the tuple is allocated.
+///
+/// # Safety
+/// The tuple is loose: it must move straight into a scanned location.
+pub(crate) unsafe fn tuple<'v, I: IntoIterator<Item = Value<'v>>>(
     vm: &Vm<'v>,
     iter: I,
 ) -> GcObj<'v, TupleObj<'v>>
@@ -35,6 +39,7 @@ where
     I::IntoIter: ExactSizeIterator,
 {
     let iter = iter.into_iter();
+    // SAFETY: the header carries the tuple vtable; the looseness is the caller's
     unsafe {
         gc::Embryo::new_tail(vm.arena(), iter.len()).finish_tail(
             Header::new(vm.arena(), vm.builtin_types().tuple.vtbl),
@@ -54,7 +59,9 @@ pub(crate) fn create<'v, I: IntoIterator<Item = Value<'v>>>(
     I::IntoIter: ExactSizeIterator,
 {
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-    Output::set(alloc, out, Value::from_object(tuple(vm, iter)));
+    // SAFETY: the new tuple is stored into `out` at once
+    let tuple = unsafe { Value::from_object(tuple(vm, iter)) };
+    Output::set(alloc, out, tuple);
 }
 
 /// Creates a `(key, value)` pair and places it into `out`.
@@ -68,8 +75,10 @@ pub(crate) fn create_pair<'v>(
     out: impl Output<'v>,
 ) {
     let embryo = embryo(alloc, 2);
-    let key = Value::from_input(alloc, key);
-    embryo.finish(alloc, [key, value.dup()], out);
+    // SAFETY: the tuple is allocated; the key and the copy of `value` move straight into
+    // it
+    let pair = unsafe { [Value::from_input(alloc, key), value.dup()] };
+    embryo.finish(alloc, pair, out);
 }
 
 /// Allocates a tuple of `len` elements without initializing it; see
@@ -96,8 +105,11 @@ impl<'v> TupleEmbryo<'v> {
     ) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let header = unsafe { Header::new(vm.arena(), vm.builtin_types().tuple.vtbl) };
-        let tuple = unsafe { self.0.finish_tail(header, TupleObj(PhantomData), (), iter) };
-        Output::set(alloc, out, Value::from_object(tuple));
+        // SAFETY: the finished tuple is stored into `out` at once
+        let tuple = unsafe {
+            Value::from_object(self.0.finish_tail(header, TupleObj(PhantomData), (), iter))
+        };
+        Output::set(alloc, out, tuple);
     }
 }
 
@@ -376,12 +388,17 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                         .items()
                         .get(start..end)
                         .ok_or_else(|| Error::index(strand))?;
-                    create(strand, slice.iter().map(Value::dup), out);
+                    // SAFETY: `create` allocates the tuple before it runs the iterator,
+                    // so the copies move straight into it
+                    create(strand, slice.iter().map(|v| unsafe { v.dup() }), out);
                 }
                 range::Slice::Stepped(indices) => {
+                    // SAFETY: as above
                     create(
                         strand,
-                        indices.into_iter().map(|i| this.items()[i].dup()),
+                        indices
+                            .into_iter()
+                            .map(|i| unsafe { this.items()[i].dup() }),
                         out,
                     );
                 }
@@ -403,10 +420,12 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().tuple_iter.create(
+        let embryo = strand.builtin_types().tuple_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+        embryo.finish(
             strand,
             Iter {
-                tuple: this.to_strong(),
+                tuple: unsafe { this.to_strong() },
                 index: 0,
             },
             out,
@@ -422,9 +441,11 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
     ) -> Result<'v, 's, ()> {
         let index = unpack_from(strand, sig, &mut out, this.items(), 0, false)?;
         if let Some(i) = sig.pos_rest_slot() {
+            // SAFETY: `create` allocates the tuple before it runs the iterator, so the
+            // copies move straight into it
             create(
                 strand,
-                this.items()[index..].iter().map(Value::dup),
+                this.items()[index..].iter().map(|v| unsafe { v.dup() }),
                 out.at(i),
             );
         }
@@ -466,7 +487,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let items = this.items();
                 match index::element(items.len(), index).and_then(|index| items.get(index)) {
-                    Some(value) => out.store(value.dup()),
+                    Some(value) => Output::set(strand, &mut out, value),
                     None => {
                         if let Some(mut default) = default {
                             out.store(default.take())
@@ -479,10 +500,12 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
             }
             sym::PAIRS => {
                 unpack!(strand, args =>);
-                strand.builtin_types().tuple_pairs.create(
+                let embryo = strand.builtin_types().tuple_pairs.embryo(strand);
+                // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+                embryo.finish(
                     strand,
                     Pairs {
-                        tuple: this.to_strong(),
+                        tuple: unsafe { this.to_strong() },
                         index: 0,
                     },
                     out,
@@ -808,17 +831,17 @@ fn unpack_from<'v, 's>(
             let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
             create_pair(strand, index, elem, out.at(i))
         } else {
-            out.at(i).store(elem.dup())
+            Output::set(strand, out.at(i), elem)
         }
     }
     if len < pos_count {
         for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            out.at(min + i).store(default.dup());
+            Output::set(strand, out.at(min + i), default);
         }
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            out.at(pos_count + i).store(default.dup());
+            Output::set(strand, out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
