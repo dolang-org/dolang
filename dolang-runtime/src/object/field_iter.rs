@@ -11,7 +11,8 @@ use crate::{
     sig::{self, UnpackKeyKind},
     strand::{Strand, with_slots_dynamic},
     sym::Sym,
-    value::{Output, Slot, Slots, TypeObject, Value},
+    value::{Slot, Slots, TypeObject, Value},
+    vm::AllocExt,
     with_slots,
 };
 use dolang_bytecode::{Rest, Variadic};
@@ -146,7 +147,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iterable)
+        strand.store(out, TypeObject::Iterable)
     }
 
     fn op_debug<'a, 's>(
@@ -170,7 +171,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
 
         with_slots_dynamic!(strand, sig.len(), |mut staged| {
             for (index, default) in sig.optional.iter().enumerate() {
-                Output::set(strand, staged.at(index), default);
+                strand.store(staged.at(index), default);
             }
 
             let iter = this.borrow(strand)?;
@@ -188,7 +189,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 if let Some(index) = found {
                     resolve(strand, receiver, &symbols[index], staged.at(dest))?;
                 } else if let Some(default) = &key.default {
-                    Output::set(strand, staged.at(dest), default);
+                    strand.store(staged.at(dest), default);
                 } else {
                     return Err(match &key.kind {
                         UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -234,7 +235,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 embryo.finish(strand, FieldIter::new(receiver, symbols), staged.at(i));
             }
             for index in 0..sig.len() {
-                Output::set(strand, out.at(index), staged.at(index));
+                strand.store(out.at(index), staged.at(index));
             }
             Ok(())
         })
@@ -353,7 +354,7 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iter)
+        strand.store(out, TypeObject::Iter)
     }
 
     fn op_debug<'a, 's>(
@@ -369,7 +370,7 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 

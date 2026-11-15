@@ -2,7 +2,7 @@ use crate::global::Tag;
 
 use dolang::runtime::value::fmt::Format;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, Strand, Value, call,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, Strand, Value, call,
     error::ErrorKind,
     method,
     object::{Mut, Ref, TypeBuilder, fmt},
@@ -67,19 +67,19 @@ impl<'v> Object<'v> for Console {
             // default, so a Do subclass that supplies only the two above still
             // answers them — by delegating to these.
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
-                Output::set(strand, out, LINE_ENDING);
+                strand.store(out, LINE_ENDING);
                 Ok(())
             })
             .get("can_style", |_this, strand, out| {
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             })
             .get("is_tty", |_this, strand, out| {
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
@@ -124,7 +124,7 @@ impl<'v> Object<'v> for DefaultOutput {
             .method("write", async move |_this, strand, args, out| {
                 let bytes = write_data(strand, args)?;
                 write(strand, &bytes).await?;
-                Output::set(strand, out, bytes.len());
+                strand.store(out, bytes.len());
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
@@ -132,7 +132,7 @@ impl<'v> Object<'v> for DefaultOutput {
                 flush(strand).await
             })
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .get("line_ending", |_this, strand, mut out| {
@@ -142,12 +142,12 @@ impl<'v> Object<'v> for DefaultOutput {
                 Ok(())
             })
             .get("can_style", |_this, strand, out| {
-                Output::set(strand, out, ansi(strand));
+                strand.store(out, ansi(strand));
                 Ok(())
             })
             .get("is_tty", |_this, strand, out| {
                 let is_tty = is_tty(strand)?;
-                Output::set(strand, out, is_tty);
+                strand.store(out, is_tty);
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
@@ -221,17 +221,17 @@ impl<'v> Object<'v> for IoConsole {
         builder
             .get("writable", |this, strand, out| {
                 let closed = this.borrow(strand)?.closed;
-                Output::set(strand, out, !closed);
+                strand.store(out, !closed);
                 Ok(())
             })
             .get("can_style", |this, strand, out| {
                 let can_style = this.borrow(strand)?.can_style;
-                Output::set(strand, out, can_style);
+                strand.store(out, can_style);
                 Ok(())
             })
             .get("is_tty", |_this, strand, out| {
                 // An adapter over an arbitrary stream is never a terminal.
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
@@ -240,7 +240,7 @@ impl<'v> Object<'v> for IoConsole {
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
-                Output::set(strand, out, LINE_ENDING);
+                strand.store(out, LINE_ENDING);
                 Ok(())
             })
             .method_with_slots(
@@ -250,7 +250,7 @@ impl<'v> Object<'v> for IoConsole {
                     inner(this, strand, &mut stream)?;
                     let global = strand.state::<Tag>();
                     method!(strand, &stream, global.syms.write_all, &bytes[..], &mut tmp)?;
-                    Output::set(strand, out, bytes.len());
+                    strand.store(out, bytes.len());
                     Ok(())
                 },
             )
@@ -273,7 +273,7 @@ impl<'v> Object<'v> for IoConsole {
                 unpack!(strand, args =>);
                 let mut me = this.borrow_mut(strand)?;
                 me.closed = true;
-                Output::set(strand, Mut::slot_mut::<0>(&mut me), Nil);
+                strand.store(Mut::slot_mut::<0>(&mut me), Nil);
                 Ok(())
             })
     }
@@ -309,7 +309,7 @@ pub(crate) fn create_io_console<'v, 's>(
         global.types.io_console.cast(&out).unwrap(),
         |inst| {
             let mut borrow = inst.borrow_mut(strand)?;
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), target);
+            strand.store(Mut::slot_mut::<0>(&mut borrow), target);
             Ok(())
         }
     )
@@ -324,7 +324,7 @@ fn inner<'v, 's>(
     let closed = {
         let me = this.borrow(strand)?;
         let closed = me.closed;
-        Output::set(strand, &mut *out, Ref::slot::<0>(&me));
+        strand.store(&mut *out, Ref::slot::<0>(&me));
         closed
     };
     if closed {
@@ -388,7 +388,7 @@ impl<'v> Object<'v> for SubConsole {
             .method("write", async move |this, strand, args, out| {
                 let bytes = write_data(strand, args)?;
                 this.borrow_mut(strand)?.append(strand, &bytes)?;
-                Output::set(strand, out, bytes.len());
+                strand.store(out, bytes.len());
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
@@ -396,21 +396,21 @@ impl<'v> Object<'v> for SubConsole {
                 Ok(())
             })
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
-                Output::set(strand, out, LINE_ENDING);
+                strand.store(out, LINE_ENDING);
                 Ok(())
             })
             .get("can_style", |this, strand, out| {
                 let can_style = this.borrow(strand)?.can_style;
-                Output::set(strand, out, can_style);
+                strand.store(out, can_style);
                 Ok(())
             })
             .get("is_tty", |_this, strand, out| {
                 // A capture buffer is never a terminal.
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {
@@ -452,7 +452,7 @@ fn host<'v, 's>(strand: &mut Strand<'v, 's>, out: &mut Slot<'v, '_>) -> Result<'
     if console.is_nil() {
         return Err(Error::state_error(strand, "no console installed"));
     }
-    Output::set(strand, out, &*console);
+    strand.store(out, &*console);
     Ok(())
 }
 
@@ -464,7 +464,7 @@ fn route<'v, 's>(strand: &mut Strand<'v, 's>, out: &mut Slot<'v, '_>) -> Result<
     }
     let global = strand.state::<Tag>();
     let root = global.capture.slot(strand);
-    Output::set(strand, out, &root);
+    strand.store(out, &root);
     Ok(())
 }
 
@@ -474,10 +474,10 @@ fn route_line_ending<'v>(strand: &mut Strand<'v, '_>, out: &mut Slot<'v, '_>) {
     let global = strand.state::<Tag>();
     if captured(strand) {
         let ending = global.capture_line_ending.slot(strand);
-        Output::set(strand, out, &ending);
+        strand.store(out, &ending);
     } else {
         let ending = global.host.line_ending.borrow();
-        Output::set(strand, out, &*ending);
+        strand.store(out, &*ending);
     }
 }
 
@@ -571,7 +571,7 @@ pub(crate) async fn write_line_to<'v, 's>(
         if target.is_nil() {
             host(strand, &mut rcvr)?;
         } else {
-            Output::set(strand, &mut rcvr, target);
+            strand.store(&mut rcvr, target);
         }
         guarded(strand, async |strand| {
             method!(
@@ -615,7 +615,7 @@ pub(crate) fn ambient_line_ending<'v, 's>(strand: &mut Strand<'v, 's>) -> Result
 pub(crate) fn capture_root<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
     let global = strand.state::<Tag>();
     let capture = global.capture.slot(strand);
-    Output::set(strand, out, &capture);
+    strand.store(out, &capture);
 }
 
 /// Stores the ambient console in `out`: whatever an enclosing capture
@@ -629,7 +629,7 @@ pub(crate) fn ambient<'v, 's>(
     if capture.is_nil() {
         return host(strand, out);
     }
-    Output::set(strand, out, &capture);
+    strand.store(out, &capture);
     Ok(())
 }
 
@@ -637,7 +637,7 @@ pub(crate) fn ambient<'v, 's>(
 pub(crate) fn host_or_nil<'v>(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
     let global = strand.state::<Tag>();
     let console = global.host.console.borrow();
-    Output::set(strand, out, &*console);
+    strand.store(out, &*console);
 }
 
 /// Whether ANSI styling should be emitted to the ambient console.

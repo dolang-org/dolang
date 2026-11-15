@@ -22,7 +22,7 @@ use crate::{
     sig,
     strand::Strand,
     value::{Input, Output, Slot, Value, ValueCell},
-    vm::Alloc,
+    vm::{Alloc, AllocExt},
 };
 
 pub trait Frame {
@@ -136,14 +136,14 @@ impl<'v> CallFrame<'v> {
                                 },
                             }
                         } else {
-                            Output::set(strand, slots.get_unchecked(offset + pos).slot(), value);
+                            strand.store(slots.get_unchecked(offset + pos).slot(), value);
                             pos += 1
                         }
                     }
                     Arg::Key(sym, value) => {
                         if let Some(i) = unpack.sym_offset(sym) {
                             if !assigned.replace(i - pos_count, true) {
-                                Output::set(strand, slots.get_unchecked(offset + i).slot(), value);
+                                strand.store(slots.get_unchecked(offset + i).slot(), value);
                                 continue;
                             }
                             if unpack.variadic.keyed() == Rest::None {
@@ -177,8 +177,7 @@ impl<'v> CallFrame<'v> {
                 .iter()
                 .enumerate()
             {
-                Output::set(
-                    strand,
+                strand.store(
                     slots.get_unchecked(offset + unpack.required + i).slot(),
                     default,
                 )
@@ -189,11 +188,7 @@ impl<'v> CallFrame<'v> {
                     continue;
                 }
                 if let Some(default) = &key.default {
-                    Output::set(
-                        strand,
-                        slots.get_unchecked(offset + pos_count + i).slot(),
-                        default,
-                    )
+                    strand.store(slots.get_unchecked(offset + pos_count + i).slot(), default)
                 } else {
                     return Err(match &key.kind {
                         sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -368,7 +363,7 @@ impl<'v> Gc<'v, Upvars<'v>> {
     ) {
         // SAFETY: a transient pin; duplicating a cell cannot collect
         let cell = unsafe { self.pin_unchecked().annex().tail.get_unchecked(index) };
-        Output::set(alloc, out, cell)
+        alloc.store(out, cell)
     }
 
     /// Store `value` into variable `index`.  The old value is dropped after the write.
@@ -391,7 +386,7 @@ impl<'v> Gc<'v, Upvars<'v>> {
                 .tail
                 .get_unchecked(index)
                 .slot();
-            Output::set(alloc, var, value)
+            alloc.store(var, value)
         }
     }
 }
@@ -484,7 +479,7 @@ impl<'v> CallFrame<'v> {
         out: Slot<'v, '_>,
     ) {
         let cell = unsafe { self.upvars_at(depth).tail.get_unchecked(index) };
-        Output::set(alloc, out, cell)
+        alloc.store(out, cell)
     }
 
     /// Move the value in `src` into the upvar at `index` in the frame `depth` levels up.
@@ -504,7 +499,7 @@ impl<'v> CallFrame<'v> {
             // The slot drops the old value only after the write: a drop can run
             // native code
             let var = self.upvars_at(depth).tail.get_unchecked(index).slot();
-            Output::set(alloc, var, src)
+            alloc.store(var, src)
         }
     }
 

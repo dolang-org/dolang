@@ -13,7 +13,7 @@ use dolang_vfs::process::{PipeRecv, PipeSend};
 use futures::io::{AsyncWriteExt as _, BufReader};
 
 use dolang::runtime::{
-    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+    AllocExt, Error, Instance, Object, Result, Slot, State, Strand, Value, call,
     io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
     object::{Mut, Ref, Request, TypeBuilder},
     unpack,
@@ -311,7 +311,7 @@ fn take_buffered_bytes<'v, 's>(
     let mut recv_borrow = recv_inst.borrow_mut(strand)?;
     let mut slot = Mut::slot_mut::<0>(&mut recv_borrow);
     let bytes = encode_value(strand, &Slot::reborrow(&mut slot))?;
-    Output::set(strand, slot, Nil);
+    strand.store(slot, Nil);
     inner.buffered = false;
     inner.wake_senders();
     inner.wake_negotiators();
@@ -987,7 +987,7 @@ pub(crate) fn make_pair<'v, 's>(
         global.types.pipe_sender.cast(&out_send).unwrap(),
         |send_inst| {
             let mut send_borrow = send_inst.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut send_borrow), &out_recv);
+            strand.store(Mut::slot_mut::<0>(&mut send_borrow), &out_recv);
         }
     );
 }
@@ -1030,7 +1030,7 @@ impl<'v> Object<'v> for PipeReceiver {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -1054,7 +1054,7 @@ impl<'v> Object<'v> for PipeReceiver {
                             inner.buffered = false;
                             drop(inner);
                             let mut borrow = this.borrow_mut(strand)?;
-                            Output::set(strand, out, Mut::slot_mut::<0>(&mut borrow));
+                            strand.store(out, Mut::slot_mut::<0>(&mut borrow));
                             drop(borrow);
                             let mut inner = shared.borrow_mut();
                             inner.wake_senders();
@@ -1198,15 +1198,11 @@ impl<'v> Object<'v> for PipeSender {
                                         "expected inspect.Backtrace",
                                     ));
                                 }
-                                Output::set(
-                                    strand,
-                                    Mut::slot_mut::<2>(&mut recv_borrow),
-                                    backtrace,
-                                );
+                                strand.store(Mut::slot_mut::<2>(&mut recv_borrow), backtrace);
                             } else {
-                                Output::set(strand, Mut::slot_mut::<2>(&mut recv_borrow), Nil);
+                                strand.store(Mut::slot_mut::<2>(&mut recv_borrow), Nil);
                             }
-                            Output::set(strand, Mut::slot_mut::<1>(&mut recv_borrow), err);
+                            strand.store(Mut::slot_mut::<1>(&mut recv_borrow), err);
                         }
                         Ok(())
                     }
@@ -1221,7 +1217,7 @@ impl<'v> Object<'v> for PipeSender {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -1259,11 +1255,7 @@ impl<'v> Object<'v> for PipeSender {
                                     .unwrap(),
                                 |recv_inst| {
                                     let mut recv_borrow = recv_inst.borrow_mut(strand)?;
-                                    Output::set(
-                                        strand,
-                                        Mut::slot_mut::<0>(&mut recv_borrow),
-                                        value,
-                                    );
+                                    strand.store(Mut::slot_mut::<0>(&mut recv_borrow), value);
                                     Ok(())
                                 }
                             )?;
@@ -1392,12 +1384,12 @@ impl<'v> Object<'v> for PipeStream {
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
                 let readable = matches!(this.borrow(strand)?.end, Some(StreamEnd::Recv(_)));
-                Output::set(strand, out, readable);
+                strand.store(out, readable);
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let writable = matches!(this.borrow(strand)?.end, Some(StreamEnd::Send(_)));
-                Output::set(strand, out, writable);
+                strand.store(out, writable);
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {

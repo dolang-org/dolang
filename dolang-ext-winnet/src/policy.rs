@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use dolang::runtime::{
-    Error, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder, unpack,
-    value::Nil, vm::ModuleBuilder,
+    AllocExt, Error, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
+    unpack, value::Nil, vm::ModuleBuilder,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_vfs_winnet::policy;
@@ -31,7 +31,7 @@ fn optional_duration<'v, 's>(
     match value {
         Some(value) => dolang_ext_time::duration(strand, Duration::from_secs(value), out),
         None => {
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         }
     }
@@ -77,7 +77,7 @@ impl<'v> Object<'v> for AccountPolicy {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("min_password_length", |this, strand, out| {
-                Output::set(strand, out, this.annex().min_password_length());
+                strand.store(out, this.annex().min_password_length());
                 Ok(())
             })
             .get("max_password_age", |this, strand, out| {
@@ -94,7 +94,7 @@ impl<'v> Object<'v> for AccountPolicy {
                 optional_duration(strand, this.annex().force_logoff(), out)
             })
             .get("password_history_length", |this, strand, out| {
-                Output::set(strand, out, this.annex().password_history_length());
+                strand.store(out, this.annex().password_history_length());
                 Ok(())
             })
             .get("lockout_duration", |this, strand, out| {
@@ -112,7 +112,7 @@ impl<'v> Object<'v> for AccountPolicy {
                 )
             })
             .get("lockout_threshold", |this, strand, out| {
-                Output::set(strand, out, this.annex().lockout_threshold());
+                strand.store(out, this.annex().lockout_threshold());
                 Ok(())
             })
     }

@@ -15,7 +15,7 @@ use dolang::runtime::object::fmt;
 use dolang::{
     compile::Config,
     runtime::{
-        AllocExt, Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+        AllocExt, Arg, Error, Instance, Object, Result, Slot, State, Strand, Value, call,
         io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
         method,
         object::{Mut, Ref, Request, TypeBuilder},
@@ -195,7 +195,7 @@ impl<'v> Object<'v> for Stdin {
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Io)
             .get("readable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .method("close", async move |_this, strand, args, _out| {
@@ -280,7 +280,7 @@ impl<'v> Object<'v> for Stdin {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -345,7 +345,7 @@ impl<'v> Object<'v> for Stdout {
         builder
             .supertype(TypeObject::Io)
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .method("write", async move |_this, strand, args, out| {
@@ -384,7 +384,7 @@ impl<'v> Object<'v> for Stdout {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -439,7 +439,7 @@ impl<'v> Object<'v> for Stderr {
         builder
             .supertype(TypeObject::Io)
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .method("write", async move |_this, strand, args, out| {
@@ -478,7 +478,7 @@ impl<'v> Object<'v> for Stderr {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -667,11 +667,7 @@ impl<'v> Object<'v> for Vfs {
                 &mut out,
             );
             with_instance!(strand, global.types.vfs.cast(&out).unwrap(), |this| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
-                    &handle,
-                );
+                strand.store(Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()), &handle);
             });
             Ok(())
         })
@@ -736,7 +732,7 @@ impl<'v> Object<'v> for Vfs {
                     async {
                         with_slots!(strand, |mut stream, mut output| {
                             let borrow = this.borrow(strand)?;
-                            Output::set(strand, &mut stream, Ref::slot::<0>(&borrow));
+                            strand.store(&mut stream, Ref::slot::<0>(&borrow));
                             drop(borrow);
                             method!(strand, &stream, annex.global.syms.join, &mut output)
                         })
@@ -888,7 +884,7 @@ impl<'v> Object<'v> for Capture {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -954,7 +950,7 @@ pub(crate) fn configure_vm<'v>(
             // than a constant of the module.
             let os = global.local.get(strand).target().os();
             let ending = std::str::from_utf8(line_ending(os)).unwrap();
-            Output::set(strand, out, ending);
+            strand.store(out, ending);
             Ok(())
         })
         .function(
@@ -1051,16 +1047,16 @@ pub(crate) fn configure_vm<'v>(
                     let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, path, out)?;
                 }
-                Some(ProgramOverride::Nil) => Output::set(strand, out, Nil),
-                Some(ProgramOverride::Module(name)) => Output::set(strand, out, name.as_ref()),
+                Some(ProgramOverride::Nil) => strand.store(out, Nil),
+                Some(ProgramOverride::Module(name)) => strand.store(out, name.as_ref()),
                 None => match core.program.borrow().as_ref() {
                     Some(ProgramSource::Path(path)) => {
                         let path = vfs_path::PathBuf::from_native(path.clone()).into_sys(strand)?;
                         let fs = strand.force_state::<FsTag>();
                         create_path(strand, fs, path, out)?;
                     }
-                    Some(ProgramSource::Module(name)) => Output::set(strand, out, name.as_str()),
-                    None => Output::set(strand, out, Nil),
+                    Some(ProgramSource::Module(name)) => strand.store(out, name.as_str()),
+                    None => strand.store(out, Nil),
                 },
             }
             Ok(())
@@ -1130,7 +1126,7 @@ pub(crate) fn configure_vm<'v>(
                     let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, path, out)?;
                 }
-                None => Output::set(strand, out, Nil),
+                None => strand.store(out, Nil),
             }
             Ok(())
         })
@@ -1166,7 +1162,7 @@ pub(crate) fn configure_vm<'v>(
                 if chomp {
                     value = strip_line_ending(value)
                 }
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
         })

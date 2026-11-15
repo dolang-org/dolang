@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, State, Strand,
+    AllocExt, Instance, Object, Result, Slot, State, Strand,
     object::{ArrayLike, ArrayView, TypeBuilder, Unpack},
     value::TypeObject,
 };
@@ -41,7 +41,7 @@ impl<'v> Object<'v> for GlobIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

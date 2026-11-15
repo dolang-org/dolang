@@ -11,7 +11,7 @@ mod util;
 use crate::global::Tag;
 
 use dolang::runtime::{
-    Args, Input, Output, Result, Slot, Strand, Type, Value,
+    AllocExt, Args, Input, Output, Result, Slot, Strand, Type, Value,
     vm::{Builder, Vm},
 };
 
@@ -36,12 +36,8 @@ pub fn install_console<'v>(
     line_ending: &str,
 ) {
     let global = builder.state::<Tag>();
-    Output::set(builder, &mut *global.host.console.borrow_mut(), console);
-    Output::set(
-        builder,
-        &mut *global.host.line_ending.borrow_mut(),
-        line_ending,
-    );
+    builder.store(&mut *global.host.console.borrow_mut(), console);
+    builder.store(&mut *global.host.line_ending.borrow_mut(), line_ending);
     global.host.can_style.set(can_style);
 }
 

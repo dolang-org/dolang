@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value,
     object::TypeBuilder, unpack, value::View, vm::Register, with_instance,
 };
 
@@ -137,23 +137,23 @@ impl<'v> Object<'v> for Uuid {
 
         builder
             .get("bytes", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.as_bytes().as_slice());
+                strand.store(out, this.annex().inner.as_bytes().as_slice());
                 Ok(())
             })
             .get("hex", |this, strand, out| {
                 let hex = this.annex().inner.simple().to_string();
-                Output::set(strand, out, hex.as_str());
+                strand.store(out, hex.as_str());
                 Ok(())
             })
             .get("version", |this, strand, out| {
                 let version = this.annex().inner.get_version_num();
-                Output::set(strand, out, version as u8);
+                strand.store(out, version as u8);
                 Ok(())
             })
             .get("variant", |this, strand, out| {
                 let global = this.annex().global;
                 let variant = this.annex().inner.get_variant();
-                Output::set(strand, out, variant_sym(global, variant));
+                strand.store(out, variant_sym(global, variant));
                 Ok(())
             })
             .type_get("NIL", |_this, strand, out| {

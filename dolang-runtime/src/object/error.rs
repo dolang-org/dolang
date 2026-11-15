@@ -17,8 +17,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Value},
-    vm::Vm,
+    value::{Slot, Value},
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -150,7 +150,7 @@ impl<'v> Protocol<'v> for BoxedObj<'v> {
     ) {
         let kind = this.get().kind();
         let ty = variant_singleton(strand, kind);
-        Output::set(strand, out, ty)
+        strand.store(out, ty)
     }
 
     fn op_display<'a, 's>(
@@ -191,7 +191,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -274,7 +274,7 @@ impl<'v> Protocol<'v> for VariantTypeObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

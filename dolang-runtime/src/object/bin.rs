@@ -14,8 +14,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Nil, Output, Slot, Slots, Value, view::PinBin, with_u8_slice},
-    vm::Vm,
+    value::{BinEmbryo, Nil, Slot, Slots, Value, view::PinBin, with_u8_slice},
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -172,7 +172,7 @@ impl<'v> Protocol<'v> for BinObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().bin)
+        strand.store(out, &strand.singletons().bin)
     }
 
     fn op_display<'a, 's>(
@@ -206,7 +206,7 @@ impl<'v> Protocol<'v> for BinObj {
     ) -> Result<'v, 's, ()> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             let eq = with_pin!(strand, oslice, |oslice| oslice.bytes() == this.bytes());
-            Output::set(strand, &mut out, Value::from_bool(eq));
+            strand.store(&mut out, Value::from_bool(eq));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -221,7 +221,7 @@ impl<'v> Protocol<'v> for BinObj {
     ) -> Result<'v, 's, ()> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             let lt = with_pin!(strand, oslice, |oslice| this.bytes() < oslice.bytes());
-            Output::set(strand, &mut out, Value::from_bool(lt));
+            strand.store(&mut out, Value::from_bool(lt));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))
@@ -250,11 +250,11 @@ impl<'v> Protocol<'v> for BinObj {
         match slice {
             range::Slice::Contiguous { start, end } => {
                 let slice = me.get(start..end).ok_or_else(|| Error::index(strand))?;
-                Output::set(strand, out, slice);
+                strand.store(out, slice);
             }
             range::Slice::Stepped(indices) => {
                 let bytes: Vec<u8> = indices.into_iter().map(|i| me[i]).collect();
-                Output::set(strand, out, bytes.as_slice());
+                strand.store(out, bytes.as_slice());
             }
         }
         Ok(())
@@ -276,14 +276,14 @@ impl<'v> Protocol<'v> for BinObj {
                             let msg = "not binary data: unknown".to_string();
                             Error::type_error(strand, msg)
                         })?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
                 unpack!(strand, args => prefix);
                 let borrow = this.bytes();
                 with_u8_slice!(strand, prefix, |prefix| {
-                    Output::set(strand, out, borrow.strip_prefix(prefix).unwrap_or(borrow))
+                    strand.store(out, borrow.strip_prefix(prefix).unwrap_or(borrow))
                 })
                 .ok_or_else(|| {
                     let msg = "not binary data: unknown".to_string();
@@ -298,14 +298,14 @@ impl<'v> Protocol<'v> for BinObj {
                         let msg = "not binary data: unknown".to_string();
                         Error::type_error(strand, msg)
                     })?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
                 unpack!(strand, args => suffix);
                 let borrow = this.bytes();
                 with_u8_slice!(strand, suffix, |suffix| {
-                    Output::set(strand, out, borrow.strip_suffix(suffix).unwrap_or(borrow))
+                    strand.store(out, borrow.strip_suffix(suffix).unwrap_or(borrow))
                 })
                 .ok_or_else(|| {
                     let msg = "not binary data: unknown".to_string();
@@ -421,7 +421,7 @@ impl<'v> Protocol<'v> for BinObj {
                 let me = this.bytes();
                 unpack!(strand, args =>);
                 let end = me.len() - iter::line_terminator_len(me);
-                Output::set(strand, out, &me[..end]);
+                strand.store(out, &me[..end]);
                 Ok(())
             }
             sym::TRIM => {
@@ -434,7 +434,7 @@ impl<'v> Protocol<'v> for BinObj {
                         trim_end_bytes(trim_start_bytes(me, &pattern), &pattern)
                     }
                 };
-                Output::set(strand, out, trimmed);
+                strand.store(out, trimmed);
                 Ok(())
             }
             sym::TRIM_START => {
@@ -447,7 +447,7 @@ impl<'v> Protocol<'v> for BinObj {
                         trim_start_bytes(me, &pattern)
                     }
                 };
-                Output::set(strand, out, trimmed);
+                strand.store(out, trimmed);
                 Ok(())
             }
             sym::TRIM_END => {
@@ -460,7 +460,7 @@ impl<'v> Protocol<'v> for BinObj {
                         trim_end_bytes(me, &pattern)
                     }
                 };
-                Output::set(strand, out, trimmed);
+                strand.store(out, trimmed);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -471,7 +471,7 @@ impl<'v> Protocol<'v> for BinObj {
                             let msg = "not binary data: unknown".to_string();
                             Error::type_error(strand, msg)
                         })?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::FIND | sym::RFIND => {
@@ -492,8 +492,8 @@ impl<'v> Protocol<'v> for BinObj {
                     Error::type_error(strand, msg)
                 })?;
                 match found {
-                    Some(offset) => Output::set(strand, out, start + offset),
-                    None => Output::set(strand, out, Nil),
+                    Some(offset) => strand.store(out, start + offset),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             }
@@ -558,7 +558,7 @@ impl<'v> Protocol<'v> for BinObj {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.bytes().len());
+                strand.store(out, this.bytes().len());
                 Ok(())
             }
             sym::STARTS_WITH
@@ -705,7 +705,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -727,7 +727,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -750,7 +750,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         // Fill keys with defaults
         let pos_count = sig.required + sig.optional.len();
         for (i, key) in sig.keys.iter().enumerate() {
-            Output::set(strand, out.at(pos_count + i), key.default.as_ref().unwrap());
+            strand.store(out.at(pos_count + i), key.default.as_ref().unwrap());
         }
 
         let mut borrow = this.borrow(strand)?.clone();
@@ -760,15 +760,15 @@ impl<'v> Protocol<'v> for Split<'v> {
             let Some((start, end)) = borrow.next_segment() else {
                 return Err(Error::missing_positional(strand, sig.required));
             };
-            Output::set(strand, out.at(i), &borrow.str[start..end]);
+            strand.store(out.at(i), &borrow.str[start..end]);
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
-                Output::set(strand, out.at(sig.required + i), &borrow.str[start..end]);
+                strand.store(out.at(sig.required + i), &borrow.str[start..end]);
             } else {
-                Output::set(strand, out.at(sig.required + i), &sig.optional[i]);
+                strand.store(out.at(sig.required + i), &sig.optional[i]);
             }
         }
 
@@ -796,7 +796,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         let Some((start, end)) = borrow.next_segment() else {
             return Ok(false);
         };
-        Output::set(strand, out, &borrow.str[start..end]);
+        strand.store(out, &borrow.str[start..end]);
         Ok(true)
     }
 
@@ -839,7 +839,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -857,7 +857,7 @@ impl<'v> Protocol<'v> for Class {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => value);
-        with_u8_slice!(strand, value, |slice| Output::set(strand, out, slice))
+        with_u8_slice!(strand, value, |slice| strand.store(out, slice))
             .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))
     }
 
@@ -915,7 +915,7 @@ impl<'v> Protocol<'v> for Class {
                 unpack!(strand, args => self_val, value);
                 with_slots!(strand, |mut native| {
                     with_u8_slice!(strand, value, |slice| {
-                        Output::set(strand, Slot::reborrow(&mut native), slice)
+                        strand.store(Slot::reborrow(&mut native), slice)
                     })
                     .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))?;
                     self_val.op_fill(
@@ -937,7 +937,7 @@ impl<'v> Protocol<'v> for Class {
                         let value: u8 = value.try_into().map_err(|_| Error::overflow(strand))?;
                         acc.push(value);
                     }
-                    Output::set(strand, out, acc.as_slice());
+                    strand.store(out, acc.as_slice());
                     Ok(())
                 })
             }

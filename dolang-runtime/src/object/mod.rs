@@ -46,8 +46,8 @@ use crate::{
     object::protocol::Recv,
     strand::Strand,
     sym::Sym,
-    value::{Input, Output, Slot, Value},
-    vm::Alloc,
+    value::{Input, Slot, Value},
+    vm::{Alloc, AllocExt},
 };
 
 use dolang_util::{alias, mono::MonoVec};
@@ -658,7 +658,7 @@ impl<'v> Protocol<'v> for BoundMethodObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().func)
+        strand.store(out, &strand.singletons().func)
     }
 
     fn op_debug<'a, 's>(

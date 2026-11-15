@@ -26,7 +26,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Nil, Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell, with_u8_slice},
-    vm::{Alloc, ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
+    vm::{Alloc, AllocExt, ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
     with_interrupt_mask, with_slots, with_str,
 };
 use dolang_bytecode::{Opcode, builtin};
@@ -49,7 +49,7 @@ impl<'v> CallFrame<'v> {
     /// Pop the top value into `out`.
     unsafe fn pop(&self, alloc: &mut impl Alloc<'v>, out: impl Output<'v>) {
         // Move before dropping `sp`, so the value never leaves the scanned range
-        unsafe { Output::set(alloc, out, self.top_slot()) }
+        unsafe { alloc.store(out, self.top_slot()) }
         self.sp.update(|s| s - 1);
     }
 
@@ -63,7 +63,7 @@ impl<'v> CallFrame<'v> {
         self.sp.update(|s| s - count);
         unsafe {
             for slot in self.slots.get_unchecked(self.sp.get()..end) {
-                Output::set(alloc, slot.slot(), Nil);
+                alloc.store(slot.slot(), Nil);
             }
         }
     }
@@ -89,7 +89,7 @@ impl<'v> CallFrame<'v> {
     unsafe fn push_local(&self, alloc: &mut impl Alloc<'v>, index: usize) {
         unsafe {
             let cell = self.slots.get_unchecked(index);
-            Output::set(alloc, self.push(), cell)
+            alloc.store(self.push(), cell)
         }
     }
 
@@ -140,7 +140,7 @@ impl<'v> Vm<'v> {
                 }
                 if found {
                     let modules = self.native_modules.borrow();
-                    Output::set(strand, &mut out, &modules[name]);
+                    strand.store(&mut out, &modules[name]);
                     return Ok(());
                 }
                 loop {
@@ -151,7 +151,7 @@ impl<'v> Vm<'v> {
                             }
                         }
                         Some(ImportCacheEntry::Ready(value)) => {
-                            Output::set(strand, &mut out, value);
+                            strand.store(&mut out, value);
                             return Ok(());
                         }
                         None => break,
@@ -247,7 +247,7 @@ impl<'v> Vm<'v> {
                             call!(strand, importer, name, Slot::reborrow(&mut raw))?
                         }
                         match mode {
-                            Mode::Get => Slot::set(strand, out, raw),
+                            Mode::Get => strand.store(out, raw),
                             Mode::Insert => {
                                 let root = args
                                     .next()
@@ -362,7 +362,7 @@ impl<'v> Vm<'v> {
             obj.op_iter(strand, out).await
         } else {
             let inner = strand.inner;
-            Output::set(strand, out, inner.input());
+            strand.store(out, inner.input());
             Ok(())
         }
     }
@@ -401,7 +401,7 @@ impl<'v> Vm<'v> {
                 || Error::type_error(strand, "expected binary or string value in binary concat"),
             )?;
         }
-        Output::set(strand, out, &acc[..]);
+        strand.store(out, &acc[..]);
         Ok(())
     }
 
@@ -469,9 +469,9 @@ impl<'v> Vm<'v> {
             });
         }
         if assert {
-            Output::set(strand, out, &Value::NIL);
+            strand.store(out, &Value::NIL);
         } else {
-            Output::set(strand, out, matches);
+            strand.store(out, matches);
         }
         Ok(())
     }
@@ -799,7 +799,7 @@ impl<'v> Vm<'v> {
                     }
                     LoadConst => {
                         let index = reader.usize();
-                        Output::set(strand, frame.push(), consttab.get_unchecked(index))
+                        strand.store(frame.push(), consttab.get_unchecked(index))
                     }
                     LoadLocal => {
                         let index = reader.usize();
@@ -871,13 +871,13 @@ impl<'v> Vm<'v> {
                         let depth = frame.sp.get();
                         let mut func = Slot::reborrow(&mut scratch1);
                         let mut res = Slot::reborrow(&mut scratch2);
-                        Output::set(strand, &mut func, frame.local(depth - count));
+                        strand.store(&mut func, frame.local(depth - count));
                         let args = Self::marshal_args(strand, frame, sig, 1).await?;
                         self.check_trap_gc(strand)?;
                         func.op_call(strand, args, Slot::reborrow(&mut res)).await?;
                         frame.items().clear();
                         frame.discard(strand, count);
-                        Output::set(strand, frame.push(), res);
+                        strand.store(frame.push(), res);
                     }
                     MethodCall => {
                         frame.pc.set(reader.offset());
@@ -889,13 +889,13 @@ impl<'v> Vm<'v> {
                         let depth = frame.sp.get();
                         let mut obj = Slot::reborrow(&mut scratch1);
                         let mut res = Slot::reborrow(&mut scratch2);
-                        Output::set(strand, &mut obj, frame.local(depth - count));
+                        strand.store(&mut obj, frame.local(depth - count));
                         let args = Self::marshal_args(strand, frame, sig, 1).await?;
                         self.check_trap_gc(strand)?;
                         obj.op_mcall(strand, method, args, Slot::reborrow(&mut res))
                             .await?;
                         frame.discard(strand, count);
-                        Output::set(strand, frame.push(), res);
+                        strand.store(frame.push(), res);
                         frame.items().clear();
                     }
                     Builtin => {
@@ -913,7 +913,7 @@ impl<'v> Vm<'v> {
                                 // SAFETY: the copy moves straight into the scratch slot
                                 let value =
                                     frame.program.read(|p| p.borrow().unwrap().importer.dup());
-                                Output::set(strand, &mut importer, value);
+                                strand.store(&mut importer, value);
                                 // Pinned out of line in the strand: inlining the import's
                                 // future would grow every frame's
                                 strand
@@ -974,7 +974,7 @@ impl<'v> Vm<'v> {
                                         };
                                     return Err(Error::type_error(strand, msg));
                                 }
-                                Output::set(strand, Slot::reborrow(&mut res), Nil);
+                                strand.store(Slot::reborrow(&mut res), Nil);
                                 Ok(())
                             }
                             builtin::TYPE_TEST | builtin::TYPE_ASSERT => self.type_test(
@@ -1019,7 +1019,7 @@ impl<'v> Vm<'v> {
                             _ => unreachable_unchecked(),
                         }?;
                         frame.discard(strand, count);
-                        Output::set(strand, frame.push(), res);
+                        strand.store(frame.push(), res);
                         frame.items().clear();
                     }
                     inst @ (Neg | Not | BitNot) => {
@@ -1118,7 +1118,7 @@ impl<'v> Vm<'v> {
                         let mut value = Slot::reborrow(&mut scratch1);
                         frame.pop(strand, &mut value);
                         let flag = value.op_next(strand, frame.push()).await?;
-                        Output::set(strand, frame.push(), flag);
+                        strand.store(frame.push(), flag);
                     }
                     Unpack => {
                         // Set current PC in frame header in case a backtrace is needed
@@ -1221,20 +1221,16 @@ impl<'v> Vm<'v> {
                         match call_result {
                             Ok(()) => {
                                 drop(guard);
-                                Output::set(strand, frame.push(), res);
-                                Output::set(strand, frame.push(), Nil);
+                                strand.store(frame.push(), res);
+                                strand.store(frame.push(), Nil);
                             }
                             Err(err) => {
                                 if let Some((indicator, weak)) = err.as_nl_branch()
                                     && weak.ptr_eq_strong(&guard)
                                 {
                                     drop(guard);
-                                    Output::set(strand, frame.push(), Nil);
-                                    Output::set(
-                                        strand,
-                                        frame.push(),
-                                        &Value::from_i16(indicator.into()),
-                                    );
+                                    strand.store(frame.push(), Nil);
+                                    strand.store(frame.push(), &Value::from_i16(indicator.into()));
                                 } else {
                                     return Err(err);
                                 }

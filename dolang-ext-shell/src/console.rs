@@ -1,7 +1,7 @@
 use crate::global::Tag;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, State, Strand, Value,
+    AllocExt, Error, Instance, Object, Result, State, Strand, Value,
     object::TypeBuilder,
     unpack,
     value::{Root, TypeObject},
@@ -35,7 +35,7 @@ impl<'v> Object<'v> for HostConsole {
             .method("write", async move |_this, strand, args, out| {
                 let bytes = dolang_ext_term::write_data(strand, args)?;
                 write_host(strand, &bytes).await?;
-                Output::set(strand, out, bytes.len());
+                strand.store(out, bytes.len());
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
@@ -51,16 +51,16 @@ impl<'v> Object<'v> for HostConsole {
                     .map_err(|error| error.into_sys(strand))
             })
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
-                Output::set(strand, out, LINE_ENDING);
+                strand.store(out, LINE_ENDING);
                 Ok(())
             })
             .get("can_style", |_this, strand, out| {
                 let global = strand.state::<Tag>();
-                Output::set(strand, out, global.terminal.ansi);
+                strand.store(out, global.terminal.ansi);
                 Ok(())
             })
             .get("is_tty", |_this, strand, out| {
@@ -69,7 +69,7 @@ impl<'v> Object<'v> for HostConsole {
                 let global = strand.state::<Tag>();
                 let is_tty =
                     global.terminal.stderr_is_terminal && !global.terminal.redirected.get();
-                Output::set(strand, out, is_tty);
+                strand.store(out, is_tty);
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {

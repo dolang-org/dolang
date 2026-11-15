@@ -295,11 +295,11 @@ let annex = instance.annex();                // &WidgetAnnex — no borrow check
 
 ### Built-in Values
 
-`Output::set` accepts an `Input`: a Rust value with a direct Do counterpart
-(numbers, `&str`, `&[u8]`, `Sym`, `ByteHandle`), a reference to a rooted value
-(`&Value`, `Slot`, `Root`, `Instance`), or a fixed singleton (`Nil`,
-`TypeObject`, `Singleton`). New compound values are built with methods that
-write into an output:
+`strand.store(out, input)` (`AllocExt`, like every write) accepts an `Input`: a
+Rust value with a direct Do counterpart (numbers, `&str`, `&[u8]`, `Sym`,
+`ByteHandle`), a reference to a rooted value (`&Value`, `Slot`, `Root`,
+`Instance`), or a fixed singleton (`Nil`, `TypeObject`, `Singleton`). New
+compound values are built with methods that write into an output:
 
 ```rust
 strand.new_array(&mut out);                 // also new_dict, new_set (AllocExt)
@@ -476,7 +476,7 @@ provides its own, so they chain.
 
 An extension that only hands a native stream to Do, such as a response body,
 needs no provider type: setting a `ByteHandle` as an output
-(`Output::set(strand, out, handle)`) wraps it in a runtime `io.Io` that owns
+(`strand.store(out, handle)`) wraps it in a runtime `io.Io` that owns
 it. Its `read` serves the prefix and then polls the handle once per call, its
 `close` closes the handle, and it provides `ByteIo` by lending clones.
 
@@ -598,7 +598,7 @@ global.types.find.create_with_annex(
 
 // 4. Root the other referents in slots (keeps them alive for GC)
 let mut borrow = global.types.find.downcast(&out).unwrap().borrow_mut_unwrap();
-Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this); // regex
+strand.store(Mut::slot_mut::<0>(&mut borrow), this); // regex
 ```
 
 Slots are accessed via `Ref::slot::<N>` (read) and `Mut::slot_mut::<N>` (write).

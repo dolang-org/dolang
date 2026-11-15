@@ -17,7 +17,7 @@ use async_zip::{
 };
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Arg, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, call,
+    Arg, Error, Instance, Object, Result, Slot, State, Strand, Sym, call,
     error::{ErrorKind, ResultExt},
     io::{ByteHandle, IoCaps, IoResultExt as _, ReadSeek, WriteSeek},
     method,
@@ -396,7 +396,7 @@ impl<'v> Object<'v> for Archive {
                     );
                     with_instance!(strand, global.types.file.cast(&file).unwrap(), |file_obj| {
                         let mut file_borrow = file_obj.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut file_borrow), this);
+                        strand.store(Mut::slot_mut::<0>(&mut file_borrow), this);
                     });
 
                     if let Some(block) = block {
@@ -406,7 +406,7 @@ impl<'v> Object<'v> for Archive {
                         });
                         result.and(close_result)
                     } else {
-                        Output::set(strand, out, file);
+                        strand.store(out, file);
                         Ok(())
                     }
                 },
@@ -613,17 +613,17 @@ impl<'v> Object<'v> for Entry {
             .get("size", |this, strand, out| {
                 let size =
                     with_entry(this, strand, |_strand, entry| Ok(entry.uncompressed_size()))?;
-                Output::set(strand, out, size);
+                strand.store(out, size);
                 Ok(())
             })
             .get("compressed_size", |this, strand, out| {
                 let size = with_entry(this, strand, |_strand, entry| Ok(entry.compressed_size()))?;
-                Output::set(strand, out, size);
+                strand.store(out, size);
                 Ok(())
             })
             .get("crc32", |this, strand, out| {
                 let crc32 = with_entry(this, strand, |_strand, entry| Ok(entry.crc32()))?;
-                Output::set(strand, out, crc32);
+                strand.store(out, crc32);
                 Ok(())
             })
             .get("compression", move |this, strand, out| {
@@ -636,13 +636,13 @@ impl<'v> Object<'v> for Entry {
                         unknown,
                     ))
                 })?;
-                Output::set(strand, out, sym);
+                strand.store(out, sym);
                 Ok(())
             })
             .get("mode", |this, strand, out| {
                 let mode = with_entry(this, strand, |_strand, entry| Ok(entry.unix_permissions()))?;
                 if let Some(mode) = mode {
-                    Output::set(strand, out, mode);
+                    strand.store(out, mode);
                 }
                 Ok(())
             })
@@ -653,7 +653,7 @@ impl<'v> Object<'v> for Entry {
                     }
                     Ok(type_syms.bits_to_sym(entry.unix_permissions()))
                 })?;
-                Output::set(strand, out, sym);
+                strand.store(out, sym);
                 Ok(())
             })
             .get("comment", |this, strand, out| {
@@ -664,7 +664,7 @@ impl<'v> Object<'v> for Entry {
                         .into_do_data(strand)
                         .map(|s| s.to_string())
                 })?;
-                Output::set(strand, out, comment.as_str());
+                strand.store(out, comment.as_str());
                 Ok(())
             })
             .get("last_modified", |this, strand, out| {
@@ -731,11 +731,7 @@ impl<'v> Object<'v> for Entry {
                                 global.types.file.cast(&file).unwrap(),
                                 |file_obj| {
                                     let mut file_borrow = file_obj.borrow_mut_unwrap();
-                                    Output::set(
-                                        strand,
-                                        Mut::slot_mut::<0>(&mut file_borrow),
-                                        archive,
-                                    );
+                                    strand.store(Mut::slot_mut::<0>(&mut file_borrow), archive);
                                 }
                             );
 
@@ -747,7 +743,7 @@ impl<'v> Object<'v> for Entry {
                                     });
                                 result.and(close_result)
                             } else {
-                                Output::set(strand, out, file);
+                                strand.store(out, file);
                                 Ok(())
                             }
                         }
@@ -800,7 +796,7 @@ impl<'v> ArrayLike<'v> for Entries {
             global.types.entry.cast(&out).unwrap(),
             |entry_obj| {
                 let mut entry_borrow = entry_obj.borrow_mut_unwrap();
-                Output::set(strand, Mut::slot_mut::<0>(&mut entry_borrow), this);
+                strand.store(Mut::slot_mut::<0>(&mut entry_borrow), this);
             }
         );
         Ok(())
@@ -866,12 +862,12 @@ impl<'v> Object<'v> for File {
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
                 let readable = matches!(this.borrow(strand)?.inner, Some(FileInner::Read { .. }));
-                Output::set(strand, out, readable);
+                strand.store(out, readable);
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let writable = matches!(this.borrow(strand)?.inner, Some(FileInner::Write(_)));
-                Output::set(strand, out, writable);
+                strand.store(out, writable);
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -958,7 +954,7 @@ impl<'v> Object<'v> for File {
                     IoSlice::advance_slices(&mut slices, n);
                 }
                 drop(borrow);
-                Output::set(strand, out, written);
+                strand.store(out, written);
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {

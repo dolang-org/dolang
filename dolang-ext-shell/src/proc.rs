@@ -1,8 +1,8 @@
-use dolang::runtime::with_slots;
+use dolang::runtime::{AllocExt, with_slots};
 use dolang::{
     compile::Config,
     runtime::{
-        Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+        Error, Instance, Object, Result, Slot, State, Strand, Value, call,
         object::TypeBuilder,
         unpack,
         value::{TypeObject, View},
@@ -197,7 +197,7 @@ impl<'v> Object<'v> for WindowsArguments {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -212,7 +212,7 @@ impl<'v> Object<'v> for WindowsArguments {
         };
         let argument = argument.clone();
         arguments.index += 1;
-        Output::set(strand, out, argument.as_str());
+        strand.store(out, argument.as_str());
         Ok(true)
     }
 }
@@ -302,7 +302,7 @@ pub(crate) fn configure_vm<'v>(
             }
             let mut command_line = String::new();
             dolang_winterop::process::quote_argument(&argument, &mut command_line);
-            Output::set(strand, out, command_line.as_str());
+            strand.store(out, command_line.as_str());
             Ok(())
         })
         .function_with_slots(
@@ -316,7 +316,7 @@ pub(crate) fn configure_vm<'v>(
                 }
                 let command_line = dolang_winterop::process::join_arguments(arguments)
                     .map_err(|error| Error::value(strand, error.to_string()))?;
-                Output::set(strand, out, command_line.as_str());
+                strand.store(out, command_line.as_str());
                 Ok(())
             },
         )

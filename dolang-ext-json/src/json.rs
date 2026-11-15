@@ -14,7 +14,7 @@ use serde_json::{
 
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
+    Alloc, Input, Instance, Object, Slot, State, Strand, Value,
     error::{Error, Result},
     io::IoResultExt as _,
     object::{Mut, Ref, TypeBuilder, fmt},
@@ -430,7 +430,7 @@ fn encode<'v, 's>(
         ty.create_with_annex(strand, EncodeError, annex, &mut error);
         with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
             let mut borrow = instance.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+            strand.store(Mut::slot_mut::<0>(&mut borrow), &tuple);
         });
         Err(Error::from_value(strand, &error))
     })
@@ -475,7 +475,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, i128::from(v));
+        self.0.store(&mut self.1, i128::from(v));
         Ok(())
     }
 
@@ -483,7 +483,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -491,7 +491,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, i128::from(v));
+        self.0.store(&mut self.1, i128::from(v));
         Ok(())
     }
 
@@ -499,7 +499,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -507,7 +507,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, Nil);
+        self.0.store(&mut self.1, Nil);
         Ok(())
     }
 
@@ -515,7 +515,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -523,7 +523,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -608,15 +608,15 @@ impl<'v> Object<'v> for DecodeError {
                     DecodeKind::Syntax => syntax,
                     DecodeKind::Eof => eof,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().line);
+                strand.store(out, this.annex().line);
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().column);
+                strand.store(out, this.annex().column);
                 Ok(())
             })
     }
@@ -661,12 +661,12 @@ impl<'v> Object<'v> for EncodeError {
                     EncodeKind::Range => range,
                     EncodeKind::Key => key,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("path", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
     }

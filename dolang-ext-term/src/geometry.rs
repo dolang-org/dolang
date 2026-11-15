@@ -1,6 +1,6 @@
 use dolang::runtime::value::fmt::Format;
 use dolang::runtime::{
-    Args, Instance, Object, Output, Result, Slot, Strand, Type, Value,
+    AllocExt, Args, Instance, Object, Result, Slot, Strand, Type, Value,
     object::{TypeBuilder, fmt},
     unpack,
 };
@@ -46,13 +46,13 @@ impl<'v> Object<'v> for Geometry {
         builder
             .get("rows", |this, strand, out| {
                 if let Some(rows) = this.annex().rows {
-                    Output::set(strand, out, rows);
+                    strand.store(out, rows);
                 }
                 Ok(())
             })
             .get("cols", |this, strand, out| {
                 if let Some(cols) = this.annex().cols {
-                    Output::set(strand, out, cols);
+                    strand.store(out, cols);
                 }
                 Ok(())
             })

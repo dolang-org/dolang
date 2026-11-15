@@ -11,8 +11,8 @@ use crate::{
     object::{protocol::GcObj, sym::SymObj},
     strand::{SlotScope, Strand},
     sym::Sym,
-    value::{self, Input, Output, Slot, ValueCell},
-    vm::Alloc,
+    value::{self, Input, Slot, ValueCell},
+    vm::{Alloc, AllocExt},
 };
 
 pub(crate) type OwnedItem<'v> = (Option<GcObj<'v, SymObj>>, ValueCell<'v>);
@@ -170,7 +170,7 @@ fn restore<'v>(
     for (cell, replace) in cells.iter().zip(replace) {
         if let Some(replace) = replace.take() {
             // Safety: the call is over, so nothing else accesses the cell
-            Output::set(strand, replace, unsafe { cell.slot() })
+            strand.store(replace, unsafe { cell.slot() })
         }
     }
 }
@@ -792,7 +792,7 @@ mod tests {
     use super::{Arg, Args};
     use crate::{
         test_support::with_vm,
-        value::{Nil, Output, ValueCell},
+        value::{Nil, ValueCell},
         vm::AllocExt,
     };
 
@@ -821,7 +821,7 @@ mod tests {
                     // The argument was taken from the caller's slot, so only the call's
                     // cell holds it
                     strand.vm().collect_full();
-                    Output::set(strand, out, &value);
+                    strand.store(out, &value);
                     Ok(())
                 },
                 &mut func,

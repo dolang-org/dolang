@@ -129,7 +129,7 @@ impl<'v, T: CodeType<'v>> Object<'v> for CodeObject<T> {
 
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder = builder.get("value", |this, strand, out| {
-            Output::set(strand, out, this.annex().value);
+            strand.store(out, this.annex().value);
             Ok(())
         });
         if T::ERRNO {
@@ -149,7 +149,7 @@ impl<'v, T: CodeType<'v>> Object<'v> for CodeObject<T> {
                         ));
                     }
                 };
-                Output::set(strand, out, os);
+                strand.store(out, os);
                 Ok(())
             });
         }

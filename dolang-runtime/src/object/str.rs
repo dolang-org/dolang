@@ -19,8 +19,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Nil, Output, Slot, Slots, StrEmbryo, Value, view::PinStr},
-    vm::Vm,
+    value::{Nil, Slot, Slots, StrEmbryo, Value, view::PinStr},
+    vm::{AllocExt, Vm},
     with_slice, with_slots, with_str,
 };
 
@@ -97,7 +97,7 @@ impl<'v> Protocol<'v> for StrObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().str)
+        strand.store(out, &strand.singletons().str)
     }
 
     fn op_display<'a, 's>(
@@ -142,7 +142,7 @@ impl<'v> Protocol<'v> for StrObj {
     ) -> Result<'v, 's, ()> {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
             let eq = with_pin!(strand, ostr, |ostr| ostr.str() == this.str());
-            Output::set(strand, &mut out, Value::from_bool(eq));
+            strand.store(&mut out, Value::from_bool(eq));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -157,7 +157,7 @@ impl<'v> Protocol<'v> for StrObj {
     ) -> Result<'v, 's, ()> {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
             let lt = with_pin!(strand, ostr, |ostr| this.str() < ostr.str());
-            Output::set(strand, &mut out, Value::from_bool(lt));
+            strand.store(&mut out, Value::from_bool(lt));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))
@@ -186,7 +186,7 @@ impl<'v> Protocol<'v> for StrObj {
         let slice = me
             .get(start..end)
             .ok_or_else(|| Error::runtime(strand, "invalid UTF-8 substring boundaries"))?;
-        Output::set(strand, out, slice);
+        strand.store(out, slice);
         Ok(())
     }
 
@@ -230,7 +230,7 @@ impl<'v> Protocol<'v> for StrObj {
                         "str.scalar: expected exactly one Unicode scalar",
                     ));
                 }
-                Output::set(strand, out, scalar as u32 as usize);
+                strand.store(out, scalar as u32 as usize);
                 Ok(())
             }
             sym::STARTS_WITH => {
@@ -239,7 +239,7 @@ impl<'v> Protocol<'v> for StrObj {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
                 let input = with_str!(strand, prefix, |prefix| this.str().starts_with(prefix));
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::WITHOUT_PREFIX => {
@@ -249,7 +249,7 @@ impl<'v> Protocol<'v> for StrObj {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.without_prefix: not a string"))?;
                 with_str!(strand, prefix, |prefix| {
-                    Output::set(strand, out, borrow.strip_prefix(prefix).unwrap_or(borrow))
+                    strand.store(out, borrow.strip_prefix(prefix).unwrap_or(borrow))
                 });
                 Ok(())
             }
@@ -259,7 +259,7 @@ impl<'v> Protocol<'v> for StrObj {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
                 let input = with_str!(strand, suffix, |suffix| this.str().ends_with(suffix));
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::WITHOUT_SUFFIX => {
@@ -269,7 +269,7 @@ impl<'v> Protocol<'v> for StrObj {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.without_suffix: not a string"))?;
                 with_str!(strand, suffix, |suffix| {
-                    Output::set(strand, out, borrow.strip_suffix(suffix).unwrap_or(borrow))
+                    strand.store(out, borrow.strip_suffix(suffix).unwrap_or(borrow))
                 });
                 Ok(())
             }
@@ -377,7 +377,7 @@ impl<'v> Protocol<'v> for StrObj {
             sym::CHOMP => {
                 unpack!(strand, args =>);
                 let end = me.len() - iter::line_terminator_len(me.as_bytes());
-                Output::set(strand, out, &me[..end]);
+                strand.store(out, &me[..end]);
                 Ok(())
             }
             sym::TRIM => {
@@ -389,7 +389,7 @@ impl<'v> Protocol<'v> for StrObj {
                         me.trim_matches(pattern.as_slice())
                     }
                 };
-                Output::set(strand, out, trimmed);
+                strand.store(out, trimmed);
                 Ok(())
             }
             sym::TRIM_START => {
@@ -401,7 +401,7 @@ impl<'v> Protocol<'v> for StrObj {
                         me.trim_start_matches(pattern.as_slice())
                     }
                 };
-                Output::set(strand, out, trimmed);
+                strand.store(out, trimmed);
                 Ok(())
             }
             sym::TRIM_END => {
@@ -413,15 +413,15 @@ impl<'v> Protocol<'v> for StrObj {
                         me.trim_end_matches(pattern.as_slice())
                     }
                 };
-                Output::set(strand, out, trimmed);
+                strand.store(out, trimmed);
                 Ok(())
             }
             sym::UPPER => {
-                Output::set(strand, out, me.to_uppercase().as_str());
+                strand.store(out, me.to_uppercase().as_str());
                 Ok(())
             }
             sym::LOWER => {
-                Output::set(strand, out, me.to_lowercase().as_str());
+                strand.store(out, me.to_lowercase().as_str());
                 Ok(())
             }
             sym::FIND | sym::RFIND => {
@@ -442,8 +442,8 @@ impl<'v> Protocol<'v> for StrObj {
                     }
                 });
                 match found {
-                    Some(offset) => Output::set(strand, out, start + offset),
-                    None => Output::set(strand, out, Nil),
+                    Some(offset) => strand.store(out, start + offset),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             }
@@ -500,7 +500,7 @@ impl<'v> Protocol<'v> for StrObj {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
                 let input = with_str!(strand, needle, |needle| this.str().contains(needle));
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -519,7 +519,7 @@ impl<'v> Protocol<'v> for StrObj {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.str().len());
+                strand.store(out, this.str().len());
                 Ok(())
             }
             sym::STARTS_WITH
@@ -610,15 +610,15 @@ impl<'v> UnicodeIter<'v> {
         if let Some(fragment) = self.next_str() {
             let len = fragment.len();
             if boundaries {
-                Output::set(strand, out, offset);
+                strand.store(out, offset);
             } else {
-                Output::set(strand, out, fragment);
+                strand.store(out, fragment);
             }
             self.offset += len;
             true
         } else if boundaries && !self.terminal_emitted {
             self.terminal_emitted = true;
-            Output::set(strand, out, offset);
+            strand.store(out, offset);
             true
         } else {
             false
@@ -664,13 +664,13 @@ fn fill_unpack<'v, 's>(
     }
     for (i, default) in sig.optional.iter().enumerate() {
         if !next(strand, out.at(sig.required + i)) {
-            Output::set(strand, out.at(sig.required + i), default);
+            strand.store(out.at(sig.required + i), default);
         }
     }
     let pos_count = sig.required + sig.optional.len();
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            Output::set(strand, out.at(pos_count + i), default);
+            strand.store(out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -707,7 +707,7 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     async fn op_iter<'a, 's>(
@@ -715,7 +715,7 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -894,7 +894,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -916,7 +916,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -939,7 +939,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         // Fill keys with defaults
         let pos_count = sig.required + sig.optional.len();
         for (i, key) in sig.keys.iter().enumerate() {
-            Output::set(strand, out.at(pos_count + i), key.default.as_ref().unwrap());
+            strand.store(out.at(pos_count + i), key.default.as_ref().unwrap());
         }
 
         let mut borrow = this.borrow(strand)?.clone();
@@ -949,15 +949,15 @@ impl<'v> Protocol<'v> for Split<'v> {
             let Some((start, end)) = borrow.next_segment() else {
                 return Err(Error::missing_positional(strand, sig.required));
             };
-            Output::set(strand, out.at(i), &borrow.str[start..end]);
+            strand.store(out.at(i), &borrow.str[start..end]);
         }
 
         // Fill optional positional slots
         for i in 0..sig.optional.len() {
             if let Some((start, end)) = borrow.next_segment() {
-                Output::set(strand, out.at(sig.required + i), &borrow.str[start..end]);
+                strand.store(out.at(sig.required + i), &borrow.str[start..end]);
             } else {
-                Output::set(strand, out.at(sig.required + i), &sig.optional[i]);
+                strand.store(out.at(sig.required + i), &sig.optional[i]);
             }
         }
 
@@ -985,7 +985,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         let Some((start, end)) = borrow.next_segment() else {
             return Ok(false);
         };
-        Output::set(strand, out, &borrow.str[start..end]);
+        strand.store(out, &borrow.str[start..end]);
         Ok(true)
     }
 
@@ -1028,7 +1028,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -1047,13 +1047,13 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => value);
         if let Some(value) = value.as_str(strand) {
-            with_str!(strand, value, |value| Output::set(strand, out, value));
+            with_str!(strand, value, |value| strand.store(out, value));
             Ok(())
         } else if let Some(value) = value.as_bin(strand) {
             with_slice!(strand, value, |value| {
                 let value = std::str::from_utf8(value)
                     .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
         } else {
@@ -1165,12 +1165,12 @@ impl<'v> Protocol<'v> for Type {
             sym::INIT_METHOD => {
                 unpack!(strand, args => self_val, value);
                 if let Some(value) = value.as_str(strand) {
-                    with_str!(strand, value, |value| Output::set(strand, &mut out, value));
+                    with_str!(strand, value, |value| strand.store(&mut out, value));
                 } else if let Some(value) = value.as_bin(strand) {
                     with_slice!(strand, value, |value| {
                         let value = std::str::from_utf8(value)
                             .map_err(|_| Error::data(strand, "Str: invalid UTF-8"))?;
-                        Output::set(strand, &mut out, value);
+                        strand.store(&mut out, value);
                         Ok(())
                     })?;
                 } else {

@@ -2,8 +2,8 @@
 
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, object::TypeBuilder, unpack,
-    value::Nil, with_slots,
+    Args, Error, Instance, Object, Result, Slot, Strand, object::TypeBuilder, unpack, value::Nil,
+    with_slots,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_winterop::security::Sid;
@@ -46,7 +46,7 @@ fn make_rights<'v, 's>(
         strand.new_array(&mut out);
         let array = out.as_array(strand).unwrap();
         for right in rights {
-            Output::set(strand, &mut item, right.as_str());
+            strand.store(&mut item, right.as_str());
             array.push(strand, &item)?;
         }
         Ok(())
@@ -77,7 +77,7 @@ pub(crate) fn build<'v, 'a, T: Object<'v> + Principal>(
             dolang_vfs_winnet::rights::grant(&vfs, &sid, right)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         })
         .method("revoke_right", async move |this, strand, args, out| {
@@ -87,7 +87,7 @@ pub(crate) fn build<'v, 'a, T: Object<'v> + Principal>(
             dolang_vfs_winnet::rights::revoke(&vfs, &sid, right)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         })
 }

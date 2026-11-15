@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value,
     object::TypeBuilder, unpack, value::View, with_instance,
 };
 
@@ -125,23 +125,23 @@ impl<'v> Object<'v> for Guid {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("bytes", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.to_bytes().as_slice());
+                strand.store(out, this.annex().inner.to_bytes().as_slice());
                 Ok(())
             })
             .get("data1", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.data1);
+                strand.store(out, this.annex().inner.data1);
                 Ok(())
             })
             .get("data2", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.data2);
+                strand.store(out, this.annex().inner.data2);
                 Ok(())
             })
             .get("data3", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.data3);
+                strand.store(out, this.annex().inner.data3);
                 Ok(())
             })
             .get("data4", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.data4.as_slice());
+                strand.store(out, this.annex().inner.data4.as_slice());
                 Ok(())
             })
             .type_get("NIL", |_this, strand, out| {

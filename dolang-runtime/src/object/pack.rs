@@ -18,7 +18,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
 
@@ -268,7 +268,7 @@ pub(crate) fn spread_items<'v, 's>(
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut slot| {
         for (key, value) in items {
-            Output::set(strand, &mut slot, value);
+            strand.store(&mut slot, value);
             if let Some(key) = key {
                 let key = unsafe { Sym::from_obj(key) };
                 sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
@@ -288,8 +288,8 @@ fn set_key<'v>(
     out: Slot<'v, '_>,
 ) {
     match key {
-        Some(key) => Output::set(strand, out, key),
-        None => Output::set(strand, out, int),
+        Some(key) => strand.store(out, key),
+        None => strand.store(out, int),
     }
 }
 
@@ -463,7 +463,7 @@ fn fill_unpack_defaults<'v, 'a>(
     for (pos, default) in
         (positional_matched..).zip(sig.optional[(positional_matched - sig.required)..].iter())
     {
-        Output::set(strand, out.at(pos), default);
+        strand.store(out.at(pos), default);
     }
 
     let pos_count = sig.required + sig.optional.len();
@@ -472,7 +472,7 @@ fn fill_unpack_defaults<'v, 'a>(
         if actions.iter().all(|action| action.dest_slot != dest)
             && let Some(default) = &wanted.default
         {
-            Output::set(strand, out.at(dest), default);
+            strand.store(out.at(dest), default);
         }
     }
 }
@@ -489,11 +489,7 @@ pub(crate) fn unpack<'v, 'a, 's>(
     let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
 
     for action in &plan.actions {
-        Output::set(
-            strand,
-            out.at(action.dest_slot),
-            &items[action.source_index].1,
-        );
+        strand.store(out.at(action.dest_slot), &items[action.source_index].1);
     }
 
     fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
@@ -612,7 +608,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -628,7 +624,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -684,7 +680,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
                 let iter = this.borrow(strand)?;
                 let len = i64::try_from(visible_len(iter.args.items(), &iter.skip, iter.pos))
                     .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             }
             _ => iter::iter_get(strand, &this, field, out),
@@ -752,7 +748,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iterable)
+        strand.store(out, TypeObject::Iterable)
     }
 
     fn op_get<'a, 's>(
@@ -797,11 +793,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
 
         for action in &plan.actions {
             iter.skip.insert(action.source_index);
-            Output::set(
-                strand,
-                out.at(action.dest_slot),
-                &items[action.source_index].1,
-            );
+            strand.store(out.at(action.dest_slot), &items[action.source_index].1);
         }
         fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
         // The rests take their items
@@ -853,7 +845,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         let mut pos = borrow.pos;
         with_slots!(strand, |mut slot| {
             while let Some((index, key, value)) = borrow.next_item(pos) {
-                Output::set(strand, &mut slot, value);
+                strand.store(&mut slot, value);
                 if let Some(key) = key {
                     let key = unsafe { Sym::from_obj(key) };
                     sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
@@ -875,7 +867,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().pack)
+        strand.store(out, &strand.singletons().pack)
     }
 
     fn op_debug<'a, 's>(
@@ -916,7 +908,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         let left = this.get();
         let right = other.items();
         let flag = eq_items(strand, &left.items, right)?;
-        Output::set(strand, &mut out, flag);
+        strand.store(&mut out, flag);
         Ok(())
     }
 
@@ -932,7 +924,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         let left = this.get();
         let right = other.items();
         let flag = lt_items(strand, &left.items, right)?;
-        Output::set(strand, &mut out, flag);
+        strand.store(&mut out, flag);
         Ok(())
     }
 
@@ -951,7 +943,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         let borrow = this.get();
         match find(strand, &borrow.items, index) {
             Some(value) => {
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -977,7 +969,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
             sym::LEN => {
                 let len = this.get().items.len();
                 let len = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             }
             sym::GET | sym::WITH | sym::WITHOUT => {
@@ -1005,15 +997,15 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                 }
                 let borrow = this.get();
                 if let Some(value) = find(strand, &borrow.items, &key) {
-                    Output::set(strand, &mut out, value);
+                    strand.store(&mut out, value);
                     Ok(())
                 } else if let Some(mut default) = default {
-                    Output::set(strand, &mut out, &mut default);
+                    strand.store(&mut out, &mut default);
                     Ok(())
                 } else if let Some(or_else) = or_else {
                     call!(strand, or_else, out)
                 } else {
-                    Output::set(strand, &mut out, Value::NIL);
+                    strand.store(&mut out, Value::NIL);
                     Ok(())
                 }
             }
@@ -1140,7 +1132,7 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut args| {
-            Output::set(strand, &mut args, &this);
+            strand.store(&mut args, &this);
             let args = args
                 .downcast_ref(strand.builtin_types().pack)
                 .expect("pack");
@@ -1237,7 +1229,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

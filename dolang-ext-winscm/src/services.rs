@@ -7,7 +7,7 @@
 //! pages as iteration advances.
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, State, Strand, object::TypeBuilder, value::TypeObject,
+    AllocExt, Instance, Object, Result, Slot, State, Strand, object::TypeBuilder, value::TypeObject,
 };
 use dolang_ext_shell::ResultExt;
 
@@ -38,7 +38,7 @@ impl<'v> Object<'v> for Services {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

@@ -85,25 +85,25 @@ producers of fresh handles (`GcObj::new`, `Recv::to_strong`, `Vm::sym_obj` and
 the symbol registration functions). Safe code copies a value by passing `&value`
 as an `Input` to an `Output`. The usual justification is that the reference
 moves straight into a scanned location, with no allocation or strand access in
-between. Allocating
-an embryo first (below) and duplicating into its payload is the common way to
-arrange that; helpers that create an object from a reference take a closure
-that they call after allocating. `PinStr` and `PinBin` own their references as
-roots by design. Code with a value to place writes it through an `Output`
-rather than holding it: `Output::set` with an `Input`, or a `TypeHandle` create
-method, into a `with_slots!` slot when it is only needed for a while.
+between. Allocating an embryo first (below) and duplicating into its payload is
+the common way to arrange that; helpers that create an object from a reference
+take a closure that they call after allocating. `PinStr` and `PinBin` own their
+references as roots by design. Code with a value to place writes it through an
+`Output` rather than holding it: `AllocExt::store` with an `Input`, or a
+`TypeHandle` create method, into a `with_slots!` slot when it is only needed for
+a while.
 
-Every write to a scanned location takes an `Alloc` witness: `Output::set` and
-`Output::swap`, and inside the crate `Slot::take`, the `GcSlot` writes, and the
-setters for upvars and instance fields. The collector runs only inside an
-allocation, while it holds the `&mut Alloc`, so no write can coincide with a
+Every write to a scanned location takes an `Alloc` witness: `AllocExt::store`
+and `AllocExt::swap`, and inside the crate `Slot::take`, the `GcSlot` writes,
+and the setters for upvars and instance fields. The collector runs only inside
+an allocation, while it holds the `&mut Alloc`, so no write can coincide with a
 collection and upset its trial counts. `Slot::take` and `GcSlot::take` are also
 `unsafe`, because the reference they return is loose; moving through
-`Output::set` with a `Slot` as the `Input` leaves nothing loose. The one write
-without a witness is a collector's `clear` of an unreachable object, through
-`ValueCell::clear`. Payload state behind a runtime borrow, such as an array's
-elements, is written through its borrow guard instead: the collector defers
-clearing an object with an outstanding borrow.
+`AllocExt::store` with a `Slot` as the `Input` leaves nothing loose. The one
+write without a witness is a collector's `clear` of an unreachable object,
+through `ValueCell::clear`. Payload state behind a runtime borrow, such as an
+array's elements, is written through its borrow guard instead: the collector
+defers clearing an object with an outstanding borrow.
 
 Creating an object moves references from wherever they are rooted into its
 payload. To keep them visible across the allocation, allocate first with an

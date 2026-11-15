@@ -14,7 +14,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Input, Output, Slot, Slots, TypeObject, Value},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
 
@@ -61,7 +61,7 @@ pub(crate) fn create<'v, I: IntoIterator<Item = Value<'v>>>(
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
     // SAFETY: the new tuple is stored into `out` at once
     let tuple = unsafe { Value::from_object(tuple(vm, iter)) };
-    Output::set(alloc, out, tuple);
+    alloc.store(out, tuple);
 }
 
 /// Creates a `(key, value)` pair and places it into `out`.
@@ -109,7 +109,7 @@ impl<'v> TupleEmbryo<'v> {
         let tuple = unsafe {
             Value::from_object(self.0.finish_tail(header, TupleObj(PhantomData), (), iter))
         };
-        Output::set(alloc, out, tuple);
+        alloc.store(out, tuple);
     }
 
     /// Fills the tuple by moving the values out of `slots`, leaving them nil, and
@@ -140,7 +140,7 @@ impl<'v> TupleEmbryo<'v> {
                     .finish_tail(header, TupleObj(PhantomData), (), values),
             )
         };
-        Output::set(alloc, out, tuple);
+        alloc.store(out, tuple);
     }
 }
 
@@ -302,7 +302,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().tuple)
+        strand.store(out, &strand.singletons().tuple)
     }
 
     fn op_debug<'a, 's>(
@@ -361,7 +361,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 let left = this.items();
                 let right = other.items();
                 if left.len() != right.len() {
-                    Output::set(strand, &mut out, Value::from_bool(false));
+                    strand.store(&mut out, Value::from_bool(false));
                     return Ok(());
                 }
                 for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
@@ -369,11 +369,11 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                         strand.check_trap()?;
                     }
                     if !l.eq(strand, r)? {
-                        Output::set(strand, &mut out, Value::from_bool(false));
+                        strand.store(&mut out, Value::from_bool(false));
                         return Ok(());
                     }
                 }
-                Output::set(strand, &mut out, Value::from_bool(true));
+                strand.store(&mut out, Value::from_bool(true));
                 Ok(())
             })
         } else {
@@ -397,11 +397,11 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                     }
                     if !l.eq(strand, r)? {
                         let flag = l.lt(strand, r)?;
-                        Output::set(strand, &mut out, flag);
+                        strand.store(&mut out, flag);
                         return Ok(());
                     }
                 }
-                Output::set(strand, &mut out, Value::from_bool(right.len() > left.len()));
+                strand.store(&mut out, Value::from_bool(right.len() > left.len()));
                 Ok(())
             })
         } else {
@@ -442,7 +442,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
         match index::element(this.items().len(), index).and_then(|index| this.items().get(index)) {
             Some(value) => {
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -496,7 +496,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         let borrow = this.items();
         with_slots!(strand, |mut tmp| {
             for item in borrow.iter() {
-                Output::set(strand, &mut tmp, item);
+                strand.store(&mut tmp, item);
                 sink.positional(strand, Slot::reborrow(&mut tmp))?;
             }
             Ok(())
@@ -521,10 +521,10 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 let items = this.items();
                 match index::element(items.len(), index).and_then(|index| items.get(index)) {
-                    Some(value) => Output::set(strand, &mut out, value),
+                    Some(value) => strand.store(&mut out, value),
                     None => {
                         if let Some(mut default) = default {
-                            Output::set(strand, &mut out, &mut default)
+                            strand.store(&mut out, &mut default)
                         } else if let Some(or_else) = or_else {
                             call!(strand, or_else, out)?;
                         }
@@ -559,19 +559,19 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                         break;
                     }
                 }
-                Output::set(strand, out, found);
+                strand.store(out, found);
                 Ok(())
             }
             sym::COPY => {
                 unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
-                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        strand.store(Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
                         call!(strand, &ty, &receiver, out)
                     });
                 }
-                Output::set(strand, out, &this);
+                strand.store(out, &this);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -593,7 +593,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.items().len());
+                strand.store(out, this.items().len());
                 Ok(())
             }
             sym::PAIRS | sym::GET | sym::CONTAINS | sym::COPY => {
@@ -646,7 +646,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -686,7 +686,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         let found = with_pin!(strand, borrow.tuple, |tuple| {
             let value = tuple.items().get(index);
             if let Some(value) = value {
-                Output::set(strand, out, value);
+                strand.store(out, value);
             }
             value.is_some()
         });
@@ -699,7 +699,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -763,7 +763,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -820,7 +820,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -865,17 +865,17 @@ fn unpack_from<'v, 's>(
             let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
             create_pair(strand, index, elem, out.at(i))
         } else {
-            Output::set(strand, out.at(i), elem)
+            strand.store(out.at(i), elem)
         }
     }
     if len < pos_count {
         for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            Output::set(strand, out.at(min + i), default);
+            strand.store(out.at(min + i), default);
         }
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            Output::set(strand, out.at(pos_count + i), default);
+            strand.store(out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -920,7 +920,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

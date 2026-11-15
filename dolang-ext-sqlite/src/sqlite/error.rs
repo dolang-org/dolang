@@ -4,7 +4,7 @@ use std::{ffi::CStr, io, marker::PhantomData};
 
 use dolang::runtime::object::fmt;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Strand, object::TypeBuilder, value::fmt::Format,
+    AllocExt, Error, Instance, Object, Result, Strand, object::TypeBuilder, value::fmt::Format,
 };
 use dolang_ext_shell::ErrorExt as _;
 use libsqlite3_sys::{
@@ -202,11 +202,11 @@ impl<'v, C: ErrorClass<'v>> Object<'v> for SqliteError<C> {
         let kinds = KINDS.map(|name| builder.sym(name));
         builder
             .get("kind", move |this, strand, out| {
-                Output::set(strand, out, kinds[kind_index(this.annex().code)]);
+                strand.store(out, kinds[kind_index(this.annex().code)]);
                 Ok(())
             })
             .get("code", |this, strand, out| {
-                Output::set(strand, out, this.annex().code);
+                strand.store(out, this.annex().code);
                 Ok(())
             })
     }

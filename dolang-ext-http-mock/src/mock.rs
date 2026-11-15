@@ -5,7 +5,7 @@ use std::{borrow::Cow, net::Ipv4Addr, net::SocketAddr, rc::Rc};
 use bytes::Bytes;
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Arg, Args, Error, Input, Object, Output, Result, Slot, State, Strand, Type, Value, call,
+    Arg, Args, Error, Input, Object, Result, Slot, State, Strand, Type, Value, call,
     io::IoResultExt as _,
     method,
     object::{DictLike, DictViewSink, Instance, Mut, Ref, TypeBuilder},
@@ -55,7 +55,7 @@ fn header_value_or_datetime<'v, 's>(
     if let Ok(time) = httpdate::parse_http_date(value_str.as_ref()) {
         datetime(strand, time, &mut out).map_err(|err| Error::runtime(strand, err))
     } else {
-        Output::set(strand, &mut out, value_str.as_ref());
+        strand.store(&mut out, value_str.as_ref());
         Ok(())
     }
 }
@@ -79,15 +79,15 @@ impl<'v> Object<'v> for RequestObject {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("method", |this, strand, out| {
-                Output::set(strand, out, this.annex().method.as_str());
+                strand.store(out, this.annex().method.as_str());
                 Ok(())
             })
             .get("url", |this, strand, out| {
-                Output::set(strand, out, this.annex().url.as_str());
+                strand.store(out, this.annex().url.as_str());
                 Ok(())
             })
             .get("body", |this, strand, out| {
-                Output::set(strand, out, &this.annex().body[..]);
+                strand.store(out, &this.annex().body[..]);
                 Ok(())
             })
             .get("headers", |this, strand, out| {
@@ -693,7 +693,7 @@ async fn respond<'v, 's>(
                     Ref::slot::<0>(&borrow),
                     Slot::reborrow(&mut mounted),
                 )?;
-                Output::set(strand, &mut received, Ref::slot::<2>(&borrow));
+                strand.store(&mut received, Ref::slot::<2>(&borrow));
                 Ok(())
             }
         )?;
@@ -731,7 +731,7 @@ async fn respond_mock<'v, 's>(
                          mut ret| {
         let len = {
             let borrow = mock.borrow(strand)?;
-            Output::set(strand, &mut callbacks, Ref::slot::<1>(&borrow));
+            strand.store(&mut callbacks, Ref::slot::<1>(&borrow));
             borrow.entries.len()
         };
         let callbacks = callbacks.as_array(strand).unwrap();
@@ -771,7 +771,7 @@ async fn respond_mock<'v, 's>(
                     return Ok(None);
                 }
                 borrow.entries[i].count += 1;
-                Output::set(strand, &mut received, Mut::slot::<2>(&borrow));
+                strand.store(&mut received, Mut::slot::<2>(&borrow));
                 borrow.entries[i].response.clone()
             };
             if let Some(received) = received.as_array(strand) {
@@ -894,7 +894,7 @@ async fn start_server<'v, 's>(
         with_instance!(strand, this.cast(&out).unwrap(), |instance| {
             let mut borrow = instance.borrow_mut(strand)?;
             strand.new_array(Mut::slot_mut::<0>(&mut borrow));
-            Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &dispatcher);
+            strand.store(Mut::slot_mut::<1>(&mut borrow), &dispatcher);
             strand.new_array(Mut::slot_mut::<2>(&mut borrow));
             Ok(())
         })
@@ -950,7 +950,7 @@ impl<'v> Object<'v> for Server {
                 with_slots!(strand, |mut dispatcher, mut tmp| {
                     {
                         let borrow = this.borrow(strand)?;
-                        Output::set(strand, &mut dispatcher, Ref::slot::<1>(&borrow));
+                        strand.store(&mut dispatcher, Ref::slot::<1>(&borrow));
                     }
                     if !dispatcher.is_nil() {
                         method!(
@@ -974,7 +974,7 @@ impl<'v> Object<'v> for Server {
                 with_slots!(strand, |mut mounted, mut item| {
                     {
                         let mut borrow = this.borrow_mut(strand)?;
-                        Output::set(strand, &mut mounted, Mut::slot::<0>(&borrow));
+                        strand.store(&mut mounted, Mut::slot::<0>(&borrow));
                         strand.new_array(Mut::slot_mut::<0>(&mut borrow));
                         strand.new_array(Mut::slot_mut::<2>(&mut borrow));
                     }
@@ -1002,7 +1002,7 @@ impl<'v> Object<'v> for Server {
             .get("address", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 borrow.check_open(strand)?;
-                Output::set(strand, out, borrow.address.to_string().as_str());
+                strand.store(out, borrow.address.to_string().as_str());
                 Ok(())
             })
             .get("url", |this, strand, out| {
@@ -1067,8 +1067,8 @@ impl<'v> Object<'v> for Server {
                         .create_with_annex(strand, mock_object, global, &mut item);
                     with_instance!(strand, global.types.mock.cast(&item).unwrap(), |instance| {
                         let mut mock_borrow = instance.borrow_mut(strand)?;
-                        Output::set(strand, Mut::slot_mut::<0>(&mut mock_borrow), this);
-                        Output::set(strand, Mut::slot_mut::<1>(&mut mock_borrow), &callbacks);
+                        strand.store(Mut::slot_mut::<0>(&mut mock_borrow), this);
+                        strand.store(Mut::slot_mut::<1>(&mut mock_borrow), &callbacks);
                         strand.new_array(Mut::slot_mut::<2>(&mut mock_borrow));
                         Ok(())
                     })?;
@@ -1095,7 +1095,7 @@ impl<'v> Object<'v> for Server {
                         });
                         combine_results(strand, result, cleanup)
                     } else {
-                        Output::set(strand, out, &item);
+                        strand.store(out, &item);
                         Ok(())
                     }
                 })
@@ -1116,7 +1116,7 @@ fn unmount_mock<'v, 's>(
             let mut borrow = this.borrow_mut(strand)?;
             borrow.mounted = false;
             strand.new_array(Mut::slot_mut::<2>(&mut borrow));
-            Output::set(strand, &mut server, Mut::slot::<0>(&borrow));
+            strand.store(&mut server, Mut::slot::<0>(&borrow));
         }
         if let Some(server) = global.types.server.cast(&server) {
             with_instance!(strand, server, |server| {

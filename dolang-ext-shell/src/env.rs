@@ -1,7 +1,7 @@
 use std::{collections::HashMap, rc::Rc};
 
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+    AllocExt, Arg, Args, Error, Instance, Object, Result, Slot, State, Strand, Value, call,
     object::{DictLike, DictView, DictViewSink, Spread, SpreadContext, TypeBuilder, Unpack},
     unpack,
     value::{TypeObject, View},
@@ -49,7 +49,7 @@ impl<'v> DictLike<'v> for EnvView {
         let global = this.borrow(strand)?.global;
         let env = global.local.get(strand).env();
         if let Some(value) = strand.access(|x| env.get(key.as_str(x))) {
-            Output::set(strand, out, value.as_ref());
+            strand.store(out, value.as_ref());
             Ok(true)
         } else {
             Ok(false)
@@ -171,7 +171,7 @@ impl<'v> Object<'v> for Env<'v> {
         let env = me.global.local.get(strand).env();
         let index = index.as_str(strand).ok_or_else(|| Error::index(strand))?;
         if let Some(value) = strand.access(|x| env.get(index.as_str(x))) {
-            Output::set(strand, out, value.as_ref());
+            strand.store(out, value.as_ref());
             Ok(())
         } else {
             Err(Error::index(strand))
@@ -192,7 +192,7 @@ impl<'v> Object<'v> for Env<'v> {
             .supertype(TypeObject::Iterable)
             .get("len", |this, strand, out| {
                 let len = EnvView.len(this, strand);
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             })
     }

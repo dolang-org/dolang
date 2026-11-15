@@ -15,7 +15,7 @@ use async_compression::tokio::{
 };
 use dolang::runtime::io::IoResultExt as _;
 use dolang::runtime::{
-    Arg, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, State, Strand,
+    AllocExt, Arg, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Result, Slot, State, Strand,
     Value, call,
     error::{ErrorKind, ResultExt},
     io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Shared},
@@ -445,7 +445,7 @@ impl<'v> Object<'v> for TarReader {
             .supertype(TypeObject::Iter)
             .get("compression", |this, strand, out| {
                 let compression = this.borrow(strand)?.compression;
-                Output::set(strand, out, compression_sym(*this.annex(), compression));
+                strand.store(out, compression_sym(*this.annex(), compression));
                 Ok(())
             })
     }
@@ -455,7 +455,7 @@ impl<'v> Object<'v> for TarReader {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -492,7 +492,7 @@ impl<'v> Object<'v> for TarReader {
         );
         with_instance!(strand, global.types.entry.cast(&out).unwrap(), |entry| {
             let mut entry_borrow = entry.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut entry_borrow), this);
+            strand.store(Mut::slot_mut::<0>(&mut entry_borrow), this);
         });
         Ok(true)
     }
@@ -527,7 +527,7 @@ impl<'v> Object<'v> for TarEntry {
                         Ok(!reader.closed && reader.generation == generation)
                     }
                 )?;
-                Output::set(strand, out, active);
+                strand.store(out, active);
                 Ok(())
             })
             .get("path", |this, strand, out| {
@@ -545,7 +545,7 @@ impl<'v> Object<'v> for TarEntry {
             .get("type", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
                     let ty = borrow.current.as_ref().unwrap().header().entry_type();
-                    Output::set(strand, out, entry_type_sym(*this.annex(), ty));
+                    strand.store(out, entry_type_sym(*this.annex(), ty));
                     Ok(())
                 })
             })
@@ -558,7 +558,7 @@ impl<'v> Object<'v> for TarEntry {
                         .header()
                         .size()
                         .into_do_decode(strand)?;
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
             })
@@ -571,7 +571,7 @@ impl<'v> Object<'v> for TarEntry {
                         .header()
                         .mode()
                         .into_do_decode(strand)?;
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
             })
@@ -584,7 +584,7 @@ impl<'v> Object<'v> for TarEntry {
                         .header()
                         .uid()
                         .into_do_decode(strand)?;
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
             })
@@ -597,7 +597,7 @@ impl<'v> Object<'v> for TarEntry {
                         .header()
                         .gid()
                         .into_do_decode(strand)?;
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
             })
@@ -627,8 +627,8 @@ impl<'v> Object<'v> for TarEntry {
                         .username()
                         .into_do_data(strand)?
                     {
-                        Some(value) => Output::set(strand, out, value),
-                        None => Output::set(strand, out, Nil),
+                        Some(value) => strand.store(out, value),
+                        None => strand.store(out, Nil),
                     }
                     Ok(())
                 })
@@ -642,8 +642,8 @@ impl<'v> Object<'v> for TarEntry {
                         .groupname()
                         .into_do_data(strand)?
                     {
-                        Some(value) => Output::set(strand, out, value),
-                        None => Output::set(strand, out, Nil),
+                        Some(value) => strand.store(out, value),
+                        None => strand.store(out, Nil),
                     }
                     Ok(())
                 })
@@ -661,7 +661,7 @@ impl<'v> Object<'v> for TarEntry {
                             let value = str::from_utf8(&value).into_do_data(strand)?;
                             dolang_ext_shell::unix_path(strand, value, out)?
                         }
-                        None => Output::set(strand, out, Nil),
+                        None => strand.store(out, Nil),
                     }
                     Ok(())
                 })
@@ -676,8 +676,8 @@ impl<'v> Object<'v> for TarEntry {
                         .device_major()
                         .into_do_decode(strand)?
                     {
-                        Some(value) => Output::set(strand, out, value),
-                        None => Output::set(strand, out, Nil),
+                        Some(value) => strand.store(out, value),
+                        None => strand.store(out, Nil),
                     }
                     Ok(())
                 })
@@ -692,8 +692,8 @@ impl<'v> Object<'v> for TarEntry {
                         .device_minor()
                         .into_do_decode(strand)?
                     {
-                        Some(value) => Output::set(strand, out, value),
-                        None => Output::set(strand, out, Nil),
+                        Some(value) => strand.store(out, value),
+                        None => strand.store(out, Nil),
                     }
                     Ok(())
                 })
@@ -735,7 +735,7 @@ impl<'v> Object<'v> for TarEntry {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -801,7 +801,7 @@ impl<'v> Object<'v> for TarEntryWriter {
             // The stream is taken when the entry's scope ends.
             .get("writable", |this, strand, out| {
                 let writable = this.borrow(strand)?.stream.is_some();
-                Output::set(strand, out, writable);
+                strand.store(out, writable);
                 Ok(())
             })
             .method("write", async move |this, strand, args, out| {
@@ -844,7 +844,7 @@ impl<'v> Object<'v> for TarEntryWriter {
                     }
                     IoSlice::advance_slices(&mut slices, n);
                 }
-                Output::set(strand, out, written);
+                strand.store(out, written);
                 Ok(())
             })
     }
@@ -885,7 +885,7 @@ impl<'v> Object<'v> for TarWriter {
         builder
             .get("compression", |this, strand, out| {
                 let compression = this.borrow(strand)?.compression;
-                Output::set(strand, out, compression_sym(*this.annex(), compression));
+                strand.store(out, compression_sym(*this.annex(), compression));
                 Ok(())
             })
             .method_with_slots(
@@ -951,7 +951,7 @@ impl<'v> Object<'v> for TarWriter {
                     let handle_cast = global.types.entry_writer.cast(&handle).unwrap();
                     with_instance!(strand, handle_cast, |handle_obj| {
                         let mut handle_borrow = handle_obj.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut handle_borrow), this);
+                        strand.store(Mut::slot_mut::<0>(&mut handle_borrow), this);
                     });
 
                     let append = async move {

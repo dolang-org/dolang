@@ -12,8 +12,8 @@ use crate::{
     strand::Strand,
     sym::Tag,
     unpack,
-    value::{Output, Slot, Value},
-    vm::Vm,
+    value::{Slot, Value},
+    vm::{AllocExt, Vm},
 };
 
 use super::protocol::{GcObj, Inspect, Protocol, Recv};
@@ -54,7 +54,7 @@ impl<'v> Protocol<'v> for SymObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().sym)
+        strand.store(out, &strand.singletons().sym)
     }
 
     fn op_verbatim<'a, 's>(
@@ -88,11 +88,7 @@ impl<'v> Protocol<'v> for SymObj {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
-            Output::set(
-                strand,
-                &mut out,
-                Value::from_bool(osym.tag() == this.get().tag),
-            );
+            strand.store(&mut out, Value::from_bool(osym.tag() == this.get().tag));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -115,8 +111,7 @@ impl<'v> Protocol<'v> for SymObj {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
-            Output::set(
-                strand,
+            strand.store(
                 &mut out,
                 Value::from_bool(this.get().name.as_str() < osym.name()),
             );
@@ -146,7 +141,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -178,7 +173,7 @@ impl<'v> Protocol<'v> for Type {
         value
             .as_sym(strand)
             .ok_or_else(|| Error::type_error(strand, "Sym: expected Sym"))?;
-        Output::set(strand, out, value);
+        strand.store(out, value);
         Ok(())
     }
 }

@@ -1,6 +1,7 @@
+use dolang::runtime::AllocExt;
 use dolang::{
     compile::Config,
-    runtime::{Error, Object, Output, State, Sym, object::TypeBuilder, unpack, vm::Register},
+    runtime::{Error, Object, State, Sym, object::TypeBuilder, unpack, vm::Register},
 };
 use dolang_vfs::target::{Architecture, OperatingSystem, OperatingSystemFamily};
 
@@ -27,18 +28,18 @@ impl<'v> Object<'v> for OsInfo {
         let is_wine = builder.sym("is_wine");
         builder
             .get("os", |this, strand, out| {
-                Output::set(strand, out, this.annex().os);
+                strand.store(out, this.annex().os);
                 Ok(())
             })
             .get("family", |this, strand, out| {
-                Output::set(strand, out, this.annex().family);
+                strand.store(out, this.annex().family);
                 Ok(())
             })
             .get("is_wine", move |this, strand, out| {
                 let Some(value) = this.annex().is_wine else {
                     return Err(Error::field(strand, is_wine));
                 };
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
     }
@@ -61,11 +62,11 @@ impl<'v> Object<'v> for CpuInfo {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("arch", |this, strand, out| {
-                Output::set(strand, out, this.annex().arch);
+                strand.store(out, this.annex().arch);
                 Ok(())
             })
             .get("logical_count", |this, strand, out| {
-                Output::set(strand, out, this.annex().logical_count);
+                strand.store(out, this.annex().logical_count);
                 Ok(())
             })
     }

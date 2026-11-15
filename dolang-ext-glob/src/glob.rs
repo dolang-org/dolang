@@ -5,7 +5,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value,
     object::{Cast, TypeBuilder},
     unpack,
     value::{Str, View},
@@ -27,7 +27,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 .as_str(strand)
                 .ok_or_else(|| Error::type_error(strand, "value: expected `Str`"))?;
             let matched = pattern.is_match(strand, value)?;
-            Output::set(strand, &mut out, matched);
+            strand.store(&mut out, matched);
             Ok(())
         })
         .commit();
@@ -112,7 +112,7 @@ impl<'v> Object<'v> for Glob {
                 }
                 _ => return Err(Error::type_error(strand, "value: expected `Str`")),
             };
-            Output::set(strand, &mut out, matched);
+            strand.store(&mut out, matched);
             Ok(())
         })
     }

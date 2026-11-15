@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
-    value::TypeObject, with_instance,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    object::TypeBuilder, value::TypeObject, with_instance,
 };
 use dolang_vfs::file::StreamEntry as VfsStreamEntry;
 use dolang_vfs::metadata::Resolve;
@@ -107,19 +107,19 @@ impl<'v> Object<'v> for StreamEntry {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.name());
+                strand.store(out, this.annex().inner.name());
                 Ok(())
             })
             .get("type", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.stream_type());
+                strand.store(out, this.annex().inner.stream_type());
                 Ok(())
             })
             .get("size", |this, strand, out| {
-                Output::set(strand, out, i128::from(this.annex().inner.size()));
+                strand.store(out, i128::from(this.annex().inner.size()));
                 Ok(())
             })
             .get("alloc_size", |this, strand, out| {
-                Output::set(strand, out, i128::from(this.annex().inner.alloc_size()));
+                strand.store(out, i128::from(this.annex().inner.alloc_size()));
                 Ok(())
             })
     }
@@ -141,7 +141,7 @@ impl<'v> Object<'v> for StreamIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

@@ -2,7 +2,7 @@ use crate::global::Tag;
 
 use crate::global::Global;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
     object::TypeBuilder,
     strand::InterruptMask,
     unpack,
@@ -62,8 +62,8 @@ fn capability<'a, 'v, 's>(
 
 fn nullable_str<'v>(strand: &mut Strand<'v, '_>, value: Option<&str>, out: impl Output<'v>) {
     match value {
-        Some(v) => Output::set(strand, out, v),
-        None => Output::set(strand, out, Nil),
+        Some(v) => strand.store(out, v),
+        None => strand.store(out, Nil),
     }
 }
 
@@ -147,12 +147,12 @@ impl<'v> Object<'v> for Connection {
             .get("name", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 let connection = capability(&borrow, strand)?;
-                Output::set(strand, out, connection.name());
+                strand.store(out, connection.name());
                 Ok(())
             })
             .get("connected", |this, strand, out| {
                 let connected = this.borrow(strand)?.0.is_some();
-                Output::set(strand, out, connected);
+                strand.store(out, connected);
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
@@ -193,7 +193,7 @@ impl<'v> Object<'v> for Connection {
                 with_interrupt_mask!(strand, InterruptMask::all(), {
                     Connection::teardown(this, strand, force, forget).await
                 })?;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
     }
@@ -212,7 +212,7 @@ impl<'v> Object<'v> for ConnectionInfo {
                 Ok(())
             })
             .get("remote", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.remote());
+                strand.store(out, this.annex().info.remote());
                 Ok(())
             })
             .get("provider", |this, strand, out| {
@@ -230,7 +230,7 @@ impl<'v> Object<'v> for ConnectionInfo {
                     connection::Kind::Print => a.global.syms.print,
                     connection::Kind::Any => a.global.syms.any,
                 };
-                Output::set(strand, out, v);
+                strand.store(out, v);
                 Ok(())
             })
             .get("state", |this, strand, out| {
@@ -239,11 +239,11 @@ impl<'v> Object<'v> for ConnectionInfo {
                     connection::State::Connected => a.global.syms.connected,
                     connection::State::Remembered => a.global.syms.remembered,
                 };
-                Output::set(strand, out, v);
+                strand.store(out, v);
                 Ok(())
             })
             .get("persistent", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.persistent());
+                strand.store(out, this.annex().info.persistent());
                 Ok(())
             })
     }
@@ -264,7 +264,7 @@ impl<'v> Object<'v> for Connections {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(
@@ -374,7 +374,7 @@ pub(crate) fn configure_module<'v, 'a>(
             let name = connection::universal_name(&dolang_ext_shell::vfs(strand), path.to_path())
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, name.as_str());
+            strand.store(out, name.as_str());
             Ok(())
         })
         .function("connect", async move |strand, args, out| {

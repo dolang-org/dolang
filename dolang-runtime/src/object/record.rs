@@ -26,7 +26,7 @@ use crate::{
     sym::{self, Sym, Tag},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value, fmt::Format},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
 
@@ -304,7 +304,7 @@ impl<'v> Record<'v> {
             return false;
         };
         let (_, value) = self.order[slot].take().expect("live entry");
-        Output::set(alloc, out, value);
+        alloc.store(out, value);
         true
     }
 
@@ -400,13 +400,13 @@ async fn fallback<'v, 'a, 's>(
     missing: impl FnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, ()>,
 ) -> Result<'v, 's, ()> {
     if let Some(mut default) = default {
-        Output::set(strand, &mut out, &mut default);
+        strand.store(&mut out, &mut default);
         Ok(())
     } else if let Some(or_else) = or_else {
         call!(strand, or_else, out)
     } else {
         missing(strand)?;
-        Output::set(strand, &mut out, Value::NIL);
+        strand.store(&mut out, Value::NIL);
         Ok(())
     }
 }
@@ -417,7 +417,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().record)
+        strand.store(out, &strand.singletons().record)
     }
 
     fn op_debug<'a, 's>(
@@ -481,7 +481,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
-                Output::set(strand, &mut out, Value::FALSE);
+                strand.store(&mut out, Value::FALSE);
                 return Ok(());
             }
             for (index, ((lkey, lvalue), (rkey, rvalue))) in
@@ -493,11 +493,11 @@ impl<'v> Protocol<'v> for Record<'v> {
                 if lkey.as_ref().map(|key| key.tag()) != rkey.as_ref().map(|key| key.tag())
                     || !lvalue.eq(strand, rvalue)?
                 {
-                    Output::set(strand, &mut out, Value::FALSE);
+                    strand.store(&mut out, Value::FALSE);
                     return Ok(());
                 }
             }
-            Output::set(strand, &mut out, Value::TRUE);
+            strand.store(&mut out, Value::TRUE);
             Ok(())
         })
     }
@@ -512,7 +512,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         let borrow = this.borrow(strand)?;
         match borrow.get(&key, None) {
             Some(value) => {
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -547,7 +547,7 @@ impl<'v> Protocol<'v> for Record<'v> {
             sym::LEN => {
                 let len = this.borrow(strand)?.len();
                 let len = i64::try_from(len).map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             }
             sym::CLEAR
@@ -626,7 +626,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                     let record = this.borrow(strand)?;
                     let found = record.get(&key, instance);
                     if let Some(value) = found {
-                        Output::set(strand, &mut out, value);
+                        strand.store(&mut out, value);
                     }
                     found.is_some()
                 };
@@ -658,7 +658,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 unpack!(strand, args => key);
                 let key = Key::new(strand, &key)?;
                 let deleted = this.borrow_mut(strand)?.delete(&key);
-                Output::set(strand, out, deleted);
+                strand.store(out, deleted);
                 Ok(())
             }
             sym::PAIRS => {
@@ -695,7 +695,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 let key = key.as_ref().map(|key| Key::new(strand, key)).transpose()?;
                 let count = this.borrow(strand)?.count(key.as_ref());
                 let count = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, count);
+                strand.store(out, count);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -729,14 +729,14 @@ impl<'v> Protocol<'v> for Record<'v> {
                         found
                     }
                 };
-                Output::set(strand, out, found);
+                strand.store(out, found);
                 Ok(())
             }
             sym::COPY => {
                 unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
-                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        strand.store(Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
                         call!(strand, &ty, &receiver, out)
                     });
@@ -776,7 +776,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         let borrow = this.borrow(strand)?;
         with_slots!(strand, |mut slot| {
             for (key, value) in borrow.items() {
-                Output::set(strand, &mut slot, value);
+                strand.store(&mut slot, value);
                 if let Some(key) = key {
                     let key = unsafe { Sym::from_obj(key) };
                     sink.symbol(strand, key, Slot::reborrow(&mut slot))?;
@@ -871,7 +871,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -887,7 +887,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -943,9 +943,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
                 match (iter.mode, sym) {
                     (Mode::Pairs, Some(sym)) => tuple::create_pair(strand, sym, value, out),
                     (Mode::Pairs, None) => tuple::create_pair(strand, int, value, out),
-                    (Mode::Keys, Some(sym)) => Output::set(strand, out, sym),
-                    (Mode::Keys, None) => Output::set(strand, out, int),
-                    (Mode::Values | Mode::KeyValues(_), _) => Output::set(strand, out, value),
+                    (Mode::Keys, Some(sym)) => strand.store(out, sym),
+                    (Mode::Keys, None) => strand.store(out, int),
+                    (Mode::Values | Mode::KeyValues(_), _) => strand.store(out, value),
                 }
                 return Ok(true);
             }
@@ -1003,7 +1003,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

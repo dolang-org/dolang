@@ -1,7 +1,7 @@
 //! Immutable snapshot returned by `winscm.Service.config()`.
 
 use dolang::runtime::{
-    Object, Output, State,
+    AllocExt, Object, State,
     object::{FlagsTypeExt, TypeBuilder},
     value::Nil,
 };
@@ -43,18 +43,18 @@ impl<'v> Object<'v> for Config {
                 convert::error_control_to_sym(strand, annex.global, annex.config.error_control, out)
             })
             .get("binary_path", |this, strand, out| {
-                Output::set(strand, out, this.annex().config.binary_path.as_str());
+                strand.store(out, this.annex().config.binary_path.as_str());
                 Ok(())
             })
             .get("load_order_group", |this, strand, out| {
                 match this.annex().config.load_order_group.as_deref() {
-                    Some(group) => Output::set(strand, out, group),
-                    None => Output::set(strand, out, Nil),
+                    Some(group) => strand.store(out, group),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
             .get("tag_id", |this, strand, out| {
-                Output::set(strand, out, i128::from(this.annex().config.tag_id));
+                strand.store(out, i128::from(this.annex().config.tag_id));
                 Ok(())
             })
             .get("dependencies", |this, strand, out| {
@@ -65,11 +65,11 @@ impl<'v> Object<'v> for Config {
                 Ok(())
             })
             .get("service_start_name", |this, strand, out| {
-                Output::set(strand, out, this.annex().config.service_start_name.as_str());
+                strand.store(out, this.annex().config.service_start_name.as_str());
                 Ok(())
             })
             .get("display_name", |this, strand, out| {
-                Output::set(strand, out, this.annex().config.display_name.as_str());
+                strand.store(out, this.annex().config.display_name.as_str());
                 Ok(())
             })
     }

@@ -3,7 +3,7 @@ use crate::{
     check::{Checked, Invalid, OrValue, validate_text},
 };
 use dolang::runtime::{
-    Args, Instance, Object, Output, Result, Slot, Strand, Type,
+    AllocExt, Args, Instance, Object, Result, Slot, Strand, Type,
     object::{TypeBuilder, fmt},
     unpack,
     value::fmt::Format,
@@ -59,7 +59,7 @@ impl<'v> Object<'v> for Comment {
         builder
             .get("text", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, borrow.text.as_str());
+                strand.store(out, borrow.text.as_str());
                 Ok(())
             })
             .set("text", |this, strand, value| {

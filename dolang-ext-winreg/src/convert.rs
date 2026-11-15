@@ -6,7 +6,7 @@
 //! uses for an unrecognized kind.
 
 use dolang::runtime::{
-    Error, Output, Result, Slot, Strand,
+    AllocExt, Error, Result, Slot, Strand,
     value::{Nil, View},
     with_slots,
 };
@@ -20,23 +20,23 @@ pub(crate) fn to_do<'v, 's>(
 ) -> Result<'v, 's, ()> {
     match value {
         Value::Sz(s) | Value::ExpandSz(s) => {
-            Output::set(strand, out, s.as_str());
+            strand.store(out, s.as_str());
         }
         Value::MultiSz(parts) => strand.tuple(parts.iter().map(String::as_str), out),
         Value::Dword(v) | Value::DwordBigEndian(v) => {
-            Output::set(strand, out, i128::from(*v));
+            strand.store(out, i128::from(*v));
         }
         Value::Qword(v) => {
-            Output::set(strand, out, i128::from(*v));
+            strand.store(out, i128::from(*v));
         }
         Value::Binary(data) => {
-            Output::set(strand, out, data.as_slice());
+            strand.store(out, data.as_slice());
         }
         Value::None => {
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
         }
         Value::Other { data, .. } => {
-            Output::set(strand, out, data.as_slice());
+            strand.store(out, data.as_slice());
         }
     }
     Ok(())

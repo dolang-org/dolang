@@ -17,7 +17,7 @@ use quick_xml::{
 
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Instance, Object, Output, Slot, State, Strand, Value,
+    Instance, Object, Slot, State, Strand, Value,
     error::{Error, Result},
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
@@ -160,7 +160,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
                         ty.create(strand, EncodeError, &mut error);
                         with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
                             let mut borrow = instance.borrow_mut_unwrap();
-                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                            strand.store(Mut::slot_mut::<0>(&mut borrow), &tuple);
                         });
                         return Err(Error::from_value(strand, &error));
                     }
@@ -626,7 +626,7 @@ fn decode<'v, 's>(
                             "document text must contain only XML whitespace",
                         ));
                     }
-                    Output::set(strand, &mut child, text.as_ref());
+                    strand.store(&mut child, text.as_ref());
                     array.push(strand, &mut child)?;
                 }
                 Event::Eof => break,
@@ -898,15 +898,15 @@ impl<'v> Object<'v> for DecodeError {
                     DecodeKind::Reference => reference,
                     DecodeKind::Namespace => namespace,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().line);
+                strand.store(out, this.annex().line);
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().column);
+                strand.store(out, this.annex().column);
                 Ok(())
             })
     }
@@ -944,12 +944,12 @@ impl<'v> Object<'v> for EncodeError {
         builder
             .nominal_supertype(TypeObject::ValueError)
             .get("kind", move |_this, strand, out| {
-                Output::set(strand, out, cycle);
+                strand.store(out, cycle);
                 Ok(())
             })
             .get("path", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
     }

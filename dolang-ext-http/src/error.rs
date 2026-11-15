@@ -4,7 +4,7 @@
 use std::{error::Error as StdError, io, iter, marker::PhantomData};
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Strand, io as do_io,
+    AllocExt, Error, Instance, Object, Result, Strand, io as do_io,
     object::{TypeBuilder, fmt},
     value::fmt::Format,
 };
@@ -265,7 +265,7 @@ impl<'v, C: ErrorClass<'v>> Object<'v> for HttpError<C> {
         if !C::KINDS.is_empty() {
             let kinds: Vec<_> = C::KINDS.iter().map(|name| builder.sym(name)).collect();
             builder = builder.get("kind", move |this, strand, out| {
-                Output::set(strand, out, kinds[this.annex().kind]);
+                strand.store(out, kinds[this.annex().kind]);
                 Ok(())
             });
         }

@@ -8,7 +8,7 @@
 //! Entries are fetched in pages as iteration advances.
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, State, Strand, object::TypeBuilder, value::TypeObject,
+    AllocExt, Instance, Object, Result, Slot, State, Strand, object::TypeBuilder, value::TypeObject,
 };
 use dolang_ext_shell::ResultExt;
 
@@ -35,7 +35,7 @@ impl<'v> Object<'v> for Values {
             .supertype(TypeObject::Iter)
             .get("len", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, borrow.0.len());
+                strand.store(out, borrow.0.len());
                 Ok(())
             })
     }
@@ -45,7 +45,7 @@ impl<'v> Object<'v> for Values {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

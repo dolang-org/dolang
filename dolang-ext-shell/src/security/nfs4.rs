@@ -1,6 +1,6 @@
 use crate::global::Nfs4SecurityTag;
-use dolang::runtime::with_instance;
 use dolang::runtime::with_slots;
+use dolang::runtime::{AllocExt, with_instance};
 
 use super::unix::{posix_id, spec_id};
 use super::*;
@@ -151,7 +151,7 @@ pub(crate) fn create_nfs4_acl<'v>(
                 .nfs4_acl
                 .create_with_annex(strand, Nfs4AclObject, acl, out);
         }
-        None => Output::set(strand, out, Nil),
+        None => strand.store(out, Nil),
     }
 }
 
@@ -410,7 +410,7 @@ impl<'v> Object<'v> for Nfs4AceObject {
                     VfsNfs4AceType::Audit => audit,
                     VfsNfs4AceType::Alarm => alarm,
                 };
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
             .get("principal", move |this, strand, out| {
@@ -421,18 +421,18 @@ impl<'v> Object<'v> for Nfs4AceObject {
                     VfsNfs4AceQualifier::User(_) => user,
                     VfsNfs4AceQualifier::Group(_) => group,
                 };
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
             .get("id", move |this, strand, out| {
                 let id = match this.annex().qualifier() {
                     VfsNfs4AceQualifier::User(id) | VfsNfs4AceQualifier::Group(id) => id,
                     _ => {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                         return Ok(());
                     }
                 };
-                Output::set(strand, out, id);
+                strand.store(out, id);
                 Ok(())
             })
             .get("mask", |this, strand, out| {

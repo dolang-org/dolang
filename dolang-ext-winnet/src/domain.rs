@@ -1,6 +1,6 @@
 use dolang::runtime::{
-    Error, Object, Output, Result, State, Strand, Value, object::TypeBuilder, unpack, value::Nil,
-    vm::ModuleBuilder,
+    AllocExt, Error, Object, Output, Result, State, Strand, Value, object::TypeBuilder, unpack,
+    value::Nil, vm::ModuleBuilder,
 };
 use dolang_ext_shell::{ResultExt, as_windows_path};
 use dolang_vfs_winnet::domain;
@@ -111,13 +111,13 @@ impl<'v> Object<'v> for JoinStatus {
                     domain::Kind::Domain => global.syms.kind_domain,
                     domain::Kind::Unknown => global.syms.kind_unknown,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("name", |this, strand, out| {
                 match this.annex().status.name() {
-                    Some(name) => Output::set(strand, out, name),
-                    None => Output::set(strand, out, Nil),
+                    Some(name) => strand.store(out, name),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
@@ -198,7 +198,7 @@ pub(crate) fn configure_module<'v, 'a>(
             domain::join(&dolang_ext_shell::vfs(strand), request)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         })
         .function("unjoin_domain", async move |strand, args, out| {
@@ -219,7 +219,7 @@ pub(crate) fn configure_module<'v, 'a>(
             domain::unjoin(&dolang_ext_shell::vfs(strand), request)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         })
         .function("rename_machine", async move |strand, args, out| {
@@ -241,7 +241,7 @@ pub(crate) fn configure_module<'v, 'a>(
             domain::rename(&dolang_ext_shell::vfs(strand), request)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         })
         .function("provision_computer", async move |strand, args, out| {
@@ -278,7 +278,7 @@ pub(crate) fn configure_module<'v, 'a>(
             let blob = domain::provision(&dolang_ext_shell::vfs(strand), request)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, blob.as_slice());
+            strand.store(out, blob.as_slice());
             Ok(())
         })
         .function("apply_offline_join", async move |strand, args, out| {
@@ -301,7 +301,7 @@ pub(crate) fn configure_module<'v, 'a>(
             domain::apply_offline(&dolang_ext_shell::vfs(strand), request)
                 .await
                 .into_sys(strand)?;
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         })
 }

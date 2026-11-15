@@ -18,8 +18,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, TypeObject, Value as DoValue},
-    vm::Vm,
+    value::{Slot, TypeObject, Value as DoValue},
+    vm::{AllocExt, Vm},
 };
 
 pub(crate) struct Value;
@@ -72,7 +72,7 @@ impl<'v> Protocol<'v> for Value {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -111,7 +111,7 @@ impl<'v> Protocol<'v> for Value {
             tag @ (sym::EQ_METHOD | sym::NE_METHOD) if this.delegator().is_none() => {
                 unpack!(strand, args => left, right);
                 let same = left.repr_eq(&right);
-                Output::set(strand, out, same == (tag == sym::EQ_METHOD));
+                strand.store(out, same == (tag == sym::EQ_METHOD));
                 Ok(())
             }
             _ => recv_special_mcall(strand, &this, method, args, out).await,
@@ -156,7 +156,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -286,7 +286,7 @@ impl<'v> Protocol<'v> for Bool {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -307,7 +307,7 @@ impl<'v> Protocol<'v> for Bool {
         let value = value
             .as_bool(strand)
             .ok_or_else(|| Error::type_error(strand, "Bool: expected Bool"))?;
-        Output::set(strand, out, value);
+        strand.store(out, value);
         Ok(())
     }
 
@@ -390,7 +390,7 @@ impl<'v> Protocol<'v> for ArgAccType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -417,7 +417,7 @@ impl<'v> Protocol<'v> for NilType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -461,7 +461,7 @@ impl<'v> Protocol<'v> for AdapterTypeObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj);
+        strand.store(out, &strand.singletons().type_obj);
     }
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,

@@ -7,7 +7,7 @@ use std::{
 
 use bitvec::boxed::BitBox;
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, State, Strand, Value,
+    AllocExt, Arg, Args, Error, Instance, Object, Result, State, Strand, Value,
     error::ResultExt,
     object::Mut,
     object::TypeBuilder,
@@ -178,14 +178,10 @@ impl<'v> Object<'v> for Statement {
                     );
 
                     with_instance!(strand, global.types.rows.cast(&wrapper).unwrap(), |inst| {
-                        Output::set(
-                            strand,
-                            Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
-                            this,
-                        );
+                        strand.store(Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()), this);
                     });
 
-                    Output::set(strand, out, wrapper);
+                    strand.store(out, wrapper);
                     Ok(())
                 },
             )
@@ -195,7 +191,7 @@ impl<'v> Object<'v> for Statement {
                     let annex = this.annex();
                     let mut borrow = this.borrow_mut(strand)?;
 
-                    Output::set(strand, &mut conn, Mut::slot::<0>(&borrow));
+                    strand.store(&mut conn, Mut::slot::<0>(&borrow));
                     let affected = with_instance!(
                         strand,
                         annex.global.types.connection.cast(&conn).unwrap(),
@@ -241,7 +237,7 @@ impl<'v> Object<'v> for Statement {
                         return Err(Error::runtime(strand, "execution failed"));
                     }
 
-                    Output::set(strand, out, affected);
+                    strand.store(out, affected);
                     Ok(())
                 },
             )

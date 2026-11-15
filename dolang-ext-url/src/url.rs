@@ -7,7 +7,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value,
     error::ResultExt,
     object::{ArrayLike, Cast, DictLike, DictViewSink, TypeBuilder},
     unpack,
@@ -92,7 +92,7 @@ impl<'v> ArrayLike<'v> for Segments {
             .flatten()
             .nth(index)
             .expect("array view index was normalized");
-        Output::set(strand, out, decode_segment(segment).as_str());
+        strand.store(out, decode_segment(segment).as_str());
         Ok(())
     }
 }
@@ -140,7 +140,7 @@ impl<'v> DictLike<'v> for Query {
             }
         });
         if let Some(value) = found {
-            Output::set(strand, out, value.as_str());
+            strand.store(out, value.as_str());
             Ok(true)
         } else {
             Ok(false)
@@ -239,68 +239,68 @@ impl<'v> Object<'v> for Url {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("scheme", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.scheme());
+                strand.store(out, this.annex().inner.scheme());
                 Ok(())
             })
             .get("username", |this, strand, out| {
                 let annex = this.annex();
                 let username = annex.inner.username();
                 if username.is_empty() {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 } else {
-                    Output::set(strand, out, username);
+                    strand.store(out, username);
                 }
                 Ok(())
             })
             .get("password", |this, strand, out| {
                 if let Some(password) = this.annex().inner.password() {
-                    Output::set(strand, out, password);
+                    strand.store(out, password);
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
             .get("host", |this, strand, out| {
                 if let Some(host) = this.annex().inner.host_str() {
-                    Output::set(strand, out, host);
+                    strand.store(out, host);
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
             .get("port", |this, strand, out| {
                 if let Some(port) = this.annex().inner.port() {
-                    Output::set(strand, out, port);
+                    strand.store(out, port);
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
             .get("path", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.path());
+                strand.store(out, this.annex().inner.path());
                 Ok(())
             })
             .get("name", |this, strand, out| {
                 if let Some(name) = url_name(&this.annex().inner) {
-                    Output::set(strand, out, name.as_str());
+                    strand.store(out, name.as_str());
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
             .get("fragment", |this, strand, out| {
                 if let Some(fragment) = this.annex().inner.fragment() {
-                    Output::set(strand, out, fragment);
+                    strand.store(out, fragment);
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
             .get("query_raw", |this, strand, out| {
                 if let Some(query) = this.annex().inner.query() {
-                    Output::set(strand, out, query);
+                    strand.store(out, query);
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })

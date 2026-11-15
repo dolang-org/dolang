@@ -4,7 +4,7 @@ use crate::{
 };
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
+    Args, Error, Instance, Object, Result, Slot, Strand, Type, Value,
     object::{ArrayLike, Mut, Ref, TypeBuilder},
     unpack, with_instance, with_slots,
 };
@@ -107,8 +107,7 @@ pub(crate) fn create_document<'v, 's>(
     }
     ty.create(strand, Document, &mut out);
     with_instance!(strand, ty.cast(&out).unwrap(), |this| {
-        Output::set(
-            strand,
+        strand.store(
             Mut::slot_mut::<CHILDREN>(&mut this.borrow_mut_unwrap()),
             children,
         );
@@ -265,7 +264,7 @@ impl<'v> Object<'v> for Document {
                     for i in 0..array.len(strand)? {
                         array.get(strand, i, &mut child)?;
                         if strand.state::<Tag>().element_type.cast(&child).is_some() {
-                            Output::set(strand, out, &child);
+                            strand.store(out, &child);
                             return Ok(());
                         }
                     }

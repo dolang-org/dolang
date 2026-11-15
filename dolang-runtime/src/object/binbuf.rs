@@ -16,7 +16,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{BinEmbryo, Output, Slot, TypeObject, Value, with_u8_slice},
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -220,7 +220,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().binbuf)
+        strand.store(out, &strand.singletons().binbuf)
     }
 
     fn op_debug<'a, 's>(
@@ -257,8 +257,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Output::set(
-                strand,
+            strand.store(
                 &mut out,
                 Value::from_bool(this_borrow.as_slice() == other_borrow.as_slice()),
             );
@@ -278,8 +277,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Output::set(
-                strand,
+            strand.store(
                 &mut out,
                 Value::from_bool(this_borrow.as_slice() < other_borrow.as_slice()),
             );
@@ -308,18 +306,18 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             match slice {
                 range::Slice::Contiguous { start, end } => {
                     let slice = me.get(start..end).ok_or_else(|| Error::index(strand))?;
-                    Output::set(strand, out, slice);
+                    strand.store(out, slice);
                 }
                 range::Slice::Stepped(indices) => {
                     let bytes: Vec<u8> = indices.into_iter().map(|i| me[i]).collect();
-                    Output::set(strand, out, bytes.as_slice());
+                    strand.store(out, bytes.as_slice());
                 }
             }
             return Ok(());
         }
         let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
         let index = index::element(me.len(), index).ok_or_else(|| Error::index(strand))?;
-        Output::set(strand, out, me[index]);
+        strand.store(out, me[index]);
         Ok(())
     }
 
@@ -447,7 +445,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                     };
                     let removed = borrow.as_slice()[start..end].to_vec();
                     borrow.splice(strand, start, end, &[]);
-                    Output::set(strand, out, removed.as_slice());
+                    strand.store(out, removed.as_slice());
                     return Ok(());
                 }
                 let idx = index_or_range
@@ -456,7 +454,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 let idx = index::element(len, idx).ok_or_else(|| Error::index(strand))?;
                 let byte = borrow.as_slice()[idx];
                 borrow.splice(strand, idx, idx + 1, &[]);
-                Output::set(strand, out, byte);
+                strand.store(out, byte);
                 Ok(())
             }
             sym::TRUNCATE => {
@@ -495,7 +493,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 for piece in &pieces {
                     borrow.copy_from_value(strand, piece);
                 }
-                Output::set(strand, out, total);
+                strand.store(out, total);
                 Ok(())
             }
             sym::FLUSH => {
@@ -509,7 +507,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                     .as_slice()
                     .starts_with(prefix))
                 .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
@@ -518,7 +516,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 let input =
                     with_u8_slice!(strand, suffix, |suffix| borrow.as_slice().ends_with(suffix))
                         .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -529,7 +527,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                     .as_slice()
                     .contains_str(needle))
                 .ok_or_else(|| Error::type_error(strand, "not binary data: unknown"))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::DRAIN => {
@@ -567,15 +565,15 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         match field.tag() {
             sym::LEN => {
                 let len = this.borrow(strand)?.len();
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             }
             sym::READABLE | sym::SEEKABLE | sym::FORKABLE => {
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             }
             sym::WRITABLE => {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             }
             sym::APPEND
@@ -608,7 +606,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
     ) -> Result<'v, 's, ()> {
         let (strand, answer) = request.parts();
         with_slots!(strand, |mut stream| {
-            Output::set(strand, Slot::reborrow(&mut stream), &this);
+            strand.store(Slot::reborrow(&mut stream), &this);
             provide_bridge(&mut Request::new(strand, answer), &stream, IoCaps::WRITE)
         })
     }
@@ -618,7 +616,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -656,7 +654,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -836,7 +834,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -852,7 +850,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -871,7 +869,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
             let want = borrow.chunk_size.min(len);
             let chunk = buf.as_slice()[..want].to_vec();
             buf.offset += want;
-            Output::set(strand, out, chunk.as_slice());
+            strand.store(out, chunk.as_slice());
             Ok(true)
         })
     }

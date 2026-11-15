@@ -1,6 +1,6 @@
 use super::{FS_BASE, FS_UNIX, FS_WINDOWS};
 
-use dolang::runtime::{Object, Output, State, Strand, object::TypeBuilder};
+use dolang::runtime::{AllocExt, Object, Output, State, Strand, object::TypeBuilder};
 use dolang_vfs::metadata::FsMetadata as VfsFsMetadata;
 
 use crate::{global::FsGlobal, util};
@@ -48,23 +48,23 @@ impl<'v, const FAMILY: u8> Object<'v> for FsMetadata<FAMILY> {
     fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder = builder
             .get("capacity", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.capacity());
+                strand.store(out, this.annex().inner.capacity());
                 Ok(())
             })
             .get("free", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.free());
+                strand.store(out, this.annex().inner.free());
                 Ok(())
             })
             .get("available", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.available());
+                strand.store(out, this.annex().inner.available());
                 Ok(())
             })
             .get("block_size", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.block_size());
+                strand.store(out, this.annex().inner.block_size());
                 Ok(())
             })
             .get("read_only", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.read_only());
+                strand.store(out, this.annex().inner.read_only());
                 Ok(())
             })
             .get("type", |this, strand, out| {

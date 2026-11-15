@@ -125,7 +125,7 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
     ) -> Result<'v, 's, ()> {
         let ty = owner.ty(strand.vm());
         with_slots!(strand, |mut owner_slot| {
-            Output::set(strand, Slot::reborrow(&mut owner_slot), owner);
+            strand.store(Slot::reborrow(&mut owner_slot), owner);
             index_from(&owner_slot, &Glue { view, ty }, strand, index, out)
         })
     }
@@ -168,7 +168,7 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
     ) -> Result<'v, 's, ()> {
         let ty = owner.ty(strand.vm());
         with_slots!(strand, |mut owner_slot| {
-            Output::set(strand, Slot::reborrow(&mut owner_slot), owner);
+            strand.store(Slot::reborrow(&mut owner_slot), owner);
             spread_from(&owner_slot, &Glue { view, ty }, strand, 0, context, sink)
         })
     }
@@ -335,7 +335,7 @@ impl<'v> ArrayViewGlue<'v> for Bytes {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let byte = with_u8_slice!(strand, owner, |bytes| bytes[index]).unwrap();
-        Output::set(strand, out, byte);
+        strand.store(out, byte);
         Ok(())
     }
 }
@@ -592,8 +592,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().array_view) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        Output::set(
-            strand,
+        strand.store(
             &mut out,
             Value::from_bool(this.as_header() == gc::Base::as_ptr(other).cast()),
         );
@@ -631,7 +630,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             sym::LEN => {
                 let view = this.get();
                 let len = view.glue.len(&view.owner, strand);
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             }
             sym::PUSH | sym::INSERT | sym::POP | sym::DELETE | sym::CLEAR => {
@@ -694,7 +693,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 }
                 drop(guard);
                 if let Some(mut default) = default {
-                    Output::set(strand, &mut out, &mut default);
+                    strand.store(&mut out, &mut default);
                 } else if let Some(or_else) = or_else {
                     call!(strand, or_else, out)?;
                 } else {
@@ -710,9 +709,9 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
                 if let Some(index) = index::element(len, index) {
                     view.glue.delete(&view.owner, strand, index)?;
-                    Output::set(strand, out, true);
+                    strand.store(out, true);
                 } else {
-                    Output::set(strand, out, false);
+                    strand.store(out, false);
                 }
                 Ok(())
             }
@@ -782,7 +781,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().array_view)
+        strand.store(out, &strand.singletons().array_view)
     }
 }
 
@@ -809,7 +808,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
     async fn op_next<'a, 's>(
@@ -880,7 +879,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 }
 
@@ -952,7 +951,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iterable)
+        strand.store(out, TypeObject::Iterable)
     }
 
     fn op_get<'a, 's>(
@@ -1034,7 +1033,7 @@ fn unpack_native<'v, 's>(
                 if position < view.glue.len(&view.owner, strand) {
                     view.glue.get(&view.owner, strand, position, slot)?;
                 } else if let Some(default) = default {
-                    Output::set(strand, slot, default);
+                    strand.store(slot, default);
                 } else {
                     return Err(Error::missing_positional(strand, position));
                 }
@@ -1042,14 +1041,14 @@ fn unpack_native<'v, 's>(
             }
             UnpackItem::SymKey { key, slot, default } => {
                 if let Some(default) = default {
-                    Output::set(strand, slot, default);
+                    strand.store(slot, default);
                 } else {
                     return Err(Error::missing_key(strand, key));
                 }
             }
             UnpackItem::ConstKey { key, slot, default } => {
                 if let Some(default) = default {
-                    Output::set(strand, slot, default);
+                    strand.store(slot, default);
                 } else {
                     return Err(Error::missing_key(strand, key));
                 }
@@ -1091,12 +1090,12 @@ fn unpack_from<'v, 's>(
     }
     if len < pos_count {
         for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            Output::set(strand, out.at(min + i), default);
+            strand.store(out.at(min + i), default);
         }
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            Output::set(strand, out.at(pos_count + i), default);
+            strand.store(out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -1134,7 +1133,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1236,7 +1235,7 @@ mod tests {
             out: Slot<'v, 'a>,
         ) -> Result<'v, 's, ()> {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, out, &borrow.0[index]);
+            strand.store(out, &borrow.0[index]);
             Ok(())
         }
     }

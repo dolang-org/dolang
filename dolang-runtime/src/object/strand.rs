@@ -21,8 +21,8 @@ use crate::{
     },
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, TypeObject, Value},
-    vm::Vm,
+    value::{Slot, TypeObject, Value},
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -155,7 +155,7 @@ async fn join_handle<'v, 's>(
         let borrow = handle.borrow().ok_or_else(|| Error::concurrency(strand))?;
         match borrow.result.as_ref().unwrap() {
             Completion::Ok(v) => {
-                Output::set(strand, out, v);
+                strand.store(out, v);
                 Ok(())
             }
             Completion::Err { value, backtrace } => {
@@ -190,7 +190,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().task)
+        strand.store(out, &strand.singletons().task)
     }
 
     fn op_debug<'a, 's>(
@@ -232,7 +232,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
             sym::JOIN => {
                 unpack!(strand, args =>);
                 with_slots!(strand, |mut handle| {
-                    Output::set(strand, &mut handle, &this);
+                    strand.store(&mut handle, &this);
                     let handle = handle
                         .downcast_ref(strand.builtin_types().strand_handle)
                         .expect("strand handle");
@@ -248,7 +248,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
             sym::WAIT => {
                 unpack!(strand, args =>);
                 with_slots!(strand, |mut handle| {
-                    Output::set(strand, &mut handle, &this);
+                    strand.store(&mut handle, &this);
                     let handle = handle
                         .downcast_ref(strand.builtin_types().strand_handle)
                         .expect("strand handle");
@@ -277,12 +277,12 @@ impl<'v> Protocol<'v> for Handle<'v> {
             }
             sym::DONE => {
                 let done = this.borrow(strand)?.result.is_some();
-                Output::set(strand, out, done);
+                strand.store(out, done);
                 Ok(())
             }
             sym::ID => {
                 let id = this.borrow(strand)?.cell.id();
-                Output::set(strand, out, id);
+                strand.store(out, id);
                 Ok(())
             }
             tag if is_observe_method(tag) => {
@@ -358,7 +358,7 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter);
+        strand.store(out, &strand.singletons().input_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -374,7 +374,7 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -386,7 +386,7 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
         with_slots!(strand, |mut value| {
             {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, &mut value, &borrow.value);
+                strand.store(&mut value, &borrow.value);
             }
             value.next(strand, out).await
         })
@@ -406,7 +406,7 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
             with_slots!(strand, |mut value| {
                 {
                     let borrow = this.borrow(strand)?;
-                    Output::set(strand, &mut value, &borrow.value);
+                    strand.store(&mut value, &borrow.value);
                 }
                 value.op_get(strand, field, out)
             })
@@ -426,7 +426,7 @@ impl<'v> Protocol<'v> for StreamIter<'v> {
             with_slots!(strand, |mut value| {
                 {
                     let borrow = this.borrow(strand)?;
-                    Output::set(strand, &mut value, &borrow.value);
+                    strand.store(&mut value, &borrow.value);
                 }
                 value.op_mcall(strand, method, args, out).await
             })
@@ -479,7 +479,7 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter);
+        strand.store(out, &strand.singletons().output_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -495,7 +495,7 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -507,7 +507,7 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
         with_slots!(strand, |mut value| {
             {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, &mut value, &borrow.value);
+                strand.store(&mut value, &borrow.value);
             }
             value.put(strand, item).await
         })
@@ -524,7 +524,7 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
             with_slots!(strand, |mut value| {
                 {
                     let borrow = this.borrow(strand)?;
-                    Output::set(strand, &mut value, &borrow.value);
+                    strand.store(&mut value, &borrow.value);
                 }
                 value.op_get(strand, field, out)
             })
@@ -544,7 +544,7 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
             with_slots!(strand, |mut value| {
                 {
                     let borrow = this.borrow(strand)?;
-                    Output::set(strand, &mut value, &borrow.value);
+                    strand.store(&mut value, &borrow.value);
                 }
                 value.op_mcall(strand, method, args, out).await
             })
@@ -560,7 +560,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().stream)
+        strand.store(out, &strand.singletons().stream)
     }
 
     fn op_debug<'a, 's>(
@@ -645,7 +645,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this.get().output);
+        strand.store(out, &this.get().output);
         Ok(())
     }
 
@@ -654,7 +654,7 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this.get().input);
+        strand.store(out, &this.get().input);
         Ok(())
     }
 
@@ -675,12 +675,12 @@ impl<'v> Protocol<'v> for StreamObj<'v> {
                     .handle
                     .read(|p| p.borrow().map(|handle| handle.result.is_some()))
                     .ok_or_else(|| Error::concurrency(strand))?;
-                Output::set(strand, out, done);
+                strand.store(out, done);
                 Ok(())
             }
             sym::ID => {
                 let id = stream_cell(strand, &this)?.id();
-                Output::set(strand, out, id);
+                strand.store(out, id);
                 Ok(())
             }
             tag if is_observe_method(tag) => {
@@ -726,7 +726,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -773,7 +773,7 @@ impl<'v> Protocol<'v> for StreamType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -875,7 +875,7 @@ fn cell_eq<'v, 's>(
 ) -> Result<'v, 's, ()> {
     match cell_of(strand.vm(), other) {
         Some(other) => {
-            Output::set(strand, &mut out, Value::from_bool(other.id() == cell.id()));
+            strand.store(&mut out, Value::from_bool(other.id() == cell.id()));
             Ok(())
         }
         None => Err(Error::unsupported(strand, "`==`")),
@@ -986,7 +986,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().strand)
+        strand.store(out, &strand.singletons().strand)
     }
 
     fn op_debug<'a, 's>(
@@ -1052,12 +1052,12 @@ impl<'v> Protocol<'v> for StrandRefObj {
             }
             sym::DONE => {
                 let done = this.get().cell.state() == CellState::Exited;
-                Output::set(strand, out, done);
+                strand.store(out, done);
                 Ok(())
             }
             sym::ID => {
                 let id = this.get().cell.id();
-                Output::set(strand, out, id);
+                strand.store(out, id);
                 Ok(())
             }
             _ => instance_get_fallback(strand, &this, field, out),
@@ -1085,7 +1085,7 @@ impl<'v> Protocol<'v> for StrandType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -1151,7 +1151,7 @@ impl<'v> Protocol<'v> for StrandInfoObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().strand_info)
+        strand.store(out, &strand.singletons().strand_info)
     }
 
     fn op_debug<'a, 's>(
@@ -1182,13 +1182,13 @@ impl<'v> Protocol<'v> for StrandInfoObj<'v> {
                         let ty = strand.builtin_types().strand_ref;
                         ty.create_imm(strand, StrandRef::new(parent.clone()), out);
                     }
-                    None => Output::set(strand, out, Value::NIL),
+                    None => strand.store(out, Value::NIL),
                 }
                 Ok(())
             }
             sym::BACKTRACE => {
                 if let InfoBacktrace::Built(value) = &*info.backtrace.borrow() {
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     return Ok(());
                 }
                 // Allocate before borrowing: `accept` borrows the state
@@ -1232,7 +1232,7 @@ impl<'v> Protocol<'v> for StrandInfoType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

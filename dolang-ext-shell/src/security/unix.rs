@@ -1,5 +1,5 @@
 use crate::global::UnixSecurityTag;
-use dolang::runtime::{with_instance, with_slots};
+use dolang::runtime::{AllocExt, with_instance, with_slots};
 
 use super::macos::resolve_uid_or_gid_arg;
 use super::*;
@@ -39,24 +39,24 @@ impl<'v> Object<'v> for Identity {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("uid", |this, strand, out| {
-                Output::set(strand, out, this.annex().uid());
+                strand.store(out, this.annex().uid());
                 Ok(())
             })
             .get("gid", |this, strand, out| {
-                Output::set(strand, out, this.annex().gid());
+                strand.store(out, this.annex().gid());
                 Ok(())
             })
             .get("euid", |this, strand, out| {
-                Output::set(strand, out, this.annex().effective_uid());
+                strand.store(out, this.annex().effective_uid());
                 Ok(())
             })
             .get("egid", |this, strand, out| {
-                Output::set(strand, out, this.annex().effective_gid());
+                strand.store(out, this.annex().effective_gid());
                 Ok(())
             })
             .get("groups", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
     }
@@ -83,11 +83,7 @@ pub(crate) fn create_identity<'v>(
             strand,
             global.types.unix_identity.cast(out).unwrap(),
             |this| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()),
-                    &groups,
-                );
+                strand.store(Mut::slot_mut::<0>(&mut this.borrow_mut_unwrap()), &groups);
             }
         );
     });
@@ -174,7 +170,7 @@ pub(crate) fn create_posix_acl<'v>(
                 .posix_acl
                 .create_with_annex(strand, PosixAclObject, acl, out);
         }
-        None => Output::set(strand, out, Nil),
+        None => strand.store(out, Nil),
     }
 }
 
@@ -309,18 +305,18 @@ impl<'v> Object<'v> for PosixAceObject {
                     VfsPosixAclQualifier::Mask => mask,
                     VfsPosixAclQualifier::Other => other,
                 };
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
             .get("id", move |this, strand, out| {
                 let id = match this.annex().qualifier() {
                     VfsPosixAclQualifier::User(id) | VfsPosixAclQualifier::Group(id) => id,
                     _ => {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                         return Ok(());
                     }
                 };
-                Output::set(strand, out, id);
+                strand.store(out, id);
                 Ok(())
             })
             .get("permissions", |this, strand, out| {
@@ -581,7 +577,7 @@ pub(crate) fn configure_vm<'v>(
             let uid =
                 resolve_uid_or_gid_arg(strand, global.local, &uid, VfsPrincipalIdKind::Uid).await?;
             let name = error::io_result(strand, vfs.user_name(uid).await)?;
-            Output::set(strand, out, name.as_str());
+            strand.store(out, name.as_str());
             Ok(())
         })
         .function("user_id", async move |strand, args, out| {
@@ -598,7 +594,7 @@ pub(crate) fn configure_vm<'v>(
                 .to_string();
             let vfs = global.local.get(strand).vfs();
             let uid = error::io_result(strand, vfs.user_id(&name).await)?;
-            Output::set(strand, out, uid);
+            strand.store(out, uid);
             Ok(())
         })
         .function("group_name", async move |strand, args, out| {
@@ -613,7 +609,7 @@ pub(crate) fn configure_vm<'v>(
             let gid =
                 resolve_uid_or_gid_arg(strand, global.local, &gid, VfsPrincipalIdKind::Gid).await?;
             let name = error::io_result(strand, vfs.group_name(gid).await)?;
-            Output::set(strand, out, name.as_str());
+            strand.store(out, name.as_str());
             Ok(())
         })
         .function("group_id", async move |strand, args, out| {
@@ -630,7 +626,7 @@ pub(crate) fn configure_vm<'v>(
                 .to_string();
             let vfs = global.local.get(strand).vfs();
             let gid = error::io_result(strand, vfs.group_id(&name).await)?;
-            Output::set(strand, out, gid);
+            strand.store(out, gid);
             Ok(())
         })
         .commit();

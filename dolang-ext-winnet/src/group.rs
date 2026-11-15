@@ -2,7 +2,7 @@ use crate::global::Tag;
 
 use crate::global::Global;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::TypeBuilder,
     unpack,
     value::{Nil, TypeObject},
@@ -188,7 +188,7 @@ impl<'v> Object<'v> for Group {
                     .add_member(sid)
                     .await
                     .into_sys(strand)?;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
             .method("remove_member", async move |this, strand, args, out| {
@@ -201,7 +201,7 @@ impl<'v> Object<'v> for Group {
                     .remove_member(sid)
                     .await
                     .into_sys(strand)?;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
             .method("delete", async move |this, strand, args, out| {
@@ -212,7 +212,7 @@ impl<'v> Object<'v> for Group {
                     .take()
                     .ok_or_else(|| Error::state_error(strand, "group was deleted"))?;
                 group.delete().await.into_sys(strand)?;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
     }
@@ -230,13 +230,13 @@ impl<'v> Object<'v> for GroupInfo {
                 Ok(())
             })
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().0.name());
+                strand.store(out, this.annex().0.name());
                 Ok(())
             })
             .get("comment", |this, strand, out| {
                 match this.annex().0.comment() {
-                    Some(v) => Output::set(strand, out, v),
-                    None => Output::set(strand, out, Nil),
+                    Some(v) => strand.store(out, v),
+                    None => strand.store(out, Nil),
                 };
                 Ok(())
             })
@@ -257,7 +257,7 @@ impl<'v> Object<'v> for Groups {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(
@@ -294,7 +294,7 @@ impl<'v> Object<'v> for GroupMembers {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(

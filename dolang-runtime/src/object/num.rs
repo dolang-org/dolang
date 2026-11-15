@@ -14,8 +14,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, Value, fmt::Format, prim::Prim},
-    vm::Vm,
+    value::{Input, Slot, Value, fmt::Format, prim::Prim},
+    vm::{AllocExt, Vm},
 };
 
 pub(crate) struct Num;
@@ -105,7 +105,7 @@ fn extrema<'v, 'a, 's>(
     is_min: bool,
 ) -> Result<'v, 's, ()> {
     unpack!(strand, args => mut first, *rest);
-    Output::set(strand, &mut out, &mut first);
+    strand.store(&mut out, &mut first);
     for mut value in rest {
         let replace = if is_min {
             value.lt(strand, &out)?
@@ -113,7 +113,7 @@ fn extrema<'v, 'a, 's>(
             out.lt(strand, &value)?
         };
         if replace {
-            Output::set(strand, &mut out, &mut value);
+            strand.store(&mut out, &mut value);
         }
         strand.check_trap_gc()?;
     }
@@ -140,11 +140,11 @@ fn default_mcall<'v, 'a, 's>(
                 ));
             }
             if value.lt(strand, &lower)? {
-                Output::set(strand, &mut out, &mut lower);
+                strand.store(&mut out, &mut lower);
             } else if upper.lt(strand, &value)? {
-                Output::set(strand, &mut out, &mut upper);
+                strand.store(&mut out, &mut upper);
             } else {
-                Output::set(strand, &mut out, &mut value);
+                strand.store(&mut out, &mut value);
             }
             Ok(())
         }
@@ -185,17 +185,17 @@ pub(crate) fn int_mcall<'v, 'a, 's>(
         sym::ABS => {
             unpack!(strand, args =>);
             let value = value.checked_abs().ok_or_else(|| Error::overflow(strand))?;
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         }
         sym::SIGNUM => {
             unpack!(strand, args =>);
-            Output::set(strand, out, value.signum());
+            strand.store(out, value.signum());
             Ok(())
         }
         sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
             unpack!(strand, args =>);
-            Output::set(strand, out, rcvr);
+            strand.store(out, rcvr);
             Ok(())
         }
         sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out),
@@ -227,7 +227,7 @@ pub(crate) fn float_mcall<'v, 'a, 's>(
     };
     if let Some(result) = result {
         unpack!(strand, args =>);
-        Output::set(strand, out, result);
+        strand.store(out, result);
         Ok(())
     } else if matches!(method.tag(), sym::MIN | sym::MAX | sym::CLAMP) {
         default_mcall(strand, rcvr, method, args, out)
@@ -264,7 +264,7 @@ impl<'v> Protocol<'v> for Num {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

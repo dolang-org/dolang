@@ -13,7 +13,7 @@ use dolang::runtime::value::fmt::Format;
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, State, Strand, Sym, Value, call, method,
+    Error, Instance, Object, Result, State, Strand, Sym, Value, call, method,
     object::TypeBuilder,
     strand::{self, Local},
     unpack,
@@ -602,7 +602,7 @@ async fn write_plain_line<'v, 's>(
     with_slots!(strand, |mut output| {
         {
             let root = global.output.borrow();
-            Output::set(strand, &mut output, &*root);
+            strand.store(&mut output, &*root);
         }
         dolang_ext_term::write_terminal_line(strand, &output, info.line_ending(), line).await
     })
@@ -657,7 +657,7 @@ fn parse_step<'v, 's>(
         View::Dict(dict) => StepPairs::Dict(dict.pairs()),
         View::Record(record) => StepPairs::Record(record.pairs()),
         _ => {
-            Output::set(strand, callable, step);
+            strand.store(callable, step);
             return Ok(StepMetadata {
                 name: None,
                 icon: None,
@@ -671,7 +671,7 @@ fn parse_step<'v, 's>(
     while pairs.next(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))? {
         match key.view(strand) {
             View::Int(0) if positional => {
-                Output::set(strand, Slot::reborrow(&mut callable), &*value);
+                strand.store(Slot::reborrow(&mut callable), &*value);
                 found = true;
             }
             View::Int(index) if positional && index >= 0 => {
@@ -825,7 +825,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 local.depth.replace(prev_depth);
                 local.parent_id.replace(prev_parent_id);
                 local.state.replace(prev_state);
-                Output::set(strand, &mut *global.output.borrow_mut(), Singleton::Null);
+                strand.store(&mut *global.output.borrow_mut(), Singleton::Null);
                 global.plain_active.set(false);
 
                 return result;
@@ -1105,24 +1105,24 @@ impl<'v> Object<'v> for Indicator {
             // --- Getters (read-only; see `update` for writes) ---
             .get("message", |this, strand, out| {
                 check_closed(strand, &this.annex().closed)?;
-                Output::set(strand, out, this.annex().bar.message().as_str());
+                strand.store(out, this.annex().bar.message().as_str());
                 Ok(())
             })
             .get("icon", |this, strand, out| {
                 check_closed(strand, &this.annex().closed)?;
-                Output::set(strand, out, this.annex().bar.prefix().as_str());
+                strand.store(out, this.annex().bar.prefix().as_str());
                 Ok(())
             })
             .get("total", |this, strand, out| {
                 check_closed(strand, &this.annex().closed)?;
                 if let Some(n) = this.annex().bar.length() {
-                    Output::set(strand, out, n);
+                    strand.store(out, n);
                 }
                 Ok(())
             })
             .get("position", |this, strand, out| {
                 check_closed(strand, &this.annex().closed)?;
-                Output::set(strand, out, this.annex().bar.position());
+                strand.store(out, this.annex().bar.position());
                 Ok(())
             })
             // --- Methods ---

@@ -3,7 +3,7 @@ use crate::global::Tag;
 use std::time::{Duration, SystemTime};
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::TypeBuilder,
     unpack,
     value::{Nil, TypeObject},
@@ -54,8 +54,8 @@ fn make_info<'v>(
 
 fn nullable_str<'v>(value: Option<&str>, out: impl Output<'v>, strand: &mut Strand<'v, '_>) {
     match value {
-        Some(v) => Output::set(strand, out, v),
-        None => Output::set(strand, out, Nil),
+        Some(v) => strand.store(out, v),
+        None => strand.store(out, Nil),
     }
 }
 
@@ -67,7 +67,7 @@ fn nullable_windows_path<'v, 's>(
     match value {
         Some(path) => dolang_ext_shell::windows_path(strand, path.as_str(), out),
         None => {
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         }
     }
@@ -86,7 +86,7 @@ fn nullable_time<'v, 's>(
         )
         .map_err(|e| Error::runtime(strand, e)),
         None => {
-            Output::set(strand, out, Nil);
+            strand.store(out, Nil);
             Ok(())
         }
     }
@@ -299,7 +299,7 @@ impl<'v> Object<'v> for User {
                     .take()
                     .ok_or_else(|| Error::state_error(strand, "user was deleted"))?;
                 user.delete().await.into_sys(strand)?;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
     }
@@ -320,7 +320,7 @@ impl<'v> Object<'v> for Users {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(
@@ -351,7 +351,7 @@ impl<'v> Object<'v> for UserFlags {
     type TypeAnnex = ();
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.get("int", |this, strand, out| {
-            Output::set(strand, out, u64::from(this.annex().bits()));
+            strand.store(out, u64::from(this.annex().bits()));
             Ok(())
         })
     }
@@ -370,7 +370,7 @@ impl<'v> Object<'v> for UserInfo {
                 Ok(())
             })
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.name());
+                strand.store(out, this.annex().info.name());
                 Ok(())
             })
             .get("full_name", |this, strand, out| {
@@ -407,8 +407,7 @@ impl<'v> Object<'v> for UserInfo {
                 Ok(())
             })
             .get("disabled", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     this.annex()
                         .info
@@ -418,8 +417,7 @@ impl<'v> Object<'v> for UserInfo {
                 Ok(())
             })
             .get("password_never_expires", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     this.annex()
                         .info
@@ -429,8 +427,7 @@ impl<'v> Object<'v> for UserInfo {
                 Ok(())
             })
             .get("password_cannot_change", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     this.annex()
                         .info
@@ -447,7 +444,7 @@ impl<'v> Object<'v> for UserInfo {
                 )
             })
             .get("password_expired", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.password_expired());
+                strand.store(out, this.annex().info.password_expired());
                 Ok(())
             })
             .get("last_logon", |this, strand, out| {
@@ -457,11 +454,11 @@ impl<'v> Object<'v> for UserInfo {
                 nullable_time(strand, this.annex().info.account_expires(), out)
             })
             .get("bad_password_count", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.bad_password_count());
+                strand.store(out, this.annex().info.bad_password_count());
                 Ok(())
             })
             .get("logon_count", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.logon_count());
+                strand.store(out, this.annex().info.logon_count());
                 Ok(())
             })
     }

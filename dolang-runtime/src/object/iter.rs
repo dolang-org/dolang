@@ -22,7 +22,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, view::View},
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -173,7 +173,7 @@ pub(crate) async fn spread_iter<'v, 's>(
     sink: &mut dyn Spread<'v, 's>,
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut root, mut iter, mut item| {
-        Output::set(strand, Slot::reborrow(&mut root), value);
+        strand.store(Slot::reborrow(&mut root), value);
         root.op_iter(strand, Slot::reborrow(&mut iter)).await?;
         let mut count = 0usize;
         while iter.op_next(strand, Slot::reborrow(&mut item)).await? {
@@ -206,14 +206,14 @@ pub(crate) fn unpack_cursor<'v, 's>(
             if let Some(next_index) = next(strand, index, out.at(i)) {
                 index = next_index;
             } else if i >= sig.required {
-                Output::set(strand, out.at(i), &sig.optional[i - sig.required]);
+                strand.store(out.at(i), &sig.optional[i - sig.required]);
             } else {
                 return Err(Error::missing_positional(strand, i));
             }
         } else {
             let key = &sig.keys[i - pos_count];
             if let Some(default) = &key.default {
-                Output::set(strand, out.at(i), default);
+                strand.store(out.at(i), default);
             } else {
                 return Err(match &key.kind {
                     sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -256,7 +256,7 @@ async fn iter_extrema<'v, 'a, 's>(
     with_slots!(strand, |mut item| {
         if !obj.next(strand, &mut out).await? {
             if let Some(mut default) = default {
-                Output::set(strand, &mut out, &mut default);
+                strand.store(&mut out, &mut default);
                 return Ok(());
             }
             return Err(Error::iter_stop(strand));
@@ -268,7 +268,7 @@ async fn iter_extrema<'v, 'a, 's>(
                 out.lt(strand, &item)?
             };
             if replace {
-                Slot::swap(strand, Slot::reborrow(&mut out), &mut item);
+                strand.swap(Slot::reborrow(&mut out), &mut item);
             }
             strand.check_trap_gc()?;
         }
@@ -286,7 +286,7 @@ async fn iter_all_any<'v, 'a, 's>(
     let has_pred = pred.is_some();
     with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
         if let Some(mut pred) = pred {
-            Output::set(strand, &mut pred_fn, &mut pred);
+            strand.store(&mut pred_fn, &mut pred);
         }
         while obj.next(strand, &mut item).await? {
             let passed = if has_pred {
@@ -296,16 +296,16 @@ async fn iter_all_any<'v, 'a, 's>(
                 item.to_bool(strand)?
             };
             if want_all && !passed {
-                Output::set(strand, &mut out, Value::FALSE);
+                strand.store(&mut out, Value::FALSE);
                 return Ok(());
             }
             if !want_all && passed {
-                Output::set(strand, &mut out, Value::TRUE);
+                strand.store(&mut out, Value::TRUE);
                 return Ok(());
             }
             strand.check_trap_gc()?;
         }
-        Output::set(strand, &mut out, Value::from_bool(want_all));
+        strand.store(&mut out, Value::from_bool(want_all));
         Ok(())
     })
 }
@@ -324,7 +324,7 @@ async fn iter_count<'v, 'a, 's>(
             }
         }
         let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
-        Output::set(strand, out, value);
+        strand.store(out, value);
         Ok(())
     })
 }
@@ -337,14 +337,14 @@ async fn iter_fold<'v, 'a, 's>(
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut acc, mut next_acc, mut item, mut func_slot| {
-        Output::set(strand, &mut acc, &mut init);
-        Output::set(strand, &mut func_slot, &mut func);
+        strand.store(&mut acc, &mut init);
+        strand.store(&mut func_slot, &mut func);
         while obj.next(strand, &mut item).await? {
             call!(strand, &func_slot, &acc, &item, &mut next_acc)?;
-            Slot::swap(strand, Slot::reborrow(&mut acc), &mut next_acc);
+            strand.swap(Slot::reborrow(&mut acc), &mut next_acc);
             strand.check_trap_gc()?;
         }
-        Output::set(strand, &mut out, &mut acc);
+        strand.store(&mut out, &mut acc);
         Ok(())
     })
 }
@@ -374,17 +374,17 @@ async fn iter_find<'v, 'a, 's>(
         return Err(Error::unexpected_key(strand, Sym::well_known(sym::ELSE)));
     }
     with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
-        Output::set(strand, &mut pred_fn, &mut pred);
+        strand.store(&mut pred_fn, &mut pred);
         while obj.next(strand, &mut item).await? {
             call!(strand, &pred_fn, &item, &mut pred_out)?;
             if pred_out.to_bool(strand)? {
-                Output::set(strand, &mut out, &mut item);
+                strand.store(&mut out, &mut item);
                 return Ok(());
             }
             strand.check_trap_gc()?;
         }
         if let Some(mut default) = default {
-            Output::set(strand, &mut out, &mut default);
+            strand.store(&mut out, &mut default);
             return Ok(());
         }
         if let Some(or_else) = or_else {
@@ -408,7 +408,7 @@ pub(crate) async fn iter_next<'v, 'a, 's>(
         return Ok(());
     }
     if let Some(mut default) = default {
-        Output::set(strand, &mut out, &mut default);
+        strand.store(&mut out, &mut default);
         return Ok(());
     }
     if let Some(or_else) = or_else {
@@ -430,7 +430,7 @@ async fn collect_sources<'v, 's>(
     let Some(Arg::Pos(rcvr)) = args.next() else {
         return Err(Error::type_error(strand, "expected receiver argument"));
     };
-    Output::set(strand, sources.at(0), &rcvr);
+    strand.store(sources.at(0), &rcvr);
     for (i, arg) in args.enumerate() {
         let slot = match arg {
             Arg::Pos(slot) => slot,
@@ -506,7 +506,7 @@ pub(crate) async fn iter_mcall<'v, 'a, 's>(
         iterable_mcall(strand, rcvr, method, args, out).await
     } else {
         with_slots!(strand, |mut delegator| {
-            Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+            strand.store(Slot::reborrow(&mut delegator), rcvr);
             let receiver = &strand.vm().singletons().input_iter;
             Delegated::new(receiver, &delegator)
                 .op_mcall(strand, method, args, out)
@@ -521,7 +521,7 @@ impl<'v> Protocol<'v> for Iterable {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -607,7 +607,7 @@ impl<'v> Protocol<'v> for Sinkable {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -714,7 +714,7 @@ pub(crate) async fn sink_mcall<'v, 'a, 's>(
         sinkable_mcall(strand, rcvr, method, args, out).await
     } else {
         with_slots!(strand, |mut delegator| {
-            Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+            strand.store(Slot::reborrow(&mut delegator), rcvr);
             let receiver = &strand.vm().singletons().output_iter;
             Delegated::new(receiver, &delegator)
                 .op_mcall(strand, method, args, out)
@@ -756,7 +756,7 @@ pub(crate) async fn iterable_mcall<'v, 'a, 's>(
     }
 
     with_slots!(strand, |mut delegator| {
-        Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+        strand.store(Slot::reborrow(&mut delegator), rcvr);
         let receiver = &strand.vm().singletons().iterable;
         Delegated::new(receiver, &delegator)
             .op_mcall(strand, method, args, out)
@@ -793,7 +793,7 @@ pub(crate) async fn sinkable_mcall<'v, 'a, 's>(
     }
 
     with_slots!(strand, |mut delegator| {
-        Output::set(strand, Slot::reborrow(&mut delegator), rcvr);
+        strand.store(Slot::reborrow(&mut delegator), rcvr);
         let receiver = &strand.vm().singletons().sinkable;
         Delegated::new(receiver, &delegator)
             .op_mcall(strand, method, args, out)
@@ -916,7 +916,7 @@ impl<'v> Protocol<'v> for Chain<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -932,7 +932,7 @@ impl<'v> Protocol<'v> for Chain<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -946,7 +946,7 @@ impl<'v> Protocol<'v> for Chain<'v> {
                 {
                     let borrow = this.borrow(strand)?;
                     match borrow.sources.get(borrow.index) {
-                        Some(next) => Output::set(strand, &mut source, next),
+                        Some(next) => strand.store(&mut source, next),
                         None => return Ok(false),
                     }
                 }
@@ -993,7 +993,7 @@ impl<'v> Protocol<'v> for Zip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1009,7 +1009,7 @@ impl<'v> Protocol<'v> for Zip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1027,7 +1027,7 @@ impl<'v> Protocol<'v> for Zip<'v> {
             {
                 let borrow = this.borrow(strand)?;
                 for (i, source) in borrow.sources.iter().enumerate() {
-                    Output::set(strand, slots.at(i), source);
+                    strand.store(slots.at(i), source);
                 }
             }
             for i in 0..len {
@@ -1157,7 +1157,7 @@ impl<'v> Protocol<'v> for Take<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1173,7 +1173,7 @@ impl<'v> Protocol<'v> for Take<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1188,7 +1188,7 @@ impl<'v> Protocol<'v> for Take<'v> {
                 if borrow.remaining == 0 {
                     return Ok(false);
                 }
-                Output::set(strand, &mut source, &borrow.source);
+                strand.store(&mut source, &borrow.source);
             }
             if !source.next(strand, out).await? {
                 return Ok(false);
@@ -1233,7 +1233,7 @@ impl<'v> Protocol<'v> for Skip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1249,7 +1249,7 @@ impl<'v> Protocol<'v> for Skip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1266,7 +1266,7 @@ impl<'v> Protocol<'v> for Skip<'v> {
                     if skipping {
                         borrow.remaining -= 1;
                     }
-                    Output::set(strand, &mut source, &borrow.source);
+                    strand.store(&mut source, &borrow.source);
                     skipping
                 };
                 if !skipping {
@@ -1315,7 +1315,7 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1331,7 +1331,7 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1343,7 +1343,7 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
         with_slots!(strand, |mut item, mut source| {
             let index = {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, &mut source, &borrow.source);
+                strand.store(&mut source, &borrow.source);
                 borrow.index
             };
             if !source.next(strand, &mut item).await? {
@@ -1393,7 +1393,7 @@ impl<'v> Protocol<'v> for Kv<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().kv)
+        strand.store(out, &strand.singletons().kv)
     }
 
     fn op_debug<'a, 's>(
@@ -1424,7 +1424,7 @@ impl<'v> Protocol<'v> for Kv<'v> {
                              mut value| {
             {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, &mut source, &borrow.source);
+                strand.store(&mut source, &borrow.source);
             }
             source.iter(strand, &mut iter).await?;
             while iter.next(strand, &mut item).await? {
@@ -1433,8 +1433,8 @@ impl<'v> Protocol<'v> for Kv<'v> {
                     // not used while the copy lives
                     item.op_unpack(strand, &unpack, unsafe { Slots::new(pair.as_inner()) })
                         .await?;
-                    Output::set(strand, &mut key, pair.at(0));
-                    Output::set(strand, &mut value, pair.at(1));
+                    strand.store(&mut key, pair.at(0));
+                    strand.store(&mut value, pair.at(1));
                 });
                 sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
             }
@@ -1454,7 +1454,7 @@ impl<'v> Protocol<'v> for Iter {
         let Some(delegator) = this.delegator() else {
             return Err(Error::unsupported(strand, "iteration"));
         };
-        Output::set(strand, out, delegator);
+        strand.store(out, delegator);
         Ok(())
     }
 
@@ -1475,7 +1475,7 @@ impl<'v> Protocol<'v> for Iter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1550,7 +1550,7 @@ impl<'v> Protocol<'v> for Iter {
             // Reached only when the class doesn't define its own `(iter)`.
             sym::SPREAD_METHOD | sym::ITER_METHOD => {
                 unpack!(strand, args => obj);
-                Output::set(strand, out, obj);
+                strand.store(out, obj);
                 Ok(())
             }
             sym::ITER => {
@@ -1657,7 +1657,7 @@ impl<'v> Protocol<'v> for Sink {
         let Some(delegator) = this.delegator() else {
             return Err(Error::unsupported(strand, "sink"));
         };
-        Output::set(strand, out, delegator);
+        strand.store(out, delegator);
         Ok(())
     }
 
@@ -1666,7 +1666,7 @@ impl<'v> Protocol<'v> for Sink {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1739,7 +1739,7 @@ impl<'v> Protocol<'v> for Sink {
             // Reached only when the class doesn't define its own `(sink)`.
             sym::SINK_METHOD => {
                 unpack!(strand, args => obj);
-                Output::set(strand, out, obj);
+                strand.store(out, obj);
                 Ok(())
             }
             sym::SINK => {
@@ -1816,7 +1816,7 @@ impl<'v> Protocol<'v> for Map<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().map_iter);
+        strand.store(out, &strand.singletons().map_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -1832,7 +1832,7 @@ impl<'v> Protocol<'v> for Map<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1843,8 +1843,8 @@ impl<'v> Protocol<'v> for Map<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut func, mut item| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut input, &borrow.obj);
-            Output::set(strand, &mut func, &borrow.func);
+            strand.store(&mut input, &borrow.obj);
+            strand.store(&mut func, &borrow.func);
             drop(borrow);
             if input.next(strand, &mut item).await? {
                 call!(strand, &func, &item, out)?;
@@ -1924,7 +1924,7 @@ impl<'v> Protocol<'v> for Premap<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter);
+        strand.store(out, &strand.singletons().output_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -1940,7 +1940,7 @@ impl<'v> Protocol<'v> for Premap<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1951,8 +1951,8 @@ impl<'v> Protocol<'v> for Premap<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut func| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut func, &borrow.func);
-            Output::set(strand, &mut output, &borrow.obj);
+            strand.store(&mut func, &borrow.func);
+            strand.store(&mut output, &borrow.obj);
             drop(borrow);
             call!(strand, &func, value, &mut output)?;
             this.borrow(strand)?.obj.put(strand, output).await
@@ -2021,7 +2021,7 @@ impl<'v> Protocol<'v> for Filter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().filter_iter);
+        strand.store(out, &strand.singletons().filter_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -2037,7 +2037,7 @@ impl<'v> Protocol<'v> for Filter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -2048,8 +2048,8 @@ impl<'v> Protocol<'v> for Filter<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut pred, mut res| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut pred, &borrow.pred);
-            Output::set(strand, &mut input, &borrow.obj);
+            strand.store(&mut pred, &borrow.pred);
+            strand.store(&mut input, &borrow.obj);
             drop(borrow);
             loop {
                 if !input.next(strand, &mut out).await? {
@@ -2132,7 +2132,7 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter);
+        strand.store(out, &strand.singletons().output_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -2148,7 +2148,7 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -2159,8 +2159,8 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut pred| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut pred, &borrow.pred);
-            Output::set(strand, &mut output, &borrow.obj);
+            strand.store(&mut pred, &borrow.pred);
+            strand.store(&mut output, &borrow.obj);
             drop(borrow);
             call!(strand, &pred, &value, &mut output)?;
             if output.to_bool(strand)? {
@@ -2230,12 +2230,12 @@ fn chomp_value<'v, 's>(
         View::Str(str) => {
             let str = str.pin();
             let end = str.len() - line_terminator_len(str.as_bytes());
-            Output::set(strand, out, &str[..end]);
+            strand.store(out, &str[..end]);
         }
         View::Bin(bin) => {
             let bin = bin.pin();
             let end = bin.len() - line_terminator_len(&bin);
-            Output::set(strand, out, &bin[..end]);
+            strand.store(out, &bin[..end]);
         }
         _ => {
             return Err(Error::type_error(
@@ -2324,7 +2324,7 @@ impl<'v> Protocol<'v> for Chomp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter);
+        strand.store(out, &strand.singletons().input_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -2340,7 +2340,7 @@ impl<'v> Protocol<'v> for Chomp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -2351,7 +2351,7 @@ impl<'v> Protocol<'v> for Chomp<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut item| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut input, &borrow.obj);
+            strand.store(&mut input, &borrow.obj);
             drop(borrow);
             if input.next(strand, &mut item).await? {
                 chomp_value(strand, &item, out, "iter.chomp")?;
@@ -2428,7 +2428,7 @@ impl<'v> Protocol<'v> for Prechomp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter);
+        strand.store(out, &strand.singletons().output_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -2444,7 +2444,7 @@ impl<'v> Protocol<'v> for Prechomp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -2455,7 +2455,7 @@ impl<'v> Protocol<'v> for Prechomp<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut chomped| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut output, &borrow.obj);
+            strand.store(&mut output, &borrow.obj);
             drop(borrow);
             chomp_value(strand, &value, &mut chomped, "sink.prechomp")?;
             output.put(strand, chomped).await
@@ -2528,7 +2528,7 @@ impl<'v> Protocol<'v> for Crimp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter);
+        strand.store(out, &strand.singletons().input_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -2544,7 +2544,7 @@ impl<'v> Protocol<'v> for Crimp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -2555,10 +2555,10 @@ impl<'v> Protocol<'v> for Crimp<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut item, mut term| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut input, &borrow.obj);
+            strand.store(&mut input, &borrow.obj);
             let has_term = match &borrow.terminator {
                 Some(terminator) => {
-                    Output::set(strand, &mut term, terminator);
+                    strand.store(&mut term, terminator);
                     true
                 }
                 None => false,
@@ -2647,7 +2647,7 @@ impl<'v> Protocol<'v> for Precrimp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter);
+        strand.store(out, &strand.singletons().output_iter);
     }
 
     fn op_debug<'a, 's>(
@@ -2663,7 +2663,7 @@ impl<'v> Protocol<'v> for Precrimp<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -2674,10 +2674,10 @@ impl<'v> Protocol<'v> for Precrimp<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut crimped, mut term| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, &mut output, &borrow.obj);
+            strand.store(&mut output, &borrow.obj);
             let has_term = match &borrow.terminator {
                 Some(terminator) => {
-                    Output::set(strand, &mut term, terminator);
+                    strand.store(&mut term, terminator);
                     true
                 }
                 None => false,
@@ -2739,7 +2739,7 @@ impl<'v> Protocol<'v> for MapType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj);
+        strand.store(out, &strand.singletons().type_obj);
     }
 
     fn op_debug<'a, 's>(
@@ -2781,7 +2781,7 @@ impl<'v> Protocol<'v> for FilterType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj);
+        strand.store(out, &strand.singletons().type_obj);
     }
 
     fn op_debug<'a, 's>(
@@ -3106,7 +3106,7 @@ impl<'v> Protocol<'v> for NullType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -3155,7 +3155,7 @@ impl<'v> Protocol<'v> for Null {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().null_type)
+        strand.store(out, &strand.singletons().null_type)
     }
 
     fn op_debug<'a, 's>(
@@ -3172,7 +3172,7 @@ impl<'v> Protocol<'v> for Null {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -3195,7 +3195,7 @@ impl<'v> Protocol<'v> for Null {
             return Err(Error::missing_positional(strand, sig.required));
         }
         for (i, default) in sig.optional.iter().enumerate() {
-            Output::set(strand, out.at(i), default);
+            strand.store(out.at(i), default);
         }
         let keyed = sig.optional.len();
         for (i, key) in sig.keys.iter().enumerate() {
@@ -3205,10 +3205,10 @@ impl<'v> Protocol<'v> for Null {
                     sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
                 });
             };
-            Output::set(strand, out.at(keyed + i), default);
+            strand.store(out.at(keyed + i), default);
         }
         if let Some(i) = sig.pos_rest_slot() {
-            Output::set(strand, out.at(i), &this);
+            strand.store(out.at(i), &this);
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -3220,7 +3220,7 @@ impl<'v> Protocol<'v> for Null {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 use dolang::runtime::{
-    Error, Object, Output, Result, Strand,
+    AllocExt, Error, Object, Result, Strand,
     object::TypeBuilder,
     unpack,
     value::{Root, TypeObject},
@@ -140,7 +140,7 @@ impl<'v> Object<'v> for PlaygroundConsole {
             .method("write", async move |_this, strand, args, out| {
                 let bytes = dolang_ext_term::write_data(strand, args)?;
                 write_host(strand, &bytes).await?;
-                Output::set(strand, out, bytes.len());
+                strand.store(out, bytes.len());
                 Ok(())
             })
             .method("flush", async move |_this, strand, args, _out| {
@@ -148,21 +148,21 @@ impl<'v> Object<'v> for PlaygroundConsole {
                 Ok(())
             })
             .get("writable", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             .get("line_ending", |_this, strand, out| {
-                Output::set(strand, out, LINE_ENDING);
+                strand.store(out, LINE_ENDING);
                 Ok(())
             })
             // The page renders SGR styling.
             .get("can_style", |_this, strand, out| {
-                Output::set(strand, out, true);
+                strand.store(out, true);
                 Ok(())
             })
             // The page is not a terminal: it has no cursor to move.
             .get("is_tty", |_this, strand, out| {
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             })
             .method("geometry", async move |_this, strand, args, out| {

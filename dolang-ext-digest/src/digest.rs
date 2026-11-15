@@ -4,7 +4,7 @@ use std::{
 };
 
 use dolang::runtime::{
-    Args, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Output, Result, Slot, Strand, Type,
+    AllocExt, Args, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Result, Slot, Strand, Type,
     error::ErrorKind,
     io::{self, IoCaps, IoResultExt as _},
     object::TypeBuilder,
@@ -238,7 +238,7 @@ async fn digest_single<'v, 's, T: Algorithm>(
     let source = Source::new(strand, value)?;
     let mut state = T::default();
     absorb(strand, &mut state, source).await?;
-    Output::set(strand, out, state.finalize().as_slice());
+    strand.store(out, state.finalize().as_slice());
     Ok(())
 }
 
@@ -260,7 +260,7 @@ async fn blake3_single<'v, 's>(
     let source = Source::new(strand, value)?;
     let mut state = blake3::Hasher::new();
     absorb(strand, &mut state, source).await?;
-    Output::set(strand, out, state.finalize().as_slice());
+    strand.store(out, state.finalize().as_slice());
     Ok(())
 }
 
@@ -306,13 +306,13 @@ impl<'v> Object<'v> for Blake3State {
             .method("update", async move |this, strand, args, out| {
                 unpack!(strand, args => value);
                 blake3_update(strand, this, value).await?;
-                Output::set(strand, out, this);
+                strand.store(out, this);
                 Ok(())
             })
             .method("digest", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let digest = this.borrow(strand)?.0.clone().finalize();
-                Output::set(strand, out, digest.as_slice());
+                strand.store(out, digest.as_slice());
                 Ok(())
             })
     }
@@ -322,7 +322,7 @@ impl<'v> Object<'v> for Blake3State {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -359,13 +359,13 @@ impl<'v, T: Algorithm> Object<'v> for Digestible<T> {
             .method("update", async move |this, strand, args, out| {
                 unpack!(strand, args => value);
                 digest_update(strand, this, value).await?;
-                Output::set(strand, out, this);
+                strand.store(out, this);
                 Ok(())
             })
             .method("digest", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let digest = this.borrow(strand)?.0.clone().finalize();
-                Output::set(strand, out, digest.as_slice());
+                strand.store(out, digest.as_slice());
                 Ok(())
             })
     }
@@ -375,7 +375,7 @@ impl<'v, T: Algorithm> Object<'v> for Digestible<T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

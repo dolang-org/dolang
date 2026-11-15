@@ -3,8 +3,8 @@ use crate::{
     error::{Error, Result},
     strand::Strand,
     unpack,
-    value::{Output, Slot, Value, prim::Prim},
-    vm::{Builder, StateTag},
+    value::{Slot, Value, prim::Prim},
+    vm::{AllocExt, Builder, StateTag},
 };
 
 fn as_float<'v, 's>(
@@ -42,7 +42,7 @@ async fn unary<'v, 'a, 's>(
 ) -> Result<'v, 's, ()> {
     unpack!(strand, args => value);
     let value = as_float(strand, &value, name)?;
-    Output::set(strand, out, op(value));
+    strand.store(out, op(value));
     Ok(())
 }
 
@@ -56,7 +56,7 @@ async fn binary<'v, 'a, 's>(
     unpack!(strand, args => left, right);
     let left = as_float(strand, &left, name)?;
     let right = as_float(strand, &right, name)?;
-    Output::set(strand, out, op(left, right));
+    strand.store(out, op(left, right));
     Ok(())
 }
 
@@ -78,7 +78,7 @@ async fn gcd<'v, 'a, 's>(
         result = gcd_pair(result, as_int(strand, &value, "gcd")?.unsigned_abs());
     }
     let result = i128::try_from(result).map_err(|_| Error::overflow(strand))?;
-    Output::set(strand, out, result);
+    strand.store(out, result);
     Ok(())
 }
 
@@ -105,7 +105,7 @@ async fn lcm<'v, 'a, 's>(
             return Err(Error::overflow(strand));
         }
     }
-    Output::set(strand, out, result as i128);
+    strand.store(out, result as i128);
     Ok(())
 }
 
@@ -143,19 +143,19 @@ async fn pow<'v, 'a, 's>(
     match (base_prim, exponent_prim) {
         (Prim::Int(base), Prim::Int(exponent)) if exponent >= 0 => {
             let value = checked_pow(strand, base, exponent)?;
-            Output::set(strand, out, value);
+            strand.store(out, value);
         }
         (Prim::Int(base), Prim::Int(exponent)) => {
-            Output::set(strand, out, (base as f64).powf(exponent as f64));
+            strand.store(out, (base as f64).powf(exponent as f64));
         }
         (Prim::Int(base), Prim::F64(exponent)) => {
-            Output::set(strand, out, (base as f64).powf(exponent));
+            strand.store(out, (base as f64).powf(exponent));
         }
         (Prim::F64(base), Prim::Int(exponent)) => {
-            Output::set(strand, out, base.powf(exponent as f64));
+            strand.store(out, base.powf(exponent as f64));
         }
         (Prim::F64(base), Prim::F64(exponent)) => {
-            Output::set(strand, out, base.powf(exponent));
+            strand.store(out, base.powf(exponent));
         }
         _ => return Err(Error::type_error(strand, "pow: expected Int or Float")),
     }
@@ -172,7 +172,7 @@ async fn hypot<'v, 'a, 's>(
     for value in rest {
         result = result.hypot(as_float(strand, &value, "hypot")?);
     }
-    Output::set(strand, out, result);
+    strand.store(out, result);
     Ok(())
 }
 
@@ -230,7 +230,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 unpack!(strand, args => value, :base);
                 let value = as_float(strand, &value, "log")?;
                 let base = as_float(strand, &base, "log")?;
-                Output::set(strand, out, value.log(base));
+                strand.store(out, value.log(base));
                 Ok(())
             })
             .function("pow", pow)

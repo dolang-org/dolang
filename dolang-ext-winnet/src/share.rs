@@ -2,7 +2,7 @@ use crate::global::Tag;
 
 use crate::global::Global;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
     object::TypeBuilder,
     unpack,
     value::{Nil, TypeObject},
@@ -58,8 +58,8 @@ fn capability<'a, 'v, 's>(
 
 fn nullable_str<'v>(strand: &mut Strand<'v, '_>, value: Option<&str>, out: impl Output<'v>) {
     match value {
-        Some(v) => Output::set(strand, out, v),
-        None => Output::set(strand, out, Nil),
+        Some(v) => strand.store(out, v),
+        None => strand.store(out, Nil),
     }
 }
 
@@ -127,7 +127,7 @@ impl<'v> Object<'v> for Share {
             .get("name", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 let share = capability(&borrow, strand)?;
-                Output::set(strand, out, share.name());
+                strand.store(out, share.name());
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {
@@ -172,7 +172,7 @@ impl<'v> Object<'v> for Share {
                     .into_sys(strand)?;
                 drop(borrow);
                 this.borrow_mut(strand)?.0 = None;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
     }
@@ -187,7 +187,7 @@ impl<'v> Object<'v> for ShareInfo {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.name());
+                strand.store(out, this.annex().info.name());
                 Ok(())
             })
             .get("kind", |this, strand, out| {
@@ -198,15 +198,15 @@ impl<'v> Object<'v> for ShareInfo {
                     share::Kind::Device => a.global.syms.device,
                     share::Kind::Ipc => a.global.syms.ipc,
                 };
-                Output::set(strand, out, v);
+                strand.store(out, v);
                 Ok(())
             })
             .get("special", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.special());
+                strand.store(out, this.annex().info.special());
                 Ok(())
             })
             .get("temporary", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.temporary());
+                strand.store(out, this.annex().info.temporary());
                 Ok(())
             })
             .get("comment", |this, strand, out| {
@@ -215,13 +215,13 @@ impl<'v> Object<'v> for ShareInfo {
             })
             .get("max_uses", |this, strand, out| {
                 match this.annex().info.max_uses() {
-                    Some(v) => Output::set(strand, out, u64::from(v)),
-                    None => Output::set(strand, out, Nil),
+                    Some(v) => strand.store(out, u64::from(v)),
+                    None => strand.store(out, Nil),
                 };
                 Ok(())
             })
             .get("current_uses", |this, strand, out| {
-                Output::set(strand, out, u64::from(this.annex().info.current_uses()));
+                strand.store(out, u64::from(this.annex().info.current_uses()));
                 Ok(())
             })
             .get("path", |this, strand, out| match this.annex().info.path() {
@@ -236,7 +236,7 @@ impl<'v> Object<'v> for ShareInfo {
                     Some(descriptor) => {
                         dolang_ext_shell::create_sec_desc(strand, descriptor.clone(), out)
                     }
-                    None => Output::set(strand, out, Nil),
+                    None => strand.store(out, Nil),
                 };
                 Ok(())
             })
@@ -257,7 +257,7 @@ impl<'v> Object<'v> for Shares {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(

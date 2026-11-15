@@ -16,7 +16,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -120,7 +120,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -162,7 +162,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             let array_borrow = array.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let value = array_borrow.inner.get(index);
             if let Some(value) = value {
-                Output::set(strand, out, value);
+                strand.store(out, value);
             }
             value.is_some()
         });
@@ -175,7 +175,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -223,7 +223,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iterable)
+        strand.store(out, TypeObject::Iterable)
     }
 
     fn op_get<'a, 's>(
@@ -281,7 +281,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
             let start = rest.start.min(borrow.inner.len());
             with_slots!(strand, |mut tmp| {
                 for item in &borrow.inner[start..] {
-                    Output::set(strand, &mut tmp, item);
+                    strand.store(&mut tmp, item);
                     sink.positional(strand, Slot::reborrow(&mut tmp))?;
                 }
                 Ok(())
@@ -365,7 +365,7 @@ impl<'v> Protocol<'v> for SinkObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -409,7 +409,7 @@ impl<'v> Protocol<'v> for SinkObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter)
+        strand.store(out, &strand.singletons().output_iter)
     }
 }
 
@@ -462,7 +462,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -517,7 +517,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_get<'a, 's>(
@@ -813,7 +813,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             let left = &this_borrow.inner;
             let right = &other_borrow.inner;
             if left.len() != right.len() {
-                Output::set(strand, &mut out, Value::from_bool(false));
+                strand.store(&mut out, Value::from_bool(false));
                 return Ok(());
             }
             for i in 0..left.len() {
@@ -823,11 +823,11 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let l = unsafe { left.get_unchecked(i) };
                 let r = unsafe { right.get_unchecked(i) };
                 if !l.eq(strand, r)? {
-                    Output::set(strand, &mut out, Value::from_bool(false));
+                    strand.store(&mut out, Value::from_bool(false));
                     return Ok(());
                 }
             }
-            Output::set(strand, &mut out, Value::from_bool(true));
+            strand.store(&mut out, Value::from_bool(true));
             Ok(())
         })
     }
@@ -854,11 +854,11 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let r = unsafe { right.get_unchecked(i) };
                 if !l.eq(strand, r)? {
                     let flag = l.lt(strand, r)?;
-                    Output::set(strand, &mut out, flag);
+                    strand.store(&mut out, flag);
                     return Ok(());
                 }
             }
-            Output::set(strand, &mut out, Value::from_bool(right.len() > left.len()));
+            strand.store(&mut out, Value::from_bool(right.len() > left.len()));
             Ok(())
         })
     }
@@ -904,7 +904,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
         match borrow.inner.get(index) {
             Some(value) => {
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -1080,10 +1080,10 @@ impl<'v> Protocol<'v> for Array<'v> {
                 match index::element(borrow.inner.len(), index)
                     .and_then(|index| borrow.inner.get(index))
                 {
-                    Some(value) => Output::set(strand, &mut out, value),
+                    Some(value) => strand.store(&mut out, value),
                     None => {
                         if let Some(mut default) = default {
-                            Output::set(strand, &mut out, &mut default)
+                            strand.store(&mut out, &mut default)
                         } else if let Some(or_else) = or_else {
                             call!(strand, or_else, out)?;
                         }
@@ -1110,10 +1110,10 @@ impl<'v> Protocol<'v> for Array<'v> {
                     }
                 };
                 match value {
-                    Some(value) => Output::set(strand, &mut out, value),
+                    Some(value) => strand.store(&mut out, value),
                     None => {
                         if let Some(mut default) = default {
-                            Output::set(strand, &mut out, &mut default)
+                            strand.store(&mut out, &mut default)
                         } else if let Some(or_else) = or_else {
                             call!(strand, or_else, out)?;
                         } else {
@@ -1131,7 +1131,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 if let Some(index) = index::element(borrow.inner.len(), index) {
                     borrow.inner.remove(index);
                 }
-                Output::set(strand, out, deleted);
+                strand.store(out, deleted);
                 Ok(())
             }
             sym::CLEAR => {
@@ -1143,7 +1143,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
-                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        strand.store(Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
                         call!(strand, &ty, &receiver, out)
                     });
@@ -1190,7 +1190,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                         break;
                     }
                 }
-                Output::set(strand, out, found);
+                strand.store(out, found);
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(
@@ -1213,7 +1213,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         match field.tag() {
             sym::LEN => {
                 let input = this.borrow(strand)?.inner.len();
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::PUSH
@@ -1260,7 +1260,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         let borrow = this.borrow(strand)?;
         with_slots!(strand, |mut tmp| {
             for item in borrow.inner.iter() {
-                Output::set(strand, &mut tmp, item);
+                strand.store(&mut tmp, item);
                 sink.positional(strand, Slot::reborrow(&mut tmp))?;
             }
             Ok(())
@@ -1301,7 +1301,7 @@ impl<'v> Protocol<'v> for Array<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().array)
+        strand.store(out, &strand.singletons().array)
     }
 }
 
@@ -1328,17 +1328,17 @@ fn unpack_from<'v, 's>(
             let index = i64::try_from(start + i).map_err(|_| Error::overflow(strand))?;
             tuple::create_pair(strand, index, elem, out.at(i))
         } else {
-            Output::set(strand, out.at(i), elem)
+            strand.store(out.at(i), elem)
         }
     }
     if len < pos_count {
         for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            Output::set(strand, out.at(min + i), default);
+            strand.store(out.at(min + i), default);
         }
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            Output::set(strand, out.at(pos_count + i), default);
+            strand.store(out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -1388,7 +1388,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

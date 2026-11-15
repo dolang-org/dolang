@@ -26,7 +26,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Case, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed},
-    vm::{Alloc, Register, Vm},
+    vm::{Alloc, AllocExt, Register, Vm},
     with_slots,
 };
 
@@ -592,12 +592,12 @@ impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        Output::set(&mut alloc, out, unsafe {
+        alloc.store(out, unsafe {
             match self.delegator {
                 Some(delegator) => delegator.dup(),
                 None => Value::from_object(Base::upcast(self.receiver.to_strong())),
@@ -1542,7 +1542,7 @@ pub trait Object<'v>: Sized + 'v {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut receiver, mut result| {
-            Output::set(strand, &mut receiver, this);
+            strand.store(&mut receiver, this);
             match other.op_lt_direct(strand, &receiver, Slot::reborrow(&mut result)) {
                 Ok(()) => result.op_bool(strand),
                 Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
@@ -1563,7 +1563,7 @@ pub trait Object<'v>: Sized + 'v {
         other: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut receiver, mut result| {
-            Output::set(strand, &mut receiver, this);
+            strand.store(&mut receiver, this);
             match other.op_lte_direct(strand, &receiver, Slot::reborrow(&mut result)) {
                 Ok(()) => result.op_bool(strand),
                 Err(error) if error.kind() == ErrorKind::Unsupported => Err(Error::type_error(
@@ -1666,7 +1666,7 @@ async fn default_object_sink<'v, 'a, 's, T: Object<'v>>(
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
     with_slots!(strand, |mut delegator| {
-        Output::set(strand, Slot::reborrow(&mut delegator), this);
+        strand.store(Slot::reborrow(&mut delegator), this);
         Delegated::new(supertype, &delegator)
             .op_sink(strand, out)
             .await
@@ -1689,7 +1689,7 @@ async fn default_object_put<'v, 'a, 's, T: Object<'v>>(
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
     with_slots!(strand, |mut delegator| {
-        Output::set(strand, Slot::reborrow(&mut delegator), this);
+        strand.store(Slot::reborrow(&mut delegator), this);
         Delegated::new(supertype, &delegator)
             .op_put(strand, value)
             .await
@@ -1710,7 +1710,7 @@ async fn default_object_spread<'v, 'a, 's, T: Object<'v>>(
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
     with_slots!(strand, |mut delegator| {
-        Output::set(strand, Slot::reborrow(&mut delegator), this);
+        strand.store(Slot::reborrow(&mut delegator), this);
         Delegated::new(supertype, &delegator)
             .op_spread(strand, context, sink)
             .await
@@ -1851,7 +1851,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         // Unanswered: fall through to the abstract supertypes, as a class instance does.
         let supertypes = instance_supertypes::<T>(this.clone(), strand);
         with_slots!(strand, |mut delegator| {
-            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+            strand.store(Slot::reborrow(&mut delegator), &this);
             for supertype in supertypes {
                 if answer.is_done() {
                     break;
@@ -1901,7 +1901,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                     Entry::Delegate(idx, MemberKind::Method) => {
                         let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
                         with_slots!(strand, |mut delegator| {
-                            Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                            strand.store(Slot::reborrow(&mut delegator), &this);
                             Delegated::new(supertype, &delegator)
                                 .op_mcall(strand, method, args, out)
                                 .await
@@ -1941,7 +1941,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
                 Some(Entry::Delegate(idx, MemberKind::Getter | MemberKind::Property)) => {
                     let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
                     with_slots!(strand, |mut delegator| {
-                        Output::set(strand, Slot::reborrow(&mut delegator), &this);
+                        strand.store(Slot::reborrow(&mut delegator), &this);
                         Delegated::new(supertype, &delegator).op_get(strand, field, out)
                     })
                 }
@@ -2008,7 +2008,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) {
         let input = this.singleton(strand.vm());
-        Output::set(strand, out, input);
+        strand.store(out, input);
     }
 
     fn op_subtype<'a, 's>(
@@ -2097,7 +2097,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(eq)")),
             T::eq(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2114,7 +2114,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(req)")),
             T::req(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2131,7 +2131,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(ne)")),
             T::ne(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
     fn op_rne<'a, 's>(
@@ -2147,7 +2147,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(rne)")),
             T::rne(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2515,7 +2515,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(lt)")),
             T::lt(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2532,7 +2532,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(lte)")),
             T::lte(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2549,7 +2549,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(gt)")),
             T::gt(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2566,7 +2566,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(gte)")),
             T::gte(Instance::from_recv(&this), strand, other)
         )?;
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2646,13 +2646,13 @@ impl<'v, T: Object<'v>> Clone for Type<'v, T> {
 impl<'v, T: Object<'v>> Input<'v> for Type<'v, T> {
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: the copy is stored into the scanned `out` at once
-        Output::set(&mut alloc, out, unsafe { self.singleton(vm).dup() });
+        alloc.store(out, unsafe { self.singleton(vm).dup() });
         None
     }
 }
@@ -2974,7 +2974,7 @@ impl<'v> Supers<'v> {
             let cell = list.last().expect("just pushed");
             // SAFETY: the cell is rooted by the builder's scan, and nothing else writes
             // it while this slot lives
-            Output::set(alloc, unsafe { cell.slot() }, supertype);
+            alloc.store(unsafe { cell.slot() }, supertype);
         }
         let mut list = list.borrow_mut();
         let (new, old) = list.split_last().expect("just pushed");
@@ -4163,7 +4163,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         if this.is(other) {
-            Output::set(strand, &mut out, Value::TRUE);
+            strand.store(&mut out, Value::TRUE);
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -4272,7 +4272,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Type);
+        strand.store(out, TypeObject::Type);
     }
 
     fn op_subtype<'a, 's>(
@@ -4301,7 +4301,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
             .get()
             .native
             .repr_eq(&this.get().native);
-        Output::set(strand, &mut out, Value::from_bool(same));
+        strand.store(&mut out, Value::from_bool(same));
         Ok(())
     }
 
@@ -4369,7 +4369,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "expected a symbol"))?;
                 with_slots!(strand, |mut slot| {
-                    Output::set(strand, Slot::reborrow(&mut slot), value);
+                    strand.store(Slot::reborrow(&mut slot), value);
                     TypeObjectWrap::type_set(native, strand, field, slot)
                 })
             }
@@ -4547,7 +4547,7 @@ mod tests {
             out: Slot<'v, 'a>,
         ) -> Result<'v, 's, ()> {
             unpack!(strand, args =>);
-            Output::set(strand, out, this);
+            strand.store(out, this);
             Ok(())
         }
     }
@@ -4579,7 +4579,7 @@ mod tests {
             builder
                 .method("receiver", async move |this, strand, args, out| {
                     unpack!(strand, args =>);
-                    Output::set(strand, out, this);
+                    strand.store(out, this);
                     Ok(())
                 })
                 .method("bump", async move |this, strand, args, out| {
@@ -4589,16 +4589,16 @@ mod tests {
                         m.counter += 1;
                         m.counter
                     };
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
                 .get("counter", |this, strand, out| {
                     let value = this.borrow(strand)?.counter;
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
                 .get("prop", |_this, strand, out| {
-                    Output::set(strand, out, 11_i64);
+                    strand.store(out, 11_i64);
                     Ok(())
                 })
                 .set("prop", |_this, _strand, _value| Ok(()))
@@ -4614,8 +4614,8 @@ mod tests {
                     "with_slot",
                     async move |_this, strand, args, out, [mut scratch]| {
                         unpack!(strand, args =>);
-                        Output::set(strand, Slot::reborrow(&mut scratch), 5_i64);
-                        Output::set(strand, out, &scratch);
+                        strand.store(Slot::reborrow(&mut scratch), 5_i64);
+                        strand.store(out, &scratch);
                         Ok(())
                     },
                 )
@@ -4631,7 +4631,7 @@ mod tests {
                 })
                 .type_get("meta", |ty, strand, out| {
                     let value = *ty.borrow(strand)?;
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 })
                 .type_set("meta", |ty, strand, value| {
@@ -4640,7 +4640,7 @@ mod tests {
                     Ok(())
                 })
                 .type_get("readonly", |_ty, strand, out| {
-                    Output::set(strand, out, 5_i64);
+                    strand.store(out, 5_i64);
                     Ok(())
                 })
         }
@@ -4751,12 +4751,12 @@ mod tests {
                 .build_type::<Fixture>((), ())
                 .type_method("(get)", async |_ty, strand, args, out| {
                     unpack!(strand, args =>);
-                    Output::set(strand, out, 123_i64);
+                    strand.store(out, 123_i64);
                     Ok(())
                 })
                 .build();
             vm.enter_with_slots(async move |strand, [mut singleton, mut proxy, mut out]| {
-                Output::set(strand, Slot::reborrow(&mut singleton), ty);
+                strand.store(Slot::reborrow(&mut singleton), ty);
                 singleton.op_type(strand, Slot::reborrow(&mut proxy));
                 method!(
                     strand,
@@ -4776,12 +4776,12 @@ mod tests {
     fn native_type_proxy_saved_methods_survive_collection() {
         with_fixture_vm(async |strand, [mut ty, mut proxy, mut saved, mut out]| {
             let state = strand.vm().state::<FixtureStateTag>();
-            Output::set(strand, Slot::reborrow(&mut ty), state.slot_ty);
+            strand.store(Slot::reborrow(&mut ty), state.slot_ty);
             ty.op_type(strand, Slot::reborrow(&mut proxy));
             proxy
                 .op_get(strand, state.make_sym, Slot::reborrow(&mut saved))
                 .unwrap();
-            Output::set(strand, &mut proxy, Nil);
+            strand.store(&mut proxy, Nil);
             strand.vm().collect_full();
             call!(strand, &saved, &ty, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
@@ -4798,7 +4798,7 @@ mod tests {
                 &mut saved
             )
             .unwrap();
-            Output::set(strand, &mut proxy, Nil);
+            strand.store(&mut proxy, Nil);
             strand.vm().collect_full();
             call!(strand, &saved, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
@@ -5014,7 +5014,7 @@ mod tests {
                     .await
                     .unwrap();
                 assert_eq!(out.at(0).to_i64(strand).unwrap(), 4);
-                Output::set(strand, &mut tail, out.at(1));
+                strand.store(&mut tail, out.at(1));
             });
 
             owner
@@ -5053,7 +5053,7 @@ mod tests {
                 Variadic::Capture,
             );
             with_slots_dynamic!(strand, 2, |mut out| {
-                Output::set(strand, out.at(0), 99);
+                strand.store(out.at(0), 99);
                 let err = tail
                     .op_unpack(strand, &bad_sig, unsafe { Slots::new(out.as_inner()) })
                     .await
@@ -5086,8 +5086,8 @@ mod tests {
                 Variadic::NONE,
             );
             with_slots_dynamic!(strand, 2, |mut out| {
-                Output::set(strand, out.at(0), 90);
-                Output::set(strand, out.at(1), 91);
+                strand.store(out.at(0), 90);
+                strand.store(out.at(1), 91);
                 let err = proxy
                     .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
                     .await
@@ -5111,7 +5111,7 @@ mod tests {
     fn delegated_op_mcall_falls_back_to_method_with_delegator_when_no_entry_matches() {
         with_fixture_vm(async |strand, [mut owner, mut delegator, mut out]| {
             make_fixture(strand, Slot::reborrow(&mut owner));
-            Output::set(strand, Slot::reborrow(&mut delegator), 42_i64);
+            strand.store(Slot::reborrow(&mut delegator), 42_i64);
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
@@ -5137,7 +5137,7 @@ mod tests {
     fn delegated_registered_handler_receives_semantic_receiver() {
         with_fixture_vm(async |strand, [mut owner, mut delegator, mut out]| {
             make_slot_fixture(strand, 0, "x", Slot::reborrow(&mut owner));
-            Output::set(strand, Slot::reborrow(&mut delegator), 42_i64);
+            strand.store(Slot::reborrow(&mut delegator), 42_i64);
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
@@ -5225,7 +5225,7 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
-                Output::set(strand, Slot::reborrow(&mut val), 1_i64);
+                strand.store(Slot::reborrow(&mut val), 1_i64);
                 let prop_sym = state.prop_sym;
                 ObjectWrap::<SlotFixture>::op_set(
                     recv.clone(),
@@ -5290,7 +5290,7 @@ mod tests {
 
                 // Synthetic `(get)` special-cased inside `op_mcall`.
                 with_slots_dynamic!(strand, 1, |mut arg_slots| {
-                    Output::set(strand, arg_slots.at(0), state.counter_sym);
+                    strand.store(arg_slots.at(0), state.counter_sym);
                     let sig = [None];
                     let args = args_from_slots(&mut arg_slots, &sig, 0);
                     ObjectWrap::<SlotFixture>::op_mcall(
@@ -5308,8 +5308,8 @@ mod tests {
                 // Synthetic `(set)` special-cased inside `op_mcall`.
                 with_slots_dynamic!(strand, 2, |mut arg_slots| {
                     let prop_sym = state.prop_sym;
-                    Output::set(strand, arg_slots.at(0), prop_sym);
-                    Output::set(strand, arg_slots.at(1), 42_i64);
+                    strand.store(arg_slots.at(0), prop_sym);
+                    strand.store(arg_slots.at(1), 42_i64);
                     let sig = [None, None];
                     let args = args_from_slots(&mut arg_slots, &sig, 0);
                     ObjectWrap::<SlotFixture>::op_mcall(
@@ -5365,7 +5365,7 @@ mod tests {
         ty: Type<'v, T>,
         out: impl Output<'v>,
     ) {
-        Output::set(strand, out, ty);
+        strand.store(out, ty);
     }
 
     #[test]
@@ -5392,7 +5392,7 @@ mod tests {
                 .enter_with_slots(
                     async |strand, [mut object, mut out, mut bound, mut type_slot]| {
                         ty.create(strand, Override, &mut object);
-                        Output::set(strand, &mut type_slot, ty);
+                        strand.store(&mut type_slot, ty);
                         let method = Sym::well_known(sym::STR_METHOD);
                         method!(strand, &object, method, &mut out).unwrap();
                         assert_eq!(out.to_string(strand).unwrap(), "registered");
@@ -5504,7 +5504,7 @@ mod tests {
 
                     // Unbound instance-method call: `SlotFixture.bump(instance)`.
                     with_slots_dynamic!(strand, 1, |mut arg_slots| {
-                        Output::set(strand, arg_slots.at(0), inst_value);
+                        strand.store(arg_slots.at(0), inst_value);
                         let sig = [None];
                         let args = args_from_slots(&mut arg_slots, &sig, 0);
                         TypeObjectWrap::<SlotFixture>::op_mcall(
@@ -5562,7 +5562,7 @@ mod tests {
                     assert_eq!(out.to_i64(strand).unwrap(), 0);
 
                     // Registered type-level setter, then read back through the getter.
-                    Output::set(strand, &mut val, 7i64);
+                    strand.store(&mut val, 7i64);
                     TypeObjectWrap::<SlotFixture>::op_set(
                         recv.clone(),
                         strand,
@@ -5598,7 +5598,7 @@ mod tests {
                     .unwrap();
 
                     // Getter-only type-level entry: setting it through the type object errors.
-                    Output::set(strand, &mut val, 1i64);
+                    strand.store(&mut val, 1i64);
                     let err = TypeObjectWrap::<SlotFixture>::op_set(
                         recv.clone(),
                         strand,
@@ -5618,7 +5618,7 @@ mod tests {
                     .unwrap_err();
                     assert_eq!(err.kind(), ErrorKind::Field);
 
-                    Output::set(strand, &mut val, 1i64);
+                    strand.store(&mut val, 1i64);
                     let err = TypeObjectWrap::<SlotFixture>::op_set(
                         recv,
                         strand,
@@ -5722,7 +5722,7 @@ mod tests {
             with_instance!(strand, state.slot_ty.cast(value).unwrap(), |instance| {
                 {
                     let mut m = instance.borrow_mut_unwrap();
-                    Output::set(strand, Mut::slot_mut::<0>(&mut m), 77_i64);
+                    strand.store(Mut::slot_mut::<0>(&mut m), 77_i64);
                 }
                 let r = instance.borrow_unwrap();
                 assert_eq!(Ref::slot::<0>(&r).to_i64(strand).unwrap(), 77);

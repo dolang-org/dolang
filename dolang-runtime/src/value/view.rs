@@ -25,7 +25,7 @@ use crate::{
     strand::{Access, PinScope, Strand},
     sym::Sym,
     value::{Input, Output, Slot, fmt::Spec},
-    vm::Alloc,
+    vm::{Alloc, AllocExt},
     with_instance, with_slots,
 };
 
@@ -324,9 +324,9 @@ impl<'v, 'a> Range<'v, 'a> {
     pub fn parts<'s>(&self, strand: &mut Strand<'v, 's>, [start, end, step]: [Slot<'v, '_>; 3]) {
         with_pin!(strand, self.0, |pin| {
             let (start_value, end_value, step_value) = pin.get().parts();
-            Output::set(strand, start, start_value);
-            Output::set(strand, end, end_value);
-            Output::set(strand, step, step_value);
+            strand.store(start, start_value);
+            strand.store(end, end_value);
+            strand.store(step, step_value);
         })
     }
 }
@@ -384,7 +384,7 @@ impl<'v, 'a> Array<'v, 'a> {
             };
             match borrow.inner.get(index) {
                 Some(v) => {
-                    Output::set(strand, out, v);
+                    strand.store(out, v);
                     Ok(true)
                 }
                 None => Ok(false),
@@ -402,7 +402,7 @@ impl<'v, 'a> Array<'v, 'a> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut value_slot| {
                 // Build the value before taking the exclusive borrow.
-                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                strand.store(Slot::reborrow(&mut value_slot), value);
                 let mut borrow = match pin.borrow_mut() {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
@@ -428,7 +428,7 @@ impl<'v, 'a> Array<'v, 'a> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut value| {
                 // Build the value before taking the exclusive borrow.
-                Output::set(strand, Slot::reborrow(&mut value), input);
+                strand.store(Slot::reborrow(&mut value), input);
                 let mut borrow = match pin.borrow_mut() {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
@@ -493,7 +493,7 @@ impl<'v, 'a> Array<'v, 'a> {
         out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
-            // Remove before calling Output::set, mirroring push's pattern.
+            // Remove before calling store, mirroring push's pattern.
             let val = {
                 let mut borrow = match pin.borrow_mut() {
                     Some(b) => b,
@@ -503,7 +503,7 @@ impl<'v, 'a> Array<'v, 'a> {
             };
             match val {
                 Some(v) => {
-                    Output::set(strand, out, &v);
+                    strand.store(out, &v);
                     Ok(true)
                 }
                 None => Ok(false),
@@ -530,7 +530,7 @@ impl<'v, 'a> Array<'v, 'a> {
                 }
                 borrow.inner.remove(index)
             };
-            Output::set(strand, out, &val);
+            strand.store(out, &val);
             Ok(true)
         })
     }
@@ -641,14 +641,14 @@ impl<'v, 'a> Dict<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut key_slot| {
-                Output::set(strand, Slot::reborrow(&mut key_slot), key);
+                strand.store(Slot::reborrow(&mut key_slot), key);
                 let borrow = match pin.borrow() {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
                 };
                 match borrow.get(strand, &key_slot, instance)? {
                     Some(value) => {
-                        Output::set(strand, out, value);
+                        strand.store(out, value);
                         Ok(true)
                     }
                     None => Ok(false),
@@ -670,8 +670,8 @@ impl<'v, 'a> Dict<'v, 'a> {
     ) -> Result<'v, 's, ()> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut key_slot, mut value_slot| {
-                Output::set(strand, Slot::reborrow(&mut key_slot), key);
-                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                strand.store(Slot::reborrow(&mut key_slot), key);
+                strand.store(Slot::reborrow(&mut value_slot), value);
                 let mut hasher = strand.vm().hasher();
                 key_slot.op_hash(strand, &mut hasher)?;
                 let hv = hasher.finish();
@@ -699,7 +699,7 @@ impl<'v, 'a> Dict<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut key_slot| {
-                Output::set(strand, Slot::reborrow(&mut key_slot), key);
+                strand.store(Slot::reborrow(&mut key_slot), key);
                 let mut borrow = match pin.borrow_mut() {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
@@ -750,7 +750,7 @@ impl<'v, 'a> Set<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut value_slot| {
-                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                strand.store(Slot::reborrow(&mut value_slot), value);
                 let mut hasher = strand.vm().hasher();
                 value_slot.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
@@ -773,7 +773,7 @@ impl<'v, 'a> Set<'v, 'a> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut value_slot| {
                 // Build the value and hash it before taking the exclusive borrow.
-                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                strand.store(Slot::reborrow(&mut value_slot), value);
                 let mut hasher = strand.vm().hasher();
                 value_slot.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
@@ -794,7 +794,7 @@ impl<'v, 'a> Set<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| {
             with_slots!(strand, |mut value_slot| {
-                Output::set(strand, Slot::reborrow(&mut value_slot), value);
+                strand.store(Slot::reborrow(&mut value_slot), value);
                 let mut hasher = strand.vm().hasher();
                 value_slot.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
@@ -950,7 +950,7 @@ impl<'v, 'a> Tuple<'v, 'a> {
     ) -> Result<'v, 's, bool> {
         with_pin!(strand, self.0, |pin| match pin.items().get(index) {
             Some(v) => {
-                Output::set(strand, out, v);
+                strand.store(out, v);
                 Ok(true)
             }
             None => Ok(false),
@@ -1150,7 +1150,7 @@ impl<'v, 'a> SetMembers<'v, 'a> {
             };
             match borrow.next_from(&mut self.pos) {
                 Some(member) => {
-                    Output::set(strand, value, member);
+                    strand.store(value, member);
                     Ok(true)
                 }
                 None => Ok(false),
@@ -1217,13 +1217,13 @@ impl<'v, 'a> RecordPairs<'v, 'a> {
                     continue;
                 };
                 match item_key {
-                    Some(item_key) => Output::set(strand, key, unsafe { Sym::from_obj(item_key) }),
+                    Some(item_key) => strand.store(key, unsafe { Sym::from_obj(item_key) }),
                     None => {
-                        Output::set(strand, key, self.int);
+                        strand.store(key, self.int);
                         self.int += 1;
                     }
                 }
-                Output::set(strand, value, item_value);
+                strand.store(value, item_value);
                 return Ok(true);
             }
             Ok(false)
@@ -1279,13 +1279,13 @@ fn next_item_pair<'v>(
     };
     *pos += 1;
     match item_key {
-        Some(item_key) => Output::set(alloc, key, unsafe { Sym::from_obj(item_key) }),
+        Some(item_key) => alloc.store(key, unsafe { Sym::from_obj(item_key) }),
         None => {
-            Output::set(alloc, key, *int);
+            alloc.store(key, *int);
             *int += 1;
         }
     }
-    Output::set(alloc, value, item_value);
+    alloc.store(value, item_value);
     true
 }
 
@@ -1300,9 +1300,8 @@ fn dict_next_pair<'v>(
         *pos += 1;
         if let Some((bucket, subindex)) = slot {
             let entry: &Entry<'v> = unsafe { bucket.as_ref() };
-            Output::set(alloc, key, &entry.key);
-            Output::set(
-                alloc,
+            alloc.store(key, &entry.key);
+            alloc.store(
                 value,
                 match &entry.value {
                     EntryValue::Single { value, .. } => value,

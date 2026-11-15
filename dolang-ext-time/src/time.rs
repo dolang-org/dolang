@@ -12,9 +12,9 @@ use dolang::runtime::object::fmt;
 
 use dolang::runtime::strand::InterruptMask;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call, io::IoResultExt as _,
-    object::TypeBuilder, unpack, value::Root, vm::Register, with_instance, with_interrupt_mask,
-    with_interrupt_token,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, call,
+    io::IoResultExt as _, object::TypeBuilder, unpack, value::Root, vm::Register, with_instance,
+    with_interrupt_mask, with_interrupt_token,
 };
 use futures::future::{AbortHandle, Abortable};
 use time::{
@@ -458,26 +458,24 @@ impl<'v> Object<'v> for Date {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("year", |this, strand, out| {
-                Output::set(strand, out, this.annex().year());
+                strand.store(out, this.annex().year());
                 Ok(())
             })
             .get("month", |this, strand, out| {
                 let global = strand.state::<Tag>();
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     &global.calendar.months[month_index(this.annex().month())],
                 );
                 Ok(())
             })
             .get("day", |this, strand, out| {
-                Output::set(strand, out, this.annex().day());
+                strand.store(out, this.annex().day());
                 Ok(())
             })
             .get("weekday", |this, strand, out| {
                 let global = strand.state::<Tag>();
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     &global.calendar.weekdays[weekday_index(this.annex().weekday())],
                 );
@@ -533,7 +531,7 @@ impl<'v> Object<'v> for Date {
             .method("rfc", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let text = format_date_rfc(*this.annex());
-                Output::set(strand, out, text.as_str());
+                strand.store(out, text.as_str());
                 Ok(())
             })
             .method("datetime", async move |this, strand, args, out| {
@@ -665,8 +663,7 @@ macro_rules! calendar_enum {
                     .method("next", async move |this, strand, args, out| {
                         unpack!(strand, args =>);
                         let global = strand.state::<Tag>();
-                        Output::set(
-                            strand,
+                        strand.store(
                             out,
                             &global.calendar.$roots
                                 [($index(*this.annex()) + 1) % global.calendar.$roots.len()],
@@ -677,8 +674,7 @@ macro_rules! calendar_enum {
                         unpack!(strand, args =>);
                         let global = strand.state::<Tag>();
                         let len = global.calendar.$roots.len();
-                        Output::set(
-                            strand,
+                        strand.store(
                             out,
                             &global.calendar.$roots[($index(*this.annex()) + len - 1) % len],
                         );
@@ -700,7 +696,7 @@ macro_rules! calendar_enum {
                     })
                 });
                 if let Some(index) = index {
-                    Output::set(strand, out, &global.calendar.$roots[index]);
+                    strand.store(out, &global.calendar.$roots[index]);
                     Ok(())
                 } else {
                     Err(Error::field(strand, field))
@@ -770,8 +766,7 @@ impl<'v> Object<'v> for Month {
             .method("next", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     &global.calendar.months[(month_index(*this.annex()) + 1) % 12],
                 );
@@ -780,8 +775,7 @@ impl<'v> Object<'v> for Month {
             .method("previous", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     &global.calendar.months[(month_index(*this.annex()) + 11) % 12],
                 );
@@ -803,7 +797,7 @@ impl<'v> Object<'v> for Month {
             })
         });
         if let Some(index) = index {
-            Output::set(strand, out, &global.calendar.months[index]);
+            strand.store(out, &global.calendar.months[index]);
             Ok(())
         } else {
             Err(Error::field(strand, field))
@@ -821,7 +815,7 @@ impl<'v> Object<'v> for Month {
             .filter(|index| (1..=12).contains(index))
             .ok_or_else(|| Error::value(strand, "month index must be in 1..12"))?;
         let global = strand.state::<Tag>();
-        Output::set(strand, out, &global.calendar.months[index - 1]);
+        strand.store(out, &global.calendar.months[index - 1]);
         Ok(())
     }
     fn display<'a, 's>(
@@ -884,15 +878,11 @@ impl<'v> Object<'v> for DateTime {
         let nanos = builder.sym("nanos");
         builder
             .get("unix_secs", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    this.annex().total_nanos() as f64 / NANOS_PER_SEC_F64,
-                );
+                strand.store(out, this.annex().total_nanos() as f64 / NANOS_PER_SEC_F64);
                 Ok(())
             })
             .get("unix_nanos", |this, strand, out| {
-                Output::set(strand, out, this.annex().total_nanos());
+                strand.store(out, this.annex().total_nanos());
                 Ok(())
             })
             .method("date", async move |this, strand, args, out| {
@@ -954,7 +944,7 @@ impl<'v> Object<'v> for DateTime {
             .method("rfc", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let formatted = format_datetime_rfc3339(strand, &this.annex())?;
-                Output::set(strand, out, formatted.as_str());
+                strand.store(out, formatted.as_str());
                 Ok(())
             })
     }
@@ -1052,11 +1042,11 @@ impl<'v> Object<'v> for Duration {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("secs", |this, strand, out| {
-                Output::set(strand, out, this.annex().secs());
+                strand.store(out, this.annex().secs());
                 Ok(())
             })
             .get("nanos", |this, strand, out| {
-                Output::set(strand, out, this.annex().total_nanos);
+                strand.store(out, this.annex().total_nanos);
                 Ok(())
             })
     }

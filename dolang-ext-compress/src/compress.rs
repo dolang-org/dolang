@@ -15,7 +15,7 @@ use async_compression::futures::{bufread::XzDecoder, write::XzEncoder};
 use async_compression::futures::{bufread::ZstdDecoder, write::ZstdEncoder};
 use dolang::runtime::io::IoResultExt as _;
 use dolang::runtime::{
-    Arg, BYTE_STREAM_CHUNK_SIZE, Error, Object, Output, Result, Slot, State, Strand, Sym, Value,
+    AllocExt, Arg, BYTE_STREAM_CHUNK_SIZE, Error, Object, Result, Slot, State, Strand, Sym, Value,
     call,
     error::ErrorKind,
     io::{ByteHandle, ByteIo, IntoByteIo, IoCaps, Read, Shared, Write},
@@ -343,12 +343,12 @@ impl<'v> Object<'v> for Decompressor {
         builder
             .get("readable", |this, strand, out| {
                 let open = this.borrow(strand)?.reader.is_some();
-                Output::set(strand, out, open);
+                strand.store(out, open);
                 Ok(())
             })
             .get("format", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(strand, out, annex.format.sym(annex.global));
+                strand.store(out, annex.format.sym(annex.global));
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -446,12 +446,12 @@ impl<'v> Object<'v> for Compressor {
         builder
             .get("writable", |this, strand, out| {
                 let open = this.borrow(strand)?.writer.is_some();
-                Output::set(strand, out, open);
+                strand.store(out, open);
                 Ok(())
             })
             .get("format", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(strand, out, annex.format.sym(annex.global));
+                strand.store(out, annex.format.sym(annex.global));
                 Ok(())
             })
             .method("write", async move |this, strand, args, out| {
@@ -476,7 +476,7 @@ impl<'v> Object<'v> for Compressor {
                     .ok_or_else(|| Error::state_error(strand, "stream closed"))?;
                 writer.write_all(&data).await.into_do_io(strand)?;
                 drop(borrow);
-                Output::set(strand, out, data.len());
+                strand.store(out, data.len());
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
