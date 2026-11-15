@@ -1,4 +1,4 @@
-use dolang::runtime::{Error, Output, Result, Strand, unpack, value::Value, vm::Register};
+use dolang::runtime::{AllocExt, Error, Result, Strand, unpack, value::Value, vm::Register};
 use rand::RngExt;
 
 const DEFAULT_ALPHABET: &str = "_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -32,7 +32,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
                 ));
             }
             let mut rng = rand::rng();
-            Output::set(strand, out, rng.random_range(start..end));
+            strand.store(out, rng.random_range(start..end));
             Ok(())
         })
         .function("string", async move |strand, args, out| {
@@ -56,7 +56,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
             let text = (0..len)
                 .map(|_| chars[rng.random_range(0..chars.len())])
                 .collect::<String>();
-            Output::set(strand, out, text.as_str());
+            strand.store(out, text.as_str());
             Ok(())
         })
         .function("pick", async move |strand, args, out| {

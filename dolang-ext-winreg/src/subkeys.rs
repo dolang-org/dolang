@@ -8,7 +8,7 @@
 //! iteration advances.
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, Slot, Strand, object::TypeBuilder, value::TypeObject,
+    AllocExt, Instance, Object, Result, Slot, Strand, object::TypeBuilder, value::TypeObject,
 };
 use dolang_ext_shell::ResultExt;
 
@@ -26,7 +26,7 @@ impl<'v> Object<'v> for SubKeys {
             .supertype(TypeObject::Iter)
             .get("len", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, borrow.0.len());
+                strand.store(out, borrow.0.len());
                 Ok(())
             })
     }
@@ -36,7 +36,7 @@ impl<'v> Object<'v> for SubKeys {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -54,7 +54,7 @@ impl<'v> Object<'v> for SubKeys {
         let Some(name) = name else {
             return Ok(false);
         };
-        Output::set(strand, out, name.as_str());
+        strand.store(out, name.as_str());
         Ok(true)
     }
 }

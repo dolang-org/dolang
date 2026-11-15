@@ -421,7 +421,7 @@ async fn copy_data<'v, 's, S: FileKind<'v>, D: FileKind<'v>>(
             borrow.seek_to(strand, SeekFrom::Start(end)).await?;
         }
     }
-    Output::set(strand, out, copied);
+    strand.store(out, copied);
     Ok(())
 }
 
@@ -717,7 +717,7 @@ impl<'v> FileKind<'v> for File {
             })
             .method("lines", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                Output::set(strand, out, this);
+                strand.store(out, this);
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
@@ -1191,7 +1191,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
                 return match block {
                     Some(block) => call!(strand, block, &guard, out),
                     None => {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                         Ok(())
                     }
                 };
@@ -1268,7 +1268,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
                 .await
                 .into_sys(strand)?;
         }
-        Output::set(strand, out, written);
+        strand.store(out, written);
         Ok(())
     }
 
@@ -1318,7 +1318,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
             .map(|piece| piece.as_slice().len())
             .sum::<usize>();
         self.write_all(&mut slices).await.into_sys(strand)?;
-        Output::set(strand, out, len);
+        strand.store(out, len);
         Ok(())
     }
 
@@ -1374,7 +1374,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -1391,7 +1391,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -1452,22 +1452,22 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
         let builder = builder
             .get("readable", |this, strand, out| {
                 let caps = Self::open_caps(this, strand)?;
-                Output::set(strand, out, caps.contains(IoCaps::READ));
+                strand.store(out, caps.contains(IoCaps::READ));
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let caps = Self::open_caps(this, strand)?;
-                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                strand.store(out, caps.contains(IoCaps::WRITE));
                 Ok(())
             })
             .get("seekable", |this, strand, out| {
                 let caps = Self::open_caps(this, strand)?;
-                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                strand.store(out, caps.contains(IoCaps::SEEK));
                 Ok(())
             })
             .get("forkable", |this, strand, out| {
                 let caps = Self::open_caps(this, strand)?;
-                Output::set(strand, out, caps.contains(IoCaps::FORK));
+                strand.store(out, caps.contains(IoCaps::FORK));
                 Ok(())
             })
             .method("close", async move |this, strand, _args, _out| {
@@ -1703,7 +1703,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                         .await
                         .into_sys(strand)?
                 };
-                Output::set(strand, out, value.as_slice());
+                strand.store(out, value.as_slice());
                 Ok(())
             })
             .method("streams", async move |this, strand, args, out| {
@@ -1766,7 +1766,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     borrow.flush_buf().await.into_sys(strand)?;
                 }
                 let pos = borrow.tell().await.into_sys(strand)?;
-                Output::set(strand, out, i128::from(pos));
+                strand.store(out, i128::from(pos));
                 Ok(())
             })
             .method("fork", async move |this, strand, args, out| {
@@ -1794,7 +1794,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     (borrow.byte_handle(caps), offset)
                 };
                 let fork = handle.fork(offset).await.into_sys(strand)?;
-                Output::set(strand, out, fork);
+                strand.store(out, fork);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
@@ -1832,7 +1832,7 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                 borrow.check_open(strand)?;
                 let pos = borrow.seek(seek_from).await.into_sys(strand)?;
 
-                Output::set(strand, out, i128::from(pos));
+                strand.store(out, i128::from(pos));
                 Ok(())
             });
         T::build(builder)

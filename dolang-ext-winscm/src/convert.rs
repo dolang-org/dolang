@@ -8,7 +8,7 @@
 //! `ServiceStateFilter`) are a bare symbol both ways and stay as manual
 //! conversions below.
 
-use dolang::runtime::{Error, Output, Result, Slot, State, Strand};
+use dolang::runtime::{AllocExt, Error, Result, Slot, State, Strand};
 use dolang_vfs_winscm::{
     ErrorControl, ServiceControl, ServiceState, ServiceStateFilter, StartType,
 };
@@ -153,10 +153,10 @@ pub(crate) fn service_state_to_sym<'v, 's>(
         // so fall back to the raw code rather than erroring on an
         // unrecognized state, same as `dolang-ext-winreg::value_entry`'s
         // `kind_to_do` does for an unrecognized `REG_*` kind.
-        Output::set(strand, out, i128::from(state.0));
+        strand.store(out, i128::from(state.0));
         return Ok(());
     };
-    Output::set(strand, out, sym);
+    strand.store(out, sym);
     Ok(())
 }
 
@@ -178,10 +178,10 @@ pub(crate) fn start_type_to_sym<'v, 's>(
     } else if value == StartType::DISABLED {
         syms.disabled
     } else {
-        Output::set(strand, out, i128::from(value.0));
+        strand.store(out, i128::from(value.0));
         return Ok(());
     };
-    Output::set(strand, out, sym);
+    strand.store(out, sym);
     Ok(())
 }
 
@@ -201,9 +201,9 @@ pub(crate) fn error_control_to_sym<'v, 's>(
     } else if value == ErrorControl::CRITICAL {
         syms.critical
     } else {
-        Output::set(strand, out, i128::from(value.0));
+        strand.store(out, i128::from(value.0));
         return Ok(());
     };
-    Output::set(strand, out, sym);
+    strand.store(out, sym);
     Ok(())
 }

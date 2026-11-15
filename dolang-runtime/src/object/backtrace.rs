@@ -11,7 +11,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
-    vm::Vm,
+    vm::{AllocExt, Vm},
 };
 
 use super::protocol::{Inspect, Protocol, Recv, instance_get_fallback};
@@ -81,7 +81,7 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().backtrace)
+        strand.store(out, &strand.singletons().backtrace)
     }
 
     fn op_debug<'a, 's>(
@@ -113,7 +113,7 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::LEN => {
-                Output::set(strand, out, this.get().entries.len());
+                strand.store(out, this.get().entries.len());
                 Ok(())
             }
             sym::ITER_METHOD => {
@@ -206,7 +206,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -270,7 +270,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 }
@@ -298,7 +298,7 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().backtrace_frame)
+        strand.store(out, &strand.singletons().backtrace_frame)
     }
 
     fn op_debug<'a, 's>(
@@ -332,19 +332,19 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
         match field.tag() {
             sym::MODULE => {
                 let module = this.get().entry.module();
-                Output::set(strand, out, module.as_ref());
+                strand.store(out, module.as_ref());
                 Ok(())
             }
             sym::RECEIVER => {
                 let receiver = this.get().entry.receiver();
-                Output::set(strand, out, receiver.as_ref());
+                strand.store(out, receiver.as_ref());
                 Ok(())
             }
             sym::METHOD => {
                 if let Some(method) = this.get().entry.method() {
-                    Output::set(strand, out, method.as_ref());
+                    strand.store(out, method.as_ref());
                 } else {
-                    Output::set(strand, &mut out, Value::NIL);
+                    strand.store(&mut out, Value::NIL);
                 }
                 Ok(())
             }
@@ -352,7 +352,7 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
                 if let Some((source, span)) = this.get().entry.source() {
                     crate::stdlib::inspect::location(strand, source.into(), span, out);
                 } else {
-                    Output::set(strand, &mut out, Value::NIL);
+                    strand.store(&mut out, Value::NIL);
                 }
                 Ok(())
             }
@@ -380,7 +380,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     /// Mirrors the instance-level `op_subtype`.
@@ -454,7 +454,7 @@ impl<'v> Protocol<'v> for FrameType {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

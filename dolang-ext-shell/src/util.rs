@@ -1,4 +1,6 @@
-use dolang::runtime::{Error, Input, Output, Result, Slot, Strand, Sym, Value, value::View};
+use dolang::runtime::{
+    AllocExt, Error, Input, Output, Result, Slot, Strand, Sym, Value, value::View,
+};
 
 pub(crate) fn bool<'v, 's>(
     strand: &mut Strand<'v, 's>,
@@ -43,8 +45,8 @@ pub(crate) fn nullable_field<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     match value {
-        Some(value) => Output::set(strand, out, value),
-        None => Output::set(strand, out, dolang::runtime::value::Nil),
+        Some(value) => strand.store(out, value),
+        None => strand.store(out, dolang::runtime::value::Nil),
     }
     Ok(())
 }
@@ -57,7 +59,7 @@ pub(crate) fn option_field<'v, 's>(
 ) -> Result<'v, 's, ()> {
     match value {
         Some(value) => {
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         }
         None => Err(Error::field(strand, field)),

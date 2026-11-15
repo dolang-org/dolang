@@ -6,7 +6,7 @@ use crate::{
         array::Array, class, dict::Dict, float, int, pack, record::Record, structure::Struct, tuple,
     },
     unpack,
-    value::{Output, StrEmbryo},
+    value::StrEmbryo,
     vm::{AllocExt, Builder},
     with_str,
 };
@@ -123,13 +123,13 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .function("final", async move |strand, args, out| {
             unpack!(strand, args => class);
             class::make_final(strand, &class)?;
-            Output::set(strand, out, class);
+            strand.store(out, class);
             Ok(())
         })
         .function("mixable", async move |strand, args, out| {
             unpack!(strand, args => class);
             class::make_mixable(strand, &class)?;
-            Output::set(strand, out, class);
+            strand.store(out, class);
             Ok(())
         })
         .value("Module", module)
@@ -207,7 +207,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             unpack!(strand, args => obj, ?ty);
             if let Some(ty) = ty {
                 let result = obj.is_instance_of(strand, &ty);
-                Output::set(strand, out, result);
+                strand.store(out, result);
             } else {
                 obj.op_type(strand, out);
             }
@@ -225,19 +225,19 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 })
                 .transpose()?;
             let value = int::coerce(&value, strand, base)?;
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         })
         .function("float", async move |strand, args, out| {
             unpack!(strand, args => value);
             let value = float::coerce(&value, strand)?;
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         })
         .function("bool", async move |strand, args, out| {
             unpack!(strand, args => value);
             let value = value.op_bool(strand)?;
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         })
         .function("str", async move |strand, args, out| {
@@ -250,7 +250,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .function("sym", async move |strand, args, out| {
             unpack!(strand, args => value);
             if value.as_sym(strand).is_some() {
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             } else if let Some(value) = value.as_str(strand) {
                 with_str!(strand, value, |value| strand.intern_sym(value, out));
@@ -283,7 +283,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 }
                 slot.op_hash(strand, &mut hasher)?;
             }
-            Output::set(strand, out, hasher.finish());
+            strand.store(out, hasher.finish());
             Ok(())
         })
         .commit();

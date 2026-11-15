@@ -16,7 +16,7 @@ use diffy::{
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    AllocExt, Error, Instance, Object, Result, Slot, State, Strand, Value,
     error::ResultExt,
     io::IoResultExt as _,
     object::{Mut, TypeBuilder},
@@ -161,7 +161,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 global.types.patch_iter.cast(&out).unwrap(),
                 |inst| {
                     let mut borrow = inst.borrow_mut_unwrap();
-                    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), input);
+                    strand.store(Mut::slot_mut::<0>(&mut borrow), input);
                 }
             );
             Ok(())
@@ -215,8 +215,8 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
             );
             with_instance!(strand, global.types.patch.cast(&out).unwrap(), |inst| {
                 let mut borrow = inst.borrow_mut_unwrap();
-                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), before);
-                Output::set(strand, Mut::slot_mut::<1>(&mut borrow), after);
+                strand.store(Mut::slot_mut::<0>(&mut borrow), before);
+                strand.store(Mut::slot_mut::<1>(&mut borrow), after);
             });
             Ok(())
         })
@@ -278,7 +278,7 @@ impl<'v> Object<'v> for Patch<'v> {
                     FileOperation::Rename { .. } => move_,
                     FileOperation::Copy { .. } => copy,
                 };
-                Output::set(strand, out, sym);
+                strand.store(out, sym);
                 Ok(())
             })
             .get("source", move |this, strand, out| {
@@ -346,9 +346,9 @@ impl<'v> Object<'v> for Patch<'v> {
                     let text = String::from_utf8(bytes).map_err(|_| {
                         apply_error(strand, "patched result is not valid UTF-8".to_owned())
                     })?;
-                    Output::set(strand, out, text.as_str());
+                    strand.store(out, text.as_str());
                 } else {
-                    Output::set(strand, out, bytes.as_slice());
+                    strand.store(out, bytes.as_slice());
                 }
                 Ok(())
             })
@@ -432,7 +432,7 @@ impl<'v> Object<'v> for PatchIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -460,12 +460,8 @@ impl<'v> Object<'v> for PatchIter<'v> {
         );
         with_instance!(strand, global.types.patch.cast(&out).unwrap(), |inst| {
             let mut patch = inst.borrow_mut_unwrap();
-            Output::set(
-                strand,
-                Mut::slot_mut::<0>(&mut patch),
-                Mut::slot::<0>(&borrow),
-            );
-            Output::set(strand, Mut::slot_mut::<1>(&mut patch), Nil);
+            strand.store(Mut::slot_mut::<0>(&mut patch), Mut::slot::<0>(&borrow));
+            strand.store(Mut::slot_mut::<1>(&mut patch), Nil);
         });
         Ok(true)
     }
@@ -535,8 +531,8 @@ fn bytes_to_pathbuf(bytes: &[u8]) -> result::Result<PathBuf, String> {
 
 fn output_bytes<'v, 'a>(strand: &mut Strand<'v, '_>, out: Slot<'v, 'a>, bytes: Vec<u8>) {
     match String::from_utf8(bytes) {
-        Ok(text) => Output::set(strand, out, text.as_str()),
-        Err(bytes) => Output::set(strand, out, bytes.as_bytes()),
+        Ok(text) => strand.store(out, text.as_str()),
+        Err(bytes) => strand.store(out, bytes.as_bytes()),
     }
 }
 

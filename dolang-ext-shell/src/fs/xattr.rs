@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
-    value::TypeObject, with_instance,
+    AllocExt, Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    object::TypeBuilder, value::TypeObject, with_instance,
 };
 use dolang_vfs::file::{XattrEntry as VfsXattrEntry, XattrNamespace};
 use dolang_vfs::metadata::Resolve;
@@ -165,7 +165,7 @@ pub(crate) async fn path_get<'v, 's>(
         .xattr(path.to_path(), &name, namespace.as_deref(), resolve)
         .await
         .into_sys(strand)?;
-    Output::set(strand, out, value.as_slice());
+    strand.store(out, value.as_slice());
     Ok(())
 }
 
@@ -222,7 +222,7 @@ impl<'v> Object<'v> for XattrEntry {
 
         builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.name());
+                strand.store(out, this.annex().inner.name());
                 Ok(())
             })
             .get("namespace", move |this, strand, out| {
@@ -253,7 +253,7 @@ impl<'v> Object<'v> for XattrIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

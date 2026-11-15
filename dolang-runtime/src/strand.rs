@@ -31,7 +31,7 @@ use crate::{
     object::{BuiltinTypes, Singletons, protocol::GcObj, range, strand::Handle, tuple},
     sym::{self, Sym},
     value::{Input, Output, Singleton, Slot, Value, ValueCell},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
 };
 
 /// Run a block with scratch [`Slot`](crate::value::Slot)s rooted for its duration.
@@ -39,11 +39,11 @@ use crate::{
 /// Invoke as:
 ///
 /// ```rust,no_run
-/// # use dolang_runtime::{with_slots, strand::Strand, value::{Output, Slot}};
+/// # use dolang_runtime::{with_slots, strand::Strand, value::Slot, vm::AllocExt};
 /// # async fn example<'v, 's>(strand: &mut Strand<'v, 's>) -> dolang_runtime::error::Result<'v, 's, ()> {
 /// with_slots!(strand, |mut a, mut b| {
-///     Output::set(strand, Slot::reborrow(&mut a), 1i64);
-///     Output::set(strand, Slot::reborrow(&mut b), 2i64);
+///     strand.store(Slot::reborrow(&mut a), 1i64);
+///     strand.store(Slot::reborrow(&mut b), 2i64);
 ///     Ok(())
 /// })
 /// # }
@@ -1553,7 +1553,7 @@ impl<'v, 's> Strand<'v, 's> {
         with_slots_dynamic!(strand, len, |mut cells| {
             for i in 0..len {
                 let item = items.next().expect("tuple items fewer than their length");
-                Output::set(strand, cells.at(i), item);
+                strand.store(cells.at(i), item);
             }
             assert!(items.next().is_none(), "tuple items more than their length");
             let embryo = tuple::embryo(strand, len);
@@ -1565,8 +1565,8 @@ impl<'v, 's> Strand<'v, 's> {
     pub fn range(&mut self, start: impl Input<'v>, end: impl Input<'v>, out: impl Output<'v>) {
         let strand = self;
         with_slots!(strand, |mut start_slot, mut end_slot| {
-            Output::set(strand, Slot::reborrow(&mut start_slot), start);
-            Output::set(strand, Slot::reborrow(&mut end_slot), end);
+            strand.store(Slot::reborrow(&mut start_slot), start);
+            strand.store(Slot::reborrow(&mut end_slot), end);
             let embryo = strand.builtin_types().range.embryo(strand);
             // SAFETY: the range is allocated; the bounds move from their rooted slots
             // straight into it
@@ -1643,14 +1643,14 @@ impl<'v, 's> Strand<'v, 's> {
     pub(crate) fn swap_input(&mut self, slot: &mut Slot<'v, '_>) {
         let inner = self.inner;
         // Safety: see the field
-        Output::swap(self, unsafe { inner.input.slot() }, slot)
+        self.swap(unsafe { inner.input.slot() }, slot)
     }
 
     /// Exchange the strand's output with the value in `slot`.
     pub(crate) fn swap_output(&mut self, slot: &mut Slot<'v, '_>) {
         let inner = self.inner;
         // Safety: see the field
-        Output::swap(self, unsafe { inner.output.slot() }, slot)
+        self.swap(unsafe { inner.output.slot() }, slot)
     }
 
     /// Get current iterator.
@@ -1658,7 +1658,7 @@ impl<'v, 's> Strand<'v, 's> {
         let inner = self.inner;
         // SAFETY: nothing writes the cell during the read, and the copy moves straight
         // into `out`
-        Output::set(self, out, unsafe { inner.input().as_ref().dup() });
+        self.store(out, unsafe { inner.input().as_ref().dup() });
     }
 
     /// Get current sink.
@@ -1666,7 +1666,7 @@ impl<'v, 's> Strand<'v, 's> {
         let inner = self.inner;
         // SAFETY: nothing writes the cell during the read, and the copy moves straight
         // into `out`
-        Output::set(self, out, unsafe { inner.output().as_ref().dup() });
+        self.store(out, unsafe { inner.output().as_ref().dup() });
     }
 
     /// Spawn a new strand scoped to this strand which executes `f`.
@@ -1801,11 +1801,11 @@ impl<'v, 's> Strand<'v, 's> {
         // future takes them over
         let [mut start, mut input, mut output] =
             pending.each_ref().map(|cell| unsafe { cell.slot() });
-        Output::set(self, &mut start, arg);
+        self.store(&mut start, arg);
         // Set strand-side I/O if this is a stream strand
         if let Some((recv, send)) = stream {
-            Output::set(self, &mut input, recv);
-            Output::set(self, &mut output, send);
+            self.store(&mut input, recv);
+            self.store(&mut output, send);
         }
 
         // Create the background strand future
@@ -1841,7 +1841,7 @@ impl<'v, 's> Strand<'v, 's> {
                 // SAFETY: the future owns `inner`, and no other slot over `pending` lives
                 let [mut start, mut input, mut output] =
                     pending.each_ref().map(|cell| unsafe { cell.slot() });
-                Output::swap(&mut strand, unsafe { inner.start.slot() }, &mut start);
+                strand.swap(unsafe { inner.start.slot() }, &mut start);
                 // Without a stream the strand keeps the channels `derived` copied
                 if close_on_exit {
                     strand.swap_input(&mut input);
@@ -1894,12 +1894,12 @@ impl<'v, 's> Strand<'v, 's> {
                 if close_on_exit {
                     let close = Sym::well_known(sym::CLOSE);
                     let backtrace_key = Sym::well_known(sym::BACKTRACE);
-                    Output::set(strand, &mut tmp, Singleton::Null);
+                    strand.store(&mut tmp, Singleton::Null);
                     strand.swap_input(&mut tmp);
                     if !tmp.is_nil() {
                         let _ = method!(strand, &tmp, close, &mut out);
                     }
-                    Output::set(strand, &mut tmp, Singleton::Null);
+                    strand.store(&mut tmp, Singleton::Null);
                     strand.swap_output(&mut tmp);
                     if !tmp.is_nil() {
                         let _ = if poisoned {
@@ -2143,12 +2143,12 @@ impl<'v, 'a, 's> RedirectGuard<'v, 'a, 's> {
     ) -> Self {
         let [mut saved_input, mut saved_output] = saved;
         let input = input.map(|input| {
-            Output::set(strand, &mut saved_input, input);
+            strand.store(&mut saved_input, input);
             strand.swap_input(&mut saved_input);
             saved_input
         });
         let output = output.map(|output| {
-            Output::set(strand, &mut saved_output, output);
+            strand.store(&mut saved_output, output);
             strand.swap_output(&mut saved_output);
             saved_output
         });
@@ -2401,7 +2401,7 @@ mod constructor_tests {
         sym::{self, Sym},
         test_support::with_vm,
         unpack,
-        value::{Output, Slot, Value},
+        value::{Slot, Value},
         vm::AllocExt,
     };
 
@@ -2448,12 +2448,12 @@ mod constructor_tests {
             strand.native_function(
                 async |strand: &mut Strand<'_, '_>, args, out| -> Result<'_, '_, ()> {
                     unpack!(strand, args => value);
-                    Output::set(strand, out, &value);
+                    strand.store(out, &value);
                     Ok(())
                 },
                 Slot::reborrow(&mut func),
             );
-            Output::set(strand, Slot::reborrow(&mut arg), "kept");
+            strand.store(Slot::reborrow(&mut arg), "kept");
             call!(strand, &func, &mut arg, Slot::reborrow(&mut result)).unwrap();
             assert_eq!(text(strand, &result), "kept");
             assert_eq!(text(strand, &arg), "kept");
@@ -2463,8 +2463,8 @@ mod constructor_tests {
     #[test]
     fn output_set_moves_a_slot_input() {
         with_vm(async |strand, [mut from, mut to]| {
-            Output::set(strand, Slot::reborrow(&mut from), "moved");
-            Output::set(strand, Slot::reborrow(&mut to), &mut from);
+            strand.store(Slot::reborrow(&mut from), "moved");
+            strand.store(Slot::reborrow(&mut to), &mut from);
             assert_eq!(text(strand, &to), "moved");
             assert!(from.is_nil());
         });
@@ -2475,7 +2475,7 @@ mod constructor_tests {
         with_vm(async |strand, [mut func, mut result]| {
             strand.bound_function(
                 async |strand: &mut Strand<'_, '_>, bound: &Value<'_>, _args, out| {
-                    Output::set(strand, out, bound);
+                    strand.store(out, bound);
                     Ok(())
                 },
                 "bound",

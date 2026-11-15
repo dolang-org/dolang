@@ -15,7 +15,7 @@ use dolang::{
     compile::{self, Config, Diag, Mode},
     extension::CompilerExt,
     runtime::{
-        Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
+        Args, Error, Instance, Object, Result, Slot, State, Strand, Sym, Type, Value,
         object::{Mut, Ref, TypeBuilder},
         unpack,
         value::{Array, Dict, Nil, PinBin, PinStr, TypeObject, View},
@@ -729,7 +729,7 @@ fn create_diagnostic<'v, 's>(
                         strand.new_array(Mut::slot_mut::<DIAG_SOURCE>(&mut borrow))
                     }
                     DiagSources::Checked(_, array) => {
-                        Output::set(strand, Mut::slot_mut::<DIAG_SOURCE>(&mut borrow), array)
+                        strand.store(Mut::slot_mut::<DIAG_SOURCE>(&mut borrow), array)
                     }
                 }
             }
@@ -797,7 +797,7 @@ fn take_input<'v, 's>(
             let Some(inner) = typelib.borrow_mut(strand)?.typelib.take() else {
                 return Err(Error::state_error(strand, "typelib is being checked"));
             };
-            Output::set(strand, &mut *source, Nil);
+            strand.store(&mut *source, Nil);
             Ok(Taken::Typelib(Box::new(inner)))
         }),
         None => with_unit(strand, input, |strand, unit| {
@@ -805,7 +805,7 @@ fn take_input<'v, 's>(
             let Some(inner) = borrow.unit.take() else {
                 return Err(Error::state_error(strand, "unit was emitted"));
             };
-            Output::set(strand, &mut *source, Mut::slot::<UNIT_SOURCE>(&borrow));
+            strand.store(&mut *source, Mut::slot::<UNIT_SOURCE>(&borrow));
             Ok(Taken::Unit(Box::new(inner)))
         }),
     }
@@ -987,16 +987,11 @@ fn check_units<'v, 's>(
         );
         with_instance!(strand, global.types.checked.cast(&*out).unwrap(), |check| {
             let mut borrow = check.borrow_mut_unwrap();
-            Output::set(
-                strand,
+            strand.store(
                 Mut::slot_mut::<CHECKED_DIAGNOSTICS>(&mut borrow),
                 &*diagnostics,
             );
-            Output::set(
-                strand,
-                Mut::slot_mut::<CHECKED_INPUTS>(&mut borrow),
-                &*inputs,
-            );
+            strand.store(Mut::slot_mut::<CHECKED_INPUTS>(&mut borrow), &*inputs);
         });
         Ok(())
     })
@@ -1266,11 +1261,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let ty = strand.state::<Tag>().types.diagnostic_iter;
                 ty.create(strand, DiagnosticIter { index: 0 }, &mut out);
                 with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
-                        this,
-                    );
+                    strand.store(Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()), this);
                 });
                 Ok(())
             })
@@ -1282,11 +1273,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let ty = strand.state::<Tag>().types.node_iter;
                 ty.create(strand, NodeIter { cursor: None }, &mut out);
                 with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
-                        this,
-                    );
+                    strand.store(Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()), this);
                 });
                 Ok(())
             })
@@ -1300,7 +1287,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 };
                 match root {
                     Some(id) => create_node(strand, this, id, &mut out)?,
-                    None => Output::set(strand, out, Nil),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
@@ -1315,7 +1302,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                     return Err(Error::state_error(strand, "unit was emitted"));
                 };
                 if id_data.unit != borrow.identity || unit.node(id_data.id).is_none() {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                     return Ok(());
                 }
                 create_node(strand, this, id_data.id, &mut out)
@@ -1345,11 +1332,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let ty = global.types.token_iter;
                 ty.create(strand, TokenIter { tokens }, &mut out);
                 with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()),
-                        this,
-                    );
+                    strand.store(Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()), this);
                 });
                 Ok(())
             })
@@ -1363,7 +1346,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let mut bytecode = Vec::new();
                 unit.emit(&mut bytecode)
                     .map_err(|err| Error::compile(strand, err))?;
-                Output::set(strand, out, bytecode.as_slice());
+                strand.store(out, bytecode.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
@@ -1374,7 +1357,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                     let unit = borrow.unit.as_ref().expect("span_range checked the unit");
                     unit.source()[range].to_owned()
                 };
-                Output::set(strand, out, text.as_str());
+                strand.store(out, text.as_str());
                 Ok(())
             })
             .method("byte_range", async move |this, strand, args, out| {
@@ -1483,7 +1466,7 @@ impl<'v> Object<'v> for CheckObject {
                         let mut borrow = this.borrow_mut(strand)?;
                         borrow.modules.extend(module);
                         borrow.depends.extend(depends.into_iter().flatten());
-                        Output::set(strand, &mut inputs, Mut::slot::<CHECK_INPUTS>(&borrow));
+                        strand.store(&mut inputs, Mut::slot::<CHECK_INPUTS>(&borrow));
                     }
                     inputs.as_array(strand).unwrap().push(strand, &input)?;
                     Ok(())
@@ -1508,7 +1491,7 @@ impl<'v> Object<'v> for CheckObject {
                     unpack!(strand, args =>);
                     let typelibs = {
                         let borrow = this.borrow(strand)?;
-                        Output::set(strand, &mut inputs, Ref::slot::<CHECK_INPUTS>(&borrow));
+                        strand.store(&mut inputs, Ref::slot::<CHECK_INPUTS>(&borrow));
                         borrow.typelibs
                     };
                     check_units(strand.state::<Tag>(), strand, &inputs, typelibs, &mut out)
@@ -1529,12 +1512,12 @@ impl<'v> Object<'v> for CheckedObject {
         builder
             .get("diagnostics", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<CHECKED_DIAGNOSTICS>(&borrow));
+                strand.store(out, Ref::slot::<CHECKED_DIAGNOSTICS>(&borrow));
                 Ok(())
             })
             .method("undecided", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                Output::set(strand, out, this.annex().undecided.as_str());
+                strand.store(out, this.annex().undecided.as_str());
                 Ok(())
             })
             .method_with_slots(
@@ -1553,7 +1536,7 @@ impl<'v> Object<'v> for CheckedObject {
                     let wanted = identity(strand, &unit);
                     {
                         let borrow = this.borrow(strand)?;
-                        Output::set(strand, &mut inputs, Ref::slot::<CHECKED_INPUTS>(&borrow));
+                        strand.store(&mut inputs, Ref::slot::<CHECKED_INPUTS>(&borrow));
                     }
                     let inputs = inputs.as_array(strand).unwrap();
                     let mut found = None;
@@ -1571,7 +1554,7 @@ impl<'v> Object<'v> for CheckedObject {
                     check
                         .typelib(id, &mut bytes)
                         .map_err(|err| Error::compile(strand, err))?;
-                    Output::set(strand, out, bytes.as_slice());
+                    strand.store(out, bytes.as_slice());
                     Ok(())
                 },
             )
@@ -1625,8 +1608,7 @@ impl<'v> Object<'v> for TypelibObject<'v> {
             &mut out,
         );
         with_instance!(strand, this.cast(&out).unwrap(), |typelib| {
-            Output::set(
-                strand,
+            strand.store(
                 Mut::slot_mut::<TYPELIB_BYTES>(&mut typelib.borrow_mut_unwrap()),
                 bytes,
             )
@@ -1638,14 +1620,14 @@ impl<'v> Object<'v> for TypelibObject<'v> {
         builder
             .get("module", |this, strand, out| {
                 let module = with_typelib(strand, &this, |typelib| typelib.module())?;
-                Output::set(strand, out, module);
+                strand.store(out, module);
                 Ok(())
             })
             .get("path", |this, strand, out| {
                 let path = with_typelib(strand, &this, |typelib| {
                     typelib.path().to_string_lossy().into_owned()
                 })?;
-                Output::set(strand, out, path.as_str());
+                strand.store(out, path.as_str());
                 Ok(())
             })
     }
@@ -1667,7 +1649,7 @@ impl<'v> Object<'v> for DiagnosticIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(
@@ -1717,7 +1699,7 @@ impl<'v> Object<'v> for NodeIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(
@@ -1765,7 +1747,7 @@ impl<'v> Object<'v> for TokenIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
     async fn next<'a, 's>(
@@ -1781,11 +1763,7 @@ impl<'v> Object<'v> for TokenIter<'v> {
         with_unit(strand, Mut::slot::<OWNER>(&iter), |strand, owner| {
             ty.create_with_annex(strand, TokenObject, annex, &mut out);
             with_instance!(strand, ty.cast(&out).unwrap(), |tok| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<OWNER>(&mut tok.borrow_mut_unwrap()),
-                    owner,
-                )
+                strand.store(Mut::slot_mut::<OWNER>(&mut tok.borrow_mut_unwrap()), owner)
             });
             Ok(())
         })?;
@@ -1803,11 +1781,7 @@ impl<'v> Object<'v> for TokenObject {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("kind", |this, strand, out| {
-                Output::set(
-                    strand,
-                    out,
-                    token_kind_sym(this.annex().global, this.annex().kind),
-                );
+                strand.store(out, token_kind_sym(this.annex().global, this.annex().kind));
                 Ok(())
             })
             .get("span", |this, strand, out| {
@@ -1822,16 +1796,16 @@ impl<'v> Object<'v> for TokenObject {
                     })?;
                     create_node_id(strand, u, id, &mut out)
                 } else {
-                    Output::set(strand, out, Nil)
+                    strand.store(out, Nil)
                 };
                 Ok(())
             })
             .get("context", |this, strand, out| {
                 match this.annex().context {
                     compile::Context::Call => {
-                        Output::set(strand, out, this.annex().global.syms.token_context_call)
+                        strand.store(out, this.annex().global.syms.token_context_call)
                     }
-                    _ => Output::set(strand, out, Nil),
+                    _ => strand.store(out, Nil),
                 };
                 Ok(())
             })
@@ -1897,11 +1871,7 @@ fn create_typed_node<'v, T: NodeMarker + 'static>(
         &mut *out,
     );
     with_instance!(strand, ty.cast(out).unwrap(), |node| {
-        Output::set(
-            strand,
-            Mut::slot_mut::<OWNER>(&mut node.borrow_mut_unwrap()),
-            owner,
-        )
+        strand.store(Mut::slot_mut::<OWNER>(&mut node.borrow_mut_unwrap()), owner)
     });
 }
 
@@ -2203,7 +2173,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             if let Some(id) = id {
                 create_node_id(strand, unit, id, &mut out)
             } else {
-                Output::set(strand, out, Nil)
+                strand.store(out, Nil)
             };
             Ok(())
         });
@@ -2212,7 +2182,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             if let Some(span) = span {
                 create_span(strand.state::<Tag>(), strand, span, out)
             } else {
-                Output::set(strand, out, Nil)
+                strand.store(out, Nil)
             };
             Ok(())
         });
@@ -2224,7 +2194,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
             if let Some(doc) = doc {
                 create_span(strand.state::<Tag>(), strand, doc, out)
             } else {
-                Output::set(strand, out, Nil)
+                strand.store(out, Nil)
             };
             Ok(())
         });
@@ -2284,7 +2254,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 if let Some(span) = span {
                     create_span(strand.state::<Tag>(), strand, span, out)
                 } else {
-                    Output::set(strand, out, Nil)
+                    strand.store(out, Nil)
                 };
                 Ok(())
             });
@@ -2333,7 +2303,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     compile::Kind::Alias { opaque, .. } => opaque,
                     _ => unreachable!(),
                 })?;
-                Output::set(strand, out, v);
+                strand.store(out, v);
                 Ok(())
             });
         }
@@ -2400,12 +2370,10 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                 })?;
                 let syms = &strand.state::<Tag>().syms;
                 match quant {
-                    Some(compile::TypeQuant::Opt) => Output::set(strand, out, syms.quant_opt),
-                    Some(compile::TypeQuant::Star) => Output::set(strand, out, syms.quant_star),
-                    Some(compile::TypeQuant::Include) => {
-                        Output::set(strand, out, syms.quant_include)
-                    }
-                    _ => Output::set(strand, out, Nil),
+                    Some(compile::TypeQuant::Opt) => strand.store(out, syms.quant_opt),
+                    Some(compile::TypeQuant::Star) => strand.store(out, syms.quant_star),
+                    Some(compile::TypeQuant::Include) => strand.store(out, syms.quant_include),
+                    _ => strand.store(out, Nil),
                 }
                 Ok(())
             });
@@ -2430,7 +2398,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     })?;
                     match target {
                         Some(target) => create_node_id(strand, unit, target, &mut out),
-                        None => Output::set(strand, out, Nil),
+                        None => strand.store(out, Nil),
                     }
                     Ok(())
                 }),
@@ -2457,7 +2425,7 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     Error::unsupported(strand, "this constant type is not representable")
                 })? {
                     Value::Sym(name) => strand.intern_sym(&name, out),
-                    Value::Str(value) => Output::set(strand, out, value.as_str()),
+                    Value::Str(value) => strand.store(out, value.as_str()),
                     Value::Int(value) => {
                         let value = i64::try_from(value).map_err(|_| {
                             Error::unsupported(
@@ -2465,10 +2433,10 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                                 "constant type integer does not fit in `Int`",
                             )
                         })?;
-                        Output::set(strand, out, value)
+                        strand.store(out, value)
                     }
-                    Value::Bool(value) => Output::set(strand, out, value),
-                    Value::Nil => Output::set(strand, out, Nil),
+                    Value::Bool(value) => strand.store(out, value),
+                    Value::Nil => strand.store(out, Nil),
                 }
                 Ok(())
             }),
@@ -2587,7 +2555,7 @@ impl ProjectNodes for Option<compile::NodeId> {
         match self {
             Some(id) => create_node(strand, owner, id, out),
             None => {
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             }
         }
@@ -2667,8 +2635,8 @@ fn project_name<'v, 's, T: NodeMarker + 'static>(
     })?;
     match name {
         Name::Span(s) => create_span(strand.state::<Tag>(), strand, s, out),
-        Name::Text(s) => Output::set(strand, out, s.as_str()),
-        Name::None => Output::set(strand, out, Nil),
+        Name::Text(s) => strand.store(out, s.as_str()),
+        Name::None => strand.store(out, Nil),
     };
     Ok(())
 }
@@ -2688,7 +2656,7 @@ fn project_pub<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::ImportItem { is_pub, .. } => is_pub,
         _ => unreachable!(),
     })?;
-    Output::set(strand, out, v);
+    strand.store(out, v);
     Ok(())
 }
 fn project_default<'v, 's, T: NodeMarker + 'static>(
@@ -2704,7 +2672,7 @@ fn project_default<'v, 's, T: NodeMarker + 'static>(
     if let Some(v) = v {
         create_span(strand.state::<Tag>(), strand, v, out)
     } else {
-        Output::set(strand, out, Nil)
+        strand.store(out, Nil)
     };
     Ok(())
 }
@@ -2742,7 +2710,7 @@ fn project_import<'v, 's, T: NodeMarker + 'static>(
     })?;
     match v {
         V::S(v) => create_span(strand.state::<Tag>(), strand, v, out),
-        V::T(v) => Output::set(strand, out, v.as_str()),
+        V::T(v) => strand.store(out, v.as_str()),
     };
     Ok(())
 }
@@ -2766,7 +2734,7 @@ fn project_target<'v, 's, T: NodeMarker + 'static>(
     if let Some(v) = v {
         create_node_id(strand, u, v, &mut out)
     } else {
-        Output::set(strand, out, Nil)
+        strand.store(out, Nil)
     };
     Ok(())
 }
@@ -2786,7 +2754,7 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
         | compile::Kind::Type { type_only, .. } => type_only,
         _ => unreachable!(),
     })?;
-    Output::set(strand, out, v);
+    strand.store(out, v);
     Ok(())
 }
 
@@ -2850,7 +2818,7 @@ impl<'v> Object<'v> for Diagnostic {
                     match strand.import("term", &mut term).await {
                         Ok(()) => method!(strand, &term, preformat, rendered.as_str(), out),
                         Err(error) if error.kind() == RuntimeErrorKind::Import => {
-                            Output::set(strand, out, rendered.as_str());
+                            strand.store(out, rendered.as_str());
                             Ok(())
                         }
                         Err(error) => Err(error),
@@ -2861,8 +2829,7 @@ impl<'v> Object<'v> for Diagnostic {
 
         builder
             .get("severity", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     severity(this.annex().global, this.annex().diag.severity()),
                 );
@@ -2870,7 +2837,7 @@ impl<'v> Object<'v> for Diagnostic {
             })
             .get("message", |this, strand, out| {
                 let message = this.annex().diag.message().to_string();
-                Output::set(strand, out, message.as_str());
+                strand.store(out, message.as_str());
                 Ok(())
             })
             .get("span", |this, strand, out| {
@@ -2884,17 +2851,17 @@ impl<'v> Object<'v> for Diagnostic {
             })
             .get("annotations", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<DIAG_ANNOTATIONS>(&borrow));
+                strand.store(out, Ref::slot::<DIAG_ANNOTATIONS>(&borrow));
                 Ok(())
             })
             .get("notes", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<DIAG_NOTES>(&borrow));
+                strand.store(out, Ref::slot::<DIAG_NOTES>(&borrow));
                 Ok(())
             })
             .get("patches", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<DIAG_PATCHES>(&borrow));
+                strand.store(out, Ref::slot::<DIAG_PATCHES>(&borrow));
                 Ok(())
             })
     }
@@ -2914,7 +2881,7 @@ impl<'v> Object<'v> for Span {
                 Ok(())
             })
             .get("len", |this, strand, out| {
-                Output::set(strand, out, this.annex().span.len());
+                strand.store(out, this.annex().span.len());
                 Ok(())
             })
     }
@@ -2968,9 +2935,9 @@ impl<'v> Object<'v> for SourceSpan {
         builder
             .get("unit", |this, strand, out| {
                 if let Some(unit) = this.annex().location.unit {
-                    Output::set(strand, out, unit.index());
+                    strand.store(out, unit.index());
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
@@ -3028,11 +2995,11 @@ impl<'v> Object<'v> for Pos {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.line_offset());
+                strand.store(out, this.annex().pos.line_offset());
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().pos.column_offset());
+                strand.store(out, this.annex().pos.column_offset());
                 Ok(())
             })
     }
@@ -3091,7 +3058,7 @@ impl<'v> Object<'v> for Annotation {
                     compile::AnnotationKind::Context => global.syms.context,
                     _ => global.syms.context,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("span", |this, strand, out| {
@@ -3099,7 +3066,7 @@ impl<'v> Object<'v> for Annotation {
                 Ok(())
             })
             .get("message", |this, strand, out| {
-                Output::set(strand, out, this.annex().message.as_str());
+                strand.store(out, this.annex().message.as_str());
                 Ok(())
             })
     }
@@ -3120,11 +3087,11 @@ impl<'v> Object<'v> for Note {
                     compile::NoteKind::Help => this.annex().global.syms.help,
                     _ => this.annex().global.syms.info,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("message", |this, strand, out| {
-                Output::set(strand, out, this.annex().message.as_str());
+                strand.store(out, this.annex().message.as_str());
                 Ok(())
             })
     }
@@ -3144,11 +3111,11 @@ impl<'v> Object<'v> for Patch {
                 Ok(())
             })
             .get("message", |this, strand, out| {
-                Output::set(strand, out, this.annex().message.as_str());
+                strand.store(out, this.annex().message.as_str());
                 Ok(())
             })
             .get("sub", |this, strand, out| {
-                Output::set(strand, out, this.annex().sub.as_str());
+                strand.store(out, this.annex().sub.as_str());
                 Ok(())
             })
     }
@@ -3364,8 +3331,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 &mut out,
             );
             with_instance!(strand, global.types.unit.cast(&out).unwrap(), |unit| {
-                Output::set(
-                    strand,
+                strand.store(
                     Mut::slot_mut::<UNIT_SOURCE>(&mut unit.borrow_mut_unwrap()),
                     source,
                 )

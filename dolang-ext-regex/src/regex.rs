@@ -5,7 +5,7 @@ use std::{borrow::Cow, mem};
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value, call,
+    AllocExt, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value, call,
     object::{Mut, Ref, Rest, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{
@@ -83,7 +83,7 @@ impl<'v> Object<'v> for PatternError {
                     PatternKind::Syntax => syntax,
                     PatternKind::TooBig => too_big,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
     }
@@ -169,12 +169,12 @@ impl<'v> Object<'v> for Regex {
                         let cast = annex.global.types.captures.cast(&out).unwrap();
                         with_instance!(strand, cast, |inst| {
                                 let mut captures = inst.borrow_mut_unwrap();
-                                Output::set(strand, Mut::slot_mut::<0>(&mut captures), haystack_value);
-                                Output::set(strand, Mut::slot_mut::<1>(&mut captures), this);
+                                strand.store(Mut::slot_mut::<0>(&mut captures), haystack_value);
+                                strand.store(Mut::slot_mut::<1>(&mut captures), this);
                             });
                     }
                     None => {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                     }
                 }
                 Ok(())
@@ -213,8 +213,8 @@ impl<'v> Object<'v> for Regex {
                 let cast = annex.global.types.find.cast(&out).unwrap();
                 with_instance!(strand, cast, |inst| {
                         let mut iter = inst.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut iter), this);
-                        Output::set(strand, Mut::slot_mut::<1>(&mut iter), haystack_value);
+                        strand.store(Mut::slot_mut::<0>(&mut iter), this);
+                        strand.store(Mut::slot_mut::<1>(&mut iter), haystack_value);
                     });
                 Ok(())
             })
@@ -255,7 +255,7 @@ impl<'v> Object<'v> for Regex {
                                 return Err(Error::value(strand, "limit must be >= 0"))
                             }
                         };
-                        Output::set(strand, out, result.as_ref());
+                        strand.store(out, result.as_ref());
                     } else if replacement.as_fmt(strand.vm()).is_some() {
                         let max = replacement_limit(strand, limit_val)?;
                         let mut result = String::new();
@@ -270,7 +270,7 @@ impl<'v> Object<'v> for Regex {
                             last_end = matched.end();
                         }
                         result.push_str(&haystack[last_end..]);
-                        Output::set(strand, out, result.as_str());
+                        strand.store(out, result.as_str());
                     } else {
                         // Callback replacement: iterate matches manually
                         let max = replacement_limit(strand, limit_val)?;
@@ -305,12 +305,11 @@ impl<'v> Object<'v> for Regex {
                             let cast = annex.global.types.captures.cast(&caps_slot).unwrap();
                             with_instance!(strand, cast, |inst| {
                                     let mut captures_mut = inst.borrow_mut_unwrap();
-                                    Output::set(
-                                        strand,
+                                    strand.store(
                                         Mut::slot_mut::<0>(&mut captures_mut),
                                         &haystack_value,
                                     );
-                                    Output::set(strand, Mut::slot_mut::<1>(&mut captures_mut), this);
+                                    strand.store(Mut::slot_mut::<1>(&mut captures_mut), this);
                                 });
 
                             // Call the replacement function with the Captures
@@ -329,7 +328,7 @@ impl<'v> Object<'v> for Regex {
                             last_end = m.end();
                         }
                         result.push_str(&haystack[last_end..]);
-                        Output::set(strand, out, result.as_str());
+                        strand.store(out, result.as_str());
                     }
                     Ok(())
                 },
@@ -425,8 +424,8 @@ impl<'v> Object<'v> for Regex {
                 let cast = annex.global.types.split.cast(&out).unwrap();
                 with_instance!(strand, cast, |inst| {
                         let mut borrow = inst.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this);
-                        Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack_value);
+                        strand.store(Mut::slot_mut::<0>(&mut borrow), this);
+                        strand.store(Mut::slot_mut::<1>(&mut borrow), haystack_value);
                     });
                 Ok(())
             })
@@ -488,8 +487,8 @@ impl<'v> Object<'v> for Regex {
                 let cast = annex.global.types.split.cast(&out).unwrap();
                 with_instance!(strand, cast, |inst| {
                         let mut borrow = inst.borrow_mut_unwrap();
-                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), this);
-                        Output::set(strand, Mut::slot_mut::<1>(&mut borrow), haystack_value);
+                        strand.store(Mut::slot_mut::<0>(&mut borrow), this);
+                        strand.store(Mut::slot_mut::<1>(&mut borrow), haystack_value);
                     });
                 Ok(())
             })
@@ -550,7 +549,7 @@ fn render_replacement<'v, 's>(
                             .ok_or_else(|| missing_capture(strand, &value))?,
                         _ => unreachable!("FmtParam names are Int or Sym"),
                     };
-                    Output::set(strand, &mut value, matched.as_str());
+                    strand.store(&mut value, matched.as_str());
                     value.fmt(strand, &spec, out)?;
                 }
                 _ => unreachable!("Fmt segments are Str, FmtValue, or FmtParam"),
@@ -665,8 +664,7 @@ impl<'v> Object<'v> for Captures<'v> {
                     annex.global.types.match_.cast(&out).unwrap(),
                     |inst| {
                         let mut match_borrow = inst.borrow_mut_unwrap();
-                        Output::set(
-                            strand,
+                        strand.store(
                             Mut::slot_mut::<0>(&mut match_borrow),
                             Ref::slot::<0>(&borrow),
                         );
@@ -677,7 +675,7 @@ impl<'v> Object<'v> for Captures<'v> {
             }
             // The group exists but did not participate in the match
             None => {
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             }
         }
@@ -689,14 +687,14 @@ impl<'v> Object<'v> for Captures<'v> {
                 let borrow = this.borrow(strand)?;
                 let input = TryInto::<i64>::try_into(borrow.caps.get_match().start())
                     .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             })
             .get("end", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 let input = TryInto::<i64>::try_into(borrow.caps.get_match().end())
                     .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             })
     }
@@ -735,14 +733,14 @@ impl<'v> Object<'v> for Match<'v> {
                 let borrow = this.borrow(strand)?;
                 let input = TryInto::<i64>::try_into(borrow.match_.start())
                     .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             })
             .get("end", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 let input = TryInto::<i64>::try_into(borrow.match_.end())
                     .map_err(|_| Error::overflow(strand))?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             })
     }
@@ -779,7 +777,7 @@ impl<'v> Object<'v> for Find<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -822,13 +820,11 @@ impl<'v> Object<'v> for Find<'v> {
                     annex.global.types.captures.cast(&out).unwrap(),
                     |inst| {
                         let mut captures_mut = inst.borrow_mut_unwrap();
-                        Output::set(
-                            strand,
+                        strand.store(
                             Mut::slot_mut::<0>(&mut captures_mut),
                             Mut::slot::<1>(&borrow),
                         );
-                        Output::set(
-                            strand,
+                        strand.store(
                             Mut::slot_mut::<1>(&mut captures_mut),
                             Mut::slot::<0>(&borrow),
                         );
@@ -915,7 +911,7 @@ impl<'v> Object<'v> for RegexSplit<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -927,7 +923,7 @@ impl<'v> Object<'v> for RegexSplit<'v> {
         let mut borrow = this.borrow_mut(strand)?;
         match borrow.inner.next_str() {
             Some(segment) => {
-                Output::set(strand, out, segment);
+                strand.store(out, segment);
                 Ok(true)
             }
             None => Ok(false),
@@ -967,14 +963,14 @@ impl<'v> Object<'v> for RegexSplit<'v> {
             match item {
                 UnpackItem::Pos { slot, default } => match remaining.get(pos) {
                     Some(segment) => {
-                        Output::set(strand, slot, segment.as_str());
+                        strand.store(slot, segment.as_str());
                         pos += 1;
                     }
-                    None => Output::set(strand, slot, default.unwrap()),
+                    None => strand.store(slot, default.unwrap()),
                 },
                 UnpackItem::SymKey { slot, default, .. }
                 | UnpackItem::ConstKey { slot, default, .. } => {
-                    Output::set(strand, slot, default.unwrap());
+                    strand.store(slot, default.unwrap());
                 }
                 UnpackItem::Rest { mut slot } | UnpackItem::PosRest { mut slot } => {
                     // The rest is a fresh iterator over the remainder
@@ -992,16 +988,8 @@ impl<'v> Object<'v> for RegexSplit<'v> {
                     );
                     with_instance!(strand, ty.cast(&slot).unwrap(), |inst| {
                         let mut rest = inst.borrow_mut_unwrap();
-                        Output::set(
-                            strand,
-                            Mut::slot_mut::<0>(&mut rest),
-                            Mut::slot::<0>(&borrow),
-                        );
-                        Output::set(
-                            strand,
-                            Mut::slot_mut::<1>(&mut rest),
-                            Mut::slot::<1>(&borrow),
-                        );
+                        strand.store(Mut::slot_mut::<0>(&mut rest), Mut::slot::<0>(&borrow));
+                        strand.store(Mut::slot_mut::<1>(&mut rest), Mut::slot::<1>(&borrow));
                     });
                 }
                 UnpackItem::KeyRest { slot } => Unpack::empty_key_rest(strand, slot),

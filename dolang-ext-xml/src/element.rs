@@ -5,7 +5,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Args, Error, Instance, Object, Output, Result, Slot, Strand, Type, Value,
+    Args, Error, Instance, Object, Result, Slot, Strand, Type, Value,
     object::{ArrayLike, ArrayView, DictLike, DictViewSink, Mut, Ref, TypeBuilder},
     unpack,
     value::{Nil, TypeObject},
@@ -199,7 +199,7 @@ impl<'v> DictLike<'v> for Attrs {
         let node = this.borrow(strand)?;
         match find_attr(&node.attrs, &name) {
             Some(index) => {
-                Output::set(strand, out, node.attrs[index].value.as_str());
+                strand.store(out, node.attrs[index].value.as_str());
                 Ok(true)
             }
             None => Ok(false),
@@ -303,7 +303,7 @@ impl<'v> DictLike<'v> for Namespaces {
         let node = this.borrow(strand)?;
         match find_namespace(&node.namespaces, &prefix) {
             Some(index) => {
-                Output::set(strand, out, node.namespaces[index].1.as_str());
+                strand.store(out, node.namespaces[index].1.as_str());
                 Ok(true)
             }
             None => Ok(false),
@@ -595,7 +595,7 @@ impl<'v> Object<'v> for Element {
             let name = attr_key(strand, index)?;
             let node = this.borrow(strand)?;
             if let Some(index) = find_attr(&node.attrs, &name) {
-                Output::set(strand, out, node.attrs[index].value.as_str());
+                strand.store(out, node.attrs[index].value.as_str());
                 Ok(())
             } else {
                 Err(Error::index(strand))
@@ -638,7 +638,7 @@ impl<'v> Object<'v> for Element {
         builder
             .get("tag", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, borrow.name.local.as_str());
+                strand.store(out, borrow.name.local.as_str());
                 Ok(())
             })
             .set("tag", |this, strand, value| {
@@ -649,9 +649,9 @@ impl<'v> Object<'v> for Element {
             })
             .get("namespace", |this, strand, out| {
                 if let Some(namespace) = &this.borrow(strand)?.name.namespace {
-                    Output::set(strand, out, namespace.as_str());
+                    strand.store(out, namespace.as_str());
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             })
@@ -679,7 +679,7 @@ impl<'v> Object<'v> for Element {
                 let borrow = this.borrow(strand)?;
                 let arr = Ref::slot::<CHILDREN>(&borrow).as_array(strand).unwrap();
                 arr.push(strand, child)?;
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
             .method("traverse", async move |this, strand, args, mut out| {
@@ -726,7 +726,7 @@ impl<'v> Object<'v> for TraverseIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

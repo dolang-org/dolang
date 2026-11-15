@@ -1,7 +1,7 @@
 //! `winscm.ServiceInfo` — one entry of a [`crate::services::Services`]
 //! snapshot.
 
-use dolang::runtime::{Object, Output, State, object::TypeBuilder};
+use dolang::runtime::{AllocExt, Object, State, object::TypeBuilder};
 use dolang_vfs_winscm::ServiceStatus;
 
 use crate::{global::Global, status};
@@ -25,13 +25,13 @@ impl<'v> Object<'v> for ServiceEntry {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().name.as_str());
+                strand.store(out, this.annex().name.as_str());
                 Ok(())
             })
             .get("display_name", |this, strand, out| {
                 match this.annex().display_name.as_deref() {
-                    Some(display_name) => Output::set(strand, out, display_name),
-                    None => Output::set(strand, out, dolang::runtime::value::Nil),
+                    Some(display_name) => strand.store(out, display_name),
+                    None => strand.store(out, dolang::runtime::value::Nil),
                 }
                 Ok(())
             })

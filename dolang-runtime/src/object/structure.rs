@@ -17,7 +17,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, Value},
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -138,7 +138,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().structure)
+        strand.store(out, &strand.singletons().structure)
     }
 
     fn op_debug<'a, 's>(
@@ -184,7 +184,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let flag = pack::eq_items(strand, &left.items, &right.items)?;
-            Output::set(strand, &mut out, flag);
+            strand.store(&mut out, flag);
             Ok(())
         })
     }
@@ -202,7 +202,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             let flag = pack::lt_items(strand, &left.items, &right.items)?;
-            Output::set(strand, &mut out, flag);
+            strand.store(&mut out, flag);
             Ok(())
         })
     }
@@ -222,7 +222,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let borrow = this.borrow(strand)?;
         match pack::find(strand, &borrow.items, index) {
             Some(value) => {
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -271,7 +271,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let borrow = this.borrow(strand)?;
         match borrow.position(field) {
             Some(index) => {
-                Output::set(strand, out, &borrow.items[index].1);
+                strand.store(out, &borrow.items[index].1);
                 Ok(())
             }
             None => Err(Error::field(strand, field)),
@@ -308,7 +308,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
                 let Some(index) = borrow.position(method) else {
                     return Err(Error::field(strand, method));
                 };
-                Output::set(strand, &mut slot, &borrow.items[index].1);
+                strand.store(&mut slot, &borrow.items[index].1);
             }
             slot.call(strand, args, out).await
         })
@@ -380,7 +380,7 @@ impl<'v> Protocol<'v> for Class {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -453,19 +453,19 @@ impl<'v> Protocol<'v> for Class {
                     let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     let found = pack::find(strand, &borrow.items, &key);
                     if let Some(value) = found {
-                        Output::set(strand, &mut out, value);
+                        strand.store(&mut out, value);
                     }
                     Ok(found.is_some())
                 })?;
                 if found {
                     Ok(())
                 } else if let Some(mut default) = default {
-                    Output::set(strand, &mut out, &mut default);
+                    strand.store(&mut out, &mut default);
                     Ok(())
                 } else if let Some(or_else) = or_else {
                     call!(strand, or_else, out)
                 } else {
-                    Output::set(strand, &mut out, Value::NIL);
+                    strand.store(&mut out, Value::NIL);
                     Ok(())
                 }
             }
@@ -477,7 +477,7 @@ impl<'v> Protocol<'v> for Class {
                         Ok(pack::find_index(strand, &borrow.items, &key).is_some())
                     })?
                 };
-                Output::set(strand, out, found);
+                strand.store(out, found);
                 Ok(())
             }
             _ => {

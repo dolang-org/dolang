@@ -2,8 +2,8 @@ mod detail {
     use dolang::{
         compile::{self, Config, Mode},
         runtime::{
-            self, AllocExt, Args, Bytecode, Error, Instance, Object, Output, Slot, Strand, Sym,
-            Value, call,
+            self, AllocExt, Args, Bytecode, Error, Instance, Object, Slot, Strand, Sym, Value,
+            call,
             error::ErrorKind,
             io::{self, ByteHandle, ByteIo, IntoByteIo, IoCaps, IoResultExt as _},
             object::{
@@ -120,7 +120,7 @@ mod detail {
             if method.as_str(strand) != "dynamic_method" {
                 return Err(Error::field(strand, method));
             }
-            Output::set(strand, out, "dynamic method");
+            strand.store(out, "dynamic method");
             Ok(())
         }
 
@@ -134,7 +134,7 @@ mod detail {
                 return Err(Error::field(strand, field));
             }
             let value = *this.borrow(strand)?;
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         }
 
@@ -157,7 +157,7 @@ mod detail {
             _args: Args<'v, 'a>,
             out: Slot<'v, 'a>,
         ) -> runtime::Result<'v, 's, ()> {
-            Output::set(strand, out, 42);
+            strand.store(out, 42);
             Ok(())
         }
 
@@ -168,7 +168,7 @@ mod detail {
             _args: Args<'v, 'a>,
             out: Slot<'v, 'a>,
         ) -> runtime::Result<'v, 's, ()> {
-            Output::set(strand, out, method.as_str(strand));
+            strand.store(out, method.as_str(strand));
             Ok(())
         }
 
@@ -243,7 +243,7 @@ mod detail {
             builder
                 .get("value", |this, strand, out| {
                     let n = this.borrow(strand)?.n;
-                    Output::set(strand, out, n);
+                    strand.store(out, n);
                     Ok(())
                 })
                 // Stops providing `BumpTag`
@@ -289,7 +289,7 @@ mod detail {
             Ok(n)
         });
         match res {
-            Ok(n) => Output::set(strand, out, n),
+            Ok(n) => strand.store(out, n),
             Err(e) if e.kind() == ErrorKind::Unsupported => {}
             Err(e) => return Err(e),
         }
@@ -490,7 +490,7 @@ mod detail {
                 let written = this.borrow(strand)?.written.clone();
                 let written = written.ok_or_else(|| Error::value(strand, "not duplex"))?;
                 let bytes = written.lock().unwrap().clone();
-                Output::set(strand, out, &bytes[..]);
+                strand.store(out, &bytes[..]);
                 Ok(())
             })
         }
@@ -551,13 +551,13 @@ mod detail {
                 .as_sym(strand)
                 .is_some_and(|sym| sym.as_str(strand) == "name")
             {
-                Output::set(strand, out, 1_i64);
+                strand.store(out, 1_i64);
                 return Ok(true);
             }
             if let Some(str) = key.as_str(strand)
                 && strand.access(|access| str.as_str(access) == "HOME")
             {
-                Output::set(strand, out, "/home");
+                strand.store(out, "/home");
                 return Ok(true);
             }
             Ok(false)
@@ -728,7 +728,7 @@ mod detail {
             builder
                 .method("is_exec", async move |this, strand, args, out| {
                     unpack!(strand, args =>);
-                    Output::set(strand, out, this.flags().0 & 4 != 0);
+                    strand.store(out, this.flags().0 & 4 != 0);
                     Ok(())
                 })
                 // Exercises type-method forwarding through Do subclasses.
@@ -742,11 +742,11 @@ mod detail {
                 })
                 // Hidden by the instance method of the same name
                 .type_method("is_exec", async move |_this, strand, _args, out| {
-                    Output::set(strand, out, "type method");
+                    strand.store(out, "type method");
                     Ok(())
                 })
                 .type_get("type_property", |_this, strand, out| {
-                    Output::set(strand, out, 42_i64);
+                    strand.store(out, 42_i64);
                     Ok(())
                 })
                 .type_set("type_property", |_this, strand, value| {
@@ -754,7 +754,7 @@ mod detail {
                     Ok(())
                 })
                 .type_get("type_readonly", |_this, strand, out| {
-                    Output::set(strand, out, 43_i64);
+                    strand.store(out, 43_i64);
                     Ok(())
                 })
                 .type_set("type_writeonly", |_this, strand, value| {
@@ -763,11 +763,11 @@ mod detail {
                 })
                 .method("hidden_property", async move |_this, strand, args, out| {
                     unpack!(strand, args =>);
-                    Output::set(strand, out, "instance method");
+                    strand.store(out, "instance method");
                     Ok(())
                 })
                 .type_get("hidden_property", |_this, strand, out| {
-                    Output::set(strand, out, 44_i64);
+                    strand.store(out, 44_i64);
                     Ok(())
                 })
                 .type_set("hidden_property", |_this, strand, value| {
@@ -871,7 +871,7 @@ mod detail {
                     .function("async", async |strand, args, mut out| {
                         unpack!(strand, args => mut value);
                         DummyAsync::new(()).await;
-                        Output::swap(strand, &mut out, &mut value);
+                        strand.swap(&mut out, &mut value);
                         Ok(())
                     })
                     .function("callme", async move |strand, args, out| {
@@ -918,7 +918,7 @@ mod detail {
                         let mut buf = Vec::new();
                         let res = io.read_to_end(&mut buf).await;
                         res.into_do_io(strand)?;
-                        Output::set(strand, out, &buf[..]);
+                        strand.store(out, &buf[..]);
                         Ok(())
                     })
                     .function("byte_tell", async move |strand, args, out| {
@@ -927,7 +927,7 @@ mod detail {
                         let mut io = handle.into_read_seek().unwrap();
                         let res = io.stream_position().await;
                         let pos = res.into_do_io(strand)?;
-                        Output::set(strand, out, pos);
+                        strand.store(out, pos);
                         Ok(())
                     })
                     .function("byte_seek", async move |strand, args, out| {
@@ -945,7 +945,7 @@ mod detail {
                         }
                         .await;
                         res.into_do_io(strand)?;
-                        Output::set(strand, out, &buf[..]);
+                        strand.store(out, &buf[..]);
                         Ok(())
                     })
                     // Reads a fork of `value` from `offset` to the end.
@@ -961,7 +961,7 @@ mod detail {
                         let mut buf = Vec::new();
                         let res = io.read_to_end(&mut buf).await;
                         res.into_do_io(strand)?;
-                        Output::set(strand, out, &buf[..]);
+                        strand.store(out, &buf[..]);
                         Ok(())
                     })
                     .function("byte_overwrite", async move |strand, args, out| {
@@ -979,7 +979,7 @@ mod detail {
                         }
                         .await;
                         res.into_do_io(strand)?;
-                        Output::set(strand, out, &buf[..]);
+                        strand.store(out, &buf[..]);
                         Ok(())
                     })
                     .function("byte_write", async move |strand, args, _out| {
@@ -1008,7 +1008,7 @@ mod detail {
                         });
                         let res = written.and(read);
                         let n = res.into_do_io(strand)?;
-                        Output::set(strand, out, &buf[..n]);
+                        strand.store(out, &buf[..n]);
                         Ok(())
                     })
                     .function("coerce_flags", async move |strand, args, out| {

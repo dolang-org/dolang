@@ -15,7 +15,7 @@ use futures::{
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    AllocExt, Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Type, Value,
+    AllocExt, Arg, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value,
     error::ErrorKind,
     io::{self, IoCaps},
     method,
@@ -151,7 +151,7 @@ async fn resolve_io<'v, 's, 'a>(
                 .is_some_and(|sym| sym == global.syms.stdout_redirect) =>
         {
             // The same value as stdout, which `run` merges.
-            Output::set(strand, &mut stderr, &output);
+            strand.store(&mut stderr, &output);
             false
         }
         Some(key) => resolve_io_value(strand, &key, "w", &mut stderr).await?,
@@ -185,7 +185,7 @@ async fn resolve_io_value<'v, 's>(
     if resolve_io_file(strand, arg, mode, out).await? {
         return Ok(true);
     }
-    Output::set(strand, out, arg);
+    strand.store(out, arg);
     Ok(false)
 }
 
@@ -371,7 +371,7 @@ async fn make_iter<'v, 's>(
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut iter| {
         slot.iter(strand, Slot::reborrow(&mut iter)).await?;
-        Output::set(strand, slot, &*iter);
+        strand.store(slot, &*iter);
         Ok(())
     })
 }
@@ -383,7 +383,7 @@ async fn make_sink<'v, 's>(
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut sink| {
         slot.sink(strand, Slot::reborrow(&mut sink)).await?;
-        Output::set(strand, slot, &*sink);
+        strand.store(slot, &*sink);
         Ok(())
     })
 }
@@ -1005,7 +1005,7 @@ impl<'v> Object<'v> for Program {
                     let fs = strand.force_state::<FsTag>();
                     create_path(strand, fs, path, out)?;
                 } else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 }
                 Ok(())
             },

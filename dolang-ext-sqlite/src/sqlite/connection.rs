@@ -8,7 +8,7 @@ use std::{
 };
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, call,
+    AllocExt, Error, Instance, Object, Result, Slot, State, Strand, Value, call,
     error::ResultExt,
     method,
     object::{Mut, Ref, TypeBuilder},
@@ -266,7 +266,7 @@ impl<'v> Object<'v> for Connection {
 
                         result
                     } else {
-                        Output::set(strand, out, wrapper);
+                        strand.store(out, wrapper);
                         Ok(())
                     }
                 },
@@ -379,11 +379,7 @@ fn wrap_statement<'v, 's>(
         strand,
         global.types.statement.cast(&wrapper).unwrap(),
         |inst| {
-            Output::set(
-                strand,
-                Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
-                this,
-            );
+            strand.store(Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()), this);
         }
     );
 
@@ -458,11 +454,7 @@ async fn transact<'v, 's, 'a>(
             strand,
             annex.global.types.transaction.cast(&wrapper).unwrap(),
             |inst| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
-                    this,
-                );
+                strand.store(Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()), this);
             }
         );
 

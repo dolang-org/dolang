@@ -16,7 +16,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Value},
-    vm::Alloc,
+    vm::{Alloc, AllocExt},
 };
 
 use super::{
@@ -70,14 +70,14 @@ pub(crate) struct Receiver<'v> {
 impl<'v> Receiver<'v> {
     fn recv(
         &mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         cx: Option<&mut task::Context<'_>>,
         out: Slot<'v, '_>,
     ) -> RecvResult {
         if self.recv_closed {
             RecvResult::Closed
         } else if let Some(value) = self.queue.pop_front() {
-            Output::set(&mut alloc, out, value);
+            alloc.store(out, value);
             if let Some(wake) = self.senders.pop_front() {
                 wake.wake();
             }
@@ -217,7 +217,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -263,7 +263,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -336,7 +336,7 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().output_iter)
+        strand.store(out, &strand.singletons().output_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -378,7 +378,7 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 

@@ -29,9 +29,9 @@ pub(crate) fn create<'v>(
     body: ByteStream,
     out: Slot<'v, '_>,
 ) {
-    use dolang::runtime::{Output, io::ByteHandle};
+    use dolang::runtime::{AllocExt as _, io::ByteHandle};
 
-    Output::set(strand, out, ByteHandle::read(native::BodyRead::new(body)));
+    strand.store(out, ByteHandle::read(native::BodyRead::new(body)));
 }
 
 /// Creates a Do `Io` that reads `body`.
@@ -107,7 +107,9 @@ pub(crate) use browser::BodyIo;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod browser {
     use bytes::{Buf as _, Bytes};
-    use dolang::runtime::{Error, Object, Output, object::TypeBuilder, unpack, value::TypeObject};
+    use dolang::runtime::{
+        AllocExt as _, Error, Object, object::TypeBuilder, unpack, value::TypeObject,
+    };
     use futures::stream::StreamExt as _;
 
     use super::ByteStream;
@@ -142,7 +144,7 @@ mod browser {
                 .supertype(TypeObject::Io)
                 .get("readable", |this, strand, out| {
                     let readable = this.borrow(strand)?.stream.is_some();
-                    Output::set(strand, out, readable);
+                    strand.store(out, readable);
                     Ok(())
                 })
                 .method("read", async move |this, strand, args, out| {
@@ -166,7 +168,7 @@ mod browser {
                         }
                     }
                     let len = size.min(chunk.len());
-                    Output::set(strand, out, &chunk[..len]);
+                    strand.store(out, &chunk[..len]);
                     chunk.advance(len);
                     Ok(())
                 })

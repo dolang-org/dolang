@@ -10,8 +10,7 @@ use dolang::runtime::{object::fmt, strand::InterruptMask};
 #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use dolang::runtime::value::View;
 use dolang::runtime::{
-    Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Type, Value,
-    call,
+    Arg, Args, Error, Instance, Object, Result, Slot, State, Strand, Sym, Type, Value, call,
     error::{ErrorKind, ResultExt as _},
     method,
     object::{DictLike, DictViewSink, Mut, TypeBuilder},
@@ -103,7 +102,7 @@ fn header_value_or_datetime<'v, 's>(
     if let Ok(time) = httpdate::parse_http_date(value_str.as_ref()) {
         datetime(strand, time, &mut out).map_err(|err| Error::runtime(strand, err))
     } else {
-        Output::set(strand, &mut out, value_str.as_ref());
+        strand.store(&mut out, value_str.as_ref());
         Ok(())
     }
 }
@@ -384,11 +383,11 @@ impl<'v> Object<'v> for StatusObject {
                 Ok(())
             })
             .get("cause", |_this, strand, out| {
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
             .get("status", |this, strand, out| {
-                Output::set(strand, out, i64::from(this.annex().status));
+                strand.store(out, i64::from(this.annex().status));
                 Ok(())
             })
             .get("headers", |this, strand, out| {
@@ -396,19 +395,19 @@ impl<'v> Object<'v> for StatusObject {
                 Ok(())
             })
             .get("truncated", |this, strand, out| {
-                Output::set(strand, out, this.annex().truncated);
+                strand.store(out, this.annex().truncated);
                 Ok(())
             })
             .method("body", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                Output::set(strand, out, this.annex().body.as_slice());
+                strand.store(out, this.annex().body.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let annex = this.annex();
                 let input = status_text(strand, &annex)?;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             })
     }
@@ -515,7 +514,7 @@ async fn multipart_part<'v, 's>(
                         "multipart part may specify at most one of `body` or `json`",
                     ));
                 }
-                Output::set(strand, &mut body, &value);
+                strand.store(&mut body, &value);
                 body_kind = Some(BodyKind::Body);
             } else if key_sym == global.syms.filename {
                 filename = Some(multipart_text_field(
@@ -538,7 +537,7 @@ async fn multipart_part<'v, 's>(
                             "multipart part may specify at most one of `body` or `json`",
                         ));
                     }
-                    Output::set(strand, &mut body, &value);
+                    strand.store(&mut body, &value);
                     body_kind = Some(BodyKind::Json);
                     continue;
                 }
@@ -557,7 +556,7 @@ async fn multipart_part<'v, 's>(
                 strand.import("json", &mut json_mod).await?;
                 let encode = global.syms.encode;
                 method!(strand, json_mod, encode, &mut body, &mut json_text)?;
-                Output::set(strand, &mut body, &json_text);
+                strand.store(&mut body, &json_text);
                 Ok(())
             })?;
             if content_type.is_none() {
@@ -754,7 +753,7 @@ async fn request<'v, 's>(
             });
             res
         } else {
-            Output::set(st, out, value);
+            st.store(out, value);
             Ok(())
         }
     })
@@ -1035,7 +1034,7 @@ fn take_io<'v, 's>(
     let body = take_body(this, strand)?;
     body_io::create(strand, *this.annex(), body, Slot::reborrow(&mut out));
     let mut borrow = this.borrow_mut(strand)?;
-    Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &out);
+    strand.store(Mut::slot_mut::<0>(&mut borrow), &out);
     Ok(())
 }
 
@@ -1079,7 +1078,7 @@ impl<'v> Object<'v> for Response {
                 if borrow.inner.is_none() {
                     return Err(Error::state_error(strand, "closed"));
                 }
-                Output::set(strand, out, borrow.inner.as_ref().unwrap().status.as_u16());
+                strand.store(out, borrow.inner.as_ref().unwrap().status.as_u16());
                 Ok(())
             })
             .get("headers", |this, strand, out| {
@@ -1090,14 +1089,14 @@ impl<'v> Object<'v> for Response {
                 unpack!(strand, args =>);
                 let body = take_body(this, strand)?;
                 let res = bytes(body).await.into_http(strand)?;
-                Output::set(strand, out, res.as_slice());
+                strand.store(out, res.as_slice());
                 Ok(())
             })
             .method("text", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let body = take_body(this, strand)?;
                 let res = text(body).await.into_http(strand)?;
-                Output::set(strand, out, res.as_str());
+                strand.store(out, res.as_str());
                 Ok(())
             })
             .method("throw_for_status", async move |this, strand, args, _out| {
@@ -1152,11 +1151,11 @@ impl<'v> Object<'v> for Response {
                         global.types.event_iter.cast(&iter).unwrap(),
                         |iterator| {
                             let mut iter_borrow = iterator.borrow_mut(strand)?;
-                            Output::set(strand, Mut::slot_mut::<0>(&mut iter_borrow), this);
+                            strand.store(Mut::slot_mut::<0>(&mut iter_borrow), this);
                             Ok(())
                         }
                     )?;
-                    Output::set(strand, out, iter);
+                    strand.store(out, iter);
                     Ok(())
                 },
             )
@@ -1179,8 +1178,8 @@ impl<'v> Object<'v> for Response {
                     {
                         let mut borrow = this.borrow_mut(strand)?;
                         drop(borrow.inner.take());
-                        Output::set(strand, &mut io, Mut::slot::<0>(&borrow));
-                        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Nil);
+                        strand.store(&mut io, Mut::slot::<0>(&borrow));
+                        strand.store(Mut::slot_mut::<0>(&mut borrow), Nil);
                     }
                     if io.is_nil() {
                         return Ok(());

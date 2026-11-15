@@ -154,7 +154,7 @@ impl FlagLike for AccessMask {
     ) -> TypeBuilder<'v, 'a, Flags<Self>> {
         builder
             .get("specific_rights", |this, strand, out| {
-                Output::set(strand, out, this.flags().0.specific_rights());
+                strand.store(out, this.flags().0.specific_rights());
                 Ok(())
             })
             .get("standard_rights", |this, strand, out| {
@@ -506,47 +506,41 @@ impl<'v> Object<'v> for Sid {
 
         builder
             .get("revision", |this, strand, out| {
-                Output::set(strand, out, this.annex().revision() as u8);
+                strand.store(out, this.annex().revision() as u8);
                 Ok(())
             })
             .get("sub_authority_count", |this, strand, out| {
-                Output::set(strand, out, this.annex().sub_authorities().len());
+                strand.store(out, this.annex().sub_authorities().len());
                 Ok(())
             })
             .get("identifier_authority", move |this, strand, out| {
                 match this.annex().identifier_authority() {
-                    SidIdentifierAuthority::Null => Output::set(strand, out, null),
-                    SidIdentifierAuthority::World => Output::set(strand, out, world),
-                    SidIdentifierAuthority::Local => Output::set(strand, out, local),
-                    SidIdentifierAuthority::Creator => Output::set(strand, out, creator),
-                    SidIdentifierAuthority::NonUnique => Output::set(strand, out, non_unique),
-                    SidIdentifierAuthority::Nt => Output::set(strand, out, nt),
-                    SidIdentifierAuthority::ResourceManager => {
-                        Output::set(strand, out, resource_manager)
-                    }
-                    SidIdentifierAuthority::AppPackage => Output::set(strand, out, app_package),
-                    SidIdentifierAuthority::MandatoryLabel => {
-                        Output::set(strand, out, mandatory_label)
-                    }
-                    SidIdentifierAuthority::ScopedPolicy => Output::set(strand, out, scoped_policy),
-                    SidIdentifierAuthority::Authentication => {
-                        Output::set(strand, out, authentication)
-                    }
-                    SidIdentifierAuthority::ProcessTrust => Output::set(strand, out, process_trust),
-                    SidIdentifierAuthority::Unknown(value) => Output::set(strand, out, value),
-                    authority => Output::set(strand, out, u64::from(authority)),
+                    SidIdentifierAuthority::Null => strand.store(out, null),
+                    SidIdentifierAuthority::World => strand.store(out, world),
+                    SidIdentifierAuthority::Local => strand.store(out, local),
+                    SidIdentifierAuthority::Creator => strand.store(out, creator),
+                    SidIdentifierAuthority::NonUnique => strand.store(out, non_unique),
+                    SidIdentifierAuthority::Nt => strand.store(out, nt),
+                    SidIdentifierAuthority::ResourceManager => strand.store(out, resource_manager),
+                    SidIdentifierAuthority::AppPackage => strand.store(out, app_package),
+                    SidIdentifierAuthority::MandatoryLabel => strand.store(out, mandatory_label),
+                    SidIdentifierAuthority::ScopedPolicy => strand.store(out, scoped_policy),
+                    SidIdentifierAuthority::Authentication => strand.store(out, authentication),
+                    SidIdentifierAuthority::ProcessTrust => strand.store(out, process_trust),
+                    SidIdentifierAuthority::Unknown(value) => strand.store(out, value),
+                    authority => strand.store(out, u64::from(authority)),
                 }
                 Ok(())
             })
             .get("sub_authorities", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
             .method("to_bin", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let bytes = this.annex().to_bytes();
-                Output::set(strand, out, bytes.as_slice());
+                strand.store(out, bytes.as_slice());
                 Ok(())
             })
             .method("lookup", async move |this, strand, args, mut out| {
@@ -637,11 +631,7 @@ fn create_acl<'v>(
         .acl
         .create_with_annex(strand, Acl, AclAnnex::Component(component), &mut *out);
     with_instance!(strand, global.types.acl.cast(&*out).unwrap(), |acl| {
-        Output::set(
-            strand,
-            Mut::slot_mut::<0>(&mut acl.borrow_mut_unwrap()),
-            descriptor,
-        );
+        strand.store(Mut::slot_mut::<0>(&mut acl.borrow_mut_unwrap()), descriptor);
     });
 }
 
@@ -749,15 +739,15 @@ impl<'v> Object<'v> for Acl {
             .get("revision", move |this, strand, out| {
                 let revision = with_acl(this, strand, |acl| acl.revision())?;
                 match revision {
-                    AclRevision::Basic => Output::set(strand, out, basic),
-                    AclRevision::DirectoryService => Output::set(strand, out, directory_service),
-                    AclRevision::Unknown(value) => Output::set(strand, out, value),
+                    AclRevision::Basic => strand.store(out, basic),
+                    AclRevision::DirectoryService => strand.store(out, directory_service),
+                    AclRevision::Unknown(value) => strand.store(out, value),
                 }
                 Ok(())
             })
             .get("size", |this, strand, out| {
                 let size = with_acl(this, strand, |acl| acl.size())?;
-                Output::set(strand, out, size);
+                strand.store(out, size);
                 Ok(())
             })
             .get("aces", |this, strand, out| {
@@ -767,7 +757,7 @@ impl<'v> Object<'v> for Acl {
             .method("to_bin", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let bytes = with_acl(this, strand, |acl| acl.as_bytes().to_vec())?;
-                Output::set(strand, out, bytes.as_slice());
+                strand.store(out, bytes.as_slice());
                 Ok(())
             })
     }
@@ -847,11 +837,7 @@ fn create_ace<'v>(
             if let Some(parent) = parent {
                 let cast = global.types.$field.cast(out).unwrap();
                 with_instance!(strand, cast, |ace| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<0>(&mut ace.borrow_mut_unwrap()),
-                        parent,
-                    );
+                    strand.store(Mut::slot_mut::<0>(&mut ace.borrow_mut_unwrap()), parent);
                 });
             }
         }};
@@ -1206,12 +1192,12 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                     VfsAceType::Unknown(_) => unknown,
                     _ => unknown,
                 };
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
             .get("type_code", |this, strand, out| {
                 let value = with_ace(this, strand, |ace| ace.type_code())?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
             .get("flags", |this, strand, out| {
@@ -1222,7 +1208,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
             })
             .get("size", |this, strand, out| {
                 let value = with_ace(this, strand, |ace| ace.size())?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             });
         if KIND != ACE_BASE && KIND != ACE_CUSTOM {
@@ -1253,7 +1239,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                     let Some(value) = with_ace(this, strand, |ace| ace.object_flags())? else {
                         return Err(Error::field(strand, object_flags_field));
                     };
-                    Output::set(strand, out, value.bits());
+                    strand.store(out, value.bits());
                     Ok(())
                 })
                 .get("object_type", move |this, strand, out| {
@@ -1265,7 +1251,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                     if let Some(value) = value {
                         dolang_ext_uuid::create_guid(strand, value, out);
                     } else {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                     }
                     Ok(())
                 })
@@ -1279,7 +1265,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                     if let Some(value) = value {
                         dolang_ext_uuid::create_guid(strand, value, out);
                     } else {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                     }
                     Ok(())
                 });
@@ -1292,7 +1278,7 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                 else {
                     return Err(Error::field(strand, application_data_field));
                 };
-                Output::set(strand, out, value.as_slice());
+                strand.store(out, value.as_slice());
                 Ok(())
             });
         }
@@ -1319,12 +1305,12 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
             builder = builder
                 .get("successful_access", move |this, strand, out| {
                     let flags = with_ace(this, strand, |ace| ace.flags())?;
-                    Output::set(strand, out, flags.contains(WinAceFlags::SUCCESSFUL_ACCESS));
+                    strand.store(out, flags.contains(WinAceFlags::SUCCESSFUL_ACCESS));
                     Ok(())
                 })
                 .get("failed_access", move |this, strand, out| {
                     let flags = with_ace(this, strand, |ace| ace.flags())?;
-                    Output::set(strand, out, flags.contains(WinAceFlags::FAILED_ACCESS));
+                    strand.store(out, flags.contains(WinAceFlags::FAILED_ACCESS));
                     Ok(())
                 });
         }
@@ -1334,18 +1320,14 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                 if kind != VfsAceType::SystemAccessFilter {
                     return Err(Error::field(strand, trust_protected_filter_field));
                 }
-                Output::set(
-                    strand,
-                    out,
-                    flags.contains(WinAceFlags::TRUST_PROTECTED_FILTER),
-                );
+                strand.store(out, flags.contains(WinAceFlags::TRUST_PROTECTED_FILTER));
                 Ok(())
             });
         }
         builder = builder.method("to_bin", async move |this, strand, args, out| {
             unpack!(strand, args =>);
             let bytes = with_ace(this, strand, |ace| ace.as_bytes().to_vec())?;
-            Output::set(strand, out, bytes.as_slice());
+            strand.store(out, bytes.as_slice());
             Ok(())
         });
         if KIND == ACE_QUALIFIED || KIND == ACE_COMMON || KIND == ACE_OBJECT {
@@ -1362,12 +1344,12 @@ impl<'v, const KIND: u8> Object<'v> for Ace<KIND> {
                         2 | 7 | 13 | 15 => audit,
                         _ => alarm,
                     };
-                    Output::set(strand, out, sym);
+                    strand.store(out, sym);
                     Ok(())
                 })
                 .get("callback", |this, strand, out| {
                     let code = with_ace(this, strand, |ace| ace.type_code())?;
-                    Output::set(strand, out, (9..=16).contains(&code));
+                    strand.store(out, (9..=16).contains(&code));
                     Ok(())
                 });
         }
@@ -1382,11 +1364,7 @@ fn ace_flag<'v, 's, const KIND: u8>(
     flag: u8,
 ) -> Result<'v, 's, ()> {
     let flags = with_ace(this, strand, |ace| ace.flags())?;
-    Output::set(
-        strand,
-        out,
-        flags.contains(WinAceFlags::from_bits_retain(flag)),
-    );
+    strand.store(out, flags.contains(WinAceFlags::from_bits_retain(flag)));
     Ok(())
 }
 
@@ -2743,7 +2721,7 @@ impl<'v> Object<'v> for SecDesc {
             if !loaded {
                 return Err(Error::field(strand, field));
             }
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         }
 
@@ -2767,7 +2745,7 @@ impl<'v> Object<'v> for SecDesc {
 
         builder
             .get("revision", |this, strand, out| {
-                Output::set(strand, out, this.annex().revision() as u8);
+                strand.store(out, this.annex().revision() as u8);
                 Ok(())
             })
             .get("control", |this, strand, out| {
@@ -2788,7 +2766,7 @@ impl<'v> Object<'v> for SecDesc {
                 Ok(())
             })
             .get("rm_control_valid", |this, strand, out| {
-                Output::set(strand, out, this.annex().rm_control_valid());
+                strand.store(out, this.annex().rm_control_valid());
                 Ok(())
             })
             .get("rm_control", move |this, strand, out| {
@@ -2800,7 +2778,7 @@ impl<'v> Object<'v> for SecDesc {
                     return Err(Error::field(strand, owner));
                 }
                 let Some(value) = descriptor.owner() else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                     return Ok(());
                 };
                 let global = strand.state::<WindowsSecurityTag>();
@@ -2813,7 +2791,7 @@ impl<'v> Object<'v> for SecDesc {
                     return Err(Error::field(strand, group));
                 }
                 let Some(value) = descriptor.group() else {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                     return Ok(());
                 };
                 let global = strand.state::<WindowsSecurityTag>();
@@ -2826,7 +2804,7 @@ impl<'v> Object<'v> for SecDesc {
                     return Err(Error::field(strand, dacl));
                 }
                 if !descriptor.dacl_present() || descriptor.dacl().is_none() {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 } else {
                     let global = strand.state::<WindowsSecurityTag>();
                     create_acl(strand, global, this, AclComponent::Dacl, &mut out);
@@ -2839,7 +2817,7 @@ impl<'v> Object<'v> for SecDesc {
                     return Err(Error::field(strand, sacl));
                 }
                 if !descriptor.sacl_present() || descriptor.sacl().is_none() {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 } else {
                     let global = strand.state::<WindowsSecurityTag>();
                     create_acl(strand, global, this, AclComponent::Sacl, &mut out);
@@ -3076,7 +3054,7 @@ impl<'v> Object<'v> for SecDesc {
             .method("to_bin", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let bytes = this.annex().to_bytes();
-                Output::set(strand, out, bytes.as_slice());
+                strand.store(out, bytes.as_slice());
                 Ok(())
             })
     }
@@ -3122,19 +3100,19 @@ impl<'v> Object<'v> for SidName {
                 Ok(())
             })
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().name());
+                strand.store(out, this.annex().name());
                 Ok(())
             })
             .get("domain", |this, strand, out| {
-                Output::set(strand, out, this.annex().domain());
+                strand.store(out, this.annex().domain());
                 Ok(())
             })
             .get("qualified_name", |this, strand, out| {
                 if this.annex().domain().is_empty() {
-                    Output::set(strand, out, this.annex().name());
+                    strand.store(out, this.annex().name());
                 } else {
                     let name = format!("{}\\{}", this.annex().domain(), this.annex().name());
-                    Output::set(strand, out, name.as_str());
+                    strand.store(out, name.as_str());
                 }
                 Ok(())
             })
@@ -3153,7 +3131,7 @@ impl<'v> Object<'v> for SidName {
                     SidNameUse::LogonSession => logon_session,
                     _ => unknown,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .type_method("lookup", async move |_this, strand, args, mut out| {
@@ -3205,14 +3183,14 @@ impl<'v> Object<'v> for TokenGroup {
             out: impl Output<'v>,
             mask: WinTokenGroupAttributes,
         ) -> Result<'v, 's, ()> {
-            Output::set(strand, out, this.annex().attributes().contains(mask));
+            strand.store(out, this.annex().attributes().contains(mask));
             Ok(())
         }
 
         builder
             .get("sid", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
             .get("attributes", |this, strand, out| {
@@ -3264,8 +3242,7 @@ impl<'v> Object<'v> for TokenGroup {
                 flag(this, strand, out, WinTokenGroupAttributes::RESOURCE)
             })
             .get("logon_id", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     this.annex()
                         .attributes()
@@ -3314,11 +3291,7 @@ impl<'v> ArrayLike<'v> for TokenGroups {
                 strand,
                 global.types.token_group.cast(&out).unwrap(),
                 |group| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<0>(&mut group.borrow_mut_unwrap()),
-                        &sid,
-                    );
+                    strand.store(Mut::slot_mut::<0>(&mut group.borrow_mut_unwrap()), &sid);
                 }
             );
             Ok(())
@@ -3337,22 +3310,22 @@ impl<'v> Object<'v> for TokenInfo {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("is_elevated", |this, strand, out| {
-                Output::set(strand, out, this.annex().is_elevated());
+                strand.store(out, this.annex().is_elevated());
                 Ok(())
             })
             .get("user_sid", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
             .get("owner_sid", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<1>(&borrow));
+                strand.store(out, Ref::slot::<1>(&borrow));
                 Ok(())
             })
             .get("primary_group_sid", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<2>(&borrow));
+                strand.store(out, Ref::slot::<2>(&borrow));
                 Ok(())
             })
             .get("groups", |this, strand, out| {
@@ -3363,9 +3336,9 @@ impl<'v> Object<'v> for TokenInfo {
                 let borrow = this.borrow(strand)?;
                 let sid = Ref::slot::<3>(&borrow);
                 if sid.is_nil() {
-                    Output::set(strand, out, Nil);
+                    strand.store(out, Nil);
                 } else {
-                    Output::set(strand, out, sid);
+                    strand.store(out, sid);
                 }
                 Ok(())
             })
@@ -3397,20 +3370,16 @@ pub(crate) fn create_token_info<'v>(
                 create_sid(strand, global, value, &mut sid);
                 let mut borrow = this.borrow_mut_unwrap();
                 match index {
-                    0 => Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &sid),
-                    1 => Output::set(strand, Mut::slot_mut::<1>(&mut borrow), &sid),
-                    2 => Output::set(strand, Mut::slot_mut::<2>(&mut borrow), &sid),
+                    0 => strand.store(Mut::slot_mut::<0>(&mut borrow), &sid),
+                    1 => strand.store(Mut::slot_mut::<1>(&mut borrow), &sid),
+                    2 => strand.store(Mut::slot_mut::<2>(&mut borrow), &sid),
                     _ => unreachable!(),
                 }
             }
 
             if let Some(logon_sid) = info.logon_sid().cloned() {
                 create_sid(strand, global, logon_sid, &mut sid);
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<3>(&mut this.borrow_mut_unwrap()),
-                    &sid,
-                );
+                strand.store(Mut::slot_mut::<3>(&mut this.borrow_mut_unwrap()), &sid);
             }
         });
     });
@@ -3448,7 +3417,7 @@ pub(crate) fn configure_vm<'v>(
             let ace = ace_from_args(strand, global, args, &SpecPath::root("ace")).await?;
             let kind = ace_kind(&ace);
             create_ace(strand, global, kind, AceAnnex::Owned(ace), None, &mut slot);
-            Output::set(strand, &mut out, &slot);
+            strand.store(&mut out, &slot);
             Ok(())
         })
         .function_with_slots("acl", async move |strand, args, mut out, [mut slot]| {
@@ -3457,7 +3426,7 @@ pub(crate) fn configure_vm<'v>(
                 .types
                 .acl
                 .create_with_annex(strand, Acl, AclAnnex::Owned(acl), &mut slot);
-            Output::set(strand, &mut out, &slot);
+            strand.store(&mut out, &slot);
             Ok(())
         })
         .function_with_slots(
@@ -3466,7 +3435,7 @@ pub(crate) fn configure_vm<'v>(
                 let descriptor =
                     sec_desc_from_args(strand, global, args, &SpecPath::root("sec_desc")).await?;
                 create_sec_desc(strand, global, descriptor, &mut slot);
-                Output::set(strand, &mut out, &slot);
+                strand.store(&mut out, &slot);
                 Ok(())
             },
         )

@@ -1,5 +1,5 @@
 use dolang::runtime::with_interrupt_mask;
-use dolang::runtime::{with_instance, with_slots};
+use dolang::runtime::{AllocExt, with_instance, with_slots};
 use std::{
     borrow::Cow,
     io,
@@ -9,7 +9,7 @@ use std::{
 use dolang::{
     compile::{Config, Context, Mode, NodeId, Span, Token},
     runtime::{
-        Error, Object, Output, Result, Strand, Type,
+        Error, Object, Result, Strand, Type,
         object::{Mut, TypeBuilder},
         strand::InterruptMask,
         unpack,
@@ -183,11 +183,7 @@ impl<'v> Object<'v> for LineEditor {
         );
         if let Some(prelude) = prelude {
             with_instance!(strand, this.cast(&out).unwrap(), |editor| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut editor.borrow_mut_unwrap()),
-                    prelude,
-                );
+                strand.store(Mut::slot_mut::<0>(&mut editor.borrow_mut_unwrap()), prelude);
             });
         }
         Ok(())
@@ -264,15 +260,13 @@ impl<'v> Object<'v> for LineEditor {
                 let (editor, result) = result;
                 this.borrow_mut(strand)?.editor = Some(editor);
                 match result {
-                    Ok(line) => Output::set(strand, out, line.as_str()),
-                    Err(ReadlineError::Eof) => Output::set(strand, out, eof),
-                    Err(ReadlineError::Interrupted) => Output::set(strand, out, interrupted),
+                    Ok(line) => strand.store(out, line.as_str()),
+                    Err(ReadlineError::Eof) => strand.store(out, eof),
+                    Err(ReadlineError::Interrupted) => strand.store(out, interrupted),
                     // A SIGINT that arrives before the read loop starts is reported
                     // as a signal rather than as an interrupted read.
                     #[cfg(unix)]
-                    Err(ReadlineError::Signal(Signal::Interrupt)) => {
-                        Output::set(strand, out, interrupted)
-                    }
+                    Err(ReadlineError::Signal(Signal::Interrupt)) => strand.store(out, interrupted),
                     Err(error) => return Err(readline_error(strand, error)),
                 }
                 Ok(())
@@ -288,7 +282,7 @@ impl<'v> Object<'v> for LineEditor {
                 if let Some(path) = path {
                     save_history(editor, &path);
                 }
-                Output::set(strand, out, Nil);
+                strand.store(out, Nil);
                 Ok(())
             })
     }

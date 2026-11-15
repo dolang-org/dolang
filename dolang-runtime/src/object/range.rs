@@ -13,7 +13,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, TypeObject, Value},
+    value::{Slot, TypeObject, Value},
+    vm::AllocExt,
     with_slots,
 };
 
@@ -220,7 +221,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().range)
+        strand.store(out, &strand.singletons().range)
     }
 
     fn op_display<'a, 's>(
@@ -265,7 +266,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             let flag = left.start.eq(strand, &right.start)?
                 && left.end.eq(strand, &right.end)?
                 && left.step.eq(strand, &right.step)?;
-            Output::set(strand, &mut out, flag);
+            strand.store(&mut out, flag);
             Ok(())
         })
     }
@@ -288,14 +289,14 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
         with_slots!(strand, |mut start, mut step| {
-            Output::set(strand, &mut start, &borrow.start);
+            strand.store(&mut start, &borrow.start);
             if start.is_nil() {
-                Output::set(strand, &mut start, 0);
+                strand.store(&mut start, 0);
             }
             let (_, direction) = direction(strand, &start, &borrow.end, borrow.step())?;
-            Output::set(strand, &mut step, &borrow.step);
+            strand.store(&mut step, &borrow.step);
             if step.is_nil() {
-                Output::set(strand, &mut step, 1);
+                strand.store(&mut step, 1);
             }
             let embryo = strand.builtin_types().range_iter.embryo(strand);
             // SAFETY: the iterator is allocated; the bounds move from their rooted slots
@@ -326,9 +327,9 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
                 let borrow = this.get();
                 with_slots!(strand, |mut start| {
                     if borrow.start.is_nil() {
-                        Output::set(strand, Slot::reborrow(&mut start), 0_i64);
+                        strand.store(Slot::reborrow(&mut start), 0_i64);
                     } else {
-                        Output::set(strand, Slot::reborrow(&mut start), &borrow.start);
+                        strand.store(Slot::reborrow(&mut start), &borrow.start);
                     }
                     let (ascending, direction) =
                         direction(strand, &start, &borrow.end, borrow.step())?;
@@ -363,7 +364,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
                         }
                         _ => in_bounds,
                     };
-                    Output::set(strand, out, contained);
+                    strand.store(out, contained);
                     Ok(())
                 })
             }
@@ -383,15 +384,15 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
                 Ok(())
             }
             sym::START => {
-                Output::set(strand, out, &this.get().start);
+                strand.store(out, &this.get().start);
                 Ok(())
             }
             sym::END => {
-                Output::set(strand, out, &this.get().end);
+                strand.store(out, &this.get().end);
                 Ok(())
             }
             sym::STEP => {
-                Output::set(strand, out, &this.get().step);
+                strand.store(out, &this.get().step);
                 Ok(())
             }
             _ => iter::iterable_get(strand, &this, field, out),
@@ -484,7 +485,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_display<'a, 's>(
@@ -508,7 +509,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -525,7 +526,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             Direction::Unbounded => true,
         };
         if res {
-            Output::set(strand, out, &borrow.cur);
+            strand.store(out, &borrow.cur);
             with_slots!(strand, |mut next| {
                 borrow
                     .cur
@@ -588,7 +589,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

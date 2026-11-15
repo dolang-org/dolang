@@ -35,7 +35,7 @@ use crate::{
     stdlib::fmt as fmt_obj,
     strand::{PinScope, Strand},
     sym::{self, Sym},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
 
@@ -233,7 +233,7 @@ impl<'v> Value<'v> {
     pub fn is_instance_of(&self, strand: &mut Strand<'v, '_>, input: impl Input<'v>) -> bool {
         with_slots!(strand, |mut self_ty, mut ty| {
             self.op_type(strand, Slot::reborrow(&mut self_ty));
-            Output::set(strand, &mut ty, input);
+            strand.store(&mut ty, input);
             self_ty.op_subtype(strand, &ty)
         })
     }
@@ -428,7 +428,7 @@ impl<'v> Value<'v> {
                     Prim::F64(_) => &builtin.float,
                     Prim::Bool(_) => &builtin.bool,
                 };
-                Output::set(strand, out, ty)
+                strand.store(out, ty)
             }
             Case::Object(o) => o.op_type(strand, out),
         }
@@ -544,7 +544,7 @@ impl<'v> Value<'v> {
         match &self.case() {
             Case::Prim(prim) => {
                 let value = prim.op_neg(strand)?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             Case::Object(object) => object.op_neg(strand, out),
@@ -557,7 +557,7 @@ impl<'v> Value<'v> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let value = !self.op_bool(strand)?;
-        Output::set(strand, out, value);
+        strand.store(out, value);
         Ok(())
     }
 
@@ -569,7 +569,7 @@ impl<'v> Value<'v> {
         match &self.case() {
             Case::Prim(prim) => {
                 let value = prim.op_bnot(strand)?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
             Case::Object(object) => object.op_bnot(strand, out),
@@ -598,7 +598,7 @@ impl<'v> Value<'v> {
         match match (self.case(), other.case()) {
             // Both primitives: dispatch to primitive handler
             (Case::Prim(left), Case::Prim(right)) => prim(&left, strand, &right).map(|v| {
-                Output::set(strand, out, v);
+                strand.store(out, v);
             }),
             // Object only on left: dispatch to left object handler
             (Case::Object(left), Case::Prim(_)) => lobj(left, strand, other, out),
@@ -1060,7 +1060,7 @@ impl<'v> Value<'v> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
                 let flag = left.op_eq(strand, &right);
-                Output::set(strand, &mut out, flag);
+                strand.store(&mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1080,7 +1080,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Output::set(strand, &mut out, Value::from_bool(self.repr_eq(other)));
+                strand.store(&mut out, Value::from_bool(self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1096,7 +1096,7 @@ impl<'v> Value<'v> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
                 let flag = left.op_eq(strand, &right);
-                Output::set(strand, &mut out, flag);
+                strand.store(&mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1116,7 +1116,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Output::set(strand, &mut out, Value::from_bool(self.repr_eq(other)));
+                strand.store(&mut out, Value::from_bool(self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1132,7 +1132,7 @@ impl<'v> Value<'v> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
                 let flag = left.op_ne(strand, &right);
-                Output::set(strand, &mut out, flag);
+                strand.store(&mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1152,7 +1152,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Output::set(strand, &mut out, Value::from_bool(!self.repr_eq(other)));
+                strand.store(&mut out, Value::from_bool(!self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1168,7 +1168,7 @@ impl<'v> Value<'v> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
                 let flag = left.op_ne(strand, &right);
-                Output::set(strand, &mut out, flag);
+                strand.store(&mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1188,7 +1188,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                Output::set(strand, &mut out, Value::from_bool(!self.repr_eq(other)));
+                strand.store(&mut out, Value::from_bool(!self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1208,7 +1208,7 @@ impl<'v> Value<'v> {
             Case::Prim(this) => {
                 let other = other.to_prim(strand)?;
                 let value = this.op_lt(strand, &other)?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
         }
@@ -1225,7 +1225,7 @@ impl<'v> Value<'v> {
             Case::Prim(this) => {
                 let other = other.to_prim(strand)?;
                 let value = this.op_lte(strand, &other)?;
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             }
         }
@@ -1526,7 +1526,7 @@ impl<'v> Value<'v> {
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut operand, mut result| {
-            Output::set(strand, &mut operand, other);
+            strand.store(&mut operand, other);
             self.op_eq(strand, &operand, Slot::reborrow(&mut result))?;
             result.op_bool(strand)
         })
@@ -1540,7 +1540,7 @@ impl<'v> Value<'v> {
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut operand, mut result| {
-            Output::set(strand, &mut operand, other);
+            strand.store(&mut operand, other);
             self.op_ne(strand, &operand, Slot::reborrow(&mut result))?;
             result.op_bool(strand)
         })
@@ -1555,7 +1555,7 @@ impl<'v> Value<'v> {
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut operand, mut result| {
-            Output::set(strand, &mut operand, other);
+            strand.store(&mut operand, other);
             self.op_lt(strand, &operand, Slot::reborrow(&mut result))?;
             result.op_bool(strand)
         })
@@ -1570,7 +1570,7 @@ impl<'v> Value<'v> {
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut operand, mut result| {
-            Output::set(strand, &mut operand, other);
+            strand.store(&mut operand, other);
             self.op_lte(strand, &operand, Slot::reborrow(&mut result))?;
             result.op_bool(strand)
         })
@@ -1585,7 +1585,7 @@ impl<'v> Value<'v> {
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut operand, mut result| {
-            Output::set(strand, &mut operand, other);
+            strand.store(&mut operand, other);
             self.op_gt(strand, &operand, Slot::reborrow(&mut result))?;
             result.op_bool(strand)
         })
@@ -1600,7 +1600,7 @@ impl<'v> Value<'v> {
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut operand, mut result| {
-            Output::set(strand, &mut operand, other);
+            strand.store(&mut operand, other);
             self.op_gte(strand, &operand, Slot::reborrow(&mut result))?;
             result.op_bool(strand)
         })
@@ -1671,7 +1671,7 @@ impl<'v> Value<'v> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut slot| {
-            Output::set(strand, &mut slot, value);
+            strand.store(&mut slot, value);
             self.op_set(strand, field, slot)
         })
     }
@@ -1698,7 +1698,7 @@ impl<'v> Value<'v> {
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut slot| {
-            Output::set(strand, &mut slot, index);
+            strand.store(&mut slot, index);
             self.op_index(strand, &slot, Output::as_slot(&mut out, private::Sealed))
         })
     }
@@ -1717,8 +1717,8 @@ impl<'v> Value<'v> {
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut sloti, mut slotv| {
-            Output::set(strand, &mut sloti, index);
-            Output::set(strand, &mut slotv, value);
+            strand.store(&mut sloti, index);
+            strand.store(&mut slotv, value);
             self.op_assign(strand, sloti, slotv)
         })
     }
@@ -1774,7 +1774,7 @@ impl<'v> Value<'v> {
         item: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut slot| {
-            Output::set(strand, &mut slot, item);
+            strand.store(&mut slot, item);
             self.op_put(strand, slot).await
         })
     }
@@ -2876,7 +2876,7 @@ impl<'v> BinEmbryo<'v> {
                 ))),
             }
         };
-        Output::set(alloc, out, value);
+        alloc.store(out, value);
     }
 
     /// Finalizes the embryo into a Do `Str` after validating it as UTF-8.
@@ -2904,7 +2904,7 @@ impl<'v> BinEmbryo<'v> {
                 None => Value::from_object(gc::Base::from_str(vm.arena(), header, StrObj, "")),
             }
         };
-        Output::set(alloc, out, value);
+        alloc.store(out, value);
     }
 
     fn allocate(alloc: &mut dyn Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, BinObj> {
@@ -3077,7 +3077,7 @@ impl<'v> StrEmbryo<'v> {
                 None => Value::from_object(gc::Base::from_str(vm.arena(), header, StrObj, "")),
             }
         };
-        Output::set(alloc, out, value)
+        alloc.store(out, value)
     }
 }
 
@@ -3145,7 +3145,7 @@ impl<'v> Weak<'v> {
         };
         if live {
             // The retained reference moves straight into `out`
-            Output::set(alloc, out, Value(self.0.clone(), PhantomData));
+            alloc.store(out, Value(self.0.clone(), PhantomData));
         }
         live
     }
@@ -3214,25 +3214,12 @@ pub trait Input<'v> {
 
 /// Call output parameter.
 ///
-/// This trait abstracts over types that may be passed to receive a [`Value`].
+/// This trait abstracts over types that may be passed to receive a [`Value`]. Write
+/// to an output with [`AllocExt::store`](crate::vm::AllocExt::store) or
+/// [`AllocExt::swap`](crate::vm::AllocExt::swap).
 pub trait Output<'v>: Sized {
     #[doc(hidden)]
     fn as_slot(this: &mut Self, _: private::Sealed) -> Slot<'v, '_>;
-
-    /// Set output to input.
-    fn set(alloc: &mut impl Alloc<'v>, mut this: Self, mut input: impl Input<'v>) {
-        let out = Output::as_slot(&mut this, private::Sealed);
-        input.input_take(alloc, out, private::Sealed);
-    }
-
-    /// Swap with another output.
-    fn swap(_alloc: &mut impl Alloc<'v>, mut this: Self, mut other: impl Output<'v>) {
-        let this = Output::as_slot(&mut this, private::Sealed);
-        let other = Output::as_slot(&mut other, private::Sealed);
-        // Safety: each slot has exclusive access to its location, so the two cannot
-        // overlap, and no reference outlives the swap.
-        unsafe { ptr::swap(this.0.as_ptr(), other.0.as_ptr()) }
-    }
 }
 
 /// Value slot.
@@ -3295,6 +3282,16 @@ impl<'v, 'a> Slot<'v, 'a> {
         // reaches this slot.
         let old = self.replace_raw(value);
         drop(old);
+    }
+
+    /// Swaps the values of two slots.
+    ///
+    /// Only for [`AllocExt::swap`](crate::vm::AllocExt::swap), which holds the
+    /// [`Alloc`] witness every write requires.
+    pub(crate) fn swap_raw(this: &mut Self, other: &mut Slot<'v, '_>) {
+        // Safety: each slot has exclusive access to its location, so the two cannot
+        // overlap, and no reference outlives the swap.
+        unsafe { ptr::swap(this.0.as_ptr(), other.0.as_ptr()) }
     }
 
     /// Moves the value out, leaving nil.

@@ -3,11 +3,11 @@ use dolang::runtime::with_instance;
 
 use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::{self as fmt_spec, Fill, Format, Kind, Pad, Spec};
-use dolang::runtime::{redirect, with_slots};
+use dolang::runtime::{AllocExt, redirect, with_slots};
 use dolang::{
     compile::Config,
     runtime::{
-        Arg, Args, Error, Instance, Object, Output, Result, Slot, State, Strand, Sym, Value, call,
+        Arg, Args, Error, Instance, Object, Result, Slot, State, Strand, Sym, Value, call,
         error::ErrorKind,
         method,
         object::{Mut, Ref, TypeBuilder},
@@ -43,17 +43,17 @@ async fn with_capture<'v, 's, R>(
 ) -> R {
     with_slots!(strand, |mut prev, mut prev_ending| {
         let mut root = global.capture.slot(strand);
-        Output::set(strand, &mut prev, &root);
-        Output::set(strand, &mut root, console);
+        strand.store(&mut prev, &root);
+        strand.store(&mut root, console);
         let mut ending = global.capture_line_ending.slot(strand);
-        Output::set(strand, &mut prev_ending, &ending);
-        Output::set(strand, &mut ending, line_ending);
+        strand.store(&mut prev_ending, &ending);
+        strand.store(&mut ending, line_ending);
         let prev_can_style = global.local.get(strand).set_capture_can_style(can_style);
         let result = f(strand).await;
         let mut root = global.capture.slot(strand);
-        Output::set(strand, &mut root, &prev);
+        strand.store(&mut root, &prev);
         let mut ending = global.capture_line_ending.slot(strand);
-        Output::set(strand, &mut ending, &prev_ending);
+        strand.store(&mut ending, &prev_ending);
         global
             .local
             .get(strand)
@@ -308,7 +308,7 @@ impl<'v> Object<'v> for Text {
                 let width = TextLayout::new(&text).width();
                 drop(text);
                 drop(borrow);
-                Output::set(strand, out, width);
+                strand.store(out, width);
                 Ok(())
             })
             .method("clip", async move |this, strand, args, out| {
@@ -322,7 +322,7 @@ impl<'v> Object<'v> for Text {
                 drop(text);
                 drop(borrow);
                 if source_width <= width {
-                    Output::set(strand, out, this);
+                    strand.store(out, this);
                     return Ok(());
                 }
 
@@ -346,14 +346,14 @@ impl<'v> Object<'v> for Text {
                 unpack!(strand, args => spaces);
                 let spaces = spaces.to_usize(strand)?;
                 if spaces == 0 {
-                    Output::set(strand, out, this);
+                    strand.store(out, this);
                     return Ok(());
                 }
 
                 let borrow = this.borrow(strand)?;
                 let text = Ref::slot::<0>(&borrow).as_str(strand).unwrap().pin();
                 if text.is_empty() {
-                    Output::set(strand, out, this);
+                    strand.store(out, this);
                     return Ok(());
                 }
 
@@ -1518,7 +1518,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             // The *ambient* console: whatever an enclosing `capture` installed,
             // else the host. `term.console` is a name, so it pins instead.
             console::ambient(strand, &mut console)?;
-            Output::set(strand, out, &console);
+            strand.store(out, &console);
             Ok(())
         })
         .function_with_slots(
@@ -1531,7 +1531,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                 match strand.import("shell", &mut shell).await {
                     Ok(()) => shell.get(strand, stdin_sym, &mut input)?,
                     Err(error) if error.kind() == ErrorKind::Import => {
-                        Output::set(strand, &mut input, Singleton::Null);
+                        strand.store(&mut input, Singleton::Null);
                     }
                     Err(error) => return Err(error),
                 }
@@ -1552,7 +1552,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
             async move |strand, args, out, [mut console, mut line_ending, mut tmp]| {
                 unpack!(strand, args => target, func);
                 if target.is_instance_of(strand, global.types.console) {
-                    Output::set(strand, &mut console, target);
+                    strand.store(&mut console, target);
                 } else if target.is_instance_of(strand, TypeObject::Io) {
                     // Any other stream works; the adapter supplies the rest of
                     // the console interface. It does not style — pass a
@@ -1603,7 +1603,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .types
                     .sub_console
                     .create(strand, SubConsole::new(can_style), &mut console);
-                Output::set(strand, &mut line_ending, console::LINE_ENDING);
+                strand.store(&mut line_ending, console::LINE_ENDING);
                 with_capture(
                     strand,
                     global,
@@ -1622,7 +1622,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                         if chomp {
                             value = strip_line_ending(value);
                         }
-                        Output::set(strand, out, value);
+                        strand.store(out, value);
                         Ok(())
                     }
                 )
@@ -1638,7 +1638,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Builder<'v>, global: State<'v, Glob
                     .types
                     .sub_console
                     .create(strand, SubConsole::discard(), &mut console);
-                Output::set(strand, &mut line_ending, console::LINE_ENDING);
+                strand.store(&mut line_ending, console::LINE_ENDING);
                 // The strand's own implicit output only needs touching when it
                 // is still `term.default` — the startup placeholder that
                 // itself forwards through this same capture. Anything else

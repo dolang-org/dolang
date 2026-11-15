@@ -24,7 +24,7 @@ use crate::{
         Input, Output, Slot, Slots, TypeObject, Value,
         fmt::{Format, Spec},
     },
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -454,12 +454,12 @@ impl<'v> Dict<'v> {
                 }
                 let value = match arg {
                     Arg::Pos(value) => {
-                        Output::set(strand, Slot::reborrow(&mut key), position);
+                        strand.store(Slot::reborrow(&mut key), position);
                         position += 1;
                         value
                     }
                     Arg::Key(sym, value) => {
-                        Output::set(strand, Slot::reborrow(&mut key), sym);
+                        strand.store(Slot::reborrow(&mut key), sym);
                         value
                     }
                 };
@@ -571,7 +571,7 @@ impl<'b, 'v, 's> Spread<'v, 's> for DictPairs<'b, 'v> {
         value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut key_slot| {
-            Output::set(strand, Slot::reborrow(&mut key_slot), key);
+            strand.store(Slot::reborrow(&mut key_slot), key);
             self.insert(strand, key_slot, value)
         })
     }
@@ -611,7 +611,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -627,7 +627,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -743,8 +743,8 @@ impl<'v> Dict<'v> {
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut key_slot, mut value_slot| {
-            Output::set(strand, &mut key_slot, key);
-            Output::set(strand, &mut value_slot, value);
+            strand.store(&mut key_slot, key);
+            strand.store(&mut value_slot, value);
             if let Some(sym) = key_slot.as_sym(strand) {
                 sink.symbol(strand, sym, value_slot)
             } else {
@@ -835,7 +835,7 @@ impl<'v> Dict<'v> {
         Self::with_iter_inner(container, epoch, strand, |strand, dict| {
             if let Some((next_index, value)) = Self::next_value_from_index(dict, index.get()) {
                 index.set(next_index);
-                Output::set(strand, &mut out, value);
+                strand.store(&mut out, value);
                 Ok(true)
             } else {
                 Ok(false)
@@ -856,7 +856,7 @@ impl<'v> Dict<'v> {
                 Self::next_value_from_bucket(dict, bucket, index.get())
             {
                 index.set(next_index);
-                Output::set(strand, &mut out, value);
+                strand.store(&mut out, value);
                 Ok(true)
             } else {
                 Ok(false)
@@ -882,7 +882,7 @@ impl<'v> Dict<'v> {
                     visited.set(bucket_index, true);
                 }
                 index.set(next_index);
-                Output::set(strand, &mut out, key);
+                strand.store(&mut out, key);
                 Ok(true)
             } else {
                 Ok(false)
@@ -897,7 +897,7 @@ impl<'v> Protocol<'v> for Values<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -913,7 +913,7 @@ impl<'v> Protocol<'v> for Values<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -942,7 +942,7 @@ impl<'v> Protocol<'v> for Values<'v> {
                     borrow.index.get(),
                     |strand, i, mut out| {
                         Dict::next_value_from_index(&dict, i).map(|(next, value)| {
-                            Output::set(strand, &mut out, value);
+                            strand.store(&mut out, value);
                             next
                         })
                     },
@@ -1010,7 +1010,7 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1026,7 +1026,7 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1056,7 +1056,7 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
                     |strand, i, mut out| {
                         Dict::next_value_from_bucket(&dict, borrow.bucket.clone(), i).map(
                             |(next, value)| {
-                                Output::set(strand, &mut out, value);
+                                strand.store(&mut out, value);
                                 next
                             },
                         )
@@ -1133,7 +1133,7 @@ impl<'v> Protocol<'v> for Keys<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1149,7 +1149,7 @@ impl<'v> Protocol<'v> for Keys<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1181,7 +1181,7 @@ impl<'v> Protocol<'v> for Keys<'v> {
                     |strand, i, mut out| {
                         Dict::next_key_from_index(&dict, i, &visited, &mut pending).map(
                             |(next, key)| {
-                                Output::set(strand, &mut out, key);
+                                strand.store(&mut out, key);
                                 next
                             },
                         )
@@ -1365,7 +1365,7 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iterable)
+        strand.store(out, TypeObject::Iterable)
     }
 
     fn op_get<'a, 's>(
@@ -1451,8 +1451,8 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                     }
                     let pair = state.next_pair(&dict);
                     Ok(pair.map(|(k, v)| {
-                        Output::set(strand, &mut key, k);
-                        Output::set(strand, &mut value, v);
+                        strand.store(&mut key, k);
+                        strand.store(&mut value, v);
                     }))
                 })?
                 .is_some();
@@ -1508,7 +1508,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -1524,7 +1524,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -1627,7 +1627,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().dict)
+        strand.store(out, &strand.singletons().dict)
     }
 
     fn op_debug<'a, 's>(
@@ -1719,7 +1719,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             // Equal pair counts make both walks end together
             if left.total_pairs != right.total_pairs {
-                Output::set(strand, &mut out, Value::FALSE);
+                strand.store(&mut out, Value::FALSE);
                 return Ok(());
             }
             let pairs = left
@@ -1736,11 +1736,11 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     || !l.key.eq(strand, &r.key)?
                     || !l.value.at(*subl).eq(strand, r.value.at(*subr))?
                 {
-                    Output::set(strand, &mut out, Value::FALSE);
+                    strand.store(&mut out, Value::FALSE);
                     return Ok(());
                 }
             }
-            Output::set(strand, &mut out, Value::TRUE);
+            strand.store(&mut out, Value::TRUE);
             Ok(())
         })
     }
@@ -1784,15 +1784,14 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     for (l, r) in [(&l.key, &r.key), (l.value.at(subl), r.value.at(subr))] {
                         if !l.eq(strand, r)? {
                             let flag = l.lt(strand, r)?;
-                            Output::set(strand, &mut out, flag);
+                            strand.store(&mut out, flag);
                             return Ok(());
                         }
                     }
                     i += 1;
                     j += 1;
                 }
-                Output::set(
-                    strand,
+                strand.store(
                     &mut out,
                     Value::from_bool(right.table.len() > left.table.len()),
                 );
@@ -1813,7 +1812,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         let dict = this.borrow(strand)?;
         match dict.find(strand, hv, index)? {
             Some(pair) => {
-                Output::set(strand, out, unsafe { pair.as_ref().value.latest() });
+                strand.store(out, unsafe { pair.as_ref().value.latest() });
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -1929,7 +1928,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 unpack!(strand, args =>);
                 if this.delegator().is_some() {
                     return with_slots!(strand, |mut receiver, mut ty| {
-                        Output::set(strand, Slot::reborrow(&mut receiver), &this);
+                        strand.store(Slot::reborrow(&mut receiver), &this);
                         receiver.op_type(strand, Slot::reborrow(&mut ty));
                         call!(strand, &ty, &receiver, out)
                     });
@@ -1964,7 +1963,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         match field.tag() {
             sym::LEN => {
                 let input = this.borrow(strand)?.total_pairs;
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::CLEAR
@@ -2154,12 +2153,12 @@ impl<'v> Dict<'v> {
         }
         let pos_count = sig.optional.len();
         for (i, default) in sig.optional.iter().enumerate() {
-            Output::set(strand, out.at(i), default);
+            strand.store(out.at(i), default);
         }
 
         with_slots!(strand, |mut key_value| {
             for (i, key) in sig.keys.iter().enumerate() {
-                Output::set(strand, Slot::reborrow(&mut key_value), &key.kind);
+                strand.store(Slot::reborrow(&mut key_value), &key.kind);
 
                 let mut hasher = strand.vm().hasher();
 
@@ -2171,9 +2170,9 @@ impl<'v> Dict<'v> {
                     unsafe { bucket.as_ref() }.value.get(Some(instance))
                 });
                 if let Some(value) = found {
-                    Output::set(strand, out.at(pos_count + i), value)
+                    strand.store(out.at(pos_count + i), value)
                 } else if let Some(default) = &key.default {
-                    Output::set(strand, out.at(pos_count + i), default)
+                    strand.store(out.at(pos_count + i), default)
                 } else {
                     return Err(match &key.kind {
                         UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -2277,15 +2276,15 @@ impl<'v> Dict<'v> {
             .map(|s| s.to_i64(strand).map_err(|_| Error::index(strand)))
             .transpose()?;
         if let Some(value) = this.borrow(strand)?.get(strand, &key, subindex)? {
-            Output::set(strand, &mut out, value);
+            strand.store(&mut out, value);
             Ok(())
         } else if let Some(mut default) = default {
-            Output::set(strand, &mut out, &mut default);
+            strand.store(&mut out, &mut default);
             Ok(())
         } else if let Some(else_key) = or_else {
             call!(strand, else_key, out)
         } else {
-            Output::set(strand, &mut out, Value::NIL);
+            strand.store(&mut out, Value::NIL);
             Ok(())
         }
     }
@@ -2326,7 +2325,7 @@ impl<'v> Dict<'v> {
                                 dict.epoch += 1;
                                 match bucket.value {
                                     EntryValue::Single { value, .. } => {
-                                        Output::set(strand, &mut out, value)
+                                        strand.store(&mut out, value)
                                     }
                                     EntryValue::Multi(_) => unreachable!(),
                                 };
@@ -2354,7 +2353,7 @@ impl<'v> Dict<'v> {
                                     }
                                 }
                                 dict.epoch += 1;
-                                Output::set(strand, &mut out, value);
+                                strand.store(&mut out, value);
                                 return Ok(());
                             }
                         }
@@ -2364,7 +2363,7 @@ impl<'v> Dict<'v> {
         }
 
         if let Some(mut default) = default {
-            Output::set(strand, &mut out, &mut default);
+            strand.store(&mut out, &mut default);
             Ok(())
         } else if let Some(else_key) = or_else {
             call!(strand, else_key, out)
@@ -2381,7 +2380,7 @@ impl<'v> Dict<'v> {
     ) -> Result<'v, 's, ()> {
         let mut dict = this.borrow_mut(strand)?;
         let deleted = dict.delete(strand, &key)?;
-        Output::set(strand, out, deleted);
+        strand.store(out, deleted);
         Ok(())
     }
 
@@ -2427,7 +2426,7 @@ impl<'v> Dict<'v> {
                 }
             }
         };
-        Output::set(strand, &mut out, Value::from_bool(found));
+        strand.store(&mut out, Value::from_bool(found));
         Ok(())
     }
 
@@ -2449,7 +2448,7 @@ impl<'v> Dict<'v> {
             dict.table.len()
         };
         let value = i64::try_from(count).map_err(|_| Error::overflow(strand))?;
-        Output::set(strand, out, value);
+        strand.store(out, value);
         Ok(())
     }
 }
@@ -2493,7 +2492,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

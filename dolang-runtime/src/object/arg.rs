@@ -8,7 +8,8 @@ use crate::{
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::{self, Sym},
-    value::{Output, Slot, Value},
+    value::{Slot, Value},
+    vm::AllocExt,
     with_slots,
 };
 
@@ -65,7 +66,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().arg_acc)
+        strand.store(out, &strand.singletons().arg_acc)
     }
 
     fn op_debug<'a, 's>(
@@ -85,11 +86,11 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
         let pack = this.borrow(strand)?;
         with_slots!(strand, |mut key_slot, mut value_slot| {
             for (key, value) in &pack.inner {
-                Output::set(strand, &mut value_slot, value);
+                strand.store(&mut value_slot, value);
                 if let Some(key) = key {
                     // SAFETY: the reference moves straight into `key_slot`
                     let key = unsafe { Value::from_object(key.dup()) };
-                    Output::set(strand, &mut key_slot, key);
+                    strand.store(&mut key_slot, key);
                     sink.keyed(
                         strand,
                         Slot::reborrow(&mut key_slot),

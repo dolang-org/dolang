@@ -5,7 +5,7 @@ use saphyr::{Mapping as YamlMapping, Scalar, Yaml, YamlEmitter};
 
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
+    Alloc, Input, Instance, Object, Slot, State, Strand, Value,
     error::{Error, Result},
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
@@ -128,7 +128,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                         ty.create_with_annex(strand, EncodeError, annex, &mut error);
                         with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
                             let mut borrow = instance.borrow_mut_unwrap();
-                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                            strand.store(Mut::slot_mut::<0>(&mut borrow), &tuple);
                         });
                         return Err(Error::from_value(strand, &error));
                     }
@@ -547,23 +547,23 @@ fn scalar_into_slot<'v, 's>(
     out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
     if style != ScalarStyle::Plain {
-        Output::set(strand, out, value);
+        strand.store(out, value);
         return Ok(());
     }
 
     if is_null(value) {
-        Output::set(strand, out, Nil);
+        strand.store(out, Nil);
     } else if let Some(bool) = parse_bool(value) {
-        Output::set(strand, out, bool);
+        strand.store(out, bool);
     } else if let Some(int) = parse_int(value) {
         let int = int.ok_or_else(|| {
             decode_error(strand, DecodeKind::Range, span.start, "numeric overflow")
         })?;
-        Output::set(strand, out, int);
+        strand.store(out, int);
     } else if let Some(float) = parse_float(value) {
-        Output::set(strand, out, float);
+        strand.store(out, float);
     } else {
-        Output::set(strand, out, value);
+        strand.store(out, value);
     }
 
     Ok(())
@@ -665,15 +665,15 @@ impl<'v> Object<'v> for DecodeError {
                     DecodeKind::Documents => documents,
                     DecodeKind::Range => range,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().line);
+                strand.store(out, this.annex().line);
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().column);
+                strand.store(out, this.annex().column);
                 Ok(())
             })
     }
@@ -716,12 +716,12 @@ impl<'v> Object<'v> for EncodeError {
                     EncodeKind::Cycle => cycle,
                     EncodeKind::Range => range,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("path", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
     }

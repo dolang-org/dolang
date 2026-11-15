@@ -4,7 +4,7 @@ use dolang::runtime::object::fmt;
 use dolang::runtime::value::fmt::Format;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value, object::TypeBuilder,
+    AllocExt, Error, Instance, Object, Result, Slot, State, Strand, Value, object::TypeBuilder,
     value::TypeObject, with_instance,
 };
 use dolang_vfs::path as vfs_path;
@@ -89,12 +89,11 @@ impl<'v, const FAMILY: u8> Object<'v> for DirEntry<FAMILY> {
         let ino = builder.sym("ino");
         let builder = builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().name.as_str());
+                strand.store(out, this.annex().name.as_str());
                 Ok(())
             })
             .get("type", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     file_type_to_sym(this.annex().file_type, this.annex().global),
                 );
@@ -132,7 +131,7 @@ impl<'v> Object<'v> for DirEntryIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 

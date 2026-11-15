@@ -37,7 +37,7 @@ use crate::{
     sym::Sym,
     unpack,
     value::{Output, Slot, Value},
-    vm::Register,
+    vm::{AllocExt, Register},
     with_instance, with_slots,
 };
 
@@ -268,7 +268,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -284,7 +284,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -298,7 +298,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         let Some(sym) = iter.symbols.get(index) else {
             return Ok(false);
         };
-        Output::set(strand, out, *sym);
+        strand.store(out, *sym);
         iter.index.set(index + 1);
         Ok(true)
     }
@@ -436,7 +436,7 @@ fn is_supertype_of<'v, F: FlagLike>(
 ) -> bool {
     with_slots!(strand, |mut source_ty, mut target_ty| {
         value.op_type(strand, Slot::reborrow(&mut source_ty));
-        Output::set(strand, &mut target_ty, ty);
+        strand.store(&mut target_ty, ty);
         target_ty.op_subtype(strand, &source_ty)
     })
 }
@@ -713,7 +713,7 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
                     .annex()
                     .to_i128()
                     .ok_or_else(|| int_error::<F>(strand))?;
-                Output::set(strand, out, int);
+                strand.store(out, int);
                 Ok(())
             })
         } else {
@@ -729,7 +729,7 @@ impl<'v, F: FlagLike> Object<'v> for Flags<F> {
                 let vm = strand.vm();
                 let table = this.ty(vm).annex(vm);
                 let bit = resolve_sym(strand, table, sym)?;
-                Output::set(strand, &mut out, (*this.annex() & bit) == bit);
+                strand.store(&mut out, (*this.annex() & bit) == bit);
                 Ok(())
             },
         ))

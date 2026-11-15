@@ -13,8 +13,8 @@ use crate::{
     object::protocol::members,
     strand::{Pinned, Strand, in_native_frame},
     sym::{self, Sym},
-    value::{Output, Slot, Value, ValueCell},
-    vm::Vm,
+    value::{Slot, Value, ValueCell},
+    vm::{AllocExt, Vm},
 };
 
 use super::{
@@ -212,7 +212,7 @@ impl<'v> Protocol<'v> for NativeFunctionObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().func);
+        strand.store(out, &strand.singletons().func);
     }
 
     fn op_display<'a, 's>(
@@ -306,7 +306,7 @@ impl<'v> Protocol<'v> for FunctionObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().func)
+        strand.store(out, &strand.singletons().func)
     }
 
     async fn op_call<'a, 's>(
@@ -371,7 +371,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(

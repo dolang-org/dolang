@@ -14,8 +14,8 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, TypeObject, Value},
-    vm::Vm,
+    value::{Slot, TypeObject, Value},
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -373,7 +373,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -389,7 +389,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -415,7 +415,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
                 let Some(bucket) = entry else {
                     continue;
                 };
-                Output::set(strand, out, unsafe { &bucket.as_ref().value });
+                strand.store(out, unsafe { &bucket.as_ref().value });
                 return Ok(true);
             }
         })
@@ -456,7 +456,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().set)
+        strand.store(out, &strand.singletons().set)
     }
 
     fn op_debug<'a, 's>(
@@ -528,7 +528,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
-                Output::set(strand, &mut out, Value::FALSE);
+                strand.store(&mut out, Value::FALSE);
                 return Ok(());
             }
             unsafe {
@@ -539,12 +539,12 @@ impl<'v> Protocol<'v> for Set<'v> {
                     })?
                     .is_none()
                     {
-                        Output::set(strand, &mut out, Value::FALSE);
+                        strand.store(&mut out, Value::FALSE);
                         return Ok(());
                     }
                 }
             }
-            Output::set(strand, &mut out, Value::TRUE);
+            strand.store(&mut out, Value::TRUE);
             Ok(())
         })
     }
@@ -558,7 +558,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         match field.tag() {
             sym::LEN => {
                 let input = this.borrow(strand)?.len();
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::ADD
@@ -605,7 +605,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                     let mut borrow = this.borrow_mut(strand)?;
                     borrow.delete(strand, &value, hash)?
                 };
-                Output::set(strand, out, deleted);
+                strand.store(out, deleted);
                 Ok(())
             }
             sym::CLEAR => {
@@ -629,7 +629,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let contains = this.borrow(strand)?.contains(strand, &value, hash)?;
-                Output::set(strand, out, contains);
+                strand.store(out, contains);
                 Ok(())
             }
             sym::UNION
@@ -734,7 +734,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                                     }
                                 }
                             }
-                            Output::set(strand, out, subset);
+                            strand.store(out, subset);
                             Ok(())
                         })?;
                     }
@@ -752,7 +752,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                                     }
                                 }
                             }
-                            Output::set(strand, out, superset);
+                            strand.store(out, superset);
                             Ok(())
                         })?;
                     }
@@ -803,7 +803,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 if (i + 1).is_multiple_of(crate::INTERRUPT_INTERVAL) {
                     strand.check_trap()?;
                 }
-                Output::set(strand, &mut slot, unsafe { &bucket.as_ref().value });
+                strand.store(&mut slot, unsafe { &bucket.as_ref().value });
                 sink.positional(strand, Slot::reborrow(&mut slot))?;
             }
             Ok(())
@@ -851,7 +851,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(

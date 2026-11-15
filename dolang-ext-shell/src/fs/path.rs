@@ -281,7 +281,7 @@ impl<'v, T: ConcretePath<'v>> ArrayLike<'v> for Components<T> {
             .expect("array view index was normalized")
             .as_str()
             .to_owned();
-        Output::set(strand, out, component.as_str());
+        strand.store(out, component.as_str());
         Ok(())
     }
 }
@@ -419,14 +419,14 @@ macro_rules! impl_concrete_path {
                     .get("name", |this, strand, out| {
                         let borrow = this.annex();
                         if let Some(n) = borrow.as_path().file_name() {
-                            Output::set(strand, out, n);
+                            strand.store(out, n);
                         }
                         Ok(())
                     })
                     .get("stem", |this, strand, out| {
                         let borrow = this.annex();
                         if let Some(stem) = borrow.as_path().file_stem() {
-                            Output::set(strand, out, stem);
+                            strand.store(out, stem);
                         }
                         Ok(())
                     })
@@ -440,13 +440,13 @@ macro_rules! impl_concrete_path {
                     .get("ext", |this, strand, out| {
                         let borrow = this.annex();
                         if let Some(e) = borrow.as_path().extension() {
-                            Output::set(strand, out, e);
+                            strand.store(out, e);
                         }
                         Ok(())
                     })
                     .get("is_absolute", |this, strand, out| {
                         let borrow = this.annex();
-                        Output::set(strand, out, borrow.as_path().is_absolute());
+                        strand.store(out, borrow.as_path().is_absolute());
                         Ok(())
                     })
                     .method("open", async move |this, strand, args, out| {
@@ -893,7 +893,7 @@ macro_rules! impl_concrete_path {
                         .get("stream_name", |this, strand, out| {
                             let annex = this.annex();
                             if let Some(spec) = stream_spec(strand, annex.as_path())? {
-                                Output::set(strand, out, spec.name());
+                                strand.store(out, spec.name());
                             }
                             Ok(())
                         })
@@ -902,7 +902,7 @@ macro_rules! impl_concrete_path {
                             let stream_type = stream_spec(strand, annex.as_path())?
                                 .and_then(|spec| spec.stream_type());
                             if let Some(stream_type) = stream_type {
-                                Output::set(strand, out, stream_type);
+                                strand.store(out, stream_type);
                             }
                             Ok(())
                         })
@@ -915,7 +915,7 @@ macro_rules! impl_concrete_path {
                             };
                             if let Some(disk) = disk {
                                 let disk = disk.to_string();
-                                Output::set(strand, out, disk.as_str());
+                                strand.store(out, disk.as_str());
                             }
                             Ok(())
                         })
@@ -929,7 +929,7 @@ macro_rules! impl_concrete_path {
                                 _ => None,
                             };
                             if let Some(server) = server {
-                                Output::set(strand, out, server.as_str());
+                                strand.store(out, server.as_str());
                             }
                             Ok(())
                         })
@@ -943,7 +943,7 @@ macro_rules! impl_concrete_path {
                                 _ => None,
                             };
                             if let Some(share) = share {
-                                Output::set(strand, out, share.as_str());
+                                strand.store(out, share.as_str());
                             }
                             Ok(())
                         })
@@ -956,7 +956,7 @@ macro_rules! impl_concrete_path {
                                 _ => None,
                             };
                             if let Some(device) = device {
-                                Output::set(strand, out, device.as_str());
+                                strand.store(out, device.as_str());
                             }
                             Ok(())
                         })
@@ -965,7 +965,7 @@ macro_rules! impl_concrete_path {
                             let verbatim = annex
                                 .windows_prefix()
                                 .is_some_and(|prefix| prefix.is_verbatim());
-                            Output::set(strand, out, verbatim);
+                            strand.store(out, verbatim);
                             Ok(())
                         })
                 } else {

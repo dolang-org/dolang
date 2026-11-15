@@ -3,7 +3,7 @@ use crate::global::Tag;
 use std::{cell::Cell, collections::HashSet, mem};
 
 use dolang::runtime::{
-    Error, Input, Instance, Object, Output, Result, State, Strand, Value, call,
+    AllocExt, Error, Input, Instance, Object, Output, Result, State, Strand, Value, call,
     error::ErrorKind,
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
@@ -36,7 +36,7 @@ pub(crate) fn configure_importer<'v>(builder: &mut Builder<'v>) {
                 }
                 let handler = global.types.import_handler.cast(&key).unwrap();
                 let result = with_instance!(strand, handler, |inst| {
-                    Output::set(strand, &mut callback, Ref::slot::<0>(&inst.borrow_unwrap()));
+                    strand.store(&mut callback, Ref::slot::<0>(&inst.borrow_unwrap()));
                     let result = call!(strand, &callback, name, &mut out);
                     if inst.annex().unregistered.get() {
                         // Unregistration raced this callback. Decline even
@@ -126,11 +126,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 strand,
                 global.types.import_handler.cast(&out).unwrap(),
                 |inst| {
-                    Output::set(
-                        strand,
-                        Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
-                        callback,
-                    );
+                    strand.store(Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()), callback);
                 }
             );
             handlers.push(strand, &out)?;

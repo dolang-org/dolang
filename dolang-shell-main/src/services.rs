@@ -1,8 +1,9 @@
 //! Native services used by bundled shell entrypoints.
+use dolang::runtime::AllocExt;
 use dolang::{
     compile::Mode,
     resource::{self, Payload},
-    runtime::{Error, Output, io::IoResultExt as _, unpack, value::Nil, vm::Register},
+    runtime::{Error, io::IoResultExt as _, unpack, value::Nil, vm::Register},
 };
 use dolang_ext_compile::apply_prelude_value;
 
@@ -69,7 +70,7 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
                 None => tokio::fs::read_to_string(&path).await.into_do_io(strand)?,
             };
             let data = load::compile_config(strand, &path, &source, &config, strict).await?;
-            Output::set(strand, out, data.as_slice());
+            strand.store(out, data.as_slice());
             Ok(())
         })
         .function("resource", async move |strand, args, out| {
@@ -83,9 +84,9 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
             let payload = strand
                 .access(|access| resource::get(namespace.as_str(access), name.as_str(access)));
             match payload {
-                Some(Payload::Text(text)) => Output::set(strand, out, text),
-                Some(Payload::Bytes(bytes)) => Output::set(strand, out, bytes),
-                None => Output::set(strand, out, Nil),
+                Some(Payload::Text(text)) => strand.store(out, text),
+                Some(Payload::Bytes(bytes)) => strand.store(out, bytes),
+                None => strand.store(out, Nil),
             }
             Ok(())
         })

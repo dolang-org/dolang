@@ -1,5 +1,5 @@
 use crate::global::MacosSecurityTag;
-use dolang::runtime::{with_instance, with_slots};
+use dolang::runtime::{AllocExt, with_instance, with_slots};
 
 use super::*;
 
@@ -147,7 +147,7 @@ pub(crate) fn create_macos_acl<'v>(
                 .macos_acl
                 .create_with_annex(strand, MacosAclObject, acl, out);
         }
-        None => Output::set(strand, out, Nil),
+        None => strand.store(out, Nil),
     }
 }
 
@@ -232,7 +232,7 @@ impl<'v> Object<'v> for MacosAceObject {
                     VfsMacosAceType::Allow => allow,
                     VfsMacosAceType::Deny => deny,
                 };
-                Output::set(strand, out, value);
+                strand.store(out, value);
                 Ok(())
             })
             .get("principal", move |this, strand, out| {
@@ -576,8 +576,8 @@ pub(crate) fn configure_vm<'v>(
                 }
             };
             with_slots!(strand, |mut kind_slot, mut id_slot| {
-                Output::set(strand, &mut kind_slot, kind);
-                Output::set(strand, &mut id_slot, id);
+                strand.store(&mut kind_slot, kind);
+                strand.store(&mut id_slot, id);
                 strand.tuple([&kind_slot, &id_slot], out)
             });
             Ok(())

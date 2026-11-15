@@ -55,8 +55,8 @@ use crate::{
     strand::{InterruptMask, Strand, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, fmt::Format, with_u8_slice},
-    vm::Vm,
+    value::{BinEmbryo, Input, Root, Slot, TypeObject, Value, fmt::Format, with_u8_slice},
+    vm::{AllocExt, Vm},
     with_slots,
 };
 
@@ -89,7 +89,7 @@ impl<'v> Protocol<'v> for Io {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -166,7 +166,7 @@ impl<'v> Protocol<'v> for Io {
             sym::READABLE | sym::WRITABLE | sym::SEEKABLE | sym::FORKABLE
                 if this.delegator().is_some() =>
             {
-                Output::set(strand, out, false);
+                strand.store(out, false);
                 Ok(())
             }
             _ => match this.delegator() {
@@ -222,7 +222,7 @@ impl<'v> Protocol<'v> for Io {
         let Some(stream) = this.delegator() else {
             return Err(Error::type_error(strand, "sink protocol not supported"));
         };
-        Output::set(strand, out, stream);
+        strand.store(out, stream);
         Ok(())
     }
 
@@ -313,7 +313,7 @@ async fn helper_mcall<'v, 'a, 's>(
         }
         sym::SINK_METHOD => {
             unpack!(strand, args => stream);
-            Output::set(strand, out, &stream);
+            strand.store(out, &stream);
             Ok(())
         }
         sym::PUT_METHOD => {
@@ -432,7 +432,7 @@ async fn write_all<'v, 's>(
                     Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
                 };
                 len += piece_len(strand, &piece)?;
-                Output::set(strand, pieces.at(index + 1), &piece);
+                strand.store(pieces.at(index + 1), &piece);
             }
             if len == 0 {
                 return Ok(());
@@ -487,7 +487,7 @@ async fn write_all_value<'v, 's>(
                 method!(strand, stream, write, data, &mut written_count)?;
             } else {
                 with_u8_slice!(strand, data, |bytes| {
-                    Output::set(strand, &mut rest, &bytes[offset..])
+                    strand.store(&mut rest, &bytes[offset..])
                 })
                 .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
                 method!(strand, stream, write, &rest, &mut written_count)?;
@@ -524,7 +524,7 @@ async fn put<'v, 's>(
     }
     let text = value.to_string(strand)?;
     with_slots!(strand, |mut data| {
-        Output::set(strand, &mut data, text.as_str());
+        strand.store(&mut data, text.as_str());
         write_all_value(strand, stream, &data).await
     })
 }
@@ -547,7 +547,7 @@ async fn copy_to<'v, 's>(
         }
         Ok(copied)
     })?;
-    Output::set(strand, out, copied);
+    strand.store(out, copied);
     Ok(())
 }
 
@@ -569,7 +569,7 @@ impl<'v> Protocol<'v> for ChunksObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -585,7 +585,7 @@ impl<'v> Protocol<'v> for ChunksObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -804,7 +804,7 @@ async fn serve_write<'v, 's>(
     data: &[u8],
 ) -> Result<'v, 's, usize> {
     with_slots!(strand, |mut bin, mut count| {
-        Output::set(strand, &mut bin, data);
+        strand.store(&mut bin, data);
         method!(
             strand,
             stream,

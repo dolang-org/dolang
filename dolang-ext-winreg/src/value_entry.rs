@@ -1,6 +1,6 @@
 //! `winreg.Value` — one entry of a live [`crate::values::Values`] enumeration.
 
-use dolang::runtime::{Object, Output, Result, Slot, State, Strand, object::TypeBuilder};
+use dolang::runtime::{AllocExt, Object, Result, Slot, State, Strand, object::TypeBuilder};
 use dolang_vfs_winreg::Value;
 
 use crate::{convert, global::Global};
@@ -29,11 +29,11 @@ fn kind_to_do<'v, 's>(
         Value::Binary(_) => global.syms.binary,
         Value::None => global.syms.none,
         Value::Other { kind, .. } => {
-            Output::set(strand, out, i128::from(*kind));
+            strand.store(out, i128::from(*kind));
             return Ok(());
         }
     };
-    Output::set(strand, out, sym);
+    strand.store(out, sym);
     Ok(())
 }
 
@@ -47,7 +47,7 @@ impl<'v> Object<'v> for ValueEntry {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().name.as_str());
+                strand.store(out, this.annex().name.as_str());
                 Ok(())
             })
             .get("kind", |this, strand, out| {

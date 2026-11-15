@@ -36,7 +36,7 @@ use crate::{
     object::{interface::InterfaceTag, native::Mut},
     stdlib::io::{Concat, ConcatType},
     strand::Strand,
-    value::{Output, Value},
+    value::Value,
     vm::AllocExt,
     with_instance, with_slots,
 };
@@ -144,7 +144,7 @@ pub fn concat<'v, 's>(
         ty.create(strand, Concat::new(end.to_vec()), &mut concat);
         with_instance!(strand, ty.cast(&concat).unwrap(), |inst| {
             let mut borrow = inst.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), iterable);
+            strand.store(Mut::slot_mut::<0>(&mut borrow), iterable);
         });
         get(strand, &concat, |_, _| Ok(()))
     })

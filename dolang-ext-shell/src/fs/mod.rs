@@ -605,8 +605,7 @@ async fn exists<'v, 's>(
     let local = global.local.get(strand);
     let vfs = local.vfs();
     let res = vfs.metadata(path.to_path()).await.map(|_| ());
-    Output::set(
-        strand,
+    strand.store(
         out,
         match res {
             Ok(()) => true,
@@ -720,7 +719,7 @@ async fn write_with_mode<'v, 's>(
     let close_result = file.close().await;
     let bytes_written = bytes_written.into_sys(strand)?;
     close_result.into_sys(strand)?;
-    Output::set(strand, out, bytes_written);
+    strand.store(out, bytes_written);
     Ok(())
 }
 
@@ -1005,7 +1004,7 @@ async fn well_known_path<'v, 's>(
     let path = vfs.well_known_path(key, app, &env).await.into_sys(strand)?;
     match path {
         Some(path) => create_path(strand, global, path, out)?,
-        None => Output::set(strand, out, dolang::runtime::value::Nil),
+        None => strand.store(out, dolang::runtime::value::Nil),
     }
     Ok(())
 }
@@ -1555,7 +1554,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, FsG
         .function("is_absolute", async move |strand, args, out| {
             unpack!(strand, args => path);
             let path = path_from_value(strand, &path)?;
-            Output::set(strand, out, path.is_absolute());
+            strand.store(out, path.is_absolute());
             Ok(())
         })
         .function("home_dir", async move |strand, args, out| {

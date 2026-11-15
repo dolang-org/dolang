@@ -95,7 +95,7 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().module)
+        strand.store(out, &strand.singletons().module)
     }
 
     fn op_display<'a, 's>(
@@ -206,7 +206,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -276,7 +276,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 }
@@ -321,7 +321,7 @@ impl<'v> Protocol<'v> for NativeObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().module)
+        strand.store(out, &strand.singletons().module)
     }
 
     fn op_display<'a, 's>(
@@ -353,7 +353,7 @@ impl<'v> Protocol<'v> for NativeObj<'v> {
         match map.binary_search_by_key(&field, |(s, _)| *s) {
             Ok(index) => match &unsafe { map.get_unchecked(index) }.1 {
                 NativeField::Value(value) => {
-                    Output::set(strand, out, value);
+                    strand.store(out, value);
                     Ok(())
                 }
                 NativeField::Getter(getter) => in_native_frame!(
@@ -517,7 +517,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().module)
+        strand.store(out, &strand.singletons().module)
     }
 
     fn op_display<'a, 's>(
@@ -579,7 +579,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Empty => (),
         };
         with_slots!(strand, |mut key| {
-            Output::set(strand, Slot::reborrow(&mut key), field);
+            strand.store(Slot::reborrow(&mut key), field);
             with_pin!(strand, re.dict, |dict| {
                 match dict
                     .borrow()
@@ -587,7 +587,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                     .get(strand, &key, Some(0))?
                 {
                     Some(value) => {
-                        Output::set(strand, &mut out, value);
+                        strand.store(&mut out, value);
                         Ok(())
                     }
                     None => Err(Error::field(strand, field)),
@@ -619,7 +619,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
             NamespaceInner::Empty => (),
         }
         with_slots!(strand, |mut key| {
-            Output::set(strand, Slot::reborrow(&mut key), field);
+            strand.store(Slot::reborrow(&mut key), field);
             let mut hasher = strand.vm().hasher();
             key.op_hash(strand, &mut hasher).unwrap();
             let hv = hasher.finish();
@@ -660,7 +660,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     // Deliberately not `Iterable`. Modules follow the iteration protocol —

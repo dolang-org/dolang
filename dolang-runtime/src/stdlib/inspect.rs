@@ -50,19 +50,19 @@ impl<'v> Object<'v> for Location {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("source", |this, strand, out| {
-                Output::set(strand, out, &*this.annex().source);
+                strand.store(out, &*this.annex().source);
                 Ok(())
             })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().span.start().line_offset());
+                strand.store(out, this.annex().span.start().line_offset());
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().span.start().column_offset());
+                strand.store(out, this.annex().span.start().column_offset());
                 Ok(())
             })
             .get("len", |this, strand, out| {
-                Output::set(strand, out, this.annex().span.len());
+                strand.store(out, this.annex().span.len());
                 Ok(())
             })
     }
@@ -192,7 +192,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 unpack!(strand, args => func);
                 match definition(strand.vm(), &func) {
                     Some((source, span)) => location(strand, source, span, out),
-                    None => Output::set(strand, out, Nil),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })

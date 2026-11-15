@@ -14,11 +14,11 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{
-        Output, Slot, Value,
+        Slot, Value,
         fmt::{self, Format, Spec},
         prim::Prim,
     },
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_slots, with_str,
 };
 
@@ -43,7 +43,7 @@ fn binop<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let prim = right.to_prim(strand)?;
     let value = op(&Prim::from(left), strand, &prim)?;
-    Output::set(strand, out, value);
+    strand.store(out, value);
     Ok(())
 }
 
@@ -56,7 +56,7 @@ fn rbinop<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let prim = right.to_prim(strand)?;
     let value = op(&prim, strand, &Prim::from(left))?;
-    Output::set(strand, out, value);
+    strand.store(out, value);
     Ok(())
 }
 
@@ -75,7 +75,7 @@ impl<'v> Protocol<'v> for IntObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().int)
+        strand.store(out, &strand.singletons().int)
     }
 
     fn op_debug<'a, 's>(
@@ -130,7 +130,7 @@ impl<'v> Protocol<'v> for IntObj {
             .get()
             .checked_neg()
             .ok_or_else(|| Error::overflow(strand))?;
-        Output::set(strand, out, Prim::Int(value));
+        strand.store(out, Prim::Int(value));
         Ok(())
     }
 
@@ -139,7 +139,7 @@ impl<'v> Protocol<'v> for IntObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, Prim::Int(!*this.get()));
+        strand.store(out, Prim::Int(!*this.get()));
         Ok(())
     }
 
@@ -351,7 +351,7 @@ impl<'v> Protocol<'v> for IntObj {
             .to_prim(strand)
             .map_err(|_| Error::unsupported(strand, "`==`"))?;
         let flag = Prim::from(*this.get()).op_eq(strand, &prim);
-        Output::set(strand, &mut out, flag);
+        strand.store(&mut out, flag);
         Ok(())
     }
 
@@ -425,7 +425,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().int)
+        strand.store(out, &strand.singletons().int)
     }
 
     fn op_verbatim<'a, 's>(
@@ -498,7 +498,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
             .value
             .checked_neg()
             .ok_or_else(|| Error::overflow(strand))?;
-        Output::set(strand, out, Prim::Int(value));
+        strand.store(out, Prim::Int(value));
         Ok(())
     }
 
@@ -507,7 +507,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, Prim::Int(!this.get().value));
+        strand.store(out, Prim::Int(!this.get().value));
         Ok(())
     }
 
@@ -719,7 +719,7 @@ impl<'v> Protocol<'v> for VerbatimObj {
             .to_prim(strand)
             .map_err(|_| Error::unsupported(strand, "`==`"))?;
         let flag = Prim::from(this.get().value).op_eq(strand, &prim);
-        Output::set(strand, &mut out, flag);
+        strand.store(&mut out, flag);
         Ok(())
     }
 
@@ -856,7 +856,7 @@ impl<'v> Protocol<'v> for Int {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -950,11 +950,11 @@ impl<'v> Protocol<'v> for Int {
     ) -> Result<'v, 's, ()> {
         match field.tag() {
             sym::MIN_CONST => {
-                Output::set(strand, out, i128::MIN);
+                strand.store(out, i128::MIN);
                 return Ok(());
             }
             sym::MAX_CONST => {
-                Output::set(strand, out, i128::MAX);
+                strand.store(out, i128::MAX);
                 return Ok(());
             }
             _ => {}
@@ -1022,7 +1022,7 @@ impl<'v> Protocol<'v> for Int {
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => value);
         let coerced = construct(&value, strand)?;
-        Output::set(strand, out, coerced);
+        strand.store(out, coerced);
         Ok(())
     }
 
@@ -1038,7 +1038,7 @@ impl<'v> Protocol<'v> for Int {
                 unpack!(strand, args => self_val, value);
                 let coerced = construct(&value, strand)?;
                 with_slots!(strand, |mut native| {
-                    Output::set(strand, Slot::reborrow(&mut native), coerced);
+                    strand.store(Slot::reborrow(&mut native), coerced);
                     self_val.op_fill(
                         strand,
                         &strand.singletons().int,

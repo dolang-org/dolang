@@ -4,8 +4,8 @@ use crate::{
     gc::arena::Visit,
     strand::Strand,
     sym::Sym,
-    value::{Input, Output, Slot, Slots, Value, private},
-    vm::Alloc,
+    value::{Input, Slot, Slots, Value, private},
+    vm::{Alloc, AllocExt},
 };
 use dolang_bytecode::{Rest, Variadic};
 
@@ -17,13 +17,13 @@ pub(crate) enum UnpackKeyKind<'v, 'a> {
 impl<'v, 'a> Input<'v> for &UnpackKeyKind<'v, 'a> {
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: stored into the scanned `out` at once
-        Output::set(&mut alloc, &mut out, unsafe {
+        alloc.store(&mut out, unsafe {
             match self {
                 UnpackKeyKind::Sym(sym) => Value::from_object(vm.sym_obj(*sym)),
                 UnpackKeyKind::Const(value) => value.dup(),
@@ -132,7 +132,7 @@ impl<'v, 'a> Unpack<'v, 'a> {
     /// without keyed items
     pub(crate) fn fill_empty_key_rest(&self, strand: &mut Strand<'v, '_>, out: &mut Slots<'v, '_>) {
         if let Some(slot) = self.key_rest_slot() {
-            Output::set(strand, out.at(slot), &strand.singletons().null);
+            strand.store(out.at(slot), &strand.singletons().null);
         }
     }
 

@@ -5,7 +5,7 @@ use ::base64::{
 };
 
 use dolang::runtime::{
-    Instance, Object, Output, Result, State, Strand, Sym, Value,
+    AllocExt, Instance, Object, Result, State, Strand, Sym, Value,
     error::Error,
     object::{TypeBuilder, fmt},
     unpack,
@@ -237,7 +237,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 View::Bin(bin) => strand.access(|access| engine.encode(bin.as_slice(access))),
                 _ => return Err(Error::type_error(strand, "expected Str or Bin")),
             };
-            Output::set(strand, out, encoded.as_str());
+            strand.store(out, encoded.as_str());
             Ok(())
         })
         .function("decode", async move |strand, args, out| {
@@ -254,7 +254,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 _ => return Err(Error::type_error(strand, "expected Str or Bin")),
             }
             .map_err(|e| decode_error(strand, e, pad))?;
-            Output::set(strand, out, decoded.as_slice());
+            strand.store(out, decoded.as_slice());
             Ok(())
         })
         .commit();
@@ -281,13 +281,13 @@ impl<'v> Object<'v> for DecodeError {
                     DecodeKind::LastSymbol => last_symbol,
                     DecodeKind::Padding => padding,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("offset", |this, strand, out| {
                 match this.annex().offset {
-                    Some(offset) => Output::set(strand, out, offset),
-                    None => Output::set(strand, out, Nil),
+                    Some(offset) => strand.store(out, offset),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })

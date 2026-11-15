@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, Strand, Value,
+    AllocExt, Error, Instance, Object, Result, Slot, Strand, Value,
     object::{ArrayLike, ArrayView, Spread, SpreadContext, TypeBuilder, Unpack},
     value::TypeObject,
 };
@@ -28,7 +28,7 @@ impl<'v> ArrayLike<'v> for ArgsView {
         index: usize,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this.annex()[index].as_ref());
+        strand.store(out, this.annex()[index].as_ref());
         Ok(())
     }
 }
@@ -44,7 +44,7 @@ impl<'v> Object<'v> for Args {
         builder
             .supertype(TypeObject::Iterable)
             .get("len", |this, strand, out| {
-                Output::set(strand, out, this.annex().len());
+                strand.store(out, this.annex().len());
                 Ok(())
             })
     }

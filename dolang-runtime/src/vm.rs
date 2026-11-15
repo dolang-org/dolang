@@ -138,7 +138,7 @@ impl<'v, A: Alloc<'v> + ?Sized> Alloc<'v> for &mut A {
     }
 }
 
-/// Operations available on every [`Alloc`], including `dyn Alloc`: lazy setup, and
+/// Operations available on every [`Alloc`], including `dyn Alloc`: writes, lazy setup, and
 /// constructing values that need nothing rooted while they are built.
 pub trait AllocExt<'v>: Alloc<'v> {
     /// Run the lazy setup declared under tag `K` with [`Builder::lazy`], unless it has
@@ -165,6 +165,20 @@ pub trait AllocExt<'v>: Alloc<'v> {
         self.alloc_vm(private::Sealed).state::<K>()
     }
 
+    /// Store `input` into `out`.
+    fn store(&mut self, mut out: impl Output<'v>, mut input: impl Input<'v>) {
+        let mut alloc = self;
+        let slot = Output::as_slot(&mut out, crate::value::private::Sealed);
+        input.input_take(&mut alloc, slot, crate::value::private::Sealed);
+    }
+
+    /// Swap the values of two outputs.
+    fn swap(&mut self, mut a: impl Output<'v>, mut b: impl Output<'v>) {
+        let mut a = Output::as_slot(&mut a, crate::value::private::Sealed);
+        let mut b = Output::as_slot(&mut b, crate::value::private::Sealed);
+        Slot::swap_raw(&mut a, &mut b);
+    }
+
     /// Store a new empty array into `out`.
     fn new_array(&mut self, out: impl Output<'v>) {
         let mut alloc = self;
@@ -188,11 +202,10 @@ pub trait AllocExt<'v>: Alloc<'v> {
 
     /// Intern `name` and store the symbol into `out`, as the `sym` function does.
     fn intern_sym(&mut self, name: &str, out: impl Output<'v>) {
-        let mut alloc = self;
-        let vm = alloc.alloc_vm(private::Sealed);
+        let vm = self.alloc_vm(private::Sealed);
         // SAFETY: stored into the scanned `out` at once
         let sym = unsafe { Value::from_object(vm.sym_register_obj(name)) };
-        Output::set(&mut alloc, out, sym);
+        self.store(out, sym);
     }
 
     /// Store a callable wrapping the async Rust function `func` into `out`.
@@ -676,7 +689,7 @@ impl<'v> Vm<'v> {
         let nsyms = verified.symtab.content.len();
         let nconsts = verified.consttab.content.len();
         with_slots_dynamic!(strand, nsyms + nconsts + 1, |mut slots| {
-            Output::set(strand, slots.at(nsyms + nconsts), importer);
+            strand.store(slots.at(nsyms + nconsts), importer);
             let sym_ty = strand.builtin_types().sym;
             for (i, s) in verified.symtab.content.iter().enumerate() {
                 let name = std::str::from_utf8(&main[s.name.clone()]).expect("verified UTF-8");
@@ -688,7 +701,7 @@ impl<'v> Vm<'v> {
                         strand.sym_register_obj(name)
                     }
                 };
-                Output::set(strand, slots.at(i), &sym);
+                strand.store(slots.at(i), &sym);
             }
             // SAFETY: the symbol cells stay rooted, unwritten, until the program owns their
             // symbols, which then root the `Sym`s for the program's life
@@ -701,29 +714,29 @@ impl<'v> Vm<'v> {
             for (i, c) in verified.consttab.content.iter().enumerate() {
                 let out = slots.at(nsyms + i);
                 match c {
-                    file::Const::Nil => Output::set(strand, out, Nil),
-                    file::Const::Int(v) => Output::set(strand, out, *v),
+                    file::Const::Nil => strand.store(out, Nil),
+                    file::Const::Int(v) => strand.store(out, *v),
                     file::Const::VerbatimInt(v, file::StrId { start, end }) => {
                         let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
                         let verbatim = strand.builtin_types().verbatim_int;
                         verbatim.create_imm(strand, int::Verbatim::new(*v, s), out);
                     }
-                    file::Const::F64(v) => Output::set(strand, out, *v),
+                    file::Const::F64(v) => strand.store(out, *v),
                     file::Const::VerbatimF64(v, file::StrId { start, end }) => {
                         let s = std::str::from_utf8(&main[*start..*end]).expect("verified UTF-8");
                         let verbatim = strand.builtin_types().verbatim_f64;
                         verbatim.create_imm(strand, float::Verbatim::new(*v, s), out);
                     }
-                    file::Const::Bool(v) => Output::set(strand, out, *v),
+                    file::Const::Bool(v) => strand.store(out, *v),
                     file::Const::Str(file::StrId { start, end }) => {
                         // Safety: the verifier checks that string constants are UTF-8
                         let s = unsafe { std::str::from_utf8_unchecked(&main[*start..*end]) };
-                        Output::set(strand, out, s);
+                        strand.store(out, s);
                     }
                     file::Const::Bin(file::BinId { start, end }) => {
-                        Output::set(strand, out, &main[*start..*end]);
+                        strand.store(out, &main[*start..*end]);
                     }
-                    file::Const::Sym(idx) => Output::set(strand, out, symtab[*idx]),
+                    file::Const::Sym(idx) => strand.store(out, symtab[*idx]),
                 }
             }
 
@@ -868,7 +881,7 @@ pub(crate) fn root_slot<'v, 'a>(roots: &'a MonoVec<ValueCell<'v>>) -> Slot<'v, '
 /// ```ignore
 /// builder.module("my_module")
 ///     .function("greet", async |strand, args, out| {
-///         Output::set(strand, out, "Hello!");
+///         strand.store(out, "Hello!");
 ///         Ok(())
 ///     })
 ///     .commit();
@@ -946,7 +959,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     ///     unpack!(strand, args => a, b);
     ///     let a = a.as_i64(strand).ok_or_else(|| Error::type_error(strand, "expected Int"))?;
     ///     let b = b.as_i64(strand).ok_or_else(|| Error::type_error(strand, "expected Int"))?;
-    ///     Output::set(strand, out, a + b);
+    ///     strand.store(out, a + b);
     ///     Ok(())
     /// })
     /// ```
@@ -1030,7 +1043,7 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
     /// ```
     pub fn value(mut self, name: &str, value: impl Input<'v>) -> Self {
         let sym = self.vm.sym(name);
-        self.push_value(sym, |vm, out| Output::set(vm, out, value));
+        self.push_value(sym, |vm, out| vm.store(out, value));
         self
     }
 

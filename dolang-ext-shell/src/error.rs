@@ -11,7 +11,7 @@ use dolang_vfs::{
 };
 
 use dolang::runtime::{
-    AllocExt, Args, Error, Instance, Object, Output, Result, Slot, Strand, Type,
+    AllocExt, Args, Error, Instance, Object, Result, Slot, Strand, Type,
     io::{self as runtime_io, IntoIoError, IoError},
     object::{Request, TypeBuilder},
     unpack,
@@ -257,19 +257,19 @@ impl<'v> Object<'v> for ProcError {
                 .nominal_supertype(TypeObject::RuntimeError)
                 .get("rc", |this, strand, out| {
                     if let Some(code) = this.annex().status.code() {
-                        Output::set(strand, out, i64::from(code));
+                        strand.store(out, i64::from(code));
                     }
                     Ok(())
                 });
         builder.get("signal", move |this, strand, out| {
             if matches!(this.annex().operating_system, OperatingSystem::Windows) {
-                Output::set(strand, out, dolang::runtime::value::Nil);
+                strand.store(out, dolang::runtime::value::Nil);
                 return Ok(());
             }
             if let Some(signal) = this.annex().status.signal() {
-                Output::set(strand, out, i64::from(signal));
+                strand.store(out, i64::from(signal));
             } else {
-                Output::set(strand, out, dolang::runtime::value::Nil);
+                strand.store(out, dolang::runtime::value::Nil);
             }
             Ok(())
         })

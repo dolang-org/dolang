@@ -1,5 +1,5 @@
 use dolang::runtime::{
-    Instance, Object, Output, State, Strand, object::TypeBuilder, unpack, value::Nil,
+    AllocExt, Instance, Object, Output, State, Strand, object::TypeBuilder, unpack, value::Nil,
     vm::ModuleBuilder,
 };
 use dolang_ext_shell::ResultExt;
@@ -38,7 +38,7 @@ impl<'v> Object<'v> for ServerType {
     type TypeAnnex = ();
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.get("int", |this, strand, out| {
-            Output::set(strand, out, u64::from(this.annex().bits()));
+            strand.store(out, u64::from(this.annex().bits()));
             Ok(())
         })
     }
@@ -53,30 +53,30 @@ impl<'v> Object<'v> for MachineInfo {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.name());
+                strand.store(out, this.annex().info.name());
                 Ok(())
             })
             .get("domain", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.domain());
+                strand.store(out, this.annex().info.domain());
                 Ok(())
             })
             .get("version_major", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.version_major());
+                strand.store(out, this.annex().info.version_major());
                 Ok(())
             })
             .get("version_minor", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.version_minor());
+                strand.store(out, this.annex().info.version_minor());
                 Ok(())
             })
             .get("comment", |this, strand, out| {
                 match this.annex().info.comment() {
-                    Some(comment) => Output::set(strand, out, comment),
-                    None => Output::set(strand, out, Nil),
+                    Some(comment) => strand.store(out, comment),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
             .get("server_started", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.server_started());
+                strand.store(out, this.annex().info.server_started());
                 Ok(())
             })
             .get("server_type", |this, strand, out| {
@@ -92,22 +92,22 @@ impl<'v> Object<'v> for MachineInfo {
             })
             .get("workstation", |this, strand, out| {
                 let has = role(&this, machine::ServerType::WORKSTATION);
-                Output::set(strand, out, has);
+                strand.store(out, has);
                 Ok(())
             })
             .get("server", |this, strand, out| {
                 let has = role(&this, machine::ServerType::SERVER);
-                Output::set(strand, out, has);
+                strand.store(out, has);
                 Ok(())
             })
             .get("domain_controller", |this, strand, out| {
                 let has = role(&this, machine::ServerType::DOMAIN_CTRL);
-                Output::set(strand, out, has);
+                strand.store(out, has);
                 Ok(())
             })
             .get("backup_domain_controller", |this, strand, out| {
                 let has = role(&this, machine::ServerType::DOMAIN_BAKCTRL);
-                Output::set(strand, out, has);
+                strand.store(out, has);
                 Ok(())
             })
     }

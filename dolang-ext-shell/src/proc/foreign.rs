@@ -71,18 +71,18 @@ impl<'v> Object<'v> for Info {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("pid", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.pid());
+                strand.store(out, this.annex().info.pid());
                 Ok(())
             })
             .get("parent_pid", |this, strand, out| {
                 match this.annex().info.parent_pid() {
-                    Some(ppid) => Output::set(strand, out, ppid),
-                    None => Output::set(strand, out, Nil),
+                    Some(ppid) => strand.store(out, ppid),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
             .get("name", |this, strand, out| {
-                Output::set(strand, out, this.annex().info.name());
+                strand.store(out, this.annex().info.name());
                 Ok(())
             })
             .get("exe", |this, strand, out| {
@@ -93,7 +93,7 @@ impl<'v> Object<'v> for Info {
                         create_path(strand, fs, exe.to_path_buf(), out)
                     }
                     None => {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                         Ok(())
                     }
                 }
@@ -106,7 +106,7 @@ impl<'v> Object<'v> for Info {
                         create_path(strand, fs, cwd.to_path_buf(), out)
                     }
                     None => {
-                        Output::set(strand, out, Nil);
+                        strand.store(out, Nil);
                         Ok(())
                     }
                 }
@@ -114,7 +114,7 @@ impl<'v> Object<'v> for Info {
             .get("cmdline", |this, strand, out| {
                 match this.annex().info.command_line() {
                     Some(cmdline) => strand.tuple(cmdline.iter().map(String::as_str), out),
-                    None => Output::set(strand, out, Nil),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
@@ -125,8 +125,8 @@ impl<'v> Object<'v> for Info {
                         let security = strand.force_state::<UnixSecurityTag>();
                         create_identity(strand, security, identity, &mut out)
                     }
-                    Ok(None) => Output::set(strand, out, Nil),
-                    Err(_) => Output::set(strand, out, Nil),
+                    Ok(None) => strand.store(out, Nil),
+                    Err(_) => strand.store(out, Nil),
                 }
                 Ok(())
             })
@@ -137,8 +137,8 @@ impl<'v> Object<'v> for Info {
                         let security = strand.force_state::<WindowsSecurityTag>();
                         create_token_info(strand, security, token, &mut out)
                     }
-                    Ok(None) => Output::set(strand, out, Nil),
-                    Err(_) => Output::set(strand, out, Nil),
+                    Ok(None) => strand.store(out, Nil),
+                    Err(_) => strand.store(out, Nil),
                 }
                 Ok(())
             })
@@ -150,15 +150,15 @@ impl<'v> Object<'v> for Info {
                         .types
                         .proc_status
                         .create_with_annex(strand, Status, exit, out),
-                    None => Output::set(strand, out, Nil),
+                    None => strand.store(out, Nil),
                 }
                 Ok(())
             })
             .get("cmdline_win", move |this, strand, out| {
                 match this.annex().info.windows_command_line() {
-                    Ok(Some(cmdline)) => Output::set(strand, out, cmdline),
-                    Ok(None) => Output::set(strand, out, Nil),
-                    Err(_) => Output::set(strand, out, Nil),
+                    Ok(Some(cmdline)) => strand.store(out, cmdline),
+                    Ok(None) => strand.store(out, Nil),
+                    Err(_) => strand.store(out, Nil),
                 }
                 Ok(())
             })
@@ -192,8 +192,8 @@ impl<'v> Object<'v> for Status {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder.get("code", |this, strand, out| {
             match this.annex().code() {
-                Some(code) => Output::set(strand, out, code),
-                None => Output::set(strand, out, Nil),
+                Some(code) => strand.store(out, code),
+                None => strand.store(out, Nil),
             }
             Ok(())
         })
@@ -227,7 +227,7 @@ impl<'v> Object<'v> for Procs {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -286,7 +286,7 @@ impl<'v> Object<'v> for Proc {
                     .ok_or_else(|| Error::state_error(strand, "process handle is closed"))?;
                 let pid = process.pid();
                 drop(borrow);
-                Output::set(strand, out, pid);
+                strand.store(out, pid);
                 Ok(())
             })
             .method("info", async move |this, strand, args, out| {

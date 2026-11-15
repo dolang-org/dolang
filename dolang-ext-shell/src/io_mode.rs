@@ -7,7 +7,7 @@ use std::{
 };
 
 use dolang::runtime::{
-    Arg, Args, BYTE_STREAM_CHUNK_SIZE, Error, Output, Result, Slot, Strand, Value,
+    AllocExt, Arg, Args, BYTE_STREAM_CHUNK_SIZE, Error, Output, Result, Slot, Strand, Value,
     io::Shared,
     value::{BinEmbryo, PinBin, PinStr, View},
 };
@@ -255,7 +255,7 @@ where
         .write_all_vectored(&mut slices)
         .await
         .into_sys(strand)?;
-    Output::set(strand, out, written);
+    strand.store(out, written);
     Ok(())
 }
 

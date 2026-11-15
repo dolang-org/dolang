@@ -3,13 +3,13 @@
 //! This module provides functions for quoting strings for shell safety,
 //! joining arguments with proper quoting, and splitting shell command lines.
 
-use dolang::runtime::with_instance;
+use dolang::runtime::{AllocExt, with_instance};
 use std::mem;
 
 use dolang::{
     compile::Config,
     runtime::{
-        Error, Instance, Object, Output, Result, Slot, Strand,
+        Error, Instance, Object, Result, Slot, Strand,
         error::ResultExt,
         object::{Mut, TypeBuilder},
         unpack,
@@ -44,7 +44,7 @@ impl<'v> Object<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -58,7 +58,7 @@ impl<'v> Object<'v> for Iter<'v> {
         // Get the next token
         match borrow.shlex.next() {
             Some(token) => {
-                Output::set(strand, out, token.as_str());
+                strand.store(out, token.as_str());
                 Ok(true)
             }
             None => {
@@ -85,7 +85,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
             unpack!(strand, args => arg);
             let s = arg.to_verbatim(strand)?;
             let quoted = shlex::try_quote(&s).into_do_value(strand)?;
-            Output::set(strand, out, quoted.as_ref());
+            strand.store(out, quoted.as_ref());
             Ok(())
         })
         .function("split", async move |strand, args, mut out| {
@@ -102,11 +102,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
             let shlex = Shlex::new(unsafe { mem::transmute::<&str, &'static str>(&*pin) });
             iter.create(strand, Iter { shlex, _pin: pin }, &mut out);
             with_instance!(strand, iter.cast(&out).unwrap(), |inst| {
-                Output::set(
-                    strand,
-                    Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()),
-                    arg,
-                );
+                strand.store(Mut::slot_mut::<0>(&mut inst.borrow_mut_unwrap()), arg);
             });
             Ok(())
         })
@@ -126,7 +122,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>) {
                 // Join with quoting
                 let joined =
                     shlex::try_join(items.iter().map(|s| s.as_str())).into_do_value(strand)?;
-                Output::set(strand, out, joined.as_str());
+                strand.store(out, joined.as_str());
                 Ok(())
             },
         )

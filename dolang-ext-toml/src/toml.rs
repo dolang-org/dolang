@@ -10,7 +10,7 @@ use toml_writer::TomlWrite;
 
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Alloc, Input, Instance, Object, Output, Slot, State, Strand, Value,
+    Alloc, Input, Instance, Object, Slot, State, Strand, Value,
     error::{Error, Result},
     object::{Mut, Ref, TypeBuilder, fmt},
     unpack,
@@ -598,7 +598,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, i128::from(v));
+        self.0.store(&mut self.1, i128::from(v));
         Ok(())
     }
 
@@ -606,7 +606,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -614,7 +614,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, i128::from(v));
+        self.0.store(&mut self.1, i128::from(v));
         Ok(())
     }
 
@@ -624,7 +624,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     {
         let value = i128::try_from(v)
             .map_err(|_| Self::fail(self.2, DecodeKind::Range, "numeric overflow"))?;
-        Output::set(self.0, &mut self.1, value);
+        self.0.store(&mut self.1, value);
         Ok(())
     }
 
@@ -632,7 +632,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -640,7 +640,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -648,7 +648,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
     where
         E: de::Error,
     {
-        Output::set(self.0, &mut self.1, v);
+        self.0.store(&mut self.1, v);
         Ok(())
     }
 
@@ -719,7 +719,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for Seed<'v, 'a, 'b> {
             while have_key {
                 let current_key = key_text.take().unwrap();
                 map.next_value_seed(Seed(strand, Slot::reborrow(&mut value), &mut *kind))?;
-                Output::set(strand, &mut saved_key, &key);
+                strand.store(&mut saved_key, &key);
 
                 if current_key == DATETIME_FIELD {
                     have_key = map
@@ -768,7 +768,7 @@ impl<'v, 'a, 'b, 'de> Visitor<'de> for MapKeySeed<'v, 'a, 'b, '_> {
     where
         E: de::Error,
     {
-        Output::set(self.strand, &mut self.out, v);
+        self.strand.store(&mut self.out, v);
         *self.text = Some(v.to_owned());
         Ok(())
     }
@@ -889,7 +889,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                         ty.create_with_annex(strand, EncodeError, annex, &mut error);
                         with_instance!(strand, ty.cast(&error).unwrap(), |instance| {
                             let mut borrow = instance.borrow_mut_unwrap();
-                            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &tuple);
+                            strand.store(Mut::slot_mut::<0>(&mut borrow), &tuple);
                         });
                         return Err(Error::from_value(strand, &error));
                     }
@@ -928,15 +928,15 @@ impl<'v> Object<'v> for DecodeError {
                     DecodeKind::Unsupported => unsupported,
                     DecodeKind::Range => range,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("line", |this, strand, out| {
-                Output::set(strand, out, this.annex().line);
+                strand.store(out, this.annex().line);
                 Ok(())
             })
             .get("column", |this, strand, out| {
-                Output::set(strand, out, this.annex().column);
+                strand.store(out, this.annex().column);
                 Ok(())
             })
     }
@@ -981,12 +981,12 @@ impl<'v> Object<'v> for EncodeError {
                     EncodeKind::Range => range,
                     EncodeKind::Key => key,
                 };
-                Output::set(strand, out, kind);
+                strand.store(out, kind);
                 Ok(())
             })
             .get("path", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
     }

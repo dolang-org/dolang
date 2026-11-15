@@ -588,7 +588,7 @@ impl<'v> Object<'v> for Fmt {
         builder
             .get("len", |this, strand, out| {
                 let len = Segments.len(this, strand);
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             })
             // The way to ask for the expansion. A sequence has no implicit
@@ -898,7 +898,7 @@ fn substitute<'v, 's>(
             substitute_segment(strand, global, bindings, consumed, &segments, segment)
         })?;
         create_from_segments(strand, global, &segments, Slot::reborrow(&mut built));
-        Output::set(strand, out, &built);
+        strand.store(out, &built);
         Ok(())
     })
 }
@@ -916,8 +916,8 @@ fn substitute_segment<'v, 's>(
         return with_slots!(strand, |mut name, mut source, mut value, mut filled| {
             let spec = with_instance!(strand, param, |param| {
                 let borrow = param.borrow(strand)?;
-                Output::set(strand, &mut name, Ref::slot::<0>(&borrow));
-                Output::set(strand, &mut source, Ref::slot::<1>(&borrow));
+                strand.store(&mut name, Ref::slot::<0>(&borrow));
+                strand.store(&mut source, Ref::slot::<1>(&borrow));
                 Ok(param.annex().spec)
             })?;
             let found = bindings
@@ -948,8 +948,8 @@ fn substitute_segment<'v, 's>(
     with_slots!(strand, |mut inner, mut source, mut rebuilt, mut wrapped| {
         let spec = with_instance!(strand, bound, |bound| {
             let borrow = bound.borrow(strand)?;
-            Output::set(strand, &mut inner, Ref::slot::<0>(&borrow));
-            Output::set(strand, &mut source, Ref::slot::<1>(&borrow));
+            strand.store(&mut inner, Ref::slot::<0>(&borrow));
+            strand.store(&mut source, Ref::slot::<1>(&borrow));
             Ok(bound.annex().spec)
         })?;
         // A sequence bound inside a sequence has holes of its own, and they are
@@ -1070,7 +1070,7 @@ fn create_from_segments<'v>(
     ty.create_with_annex(strand, Fmt, FmtAnnex { global }, &mut out);
     with_instance!(strand, ty.cast(&out).unwrap(), |this| {
         let mut borrow = this.borrow_mut_unwrap();
-        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), segments);
+        strand.store(Mut::slot_mut::<0>(&mut borrow), segments);
     });
 }
 
@@ -1100,11 +1100,11 @@ where
         .get("fill", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.fill {
-                Fill::Default => Output::set(strand, out, Nil),
-                Fill::Zero => Output::set(strand, out, annex.global.symbols.zero),
+                Fill::Default => strand.store(out, Nil),
+                Fill::Zero => strand.store(out, annex.global.symbols.zero),
                 Fill::Char(ch) => {
                     let mut buf = [0; 4];
-                    Output::set(strand, out, &*ch.encode_utf8(&mut buf));
+                    strand.store(out, &*ch.encode_utf8(&mut buf));
                 }
             }
             Ok(())
@@ -1112,43 +1112,43 @@ where
         .get("align", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.align {
-                None => Output::set(strand, out, Nil),
-                Some(align) => Output::set(strand, out, annex.global.symbols.align_symbol(align)),
+                None => strand.store(out, Nil),
+                Some(align) => strand.store(out, annex.global.symbols.align_symbol(align)),
             }
             Ok(())
         })
         .get("sign", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.sign {
-                None => Output::set(strand, out, Nil),
-                Some(sign) => Output::set(strand, out, annex.global.symbols.sign_symbol(sign)),
+                None => strand.store(out, Nil),
+                Some(sign) => strand.store(out, annex.global.symbols.sign_symbol(sign)),
             }
             Ok(())
         })
         .get("width", |this, strand, out| {
             match this.annex().spec.width {
-                Some(width) => Output::set(strand, out, width),
-                None => Output::set(strand, out, Nil),
+                Some(width) => strand.store(out, width),
+                None => strand.store(out, Nil),
             }
             Ok(())
         })
         .get("precision", |this, strand, out| {
             match this.annex().spec.precision {
-                Some(precision) => Output::set(strand, out, precision),
-                None => Output::set(strand, out, Nil),
+                Some(precision) => strand.store(out, precision),
+                None => strand.store(out, Nil),
             }
             Ok(())
         })
         .get("alt", |this, strand, out| {
             let alt = this.annex().spec.alt;
-            Output::set(strand, out, alt);
+            strand.store(out, alt);
             Ok(())
         })
         .get("kind", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.kind {
-                None => Output::set(strand, out, Nil),
-                Some(kind) => Output::set(strand, out, annex.global.symbols.kind_symbol(kind)),
+                None => strand.store(out, Nil),
+                Some(kind) => strand.store(out, annex.global.symbols.kind_symbol(kind)),
             }
             Ok(())
         })
@@ -1172,24 +1172,24 @@ pub(crate) fn register<'v>(builder: &mut Builder<'v>) -> State<'v, Global<'v>> {
     let value = build_spec_members(builder.build_type::<FmtValue>((), ()))
         .get("value", |this, strand, out| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, out, Ref::slot::<0>(&borrow));
+            strand.store(out, Ref::slot::<0>(&borrow));
             Ok(())
         })
         .get("source", |this, strand, out| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, out, Ref::slot::<1>(&borrow));
+            strand.store(out, Ref::slot::<1>(&borrow));
             Ok(())
         })
         .build();
     let param = build_spec_members(builder.build_type::<FmtParam>((), ()))
         .get("name", |this, strand, out| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, out, Ref::slot::<0>(&borrow));
+            strand.store(out, Ref::slot::<0>(&borrow));
             Ok(())
         })
         .get("source", |this, strand, out| {
             let borrow = this.borrow(strand)?;
-            Output::set(strand, out, Ref::slot::<1>(&borrow));
+            strand.store(out, Ref::slot::<1>(&borrow));
             Ok(())
         })
         .build();
@@ -1306,9 +1306,9 @@ fn create_param<'v, 's>(
     ty.create_with_annex(strand, FmtParam, SpecAnnex { global, spec }, &mut out);
     with_instance!(strand, ty.cast(&out).unwrap(), |instance| {
         let mut borrow = instance.borrow_mut_unwrap();
-        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), name);
+        strand.store(Mut::slot_mut::<0>(&mut borrow), name);
         if let Some(source) = source {
-            Output::set(strand, Mut::slot_mut::<1>(&mut borrow), source);
+            strand.store(Mut::slot_mut::<1>(&mut borrow), source);
         }
     });
     Ok(())
@@ -1326,9 +1326,9 @@ fn create_value<'v>(
     ty.create_with_annex(strand, FmtValue, SpecAnnex { global, spec }, &mut out);
     with_instance!(strand, ty.cast(&out).unwrap(), |instance| {
         let mut borrow = instance.borrow_mut_unwrap();
-        Output::set(strand, Mut::slot_mut::<0>(&mut borrow), value);
+        strand.store(Mut::slot_mut::<0>(&mut borrow), value);
         if let Some(source) = source {
-            Output::set(strand, Mut::slot_mut::<1>(&mut borrow), source);
+            strand.store(Mut::slot_mut::<1>(&mut borrow), source);
         }
     });
 }
@@ -1467,7 +1467,7 @@ pub(crate) fn view_value_bound<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let borrow = this.borrow(strand)?;
-    Output::set(strand, out, Ref::slot::<0>(&borrow));
+    strand.store(out, Ref::slot::<0>(&borrow));
     Ok(())
 }
 
@@ -1478,7 +1478,7 @@ pub(crate) fn view_param_name<'v, 's>(
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
     let borrow = this.borrow(strand)?;
-    Output::set(strand, out, Ref::slot::<0>(&borrow));
+    strand.store(out, Ref::slot::<0>(&borrow));
     Ok(())
 }
 

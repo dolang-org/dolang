@@ -6,8 +6,8 @@ use std::{
 };
 
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, object::Ref, object::TypeBuilder,
-    value::TypeObject, with_instance, with_slots,
+    AllocExt, Error, Instance, Object, Result, Slot, State, Strand, object::Ref,
+    object::TypeBuilder, value::TypeObject, with_instance, with_slots,
 };
 
 use crate::{
@@ -170,22 +170,22 @@ impl<'v> Object<'v> for Event {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("type", |this, strand, out| {
-                Output::set(strand, out, this.annex().event_type.as_str());
+                strand.store(out, this.annex().event_type.as_str());
                 Ok(())
             })
             .get("data", |this, strand, out| {
-                Output::set(strand, out, this.annex().data.as_str());
+                strand.store(out, this.annex().data.as_str());
                 Ok(())
             })
             .get("id", |this, strand, out| {
                 if let Some(id) = &this.annex().id {
-                    Output::set(strand, out, id.as_str());
+                    strand.store(out, id.as_str());
                 }
                 Ok(())
             })
             .get("retry", |this, strand, out| {
                 if let Some(retry) = this.annex().retry {
-                    Output::set(strand, out, retry);
+                    strand.store(out, retry);
                 }
                 Ok(())
             })
@@ -242,7 +242,7 @@ impl<'v> Object<'v> for EventIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -272,7 +272,7 @@ impl<'v> Object<'v> for EventIter {
 
             let chunk = with_slots!(strand, |mut response| {
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, &mut response, Ref::slot::<0>(&borrow));
+                strand.store(&mut response, Ref::slot::<0>(&borrow));
                 drop(borrow);
                 let response = global
                     .types

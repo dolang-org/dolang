@@ -167,7 +167,7 @@ pub(crate) fn create_any_acl<'v>(
     out: &mut Slot<'v, '_>,
 ) {
     match acl {
-        None => Output::set(strand, out, Nil),
+        None => strand.store(out, Nil),
         Some(VfsAnyAcl::Posix(acl)) => {
             let global = strand.force_state::<UnixSecurityTag>();
             create_posix_acl(strand, global, Some(acl), out)
@@ -180,7 +180,7 @@ pub(crate) fn create_any_acl<'v>(
             let global = strand.force_state::<MacosSecurityTag>();
             create_macos_acl(strand, global, Some(acl), out)
         }
-        Some(_) => Output::set(strand, out, Nil),
+        Some(_) => strand.store(out, Nil),
     }
 }
 
@@ -327,7 +327,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, local: LocalKey<'v, L
                         .to_owned()
                 }
             };
-            Output::set(strand, out, name.as_str());
+            strand.store(out, name.as_str());
             Ok(())
         })
         .commit();

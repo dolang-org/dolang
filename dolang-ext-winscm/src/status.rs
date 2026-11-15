@@ -2,7 +2,7 @@
 //! `.query_status`, `.wait_for_status_change`, and `ServiceInfo.status`.
 
 use dolang::runtime::{
-    Object, Output, State, Strand,
+    AllocExt, Object, Output, State, Strand,
     object::{FlagsTypeExt, TypeBuilder},
 };
 use dolang_vfs_winscm::ServiceStatus;
@@ -68,31 +68,27 @@ impl<'v> Object<'v> for Status {
             })
             .get("win32_exit_code", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(strand, out, i128::from(annex.status.win32_exit_code));
+                strand.store(out, i128::from(annex.status.win32_exit_code));
                 Ok(())
             })
             .get("service_specific_exit_code", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(
-                    strand,
-                    out,
-                    i128::from(annex.status.service_specific_exit_code),
-                );
+                strand.store(out, i128::from(annex.status.service_specific_exit_code));
                 Ok(())
             })
             .get("check_point", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(strand, out, i128::from(annex.status.check_point));
+                strand.store(out, i128::from(annex.status.check_point));
                 Ok(())
             })
             .get("wait_hint", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(strand, out, i128::from(annex.status.wait_hint));
+                strand.store(out, i128::from(annex.status.wait_hint));
                 Ok(())
             })
             .get("process_id", |this, strand, out| {
                 let annex = this.annex();
-                Output::set(strand, out, i128::from(annex.status.process_id));
+                strand.store(out, i128::from(annex.status.process_id));
                 Ok(())
             })
     }

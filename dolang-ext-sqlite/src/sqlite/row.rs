@@ -3,7 +3,7 @@ use std::{cell::Cell, ffi::CStr};
 use bitvec::slice::BitSlice;
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
-    Error, Instance, Object, Output, Result, Slot, State, Strand, Value,
+    Error, Instance, Object, Result, Slot, State, Strand, Value,
     object::{Mut, Ref, Rest, Spread, SpreadContext, TypeBuilder, Unpack, UnpackItem},
     value::Nil,
     value::TypeObject,
@@ -47,7 +47,7 @@ impl<'v> Object<'v> for Rows {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -119,7 +119,7 @@ impl<'v> Object<'v> for Rows {
                 let stmt_borrow = stmt.borrow(strand)?;
                 let owned = matches!(&stmt_borrow.query, QueryState::Active { owned: true, .. });
 
-                Output::set(strand, &mut conn, Ref::slot::<0>(&stmt_borrow));
+                strand.store(&mut conn, Ref::slot::<0>(&stmt_borrow));
                 drop(stmt_borrow);
                 let conn = annex.global.types.connection.cast(&conn).unwrap();
 
@@ -177,11 +177,11 @@ impl<'v> Object<'v> for Rows {
                             annex.global.types.row.cast(&wrapper).unwrap(),
                             |row| {
                                 let mut row = row.borrow_mut_unwrap();
-                                Output::set(strand, Mut::slot_mut::<0>(&mut row), stmt);
+                                strand.store(Mut::slot_mut::<0>(&mut row), stmt);
                             }
                         );
 
-                        Output::set(strand, out, wrapper);
+                        strand.store(out, wrapper);
                         Ok(true)
                     })
                 } else {
@@ -244,7 +244,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
             match item {
                 UnpackItem::Pos { slot, default } if keyed => {
                     let input = default.ok_or_else(|| Error::missing_positional(strand, 0))?;
-                    Output::set(strand, slot, input);
+                    strand.store(slot, input);
                 }
                 UnpackItem::Pos { mut slot, default } => {
                     // Find next unconsumed column
@@ -265,7 +265,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
                     }
                     // No more columns available
                     let input = default.ok_or_else(|| Error::missing_positional(strand, count))?;
-                    Output::set(strand, slot, input);
+                    strand.store(slot, input);
                 }
                 UnpackItem::SymKey {
                     key,
@@ -277,7 +277,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
                     if idx < 0 || idx as usize >= consumed.len() || consumed[idx as usize] {
                         // Column not found or already consumed
                         let input = default.ok_or_else(|| Error::missing_key(strand, key))?;
-                        Output::set(strand, slot, input);
+                        strand.store(slot, input);
                     } else {
                         consumed[idx as usize] = true;
                         let found = get(
@@ -309,7 +309,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
 
                     if idx < 0 || idx as usize >= consumed.len() || consumed[idx as usize] {
                         let input = default.ok_or_else(|| Error::missing_key(strand, key))?;
-                        Output::set(strand, slot, input);
+                        strand.store(slot, input);
                     } else {
                         consumed[idx as usize] = true;
                         let found = get(
@@ -436,7 +436,7 @@ fn unpack_columns<'v, 's>(
         let rest = global.types.row_rest.cast(&slot).unwrap();
         with_instance!(strand, rest, |rest| {
             let mut rest = rest.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut rest), row);
+            strand.store(Mut::slot_mut::<0>(&mut rest), row);
         });
     }
     Ok(())
@@ -590,7 +590,7 @@ unsafe fn get<'v, 's>(
             }
             unsafe {
                 match sqlite3_column_type(raw, idx) {
-                    SQLITE_NULL => Output::set(strand, out, Nil),
+                    SQLITE_NULL => strand.store(out, Nil),
                     SQLITE_INTEGER => {
                         let val = sqlite3_column_int64(raw, idx);
                         if stmt_annex
@@ -598,23 +598,23 @@ unsafe fn get<'v, 's>(
                             .get(idx as usize)
                             .is_some_and(|flag| *flag)
                         {
-                            Output::set(strand, out, val != 0);
+                            strand.store(out, val != 0);
                         } else {
-                            Output::set(strand, out, val);
+                            strand.store(out, val);
                         }
                     }
-                    SQLITE_FLOAT => Output::set(strand, out, sqlite3_column_double(raw, idx)),
+                    SQLITE_FLOAT => strand.store(out, sqlite3_column_double(raw, idx)),
                     SQLITE_TEXT => {
                         let ptr = sqlite3_column_text(raw, idx);
                         let len = sqlite3_column_bytes(raw, idx);
                         let bytes = std::slice::from_raw_parts(ptr, len as usize);
-                        Output::set(strand, out, String::from_utf8_lossy(bytes).as_ref())
+                        strand.store(out, String::from_utf8_lossy(bytes).as_ref())
                     }
                     SQLITE_BLOB => {
                         let ptr = sqlite3_column_blob(raw, idx) as *const u8;
                         let len = sqlite3_column_bytes(raw, idx);
                         let bytes = std::slice::from_raw_parts(ptr, len as usize);
-                        Output::set(strand, out, bytes);
+                        strand.store(out, bytes);
                     }
                     _ => return Err(Error::runtime(strand, "unsupported sqlite type")),
                 }
@@ -624,12 +624,12 @@ unsafe fn get<'v, 's>(
         RowData::Owned(values) => {
             if let Some(value) = values.get(idx as usize) {
                 match value {
-                    SqliteValue::Null => Output::set(strand, out, Nil),
-                    SqliteValue::Bool(b) => Output::set(strand, out, *b),
-                    SqliteValue::Integer(i) => Output::set(strand, out, *i),
-                    SqliteValue::Real(f) => Output::set(strand, out, *f),
-                    SqliteValue::Text(s) => Output::set(strand, out, s.as_str()),
-                    SqliteValue::Blob(b) => Output::set(strand, out, b.as_slice()),
+                    SqliteValue::Null => strand.store(out, Nil),
+                    SqliteValue::Bool(b) => strand.store(out, *b),
+                    SqliteValue::Integer(i) => strand.store(out, *i),
+                    SqliteValue::Real(f) => strand.store(out, *f),
+                    SqliteValue::Text(s) => strand.store(out, s.as_str()),
+                    SqliteValue::Blob(b) => strand.store(out, b.as_slice()),
                 };
                 Ok(true)
             } else {
@@ -764,11 +764,7 @@ impl<'v> Object<'v> for RowRest {
         let iter = global.types.row_rest_iter.cast(&out).unwrap();
         with_instance!(strand, iter, |iter| {
             let mut iter = iter.borrow_mut_unwrap();
-            Output::set(
-                strand,
-                Mut::slot_mut::<0>(&mut iter),
-                Ref::slot::<0>(&borrow),
-            );
+            strand.store(Mut::slot_mut::<0>(&mut iter), Ref::slot::<0>(&borrow));
         });
         Ok(())
     }
@@ -804,7 +800,7 @@ impl<'v> Object<'v> for RowRestIter {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -871,7 +867,7 @@ impl<'v> Object<'v> for RowRestIter {
                         strand.intern_sym(&name, Slot::reborrow(&mut key));
                         strand.tuple([&key, &value], out);
                     } else {
-                        Output::set(strand, out, &value);
+                        strand.store(out, &value);
                     }
                     annex.index.set(index + 1);
                     Ok(true)

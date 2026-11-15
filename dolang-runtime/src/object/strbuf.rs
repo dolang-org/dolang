@@ -14,7 +14,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, StrEmbryo, TypeObject, Value},
-    vm::Vm,
+    vm::{AllocExt, Vm},
     with_str,
 };
 
@@ -199,7 +199,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().strbuf)
+        strand.store(out, &strand.singletons().strbuf)
     }
 
     fn op_debug<'a, 's>(
@@ -231,8 +231,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Output::set(
-                strand,
+            strand.store(
                 &mut out,
                 Value::from_bool(this_borrow.as_str() == other_borrow.as_str()),
             );
@@ -252,8 +251,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            Output::set(
-                strand,
+            strand.store(
                 &mut out,
                 Value::from_bool(this_borrow.as_str() < other_borrow.as_str()),
             );
@@ -284,7 +282,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         let slice = me
             .get(start..end)
             .ok_or_else(|| Error::runtime(strand, BOUNDARY_ERROR))?;
-        Output::set(strand, out, slice);
+        strand.store(out, slice);
         Ok(())
     }
 
@@ -369,7 +367,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                     cur[start..end].to_owned()
                 };
                 unsafe { borrow.embryo.splice(strand, start, end, &[]) };
-                Output::set(strand, out, removed.as_str());
+                strand.store(out, removed.as_str());
                 Ok(())
             }
             sym::TRUNCATE => {
@@ -399,7 +397,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.starts_with: not a string"))?;
                 let input = with_str!(strand, prefix, |prefix| borrow.as_str().starts_with(prefix));
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::ENDS_WITH => {
@@ -409,7 +407,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "str.ends_with: not a string"))?;
                 let input = with_str!(strand, suffix, |suffix| borrow.as_str().ends_with(suffix));
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -419,7 +417,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                     .as_str(strand)
                     .ok_or_else(|| Error::type_error(strand, "not a string"))?;
                 let input = with_str!(strand, needle, |needle| borrow.as_str().contains(needle));
-                Output::set(strand, out, input);
+                strand.store(out, input);
                 Ok(())
             }
             sym::DRAIN => {
@@ -460,7 +458,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         match field.tag() {
             sym::LEN => {
                 let len = this.borrow(strand)?.len();
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             }
             sym::APPEND
@@ -486,7 +484,7 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -524,7 +522,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_debug<'a, 's>(
@@ -690,7 +688,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 
     fn op_debug<'a, 's>(
@@ -706,7 +704,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
 
@@ -736,7 +734,7 @@ impl<'v> Protocol<'v> for Chunks<'v> {
             }
             let chunk = s[..end].to_owned();
             buf.offset += end;
-            Output::set(strand, out, chunk.as_str());
+            strand.store(out, chunk.as_str());
             Ok(true)
         })
     }

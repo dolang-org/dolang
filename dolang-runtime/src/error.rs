@@ -25,7 +25,7 @@ use crate::{
     strand::{Strand, StrandInner},
     sym::Sym,
     value::{Case, Input, Output, Slot, Value, private::Sealed, view::View},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
 
@@ -366,11 +366,11 @@ impl<'v, 's> ErrorRoot<'v, 's> {
     /// Move the contents into a new root registered with `inner`.
     fn rehome<'ps>(
         mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         inner: &'ps StrandInner<'v>,
     ) -> ErrorRoot<'v, 'ps> {
         let mut root = ErrorRoot::new(inner);
-        Output::swap(&mut alloc, &mut root, &mut self);
+        alloc.swap(&mut root, &mut self);
         mem::swap(root.backtrace_mut(), self.backtrace_mut());
         root
     }
@@ -402,11 +402,11 @@ impl<'v> Output<'v> for ErrorRoot<'v, '_> {
 impl<'v> Input<'v> for ErrorRoot<'v, '_> {
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        Output::set(&mut alloc, out, Output::as_slot(self, Sealed));
+        alloc.store(out, Output::as_slot(self, Sealed));
         None
     }
 }
@@ -414,12 +414,12 @@ impl<'v> Input<'v> for ErrorRoot<'v, '_> {
 impl<'v> Input<'v> for &ErrorRoot<'v, '_> {
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        Output::set(&mut alloc, out, unsafe { self.dup() });
+        alloc.store(out, unsafe { self.dup() });
         None
     }
 }
@@ -428,12 +428,12 @@ impl<'v> Input<'v> for &ErrorRoot<'v, '_> {
 impl<'v> Input<'v> for &mut ErrorRoot<'v, '_> {
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let mut slot = Output::as_slot(*self, Sealed);
-        Output::set(&mut alloc, out, &mut slot);
+        alloc.store(out, &mut slot);
         Some(slot)
     }
 }
@@ -641,7 +641,7 @@ impl<'v, 's, 'a> fmt::Display for Display<'v, 's, 'a> {
 /// Describes a key for an error message.
 fn key_text<'v>(strand: &mut Strand<'v, '_>, key: impl Input<'v>) -> String {
     with_slots!(strand, |mut value| {
-        Output::set(strand, Slot::reborrow(&mut value), key);
+        strand.store(Slot::reborrow(&mut value), key);
         match value.view(strand.vm()) {
             View::Sym(sym) => sym.as_str(strand).to_string(),
             View::Str(str) => strand.access(|access| format!("{:?}", str.as_str(access))),
@@ -698,7 +698,7 @@ impl<'v, 's> Error<'v, 's> {
         loop {
             match self.inner {
                 Variant::Boxed(ref root) => {
-                    Output::set(strand, output, root);
+                    strand.store(output, root);
                     break;
                 }
                 _ => self.expand(strand),
@@ -852,7 +852,7 @@ impl<'v, 's> Error<'v, 's> {
     /// Create error: generic value
     pub fn from_value(strand: &mut Strand<'v, 's>, err: impl Input<'v>) -> Self {
         let mut root = ErrorRoot::new(strand.inner);
-        Output::set(strand, &mut root, err);
+        strand.store(&mut root, err);
         Self {
             inner: Variant::Boxed(root),
             phantom: PhantomData,
@@ -1109,9 +1109,9 @@ impl<'v, 's> Error<'v, 's> {
         backtrace: impl Input<'v>,
     ) -> Result<'v, 's, Self> {
         let mut root = ErrorRoot::new(strand.inner);
-        Output::set(strand, &mut root, err);
+        strand.store(&mut root, err);
         with_slots!(strand, |mut backtrace_slot| {
-            Output::set(strand, Slot::reborrow(&mut backtrace_slot), backtrace);
+            strand.store(Slot::reborrow(&mut backtrace_slot), backtrace);
             if !root.fill_backtrace(strand.vm(), &backtrace_slot) {
                 return Err(Error::type_error(strand, "expected inspect.Backtrace"));
             }

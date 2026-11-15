@@ -172,11 +172,11 @@ fn attr_field<'v, 's, const FAMILY: u8>(
 ) -> Result<'v, 's, ()> {
     match attrs::flag(&this.annex().inner, windows, linux, macos, freebsd) {
         attrs::Flag::Inapplicable | attrs::Flag::Unavailable => {
-            Output::set(strand, out, dolang::runtime::value::Nil);
+            strand.store(out, dolang::runtime::value::Nil);
             Ok(())
         }
         attrs::Flag::Value(value) => {
-            Output::set(strand, out, value);
+            strand.store(out, value);
             Ok(())
         }
     }
@@ -233,19 +233,18 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
         let group = builder.sym("group");
         builder = builder
             .get("size", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.len());
+                strand.store(out, this.annex().inner.len());
                 Ok(())
             })
             .get("type", |this, strand, out| {
-                Output::set(
-                    strand,
+                strand.store(
                     out,
                     file_type_to_sym(this.annex().inner.file_type(), this.annex().global),
                 );
                 Ok(())
             })
             .get("is_mount", |this, strand, out| {
-                Output::set(strand, out, this.annex().inner.is_mount());
+                strand.store(out, this.annex().inner.is_mount());
                 Ok(())
             })
             .get("modified", |this, strand, out| {
@@ -343,7 +342,7 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                 let annex = this.annex();
                 if let Some(windows) = annex.inner.windows() {
                     let Some(value) = windows.user().cloned() else {
-                        Output::set(strand, out, dolang::runtime::value::Nil);
+                        strand.store(out, dolang::runtime::value::Nil);
                         return Ok(());
                     };
                     let windows = strand.force_state::<WindowsSecurityTag>();
@@ -356,7 +355,7 @@ impl<'v, const FAMILY: u8> Object<'v> for Metadata<FAMILY> {
                 let annex = this.annex();
                 if let Some(windows) = annex.inner.windows() {
                     let Some(value) = windows.group().cloned() else {
-                        Output::set(strand, out, dolang::runtime::value::Nil);
+                        strand.store(out, dolang::runtime::value::Nil);
                         return Ok(());
                     };
                     let windows = strand.force_state::<WindowsSecurityTag>();

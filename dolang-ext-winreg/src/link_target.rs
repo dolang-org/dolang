@@ -1,4 +1,4 @@
-use dolang::runtime::{Object, Output, State, object::TypeBuilder};
+use dolang::runtime::{AllocExt, Object, State, object::TypeBuilder};
 
 use crate::global::Global;
 
@@ -15,7 +15,7 @@ impl<'v> Object<'v> for LinkTarget {
         builder
             .get("native", |this, strand, out| {
                 let native = this.borrow(strand)?.0.native.clone();
-                Output::set(strand, out, native.as_str());
+                strand.store(out, native.as_str());
                 Ok(())
             })
             .get("root", |this, strand, out| {
@@ -33,14 +33,14 @@ impl<'v> Object<'v> for LinkTarget {
                             global.syms.current_config
                         }
                     };
-                    Output::set(strand, out, sym);
+                    strand.store(out, sym);
                 }
                 Ok(())
             })
             .get("subpath", |this, strand, out| {
                 let subpath = this.borrow(strand)?.0.subpath.clone();
                 if let Some(subpath) = &subpath {
-                    Output::set(strand, out, subpath.as_str());
+                    strand.store(out, subpath.as_str());
                 }
                 Ok(())
             })

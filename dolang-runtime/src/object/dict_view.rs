@@ -45,8 +45,8 @@ impl<'v> DictViewSink<'v, '_> {
     ) {
         // Either input may allocate, so each lands in a slot before the other is made
         with_slots!(strand, |mut key_slot, mut value_slot| {
-            Output::set(strand, &mut key_slot, key);
-            Output::set(strand, &mut value_slot, value);
+            strand.store(&mut key_slot, key);
+            strand.store(&mut value_slot, value);
             self.pairs
                 .borrow_mut()
                 // SAFETY: the values move straight into the borrowed accumulator
@@ -615,8 +615,8 @@ fn spread_pairs<'v, 's>(
     // of the sink call.
     with_slots!(strand, |mut first, mut second| {
         for (key, value) in pairs {
-            Output::set(strand, &mut first, key);
-            Output::set(strand, &mut second, value);
+            strand.store(&mut first, key);
+            strand.store(&mut second, value);
             match first.as_sym(strand) {
                 Some(sym) => sink.symbol(strand, sym, Slot::reborrow(&mut second))?,
                 None => sink.keyed(
@@ -646,7 +646,7 @@ fn unpack_pairs<'v, 's>(
             let (slot, default) = match item {
                 UnpackItem::Pos { slot, default } => {
                     match default {
-                        Some(default) => Output::set(strand, slot, default),
+                        Some(default) => strand.store(slot, default),
                         None => return Err(Error::missing_positional(strand, position)),
                     }
                     position += 1;
@@ -657,7 +657,7 @@ fn unpack_pairs<'v, 's>(
                     slot,
                     default,
                 } => {
-                    Output::set(strand, Slot::reborrow(&mut key), sym);
+                    strand.store(Slot::reborrow(&mut key), sym);
                     (slot, default)
                 }
                 UnpackItem::ConstKey {
@@ -665,7 +665,7 @@ fn unpack_pairs<'v, 's>(
                     slot,
                     default,
                 } => {
-                    Output::set(strand, Slot::reborrow(&mut key), value);
+                    strand.store(Slot::reborrow(&mut key), value);
                     (slot, default)
                 }
                 rest => {
@@ -677,9 +677,9 @@ fn unpack_pairs<'v, 's>(
             let found = find_pair(strand, pairs, &consumed, &key)?;
             if let Some((index, (_, value))) = found {
                 consumed.set(index, true);
-                Output::set(strand, slot, value);
+                strand.store(slot, value);
             } else if let Some(default) = default {
-                Output::set(strand, slot, default);
+                strand.store(slot, default);
             } else if let Some(sym) = key.as_sym(strand) {
                 return Err(Error::missing_key(strand, sym));
             } else {
@@ -816,18 +816,18 @@ fn unpack_sig_pairs<'v, 's>(
     }
     let pos_count = sig.optional.len();
     for (index, default) in sig.optional.iter().enumerate() {
-        Output::set(strand, out.at(index), default);
+        strand.store(out.at(index), default);
     }
     for (offset, spec) in sig.keys.iter().enumerate() {
         let found = with_slots!(strand, |mut key| {
-            Output::set(strand, Slot::reborrow(&mut key), &spec.kind);
+            strand.store(Slot::reborrow(&mut key), &spec.kind);
             find_pair(strand, pairs, &consumed, &key)?
         });
         if let Some((found, (_, value))) = found {
             consumed.set(found, true);
-            Output::set(strand, out.at(pos_count + offset), value);
+            strand.store(out.at(pos_count + offset), value);
         } else if let Some(default) = &spec.default {
-            Output::set(strand, out.at(pos_count + offset), default);
+            strand.store(out.at(pos_count + offset), default);
         } else {
             return Err(Error::missing_key(strand, &spec.kind));
         }
@@ -869,8 +869,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().dict_view) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        Output::set(
-            strand,
+        strand.store(
             &mut out,
             Value::from_bool(this.as_header() == gc::Base::as_ptr(other).cast()),
         );
@@ -908,7 +907,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         if field.tag() == sym::LEN {
             let view = this.get();
             let len = view.glue.len(&view.owner, strand);
-            Output::set(strand, out, len);
+            strand.store(out, len);
             Ok(())
         } else if matches!(
             field.tag(),
@@ -946,7 +945,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             unpack!(strand, args => key);
             let view = this.get();
             let removed = view.glue.delete(&view.owner, strand, &key)?;
-            Output::set(strand, out, removed);
+            strand.store(out, removed);
             return Ok(());
         }
         if method.tag() == sym::CLEAR {
@@ -991,14 +990,14 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             return if found {
                 Ok(())
             } else if let Some(mut default) = default {
-                Output::set(strand, &mut out, &mut default);
+                strand.store(&mut out, &mut default);
                 Ok(())
             } else if let Some(or_else) = or_else {
                 call!(strand, or_else, out)
             } else if method.tag() == sym::POP {
                 Err(Error::index(strand))
             } else {
-                Output::set(strand, &mut out, Value::NIL);
+                strand.store(&mut out, Value::NIL);
                 Ok(())
             };
         }
@@ -1073,7 +1072,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().dict_view)
+        strand.store(out, &strand.singletons().dict_view)
     }
 }
 
@@ -1090,7 +1089,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, &this);
+        strand.store(out, &this);
         Ok(())
     }
     async fn op_next<'a, 's>(
@@ -1168,7 +1167,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().input_iter)
+        strand.store(out, &strand.singletons().input_iter)
     }
 }
 
@@ -1195,7 +1194,7 @@ impl<'v> Protocol<'v> for Type {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, &strand.singletons().type_obj)
+        strand.store(out, &strand.singletons().type_obj)
     }
 
     fn op_subtype<'a, 's>(
@@ -1286,7 +1285,7 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
-        Output::set(strand, out, TypeObject::Iterable)
+        strand.store(out, TypeObject::Iterable)
     }
 
     fn op_get<'a, 's>(
@@ -1365,8 +1364,8 @@ mod tests {
                 return Ok(false);
             };
             match pairs.0[index].1 {
-                Some(value) => Output::set(strand, out, value),
-                None => Output::set(strand, out, &Value::NIL),
+                Some(value) => strand.store(out, value),
+                None => strand.store(out, &Value::NIL),
             }
             Ok(true)
         }
@@ -1403,8 +1402,8 @@ mod tests {
                 return Ok(false);
             };
             match pairs.0.remove(index).1 {
-                Some(value) => Output::set(strand, out, value),
-                None => Output::set(strand, out, &Value::NIL),
+                Some(value) => strand.store(out, value),
+                None => strand.store(out, &Value::NIL),
             }
             Ok(true)
         }

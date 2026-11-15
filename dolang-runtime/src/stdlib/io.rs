@@ -44,11 +44,11 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{
-        BinEmbryo, Input, Nil, Output, Slot, TypeObject, Value,
+        BinEmbryo, Input, Nil, Slot, TypeObject, Value,
         private::Sealed,
         view::{PinBin, PinStr},
     },
-    vm::{Alloc, Builder, StateTag},
+    vm::{Alloc, AllocExt, Builder, StateTag},
     with_instance, with_slots,
 };
 
@@ -686,7 +686,7 @@ impl<'v> Object<'v> for Buffered {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -705,7 +705,7 @@ impl<'v> Object<'v> for Buffered {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Output::set(strand, out, this);
+        strand.store(out, this);
         Ok(())
     }
 
@@ -740,17 +740,17 @@ impl<'v> Object<'v> for Buffered {
         builder
             .get("readable", |this, strand, out| {
                 let caps = this.borrow(strand)?.open_caps();
-                Output::set(strand, out, caps.contains(IoCaps::READ));
+                strand.store(out, caps.contains(IoCaps::READ));
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let caps = this.borrow(strand)?.open_caps();
-                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                strand.store(out, caps.contains(IoCaps::WRITE));
                 Ok(())
             })
             .get("seekable", |this, strand, out| {
                 let caps = this.borrow(strand)?.open_caps();
-                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                strand.store(out, caps.contains(IoCaps::SEEK));
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -780,7 +780,7 @@ impl<'v> Object<'v> for Buffered {
             })
             .method("lines", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                Output::set(strand, out, this);
+                strand.store(out, this);
                 Ok(())
             })
             .method("write", async move |this, strand, args, out| {
@@ -791,7 +791,7 @@ impl<'v> Object<'v> for Buffered {
                 let mut io = borrow.lock(strand).await?;
                 let res = io.write_all_vectored(&mut slices).await;
                 res.into_do_io(strand)?;
-                Output::set(strand, out, len);
+                strand.store(out, len);
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
@@ -813,7 +813,7 @@ impl<'v> Object<'v> for Buffered {
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.stream_position().await;
                 let pos = res.into_do_io(strand)?;
-                Output::set(strand, out, pos);
+                strand.store(out, pos);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
@@ -823,7 +823,7 @@ impl<'v> Object<'v> for Buffered {
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.seek(pos).await;
                 let pos = res.into_do_io(strand)?;
-                Output::set(strand, out, pos);
+                strand.store(out, pos);
                 Ok(())
             })
     }
@@ -924,19 +924,19 @@ impl<'v> Object<'v> for Stream {
             .get("readable", |this, strand, out| {
                 let this = this.borrow(strand)?;
                 let caps = open_caps(&this.io, this.caps);
-                Output::set(strand, out, caps.contains(IoCaps::READ));
+                strand.store(out, caps.contains(IoCaps::READ));
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let this = this.borrow(strand)?;
                 let caps = open_caps(&this.io, this.caps);
-                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                strand.store(out, caps.contains(IoCaps::WRITE));
                 Ok(())
             })
             .get("seekable", |this, strand, out| {
                 let this = this.borrow(strand)?;
                 let caps = open_caps(&this.io, this.caps);
-                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                strand.store(out, caps.contains(IoCaps::SEEK));
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -961,7 +961,7 @@ impl<'v> Object<'v> for Stream {
                 let mut io = borrow.lock(strand).await?;
                 let res = io.write_vectored(&slices).await;
                 let written = res.into_do_io(strand)?;
-                Output::set(strand, out, written);
+                strand.store(out, written);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
@@ -971,7 +971,7 @@ impl<'v> Object<'v> for Stream {
                 borrow.check(strand, IoCaps::SEEK)?;
                 let res = borrow.lock(strand).await?.seek(pos).await;
                 let pos = res.into_do_io(strand)?;
-                Output::set(strand, out, pos);
+                strand.store(out, pos);
                 Ok(())
             })
             .method("close", async move |this, strand, args, _out| {
@@ -1032,7 +1032,7 @@ impl Concat {
                 Mut::slot::<0>(this)
                     .iter(strand, Slot::reborrow(&mut item))
                     .await?;
-                Output::set(strand, Mut::slot_mut::<0>(this), &item);
+                strand.store(Mut::slot_mut::<0>(this), &item);
                 this.state = ConcatState::Iterating;
             }
             while this.state == ConcatState::Iterating && this.pending.len() < size {
@@ -1041,7 +1041,7 @@ impl Concat {
                     .await?
                 {
                     this.state = ConcatState::Done;
-                    Output::set(strand, Mut::slot_mut::<0>(this), Nil);
+                    strand.store(Mut::slot_mut::<0>(this), Nil);
                     break;
                 }
                 if let Some(b) = item.as_bin(strand.vm()) {
@@ -1091,7 +1091,7 @@ impl<'v> Object<'v> for Concat {
         this.create(strand, Concat::new(end), &mut out);
         with_instance!(strand, this.cast(&out).unwrap(), |inst| {
             let mut borrow = inst.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &items);
+            strand.store(Mut::slot_mut::<0>(&mut borrow), &items);
         });
         Ok(())
     }
@@ -1101,7 +1101,7 @@ impl<'v> Object<'v> for Concat {
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
                 let this = this.borrow(strand)?;
-                Output::set(strand, out, this.state != ConcatState::Closed);
+                strand.store(out, this.state != ConcatState::Closed);
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -1112,7 +1112,7 @@ impl<'v> Object<'v> for Concat {
                 check_caps(strand, "stream", open, IoCaps::READ, IoCaps::READ)?;
                 Concat::fill(&mut borrow, strand, size).await?;
                 let n = size.min(borrow.pending.len());
-                Output::set(strand, out, &borrow.pending[..n]);
+                strand.store(out, &borrow.pending[..n]);
                 borrow.pending.drain(..n);
                 Ok(())
             })
@@ -1121,7 +1121,7 @@ impl<'v> Object<'v> for Concat {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.state = ConcatState::Closed;
                 borrow.pending = Vec::new();
-                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Nil);
+                strand.store(Mut::slot_mut::<0>(&mut borrow), Nil);
                 Ok(())
             })
     }
@@ -1207,7 +1207,7 @@ impl Cursor {
         let n = with_bytes(strand, target, self.target, |strand, bytes| {
             let at = usize::try_from(at).unwrap_or(usize::MAX).min(bytes.len());
             let n = size.min(room).min(bytes.len() - at);
-            Output::set(strand, out, &bytes[at..at + n]);
+            strand.store(out, &bytes[at..at + n]);
             n
         })?;
         self.pos += n as u64;
@@ -1440,7 +1440,7 @@ impl<'v> Object<'v> for Cursor {
         this.create(strand, cursor, &mut out);
         with_instance!(strand, this.cast(&out).unwrap(), |inst| {
             let mut borrow = inst.borrow_mut_unwrap();
-            Output::set(strand, Mut::slot_mut::<0>(&mut borrow), &target);
+            strand.store(Mut::slot_mut::<0>(&mut borrow), &target);
         });
         Ok(())
     }
@@ -1452,17 +1452,17 @@ impl<'v> Object<'v> for Cursor {
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
                 let caps = this.borrow(strand)?.caps();
-                Output::set(strand, out, caps.contains(IoCaps::READ));
+                strand.store(out, caps.contains(IoCaps::READ));
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let caps = this.borrow(strand)?.caps();
-                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                strand.store(out, caps.contains(IoCaps::WRITE));
                 Ok(())
             })
             .get("seekable", |this, strand, out| {
                 let caps = this.borrow(strand)?.caps();
-                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                strand.store(out, caps.contains(IoCaps::SEEK));
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -1471,7 +1471,7 @@ impl<'v> Object<'v> for Cursor {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::READ)?;
                 with_slots!(strand, |mut target| {
-                    Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
+                    strand.store(&mut target, Mut::slot::<0>(&borrow));
                     borrow.read(strand, &target, size, out)
                 })
             })
@@ -1485,10 +1485,10 @@ impl<'v> Object<'v> for Cursor {
                     .collect::<Vec<_>>()
                     .concat();
                 let n = with_slots!(strand, |mut target| {
-                    Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
+                    strand.store(&mut target, Mut::slot::<0>(&borrow));
                     borrow.write(strand, &target, &data)
                 })?;
-                Output::set(strand, out, n);
+                strand.store(out, n);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
@@ -1497,10 +1497,10 @@ impl<'v> Object<'v> for Cursor {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::SEEK)?;
                 let pos = with_slots!(strand, |mut target| {
-                    Output::set(strand, &mut target, Mut::slot::<0>(&borrow));
+                    strand.store(&mut target, Mut::slot::<0>(&borrow));
                     borrow.seek(strand, &target, pos)
                 })?;
-                Output::set(strand, out, pos);
+                strand.store(out, pos);
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
@@ -1510,7 +1510,7 @@ impl<'v> Object<'v> for Cursor {
             .method("close", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
-                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Nil);
+                strand.store(Mut::slot_mut::<0>(&mut borrow), Nil);
                 let unfinished = !borrow.held.is_empty();
                 borrow.open = false;
                 borrow.held = Vec::new();
@@ -1791,17 +1791,17 @@ impl<'v> Object<'v> for Window {
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
                 let caps = this.borrow(strand)?.caps();
-                Output::set(strand, out, caps.contains(IoCaps::READ));
+                strand.store(out, caps.contains(IoCaps::READ));
                 Ok(())
             })
             .get("writable", |this, strand, out| {
                 let caps = this.borrow(strand)?.caps();
-                Output::set(strand, out, caps.contains(IoCaps::WRITE));
+                strand.store(out, caps.contains(IoCaps::WRITE));
                 Ok(())
             })
             .get("seekable", |this, strand, out| {
                 let caps = this.borrow(strand)?.caps();
-                Output::set(strand, out, caps.contains(IoCaps::SEEK));
+                strand.store(out, caps.contains(IoCaps::SEEK));
                 Ok(())
             })
             .method("read", async move |this, strand, args, out| {
@@ -1825,7 +1825,7 @@ impl<'v> Object<'v> for Window {
                 let mut io = borrow.lock(strand).await?;
                 let (slices, _) = slices(&pieces);
                 let n = io.write_vectored(&slices).await.into_do_io(strand)?;
-                Output::set(strand, out, n);
+                strand.store(out, n);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
@@ -1835,7 +1835,7 @@ impl<'v> Object<'v> for Window {
                 borrow.check(strand, IoCaps::SEEK)?;
                 let mut io = borrow.lock(strand).await?;
                 let pos = io.seek(pos).await.into_do_io(strand)?;
-                Output::set(strand, out, pos);
+                strand.store(out, pos);
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
@@ -1870,7 +1870,8 @@ mod tests {
         strand::Strand,
         sym::{self, Sym},
         test_support::with_vm,
-        value::{Output, Slot, Value},
+        value::{Slot, Value},
+        vm::AllocExt,
     };
 
     fn bin<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> Vec<u8> {
@@ -1882,7 +1883,7 @@ mod tests {
         with_vm(async |strand, [mut stream, mut out]| {
             let handle =
                 ByteHandle::read(Cursor::new(b"cdef".to_vec())).with_prefix(b"ab".to_vec());
-            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            strand.store(Slot::reborrow(&mut stream), handle);
             let read = Sym::well_known(sym::READ);
             let mut got = Vec::new();
             loop {
@@ -1918,7 +1919,7 @@ mod tests {
     fn chunks_are_bounded() {
         with_vm(async |strand, [mut stream, mut iter, mut item]| {
             let handle = ByteHandle::read(Cursor::new(b"hello".to_vec()));
-            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            strand.store(Slot::reborrow(&mut stream), handle);
             method!(
                 strand,
                 &stream,
@@ -1941,7 +1942,7 @@ mod tests {
     fn writes_seeks_and_closes() {
         with_vm(async |strand, [mut stream, mut out]| {
             let handle = ByteHandle::read_write_seek(Cursor::new(Vec::new()));
-            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            strand.store(Slot::reborrow(&mut stream), handle);
             method!(
                 strand,
                 &stream,
@@ -1989,7 +1990,7 @@ mod tests {
     fn lent_handle_shares_position() {
         with_vm(async |strand, [mut stream, mut out]| {
             let handle = ByteHandle::read(Cursor::new(b"cd".to_vec())).with_prefix(b"ab".to_vec());
-            Output::set(strand, Slot::reborrow(&mut stream), handle);
+            strand.store(Slot::reborrow(&mut stream), handle);
             let lent = io::get(strand, &stream, |_, _| Ok(())).unwrap();
             let mut reader = lent.into_read().unwrap();
             let mut byte = [0];

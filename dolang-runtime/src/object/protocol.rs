@@ -19,7 +19,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Input, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
-    vm::{Alloc, Vm},
+    vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
 
@@ -237,7 +237,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         let mut out = out;
         Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
         let equal = out.op_bool(strand)?;
-        Output::set(strand, &mut out, Value::from_bool(!equal));
+        strand.store(&mut out, Value::from_bool(!equal));
         Ok(())
     }
     fn op_rne<'a, 's>(
@@ -478,7 +478,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
             Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
             result = out.op_bool(strand)?;
         }
-        Output::set(strand, &mut out, Value::from_bool(result));
+        strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -489,7 +489,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut receiver| {
-            Output::set(strand, &mut receiver, this);
+            strand.store(&mut receiver, this);
             other.op_lt_direct(strand, &receiver, out)
         })
     }
@@ -501,7 +501,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut receiver| {
-            Output::set(strand, &mut receiver, this);
+            strand.store(&mut receiver, this);
             other.op_lte_direct(strand, &receiver, out)
         })
     }
@@ -1027,7 +1027,7 @@ where
                 iter,
             ))
         };
-        Output::set(alloc, out, obj);
+        alloc.store(out, obj);
     }
 }
 
@@ -1086,7 +1086,7 @@ impl<'v, T: Protocol<'v, Annex: Sized>> ObjEmbryo<'v, T> {
                 annex,
             ))
         };
-        Output::set(alloc, out, obj);
+        alloc.store(out, obj);
     }
 }
 
@@ -1275,12 +1275,12 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for Recv<'v, 'a, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        Output::set(&mut alloc, out, unsafe {
+        alloc.store(out, unsafe {
             match self.delegator {
                 Some(delegator) => delegator.dup(),
                 None => Value::from_object(self.receiver.to_strong()),
@@ -1294,12 +1294,12 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for &Recv<'v, 'a, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        Output::set(&mut alloc, out, unsafe {
+        alloc.store(out, unsafe {
             match self.delegator {
                 Some(delegator) => delegator.dup(),
                 None => Value::from_object(self.receiver.to_strong()),
@@ -1313,12 +1313,12 @@ impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        mut alloc: &mut dyn Alloc<'v>,
+        alloc: &mut dyn Alloc<'v>,
         out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the duplicate moves straight into the output slot
-        Output::set(&mut alloc, out, unsafe { Value::from_object(self.dup()) });
+        alloc.store(out, unsafe { Value::from_object(self.dup()) });
         None
     }
 }
@@ -2720,7 +2720,7 @@ pub(crate) fn instance_mcall_fallback<'v, 'a, 's>(
         return Err(Error::field(strand, method));
     }
     with_slots!(strand, |mut receiver_slot| {
-        Output::set(strand, Slot::reborrow(&mut receiver_slot), receiver);
+        strand.store(Slot::reborrow(&mut receiver_slot), receiver);
         special_mcall(strand, &receiver_slot, None, method, args, out)
     })
 }
@@ -2737,7 +2737,7 @@ pub(crate) async fn recv_special_mcall<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Result<'v, 's, ()> {
     if this.delegator().is_none() && is_special_mcall(method.tag()) {
         with_slots!(strand, |mut receiver| {
-            Output::set(strand, Slot::reborrow(&mut receiver), this);
+            strand.store(Slot::reborrow(&mut receiver), this);
             if receiver.is_instance_of(strand, TypeObject::Type) {
                 return type_mcall_fallback(strand, &receiver, method, args, out).await;
             }
@@ -2845,12 +2845,12 @@ fn special_mcall<'v, 'a, 's>(
         }
         sym::BOOL_METHOD => {
             let b = dispatch!(op_bool)?;
-            Output::set(strand, out, b);
+            strand.store(out, b);
         }
         sym::HASH_METHOD => {
             let mut hasher = strand.vm().hasher();
             dispatch!(op_hash, &mut hasher)?;
-            Output::set(strand, out, hasher.finish());
+            strand.store(out, hasher.finish());
         }
         sym::EQ_METHOD => {
             unpack!(strand, args => other);

@@ -312,7 +312,7 @@ impl<'v> Object<'v> for Key {
         if let Some(initial) = initial {
             with_instance!(strand, this.cast(&out).unwrap(), |inst| {
                 let mut borrow = inst.borrow_mut_unwrap();
-                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), initial);
+                strand.store(Mut::slot_mut::<0>(&mut borrow), initial);
             });
         }
         Ok(())
@@ -322,7 +322,7 @@ impl<'v> Object<'v> for Key {
         builder
             .get_with_slots("value", |this, strand, mut out, [mut key]| {
                 let state = strand.state::<StrandStateTag>();
-                Output::set(strand, &mut key, this);
+                strand.store(&mut key, this);
                 let root = state.local_root.slot(strand);
                 if !root.is_nil() {
                     let dict = root.as_dict(strand).expect("strand local store is a dict");
@@ -331,12 +331,12 @@ impl<'v> Object<'v> for Key {
                     }
                 }
                 let borrow = this.borrow(strand)?;
-                Output::set(strand, out, Ref::slot::<0>(&borrow));
+                strand.store(out, Ref::slot::<0>(&borrow));
                 Ok(())
             })
             .set_with_slots("value", |this, strand, mut value, [mut key]| {
                 let state = strand.state::<StrandStateTag>();
-                Output::set(strand, &mut key, this);
+                strand.store(&mut key, this);
                 let root = unique_local_root(state, strand)?;
                 let dict = root
                     .as_dict(strand)
@@ -349,7 +349,7 @@ impl<'v> Object<'v> for Key {
                 async |this, strand, args, out, [mut key, mut prior]| {
                     unpack!(strand, args => mut value, block);
                     let state = strand.state::<StrandStateTag>();
-                    Output::set(strand, &mut key, this);
+                    strand.store(&mut key, this);
                     let root = state.local_root.slot(strand);
                     let had_prior = if root.is_nil() {
                         false
@@ -398,7 +398,7 @@ fn clone_local_root<'v, 's>(
                 .insert(strand, &mut key, &mut value, false)
                 .unwrap();
         }
-        Output::set(strand, &mut root, copied);
+        strand.store(&mut root, copied);
         root
     })
 }
@@ -588,7 +588,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let res = tmp.next(strand, &mut out).await?;
                 if !res {
                     if let Some(mut default) = default {
-                        Output::set(strand, out, &mut default);
+                        strand.store(out, &mut default);
                         return Ok(());
                     } else if let Some(or_else) = or_else {
                         return call!(strand, or_else, out);
@@ -758,11 +758,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             // would skip closing the stage's pipe ends.
                             if let Some(input) = &mut redir_input {
                                 input.iter(strand, &mut tmp).await?;
-                                Output::set(strand, input, &mut tmp);
+                                strand.store(input, &mut tmp);
                             }
                             if let Some(output) = &mut redir_output {
                                 output.sink(strand, &mut tmp).await?;
-                                Output::set(strand, output, &mut tmp);
+                                strand.store(output, &mut tmp);
                             }
                             for i in 0..count.saturating_sub(1) {
                                 let mut pair = pipe_slots.iter_mut().skip(2 * i);
@@ -789,13 +789,13 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                                 strand,
                                                 |mut s, mut r, mut tmp, mut tmp2| {
                                                     let input = if let Some(recv) = recv {
-                                                        Output::set(strand, &mut r, recv);
+                                                        strand.store(&mut r, recv);
                                                         Some(&*r)
                                                     } else {
                                                         redir_input.as_deref()
                                                     };
                                                     let output = if let Some(send) = send {
-                                                        Output::set(strand, &mut s, send);
+                                                        strand.store(&mut s, send);
                                                         Some(&*s)
                                                     } else {
                                                         redir_output.as_deref()
@@ -940,7 +940,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             output.put(strand, &mut item).await?;
                             strand.check_trap_gc()?
                         }
-                        Output::set(strand, out, &mut arg);
+                        strand.store(out, &mut arg);
                     } else {
                         // Allocate the array first, so each item is rooted as soon as it
                         // arrives
@@ -1066,7 +1066,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     if count == 0 {
                         return Err(Error::value(strand, "strand.pool: count must be positive"));
                     }
-                    Output::set(strand, &mut output, Singleton::Null);
+                    strand.store(&mut output, Singleton::Null);
                     map_workers(
                         strand,
                         count,
