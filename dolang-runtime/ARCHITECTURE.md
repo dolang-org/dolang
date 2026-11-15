@@ -93,6 +93,18 @@ roots by design. Code with a value to place writes it through an `Output`
 rather than holding it: `Output::set` with an `Input`, or a `TypeHandle` create
 method, into a `with_slots!` slot when it is only needed for a while.
 
+Every write to a scanned location takes an `Alloc` witness: `Output::set` and
+`Output::swap`, and inside the crate `Slot::take`, the `GcSlot` writes, and the
+setters for upvars and instance fields. The collector runs only inside an
+allocation, while it holds the `&mut Alloc`, so no write can coincide with a
+collection and upset its trial counts. `Slot::take` and `GcSlot::take` are also
+`unsafe`, because the reference they return is loose; moving through
+`Output::set` with a `Slot` as the `Input` leaves nothing loose. The one write
+without a witness is a collector's `clear` of an unreachable object, through
+`ValueCell::clear`. Payload state behind a runtime borrow, such as an array's
+elements, is written through its borrow guard instead: the collector defers
+clearing an object with an outstanding borrow.
+
 Creating an object moves references from wherever they are rooted into its
 payload. To keep them visible across the allocation, allocate first with an
 embryo (`gc::Embryo`, through `TypeHandle::embryo` or `tuple::embryo`), then
@@ -160,6 +172,8 @@ collector must allocate them where they never move.
 `Slot`, for a mutable typed location that other code can reach, such as a call
 frame's upvar chain. `GcCell::as_ref` lends the stored reference as a location,
 and writes go through a slot that drops the old reference only after the write.
+`GcCell::new` takes an owned reference, so it is `unsafe` like
+`ValueCell::from_value`; `GcCell::default` starts empty.
 
 A moving collector also rewrites pointers underneath shared references, so
 `Repr` and `Base` would need to hold their pointers in an `UnsafeCell`. That

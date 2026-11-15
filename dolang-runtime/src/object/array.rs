@@ -45,11 +45,12 @@ impl<'v> ArraySpread<'_, 'v> {
             .downcast_ref(strand.builtin_types().array)
             .expect("array accumulator");
         with_pin!(strand, array, |array| {
+            // SAFETY: the value moves straight into the borrowed array
             array
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?
                 .inner
-                .push(value.take());
+                .push(unsafe { value.take(strand) });
             Ok(())
         })
     }
@@ -378,7 +379,8 @@ impl<'v> Protocol<'v> for SinkObj<'v> {
             let mut array_borrow = array
                 .borrow_mut()
                 .ok_or_else(|| Error::concurrency(strand))?;
-            array_borrow.inner.push(value.take());
+            // SAFETY: the value moves straight into the borrowed array
+            array_borrow.inner.push(unsafe { value.take(strand) });
             Ok(())
         })
     }
@@ -573,7 +575,11 @@ impl<'v> Array<'v> {
     ) -> Result<'v, 's, ()> {
         let args = args.positional(strand)?;
         let embryo = strand.builtin_types().array.embryo(strand);
-        let inner = args.map(|mut value| value.take()).collect();
+        // SAFETY: the array is allocated; the values move from their rooted slots
+        // straight into it
+        let inner = args
+            .map(|mut value| unsafe { value.take(strand) })
+            .collect();
         embryo.finish(strand, Self { inner }, out);
         Ok(())
     }
@@ -807,7 +813,7 @@ impl<'v> Protocol<'v> for Array<'v> {
             let left = &this_borrow.inner;
             let right = &other_borrow.inner;
             if left.len() != right.len() {
-                out.store(Value::from_bool(false));
+                Output::set(strand, &mut out, Value::from_bool(false));
                 return Ok(());
             }
             for i in 0..left.len() {
@@ -817,11 +823,11 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let l = unsafe { left.get_unchecked(i) };
                 let r = unsafe { right.get_unchecked(i) };
                 if !l.eq(strand, r)? {
-                    out.store(Value::from_bool(false));
+                    Output::set(strand, &mut out, Value::from_bool(false));
                     return Ok(());
                 }
             }
-            out.store(Value::from_bool(true));
+            Output::set(strand, &mut out, Value::from_bool(true));
             Ok(())
         })
     }
@@ -847,11 +853,12 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let l = unsafe { left.get_unchecked(i) };
                 let r = unsafe { right.get_unchecked(i) };
                 if !l.eq(strand, r)? {
-                    out.store(Value::from_bool(l.lt(strand, r)?));
+                    let flag = l.lt(strand, r)?;
+                    Output::set(strand, &mut out, flag);
                     return Ok(());
                 }
             }
-            out.store(Value::from_bool(right.len() > left.len()));
+            Output::set(strand, &mut out, Value::from_bool(right.len() > left.len()));
             Ok(())
         })
     }
@@ -983,7 +990,8 @@ impl<'v> Protocol<'v> for Array<'v> {
             index::element(borrow.inner.len(), index).ok_or_else(|| Error::index(strand))?;
         match borrow.inner.get_mut(index) {
             Some(slot) => {
-                *slot = value.take();
+                // SAFETY: the value moves straight into the borrowed array
+                *slot = unsafe { value.take(strand) };
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -1002,7 +1010,8 @@ impl<'v> Protocol<'v> for Array<'v> {
                 let mut borrow = this.borrow_mut(strand)?;
                 for arg in args {
                     match arg {
-                        Arg::Pos(mut slot) => borrow.inner.push(slot.take()),
+                        // SAFETY: the value moves straight into the borrowed array
+                        Arg::Pos(mut slot) => borrow.inner.push(unsafe { slot.take(strand) }),
                         Arg::Key(key, _) => {
                             return Err(Error::unexpected_key(strand, key));
                         }
@@ -1033,7 +1042,8 @@ impl<'v> Protocol<'v> for Array<'v> {
                     return Err(Error::index(strand));
                 }
                 match args.next() {
-                    None => borrow.inner.insert(i, value.take()),
+                    // SAFETY: the value moves straight into the borrowed array
+                    None => borrow.inner.insert(i, unsafe { value.take(strand) }),
                     Some(Arg::Key(key, _)) => {
                         return Err(Error::unexpected_key(strand, key));
                     }
@@ -1049,7 +1059,11 @@ impl<'v> Protocol<'v> for Array<'v> {
                         }
                         borrow
                             .inner
-                            .splice(i..i, values.into_iter().map(|mut v| v.take()));
+                            // SAFETY: the values move straight into the borrowed array
+                            .splice(
+                                i..i,
+                                values.into_iter().map(|mut v| unsafe { v.take(strand) }),
+                            );
                     }
                 }
                 Ok(())
@@ -1069,7 +1083,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                     Some(value) => Output::set(strand, &mut out, value),
                     None => {
                         if let Some(mut default) = default {
-                            out.store(default.take())
+                            Output::set(strand, &mut out, &mut default)
                         } else if let Some(or_else) = or_else {
                             call!(strand, or_else, out)?;
                         }
@@ -1096,10 +1110,10 @@ impl<'v> Protocol<'v> for Array<'v> {
                     }
                 };
                 match value {
-                    Some(value) => out.store(value),
+                    Some(value) => Output::set(strand, &mut out, value),
                     None => {
                         if let Some(mut default) = default {
-                            out.store(default.take())
+                            Output::set(strand, &mut out, &mut default)
                         } else if let Some(or_else) = or_else {
                             call!(strand, or_else, out)?;
                         } else {

@@ -14,6 +14,7 @@ use dolang_util::alias;
 use crate::{
     strand::{Access, PinScope},
     value::repr::tag,
+    vm::Alloc,
 };
 
 pub(crate) mod arena;
@@ -424,9 +425,22 @@ impl<'v, T: Upcast<Header>> Base<'v, T> {
 #[repr(transparent)]
 pub(crate) struct GcCell<'v, T: Upcast<Header>>(UnsafeCell<Option<Base<'v, T>>>);
 
-impl<'v, T: Upcast<Header>> GcCell<'v, T> {
+impl<'v, T: Upcast<Header>> Default for GcCell<'v, T> {
     #[inline]
-    pub(crate) fn new(value: Option<Base<'v, T>>) -> Self {
+    fn default() -> Self {
+        Self(UnsafeCell::new(None))
+    }
+}
+
+impl<'v, T: Upcast<Header>> GcCell<'v, T> {
+    /// Wrap an owned reference in a cell.
+    ///
+    /// # Safety
+    /// The reference is loose until the cell lands in a scanned location, so it must
+    /// reach one with no allocation or strand access in between, as for
+    /// [`ValueCell::from_value`](crate::value::ValueCell::from_value).
+    #[inline]
+    pub(crate) unsafe fn new(value: Option<Base<'v, T>>) -> Self {
         Self(UnsafeCell::new(value))
     }
 
@@ -494,22 +508,34 @@ impl<'v, 'a, T: Upcast<Header>> GcSlot<'v, 'a, T> {
     }
 
     /// Replaces the reference, returning the old one.
+    ///
+    /// # Safety
+    /// The result is loose, as for [`Base::dup`].
     #[inline]
-    pub(crate) fn replace(&mut self, value: Option<Base<'v, T>>) -> Option<Base<'v, T>> {
+    pub(crate) unsafe fn replace(
+        &mut self,
+        _alloc: &mut dyn Alloc<'v>,
+        value: Option<Base<'v, T>>,
+    ) -> Option<Base<'v, T>> {
         // SAFETY: the slot has exclusive access; the `&mut` lives only for the write
         unsafe { mem::replace(self.0.as_mut(), value) }
     }
 
+    /// Moves the reference out, leaving `None`.
+    ///
+    /// # Safety
+    /// The result is loose, as for [`Base::dup`].
     #[inline]
-    pub(crate) fn take(&mut self) -> Option<Base<'v, T>> {
-        self.replace(None)
+    pub(crate) unsafe fn take(&mut self, alloc: &mut dyn Alloc<'v>) -> Option<Base<'v, T>> {
+        unsafe { self.replace(alloc, None) }
     }
 
     /// Stores `value`, dropping the old reference only after the write: a drop can
     /// run native code that reaches this slot.
     #[inline]
-    pub(crate) fn store(&mut self, value: Option<Base<'v, T>>) {
-        let old = self.replace(value);
+    pub(crate) fn store(&mut self, alloc: &mut dyn Alloc<'v>, value: Option<Base<'v, T>>) {
+        // SAFETY: the old reference is dropped at once
+        let old = unsafe { self.replace(alloc, value) };
         drop(old);
     }
 }

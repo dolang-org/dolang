@@ -187,10 +187,12 @@ pub trait AllocExt<'v>: Alloc<'v> {
     }
 
     /// Intern `name` and store the symbol into `out`, as the `sym` function does.
-    fn intern_sym(&mut self, name: &str, mut out: impl Output<'v>) {
-        let vm = self.alloc_vm(private::Sealed);
+    fn intern_sym(&mut self, name: &str, out: impl Output<'v>) {
+        let mut alloc = self;
+        let vm = alloc.alloc_vm(private::Sealed);
         // SAFETY: stored into the scanned `out` at once
-        Slot::from_output(&mut out).store(unsafe { Value::from_object(vm.sym_register_obj(name)) });
+        let sym = unsafe { Value::from_object(vm.sym_register_obj(name)) };
+        Output::set(&mut alloc, out, sym);
     }
 
     /// Store a callable wrapping the async Rust function `func` into `out`.
@@ -239,7 +241,7 @@ pub trait AllocExt<'v>: Alloc<'v> {
         let embryo = types.native_function.embryo(&mut alloc);
         // SAFETY: the function is allocated; the bound value moves from the rooted `out`
         // into its payload with no allocation in between
-        let bound = unsafe { ValueCell::from_value(out.take()) };
+        let bound = unsafe { ValueCell::from_value(out.take(&mut alloc)) };
         embryo.finish_imm(
             &mut alloc,
             NativeFunction::bound(func).with_bound(bound),
@@ -513,7 +515,12 @@ impl<'v> Vm<'v> {
     }
 
     /// Insert a native module, enforcing ownership of names declared by lazy units.
-    fn insert_native_module(&self, name: &'v str, mut module: Slot<'v, '_>) {
+    fn insert_native_module(
+        &self,
+        alloc: &mut dyn Alloc<'v>,
+        name: &'v str,
+        mut module: Slot<'v, '_>,
+    ) {
         {
             let lazy = self.lazy.borrow();
             let owner = lazy.by_module.get(name).copied();
@@ -531,7 +538,9 @@ impl<'v> Vm<'v> {
                 (None, None) => unreachable!(),
             }
         }
-        let replaced = self.native_modules.borrow_mut().insert(name, module.take());
+        // SAFETY: the module moves straight into the scanned table
+        let module = unsafe { module.take(alloc) };
+        let replaced = self.native_modules.borrow_mut().insert(name, module);
         drop(replaced);
     }
 
@@ -722,9 +731,10 @@ impl<'v> Vm<'v> {
             // SAFETY (from here to the finish): the program is allocated, and nothing
             // allocates before its tables move into it
             let symroots: Vec<_> = (0..nsyms).map(|i| unsafe { symroot(i).dup() }).collect();
-            let importer = slots.at(nsyms + nconsts).take();
-            let consttab: alias::Box<_> =
-                (0..nconsts).map(|i| slots.at(nsyms + i).take()).collect();
+            let importer = unsafe { slots.at(nsyms + nconsts).take(strand) };
+            let consttab: alias::Box<_> = (0..nconsts)
+                .map(|i| unsafe { slots.at(nsyms + i).take(strand) })
+                .collect();
 
             let packtab: alias::Box<_> = verified
                 .packtab
@@ -1120,8 +1130,8 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
             staging.module.slot()
         });
         // SAFETY: as above
-        vm.inner
-            .insert_native_module(name, unsafe { staging.module.slot() });
+        let inner = vm.inner;
+        inner.insert_native_module(vm, name, unsafe { staging.module.slot() });
         vm
     }
 }
@@ -1399,8 +1409,8 @@ impl<'v> Register<'v> {
         // SAFETY: the cell is reached only through this slot while it lives
         ty.create(self, value, unsafe { module.slot() });
         // SAFETY: as above
-        self.inner
-            .insert_native_module(name, unsafe { module.slot() });
+        let inner = self.inner;
+        inner.insert_native_module(self, name, unsafe { module.slot() });
         self
     }
 
@@ -1420,8 +1430,8 @@ impl<'v> Register<'v> {
         // SAFETY: the cell is reached only through this slot while it lives
         ty.create_with_annex(self, value, annex, unsafe { module.slot() });
         // SAFETY: as above
-        self.inner
-            .insert_native_module(name, unsafe { module.slot() });
+        let inner = self.inner;
+        inner.insert_native_module(self, name, unsafe { module.slot() });
         self
     }
 }

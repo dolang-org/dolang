@@ -17,13 +17,13 @@ pub(crate) enum UnpackKeyKind<'v, 'a> {
 impl<'v, 'a> Input<'v> for &UnpackKeyKind<'v, 'a> {
     fn input_take<'b>(
         &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
+        mut alloc: &mut dyn Alloc<'v>,
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: stored into the scanned `out` at once
-        out.store(unsafe {
+        Output::set(&mut alloc, &mut out, unsafe {
             match self {
                 UnpackKeyKind::Sym(sym) => Value::from_object(vm.sym_obj(*sym)),
                 UnpackKeyKind::Const(value) => value.dup(),

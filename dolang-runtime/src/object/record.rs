@@ -26,7 +26,7 @@ use crate::{
     sym::{self, Sym, Tag},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value, fmt::Format},
-    vm::Vm,
+    vm::{Alloc, Vm},
     with_slots,
 };
 
@@ -126,9 +126,8 @@ impl<'v> Record<'v> {
     /// Store a record of `args` into `out`.
     pub(crate) fn from_args(strand: &mut Strand<'v, '_>, args: Args<'v, '_>, out: impl Output<'v>) {
         let embryo = strand.builtin_types().record.embryo(strand);
-        let vm = strand.vm();
         // SAFETY: the record is allocated; the items move straight into it
-        let items = unsafe { pack::pack_items(vm, args) };
+        let items = unsafe { pack::pack_items(strand, args) };
         embryo.finish(strand, Self::from_items(items), out);
     }
 
@@ -296,15 +295,16 @@ impl<'v> Record<'v> {
     /// was none.
     fn remove(
         &mut self,
+        alloc: &mut impl Alloc<'v>,
         key: &Key<'v, '_>,
         instance: Option<i64>,
-        mut out: impl Output<'v>,
+        out: impl Output<'v>,
     ) -> bool {
         let Some(slot) = self.remove_index(key, instance) else {
             return false;
         };
         let (_, value) = self.order[slot].take().expect("live entry");
-        Slot::from_output(&mut out).store(value);
+        Output::set(alloc, out, value);
         true
     }
 
@@ -400,13 +400,13 @@ async fn fallback<'v, 'a, 's>(
     missing: impl FnOnce(&mut Strand<'v, 's>) -> Result<'v, 's, ()>,
 ) -> Result<'v, 's, ()> {
     if let Some(mut default) = default {
-        out.store(default.take());
+        Output::set(strand, &mut out, &mut default);
         Ok(())
     } else if let Some(or_else) = or_else {
         call!(strand, or_else, out)
     } else {
         missing(strand)?;
-        out.store(Value::NIL);
+        Output::set(strand, &mut out, Value::NIL);
         Ok(())
     }
 }
@@ -481,7 +481,7 @@ impl<'v> Protocol<'v> for Record<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
-                out.store(Value::FALSE);
+                Output::set(strand, &mut out, Value::FALSE);
                 return Ok(());
             }
             for (index, ((lkey, lvalue), (rkey, rvalue))) in
@@ -493,11 +493,11 @@ impl<'v> Protocol<'v> for Record<'v> {
                 if lkey.as_ref().map(|key| key.tag()) != rkey.as_ref().map(|key| key.tag())
                     || !lvalue.eq(strand, rvalue)?
                 {
-                    out.store(Value::FALSE);
+                    Output::set(strand, &mut out, Value::FALSE);
                     return Ok(());
                 }
             }
-            out.store(Value::TRUE);
+            Output::set(strand, &mut out, Value::TRUE);
             Ok(())
         })
     }
@@ -528,7 +528,8 @@ impl<'v> Protocol<'v> for Record<'v> {
         let key = Key::new(strand, &key)?;
         if this
             .borrow_mut(strand)?
-            .assign(strand.vm(), key, value.take())
+            // SAFETY: the value moves straight into the borrowed record
+            .assign(strand.vm(), key, unsafe { value.take(strand) })
         {
             Ok(())
         } else {
@@ -588,7 +589,8 @@ impl<'v> Protocol<'v> for Record<'v> {
                 let key = Key::new(strand, &key)?;
                 if this
                     .borrow_mut(strand)?
-                    .insert(strand.vm(), key, value.take())
+                    // SAFETY: the value moves straight into the borrowed record
+                    .insert(strand.vm(), key, unsafe { value.take(strand) })
                 {
                     Ok(())
                 } else {
@@ -605,7 +607,12 @@ impl<'v> Protocol<'v> for Record<'v> {
                     }
                 }
                 let mut record = this.borrow_mut(strand)?;
-                record.push(values.into_iter().map(|mut value| value.take()));
+                // SAFETY: the values move straight into the borrowed record
+                record.push(
+                    values
+                        .into_iter()
+                        .map(|mut value| unsafe { value.take(strand) }),
+                );
                 Ok(())
             }
             sym::GET => {
@@ -636,7 +643,10 @@ impl<'v> Protocol<'v> for Record<'v> {
                 }
                 let key = Key::new(strand, &key)?;
                 let instance = instance(strand, instance_arg)?;
-                if this.borrow_mut(strand)?.remove(&key, instance, &mut out) {
+                if this
+                    .borrow_mut(strand)?
+                    .remove(strand, &key, instance, &mut out)
+                {
                     return Ok(());
                 }
                 fallback(strand, default, or_else, out, |strand| {

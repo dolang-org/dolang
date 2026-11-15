@@ -57,7 +57,8 @@ impl Annex for NativeFunction<'_> {
     }
 
     fn clear(&self) {
-        unsafe { self.bound.slot() }.store(Value::NIL)
+        // SAFETY: the collector clears only unreachable functions
+        unsafe { self.bound.clear() }
     }
 }
 

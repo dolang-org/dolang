@@ -13,7 +13,7 @@ use crate::{
     sym::Sym,
     unpack,
     value::{
-        Input, Output, Slot, StrEmbryo, TypeObject, Value,
+        Input, Nil, Output, Slot, StrEmbryo, TypeObject, Value,
         fmt::{Align, Fill, Format, Kind, Pad, Sign, Spec},
     },
     vm::{AllocExt, Builder, State, StateTag, Vm},
@@ -1097,10 +1097,10 @@ where
     builder
         // Each is called to apply options
         .supertype(TypeObject::Func)
-        .get("fill", |this, strand, mut out| {
+        .get("fill", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.fill {
-                Fill::Default => out.store(Value::NIL),
+                Fill::Default => Output::set(strand, out, Nil),
                 Fill::Zero => Output::set(strand, out, annex.global.symbols.zero),
                 Fill::Char(ch) => {
                     let mut buf = [0; 4];
@@ -1109,33 +1109,33 @@ where
             }
             Ok(())
         })
-        .get("align", |this, strand, mut out| {
+        .get("align", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.align {
-                None => out.store(Value::NIL),
+                None => Output::set(strand, out, Nil),
                 Some(align) => Output::set(strand, out, annex.global.symbols.align_symbol(align)),
             }
             Ok(())
         })
-        .get("sign", |this, strand, mut out| {
+        .get("sign", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.sign {
-                None => out.store(Value::NIL),
+                None => Output::set(strand, out, Nil),
                 Some(sign) => Output::set(strand, out, annex.global.symbols.sign_symbol(sign)),
             }
             Ok(())
         })
-        .get("width", |this, strand, mut out| {
+        .get("width", |this, strand, out| {
             match this.annex().spec.width {
                 Some(width) => Output::set(strand, out, width),
-                None => out.store(Value::NIL),
+                None => Output::set(strand, out, Nil),
             }
             Ok(())
         })
-        .get("precision", |this, strand, mut out| {
+        .get("precision", |this, strand, out| {
             match this.annex().spec.precision {
                 Some(precision) => Output::set(strand, out, precision),
-                None => out.store(Value::NIL),
+                None => Output::set(strand, out, Nil),
             }
             Ok(())
         })
@@ -1144,10 +1144,10 @@ where
             Output::set(strand, out, alt);
             Ok(())
         })
-        .get("kind", |this, strand, mut out| {
+        .get("kind", |this, strand, out| {
             let annex = this.annex();
             match annex.spec.kind {
-                None => out.store(Value::NIL),
+                None => Output::set(strand, out, Nil),
                 Some(kind) => Output::set(strand, out, annex.global.symbols.kind_symbol(kind)),
             }
             Ok(())

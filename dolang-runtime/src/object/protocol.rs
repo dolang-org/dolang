@@ -237,7 +237,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         let mut out = out;
         Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
         let equal = out.op_bool(strand)?;
-        out.store(Value::from_bool(!equal));
+        Output::set(strand, &mut out, Value::from_bool(!equal));
         Ok(())
     }
     fn op_rne<'a, 's>(
@@ -478,7 +478,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
             Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
             result = out.op_bool(strand)?;
         }
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -1275,12 +1275,12 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for Recv<'v, 'a, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe {
+        Output::set(&mut alloc, out, unsafe {
             match self.delegator {
                 Some(delegator) => delegator.dup(),
                 None => Value::from_object(self.receiver.to_strong()),
@@ -1294,12 +1294,12 @@ impl<'v, 'a, T: ?Sized + Protocol<'v>> Input<'v> for &Recv<'v, 'a, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe {
+        Output::set(&mut alloc, out, unsafe {
             match self.delegator {
                 Some(delegator) => delegator.dup(),
                 None => Value::from_object(self.receiver.to_strong()),
@@ -1313,12 +1313,12 @@ impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the duplicate moves straight into the output slot
-        out.store(unsafe { Value::from_object(self.dup()) });
+        Output::set(&mut alloc, out, unsafe { Value::from_object(self.dup()) });
         None
     }
 }

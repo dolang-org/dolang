@@ -313,7 +313,7 @@ impl<'v> Dict<'v> {
     ) -> Result<'v, 's, ()> {
         unsafe {
             let found = self.find(strand, hv, &key)?;
-            let (key, value) = (key.take(), value.take());
+            let (key, value) = (key.take(strand), value.take(strand));
             let mut cap = self.table.capacity();
             let probe = match found {
                 Some(bucket) => Ok(bucket),
@@ -1719,7 +1719,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             // Equal pair counts make both walks end together
             if left.total_pairs != right.total_pairs {
-                out.store(Value::FALSE);
+                Output::set(strand, &mut out, Value::FALSE);
                 return Ok(());
             }
             let pairs = left
@@ -1736,11 +1736,11 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     || !l.key.eq(strand, &r.key)?
                     || !l.value.at(*subl).eq(strand, r.value.at(*subr))?
                 {
-                    out.store(Value::FALSE);
+                    Output::set(strand, &mut out, Value::FALSE);
                     return Ok(());
                 }
             }
-            out.store(Value::TRUE);
+            Output::set(strand, &mut out, Value::TRUE);
             Ok(())
         })
     }
@@ -1783,14 +1783,19 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     let (r, subr) = (r.0.as_ref(), r.1);
                     for (l, r) in [(&l.key, &r.key), (l.value.at(subl), r.value.at(subr))] {
                         if !l.eq(strand, r)? {
-                            out.store(Value::from_bool(l.lt(strand, r)?));
+                            let flag = l.lt(strand, r)?;
+                            Output::set(strand, &mut out, flag);
                             return Ok(());
                         }
                     }
                     i += 1;
                     j += 1;
                 }
-                out.store(Value::from_bool(right.table.len() > left.table.len()));
+                Output::set(
+                    strand,
+                    &mut out,
+                    Value::from_bool(right.table.len() > left.table.len()),
+                );
                 Ok(())
             }
         })
@@ -2275,12 +2280,12 @@ impl<'v> Dict<'v> {
             Output::set(strand, &mut out, value);
             Ok(())
         } else if let Some(mut default) = default {
-            out.store(default.take());
+            Output::set(strand, &mut out, &mut default);
             Ok(())
         } else if let Some(else_key) = or_else {
             call!(strand, else_key, out)
         } else {
-            out.store(Value::NIL);
+            Output::set(strand, &mut out, Value::NIL);
             Ok(())
         }
     }
@@ -2320,7 +2325,9 @@ impl<'v> Dict<'v> {
                                 let bucket = dict.table.remove(bucket).0;
                                 dict.epoch += 1;
                                 match bucket.value {
-                                    EntryValue::Single { value, .. } => out.store(value),
+                                    EntryValue::Single { value, .. } => {
+                                        Output::set(strand, &mut out, value)
+                                    }
                                     EntryValue::Multi(_) => unreachable!(),
                                 };
                                 return Ok(());
@@ -2347,7 +2354,7 @@ impl<'v> Dict<'v> {
                                     }
                                 }
                                 dict.epoch += 1;
-                                out.store(value);
+                                Output::set(strand, &mut out, value);
                                 return Ok(());
                             }
                         }
@@ -2357,7 +2364,7 @@ impl<'v> Dict<'v> {
         }
 
         if let Some(mut default) = default {
-            out.store(default.take());
+            Output::set(strand, &mut out, &mut default);
             Ok(())
         } else if let Some(else_key) = or_else {
             call!(strand, else_key, out)
@@ -2420,7 +2427,7 @@ impl<'v> Dict<'v> {
                 }
             }
         };
-        out.store(Value::from_bool(found));
+        Output::set(strand, &mut out, Value::from_bool(found));
         Ok(())
     }
 

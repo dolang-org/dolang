@@ -350,9 +350,8 @@ impl<'v> Protocol<'v> for IntObj {
         let prim = other
             .to_prim(strand)
             .map_err(|_| Error::unsupported(strand, "`==`"))?;
-        out.store(Value::from_bool(
-            Prim::from(*this.get()).op_eq(strand, &prim),
-        ));
+        let flag = Prim::from(*this.get()).op_eq(strand, &prim);
+        Output::set(strand, &mut out, flag);
         Ok(())
     }
 
@@ -719,9 +718,8 @@ impl<'v> Protocol<'v> for VerbatimObj {
         let prim = other
             .to_prim(strand)
             .map_err(|_| Error::unsupported(strand, "`==`"))?;
-        out.store(Value::from_bool(
-            Prim::from(this.get().value).op_eq(strand, &prim),
-        ));
+        let flag = Prim::from(this.get().value).op_eq(strand, &prim);
+        Output::set(strand, &mut out, flag);
         Ok(())
     }
 

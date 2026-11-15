@@ -364,9 +364,13 @@ impl<'v, 's> ErrorRoot<'v, 's> {
     }
 
     /// Move the contents into a new root registered with `inner`.
-    fn rehome<'ps>(mut self, inner: &'ps StrandInner<'v>) -> ErrorRoot<'v, 'ps> {
+    fn rehome<'ps>(
+        mut self,
+        mut alloc: &mut dyn Alloc<'v>,
+        inner: &'ps StrandInner<'v>,
+    ) -> ErrorRoot<'v, 'ps> {
         let mut root = ErrorRoot::new(inner);
-        Output::swap(&mut root, &mut self);
+        Output::swap(&mut alloc, &mut root, &mut self);
         mem::swap(root.backtrace_mut(), self.backtrace_mut());
         root
     }
@@ -398,11 +402,11 @@ impl<'v> Output<'v> for ErrorRoot<'v, '_> {
 impl<'v> Input<'v> for ErrorRoot<'v, '_> {
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(Output::as_slot(self, Sealed).take());
+        Output::set(&mut alloc, out, Output::as_slot(self, Sealed));
         None
     }
 }
@@ -410,12 +414,12 @@ impl<'v> Input<'v> for ErrorRoot<'v, '_> {
 impl<'v> Input<'v> for &ErrorRoot<'v, '_> {
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.dup() });
+        Output::set(&mut alloc, out, unsafe { self.dup() });
         None
     }
 }
@@ -424,12 +428,12 @@ impl<'v> Input<'v> for &ErrorRoot<'v, '_> {
 impl<'v> Input<'v> for &mut ErrorRoot<'v, '_> {
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let mut slot = Output::as_slot(*self, Sealed);
-        out.store(slot.take());
+        Output::set(&mut alloc, out, &mut slot);
         Some(slot)
     }
 }
@@ -454,7 +458,6 @@ enum Variant<'v, 's> {
     TimedOut,
     Concurrency,
     Runtime(&'static str),
-    Type(&'static str),
     NonLocalJump(u8, gc::Weak<'v, frame::Upvars<'v>>),
     Boxed(ErrorRoot<'v, 's>),
 }
@@ -581,7 +584,6 @@ impl<'v, 's> fmt::Display for Error<'v, 's> {
             Variant::TimedOut => write!(f, "strand timed out"),
             Variant::Concurrency => write!(f, "conflicting concurrent operation"),
             Variant::Runtime(msg) => write!(f, "{msg}"),
-            Variant::Type(msg) => write!(f, "type error: {msg}"),
             Variant::NonLocalJump(..) => write!(f, "non-local jump"),
             Variant::Boxed(root) => {
                 let val: &Value<'v> = root;
@@ -686,7 +688,6 @@ impl<'v, 's> Error<'v, 's> {
             Variant::TimedOut => Self::new_info(strand, Boxed::TimedOut).inner,
             Variant::Concurrency => Self::new_info(strand, Boxed::Concurrency(None)).inner,
             Variant::Runtime(msg) => Self::new_info(strand, Boxed::Runtime(msg.into())).inner,
-            Variant::Type(msg) => Self::new_info(strand, Boxed::Type(msg.into())).inner,
             Variant::NonLocalJump(..) => unreachable!("non-local jump should never be boxed"),
             Variant::Boxed(..) => return,
         }
@@ -811,13 +812,6 @@ impl<'v, 's> Error<'v, 's> {
     /// Create error: misuse of value according to type
     pub fn type_error(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand, Boxed::Type(msg.into()))
-    }
-
-    pub(crate) fn type_error_raw(
-        #[allow(unused_variables)] strand: &'s StrandInner<'v>,
-        msg: &'static str,
-    ) -> Self {
-        Self::new_variant(Variant::Type(msg))
     }
 
     /// Create error: invalid value with otherwise acceptable type
@@ -973,7 +967,6 @@ impl<'v, 's> Error<'v, 's> {
             Variant::TimedOut => ErrorKind::TimedOut,
             Variant::Concurrency => ErrorKind::Concurrency,
             Variant::Runtime(_) => ErrorKind::Runtime,
-            Variant::Type(_) => ErrorKind::Type,
             Variant::NonLocalJump(..) => ErrorKind::Runtime,
             Variant::Boxed(root) => {
                 let val: &Value<'v> = root;
@@ -1129,23 +1122,6 @@ impl<'v, 's> Error<'v, 's> {
         })
     }
 
-    pub(crate) fn from_value_backtrace_raw(
-        strand: &'s StrandInner<'v>,
-        err: &Value<'v>,
-        backtrace: &Value<'v>,
-    ) -> Result<'v, 's, Self> {
-        let mut root = ErrorRoot::new(strand);
-        // SAFETY: the copy is stored into the scanned root at once
-        Output::as_slot(&mut root, Sealed).store(unsafe { err.dup() });
-        if !backtrace.is_nil() && !root.fill_backtrace(strand.vm(), backtrace) {
-            return Err(Error::type_error_raw(strand, "expected inspect.Backtrace"));
-        }
-        Ok(Self {
-            inner: Variant::Boxed(root),
-            phantom: PhantomData,
-        })
-    }
-
     pub(crate) fn push_backtrace(&mut self, strand: &mut Strand<'v, 's>, entry: UnwindEntry<'v>) {
         if self.as_nl_branch().is_some() {
             return;
@@ -1161,10 +1137,16 @@ impl<'v, 's> Error<'v, 's> {
         }
     }
 
-    pub(crate) fn migrate<'ps>(self, strand: &Strand<'v, 'ps>) -> Error<'v, 'ps> {
+    /// Move the error to the strand whose state is `inner`; `alloc` may belong to
+    /// any strand of the VM.
+    pub(crate) fn migrate<'ps>(
+        self,
+        alloc: &mut dyn Alloc<'v>,
+        inner: &'ps StrandInner<'v>,
+    ) -> Error<'v, 'ps> {
         Error {
             inner: match self.inner {
-                Variant::Boxed(root) => Variant::Boxed(root.rehome(strand.inner)),
+                Variant::Boxed(root) => Variant::Boxed(root.rehome(alloc, inner)),
                 Variant::Unsupported(msg) => Variant::Unsupported(msg),
                 Variant::Immutable => Variant::Immutable,
                 Variant::Overflow => Variant::Overflow,
@@ -1175,7 +1157,6 @@ impl<'v, 's> Error<'v, 's> {
                 Variant::TimedOut => Variant::TimedOut,
                 Variant::Concurrency => Variant::Concurrency,
                 Variant::Runtime(msg) => Variant::Runtime(msg),
-                Variant::Type(msg) => Variant::Type(msg),
                 Variant::NonLocalJump(i, w) => Variant::NonLocalJump(i, w),
             },
             phantom: PhantomData,

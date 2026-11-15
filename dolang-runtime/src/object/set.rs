@@ -210,7 +210,8 @@ impl<'v> Set<'v> {
         {
             Ok(_) => Ok(false),
             Err(insert) => {
-                self.insert_at_index(hash, insert, value.take());
+                // SAFETY: the value moves straight into the borrowed set
+                self.insert_at_index(hash, insert, unsafe { value.take(strand) });
                 Ok(true)
             }
         }
@@ -527,7 +528,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
             if left.len() != right.len() {
-                out.store(Value::FALSE);
+                Output::set(strand, &mut out, Value::FALSE);
                 return Ok(());
             }
             unsafe {
@@ -538,12 +539,12 @@ impl<'v> Protocol<'v> for Set<'v> {
                     })?
                     .is_none()
                     {
-                        out.store(Value::FALSE);
+                        Output::set(strand, &mut out, Value::FALSE);
                         return Ok(());
                     }
                 }
             }
-            out.store(Value::TRUE);
+            Output::set(strand, &mut out, Value::TRUE);
             Ok(())
         })
     }

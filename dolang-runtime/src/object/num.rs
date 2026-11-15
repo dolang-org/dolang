@@ -105,7 +105,7 @@ fn extrema<'v, 'a, 's>(
     is_min: bool,
 ) -> Result<'v, 's, ()> {
     unpack!(strand, args => mut first, *rest);
-    out.store(first.take());
+    Output::set(strand, &mut out, &mut first);
     for mut value in rest {
         let replace = if is_min {
             value.lt(strand, &out)?
@@ -113,7 +113,7 @@ fn extrema<'v, 'a, 's>(
             out.lt(strand, &value)?
         };
         if replace {
-            out.store(value.take());
+            Output::set(strand, &mut out, &mut value);
         }
         strand.check_trap_gc()?;
     }
@@ -140,11 +140,11 @@ fn default_mcall<'v, 'a, 's>(
                 ));
             }
             if value.lt(strand, &lower)? {
-                out.store(lower.take());
+                Output::set(strand, &mut out, &mut lower);
             } else if upper.lt(strand, &value)? {
-                out.store(upper.take());
+                Output::set(strand, &mut out, &mut upper);
             } else {
-                out.store(value.take());
+                Output::set(strand, &mut out, &mut value);
             }
             Ok(())
         }

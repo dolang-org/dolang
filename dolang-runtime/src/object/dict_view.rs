@@ -49,7 +49,10 @@ impl<'v> DictViewSink<'v, '_> {
             Output::set(strand, &mut value_slot, value);
             self.pairs
                 .borrow_mut()
-                .push((key_slot.take(), value_slot.take()));
+                // SAFETY: the values move straight into the borrowed accumulator
+                .push((unsafe { key_slot.take(strand) }, unsafe {
+                    value_slot.take(strand)
+                }));
         })
     }
 }
@@ -866,9 +869,11 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().dict_view) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        out.store(Value::from_bool(
-            this.as_header() == gc::Base::as_ptr(other).cast(),
-        ));
+        Output::set(
+            strand,
+            &mut out,
+            Value::from_bool(this.as_header() == gc::Base::as_ptr(other).cast()),
+        );
         Ok(())
     }
 
@@ -986,14 +991,14 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             return if found {
                 Ok(())
             } else if let Some(mut default) = default {
-                out.store(default.take());
+                Output::set(strand, &mut out, &mut default);
                 Ok(())
             } else if let Some(or_else) = or_else {
                 call!(strand, or_else, out)
             } else if method.tag() == sym::POP {
                 Err(Error::index(strand))
             } else {
-                out.store(Value::NIL);
+                Output::set(strand, &mut out, Value::NIL);
                 Ok(())
             };
         }

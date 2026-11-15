@@ -16,12 +16,12 @@ use crate::{
     error::{Error, Result},
     gc::{
         self, Boxable, Collect, Gc,
-        arena::{Arena, Header, Visit},
+        arena::{Header, Visit},
     },
     object::{pack, tuple},
     sig,
     strand::Strand,
-    value::{Output, Slot, Value, ValueCell},
+    value::{Input, Output, Slot, Value, ValueCell},
     vm::Alloc,
 };
 
@@ -206,22 +206,23 @@ impl<'v> CallFrame<'v> {
                 let embryo = strand.builtin_types().pack.embryo(strand);
                 let items = rest
                     .into_iter()
-                    .map(|(sym, mut value)| (sym.map(|sym| strand.sym_obj(sym)), value.take()))
+                    .map(|(sym, mut value)| {
+                        (sym.map(|sym| strand.sym_obj(sym)), value.take(strand))
+                    })
                     .collect();
                 let record = pack::Pack::new(items);
                 embryo.finish_imm(strand, record, slots.get_unchecked(rest_slot).slot());
             }
             if let Some(values) = pos_rest {
                 let embryo = tuple::embryo(strand, values.len());
-                let values = values.into_iter().map(|mut value| value.take());
-                embryo.finish(strand, values, slots.get_unchecked(rest_slot).slot());
+                embryo.finish_moving(strand, values, slots.get_unchecked(rest_slot).slot());
                 rest_slot += 1;
             }
             if let Some(entries) = key_rest {
                 let embryo = strand.builtin_types().pack.embryo(strand);
                 let entries = entries
                     .into_iter()
-                    .map(|(sym, mut value)| (strand.sym_obj(sym), value.take()));
+                    .map(|(sym, mut value)| (strand.sym_obj(sym), value.take(strand)));
                 let record = pack::Pack::from_sym_entries(entries);
                 embryo.finish_imm(strand, record, slots.get_unchecked(rest_slot).slot());
             }
@@ -324,7 +325,9 @@ impl<'v> CallFrame<'v> {
         let slots = info.1;
         CallFrame {
             func,
-            upvars: gc::GcCell::new(upvars),
+            // SAFETY: the frame is scanned once the caller links it in, before anything
+            // allocates
+            upvars: unsafe { gc::GcCell::new(upvars) },
             parent,
             program: loaded,
             pc: Cell::new(0),
@@ -373,16 +376,22 @@ impl<'v> Gc<'v, Upvars<'v>> {
     /// # Safety
     ///
     /// `index` must be in bounds, and nothing may borrow the variable.
-    pub(crate) unsafe fn set_var(&self, index: usize, value: Value<'v>) {
+    pub(crate) unsafe fn set_var(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        index: usize,
+        value: impl Input<'v>,
+    ) {
         // SAFETY: a transient pin; dropping the old value may run a finalizer, which
         // has no strand and cannot collect
         unsafe {
-            self.pin_unchecked()
+            let var = self
+                .pin_unchecked()
                 .annex()
                 .tail
                 .get_unchecked(index)
-                .slot()
-                .store(value)
+                .slot();
+            Output::set(alloc, var, value)
         }
     }
 }
@@ -415,7 +424,7 @@ impl<'v> gc::TailAnnex<ValueCell<'v>> for UpvarsPrefix<'v> {
         for var in vars {
             // Safety: the collector clears only unreachable frames, so nothing
             // else accesses the cell.
-            unsafe { var.slot().store(Value::NIL) }
+            unsafe { var.clear() }
         }
     }
 }
@@ -484,21 +493,24 @@ impl<'v> CallFrame<'v> {
     ///
     /// - The chain must be at least `depth + 1` frames long
     /// - `index` must be valid in the target upvar frame
-    pub(crate) unsafe fn set_upvar(&self, index: usize, depth: usize, mut src: Slot<'v, '_>) {
+    pub(crate) unsafe fn set_upvar(
+        &self,
+        alloc: &mut impl Alloc<'v>,
+        index: usize,
+        depth: usize,
+        src: Slot<'v, '_>,
+    ) {
         unsafe {
-            let value = src.take();
             // The slot drops the old value only after the write: a drop can run
             // native code
-            self.upvars_at(depth)
-                .tail
-                .get_unchecked(index)
-                .slot()
-                .store(value)
+            let var = self.upvars_at(depth).tail.get_unchecked(index).slot();
+            Output::set(alloc, var, src)
         }
     }
 
     /// Push a new upvar frame of `count` nil variables.
-    pub(crate) fn push_upvars(&self, arena: &Arena<'v>, count: usize) {
+    pub(crate) fn push_upvars(&self, alloc: &mut dyn Alloc<'v>, count: usize) {
+        let arena = alloc.alloc_vm(crate::vm::private::Sealed).arena();
         // Allocate first, so the parent is duplicated straight into the new frame
         // SAFETY: finished below with `Upvars`' own vtable and header
         let embryo = unsafe { gc::Embryo::<Header, Upvars<'v>>::new_tail(arena, count) };
@@ -520,7 +532,7 @@ impl<'v> CallFrame<'v> {
             )
         };
         // SAFETY: nothing borrows the chain across this write
-        unsafe { self.upvars.slot() }.store(Some(upvars))
+        unsafe { self.upvars.slot() }.store(alloc, Some(upvars))
     }
 
     /// Pop the innermost upvar frame, returning it.
@@ -529,11 +541,12 @@ impl<'v> CallFrame<'v> {
     ///
     /// The chain must not be empty. The result is loose, as for [`gc::Base::dup`]: it
     /// must be dropped, or moved into a scanned location, before anything allocates.
-    pub(crate) unsafe fn pop_upvars(&self) -> Gc<'v, Upvars<'v>> {
+    pub(crate) unsafe fn pop_upvars(&self, alloc: &mut dyn Alloc<'v>) -> Gc<'v, Upvars<'v>> {
         unsafe {
-            // SAFETY: nothing borrows the chain across these writes
+            // SAFETY: nothing borrows the chain across these writes; the caller takes
+            // over the popped frame's looseness
             let mut slot = self.upvars.slot();
-            let popped = slot.take().unwrap_unchecked();
+            let popped = slot.take(alloc).unwrap_unchecked();
             // SAFETY: the parent moves straight into the chain
             let parent = popped
                 .pin_unchecked()
@@ -542,7 +555,7 @@ impl<'v> CallFrame<'v> {
                 .parent
                 .as_ref()
                 .map(|p| p.dup());
-            slot.replace(parent);
+            slot.store(alloc, parent);
             popped
         }
     }

@@ -875,7 +875,7 @@ fn cell_eq<'v, 's>(
 ) -> Result<'v, 's, ()> {
     match cell_of(strand.vm(), other) {
         Some(other) => {
-            out.store(Value::from_bool(other.id() == cell.id()));
+            Output::set(strand, &mut out, Value::from_bool(other.id() == cell.id()));
             Ok(())
         }
         None => Err(Error::unsupported(strand, "`==`")),
@@ -955,7 +955,7 @@ fn observe_mcall<'v, 's>(
                 }
                 let len = refs.len();
                 let embryo = tuple::embryo(strand, len);
-                embryo.finish(strand, (0..len).map(|i| refs.at(i).take()), out);
+                embryo.finish_moving(strand, refs.iter_mut(), out);
             });
             Ok(())
         }

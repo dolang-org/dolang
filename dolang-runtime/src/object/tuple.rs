@@ -111,6 +111,37 @@ impl<'v> TupleEmbryo<'v> {
         };
         Output::set(alloc, out, tuple);
     }
+
+    /// Fills the tuple by moving the values out of `slots`, leaving them nil, and
+    /// places it into `out`.
+    ///
+    /// # Panics
+    /// If `slots` yields a different number of slots than the embryo was allocated
+    /// for.
+    pub(crate) fn finish_moving<'a>(
+        self,
+        alloc: &mut impl Alloc<'v>,
+        slots: impl IntoIterator<Item = Slot<'v, 'a>>,
+        out: impl Output<'v>,
+    ) where
+        'v: 'a,
+    {
+        let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        let header = unsafe { Header::new(vm.arena(), vm.builtin_types().tuple.vtbl) };
+        // SAFETY: the tuple is allocated, and each value moves from its rooted slot
+        // straight into it
+        let values = slots
+            .into_iter()
+            .map(|mut slot| unsafe { slot.take(alloc) });
+        // SAFETY: the finished tuple is stored into `out` at once
+        let tuple = unsafe {
+            Value::from_object(
+                self.0
+                    .finish_tail(header, TupleObj(PhantomData), (), values),
+            )
+        };
+        Output::set(alloc, out, tuple);
+    }
 }
 
 impl<'v, 'a> Recv<'v, 'a, TupleObj<'v>> {
@@ -135,7 +166,7 @@ pub(crate) fn from_args<'v, 's>(
 ) -> Result<'v, 's, ()> {
     let args = args.positional(strand)?;
     let embryo = embryo(strand, args.len());
-    embryo.finish(strand, args.map(|mut value| value.take()), out);
+    embryo.finish_moving(strand, args, out);
     Ok(())
 }
 
@@ -159,7 +190,8 @@ pub(crate) async fn from_builtin_args<'v, 's>(
                 strand.check_trap_gc()?;
             }
             match args.next() {
-                Some(Arg::Pos(mut item)) => sink.0.borrow_mut().push(item.take()),
+                // SAFETY: the value moves straight into the borrowed sink
+                Some(Arg::Pos(mut item)) => sink.0.borrow_mut().push(unsafe { item.take(strand) }),
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
                     expand
                         .op_spread(strand, SpreadContext::Sequence, sink)
@@ -208,10 +240,11 @@ struct TupleSpread<'a, 'v>(&'a RefCell<Vec<Value<'v>>>);
 impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
     fn positional(
         &mut self,
-        _strand: &mut Strand<'v, 's>,
+        strand: &mut Strand<'v, 's>,
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        self.0.borrow_mut().push(value.take());
+        // SAFETY: the value moves straight into the scanned accumulator
+        self.0.borrow_mut().push(unsafe { value.take(strand) });
         Ok(())
     }
 
@@ -328,7 +361,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 let left = this.items();
                 let right = other.items();
                 if left.len() != right.len() {
-                    out.store(Value::from_bool(false));
+                    Output::set(strand, &mut out, Value::from_bool(false));
                     return Ok(());
                 }
                 for (i, (l, r)) in left.iter().zip(right.iter()).enumerate() {
@@ -336,11 +369,11 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                         strand.check_trap()?;
                     }
                     if !l.eq(strand, r)? {
-                        out.store(Value::from_bool(false));
+                        Output::set(strand, &mut out, Value::from_bool(false));
                         return Ok(());
                     }
                 }
-                out.store(Value::from_bool(true));
+                Output::set(strand, &mut out, Value::from_bool(true));
                 Ok(())
             })
         } else {
@@ -363,11 +396,12 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                         strand.check_trap()?;
                     }
                     if !l.eq(strand, r)? {
-                        out.store(Value::from_bool(l.lt(strand, r)?));
+                        let flag = l.lt(strand, r)?;
+                        Output::set(strand, &mut out, flag);
                         return Ok(());
                     }
                 }
-                out.store(Value::from_bool(right.len() > left.len()));
+                Output::set(strand, &mut out, Value::from_bool(right.len() > left.len()));
                 Ok(())
             })
         } else {
@@ -490,7 +524,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                     Some(value) => Output::set(strand, &mut out, value),
                     None => {
                         if let Some(mut default) = default {
-                            out.store(default.take())
+                            Output::set(strand, &mut out, &mut default)
                         } else if let Some(or_else) = or_else {
                             call!(strand, or_else, out)?;
                         }

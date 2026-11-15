@@ -234,7 +234,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 embryo.finish(strand, FieldIter::new(receiver, symbols), staged.at(i));
             }
             for index in 0..sig.len() {
-                out.at(index).store(staged.at(index).take());
+                Output::set(strand, out.at(index), staged.at(index));
             }
             Ok(())
         })

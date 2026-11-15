@@ -87,14 +87,9 @@ impl<'v> Struct<'v> {
             return Err(Self::duplicate_key_error(strand, name));
         }
         let embryo = strand.builtin_types().structure.embryo(strand);
-        embryo.finish(
-            strand,
-            Self {
-                // SAFETY: the struct is allocated; the items move straight into it
-                items: unsafe { pack::pack_items(vm, args) },
-            },
-            out,
-        );
+        // SAFETY: the struct is allocated; the items move straight into it
+        let items = unsafe { pack::pack_items(strand, args) };
+        embryo.finish(strand, Self { items }, out);
         Ok(())
     }
 
@@ -188,11 +183,8 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let left = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            out.store(Value::from_bool(pack::eq_items(
-                strand,
-                &left.items,
-                &right.items,
-            )?));
+            let flag = pack::eq_items(strand, &left.items, &right.items)?;
+            Output::set(strand, &mut out, flag);
             Ok(())
         })
     }
@@ -209,11 +201,8 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let left = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let right = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            out.store(Value::from_bool(pack::lt_items(
-                strand,
-                &left.items,
-                &right.items,
-            )?));
+            let flag = pack::lt_items(strand, &left.items, &right.items)?;
+            Output::set(strand, &mut out, flag);
             Ok(())
         })
     }
@@ -250,7 +239,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
             let mut borrow = this.borrow_mut(strand)?;
             // SAFETY: the symbol and the value move straight into the borrowed struct
             let key = unsafe { strand.sym_obj(key) };
-            borrow.set(key, value.take());
+            borrow.set(key, unsafe { value.take(strand) });
             return Ok(());
         }
         if !key.is_int(strand) {
@@ -262,7 +251,8 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let mut borrow = this.borrow_mut(strand)?;
         match pack::find_index(strand, &borrow.items, &key) {
             Some(index) => {
-                borrow.items[index].1 = value.take();
+                // SAFETY: the value moves straight into the borrowed struct
+                borrow.items[index].1 = unsafe { value.take(strand) };
                 Ok(())
             }
             None => Err(Error::index(strand)),
@@ -297,7 +287,7 @@ impl<'v> Protocol<'v> for Struct<'v> {
         let mut borrow = this.borrow_mut(strand)?;
         // SAFETY: the symbol and the value move straight into the borrowed struct
         let key = unsafe { strand.sym_obj(field) };
-        borrow.set(key, value.take());
+        borrow.set(key, unsafe { value.take(strand) });
         Ok(())
     }
 
@@ -470,12 +460,12 @@ impl<'v> Protocol<'v> for Class {
                 if found {
                     Ok(())
                 } else if let Some(mut default) = default {
-                    out.store(default.take());
+                    Output::set(strand, &mut out, &mut default);
                     Ok(())
                 } else if let Some(or_else) = or_else {
                     call!(strand, or_else, out)
                 } else {
-                    out.store(Value::NIL);
+                    Output::set(strand, &mut out, Value::NIL);
                     Ok(())
                 }
             }

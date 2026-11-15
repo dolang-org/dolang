@@ -13,7 +13,7 @@ use crate::{
     },
     strand::Strand,
     unpack,
-    value::{Output, Value, fmt::Format},
+    value::{Nil, Output, Value, fmt::Format},
     vm::{AllocExt, Builder, StateTag, Vm},
     with_instance,
 };
@@ -188,11 +188,11 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             .value("Backtrace", backtrace)
             .value("Frame", frame)
             .value("Location", state.location)
-            .function("definition", async move |strand, args, mut out| {
+            .function("definition", async move |strand, args, out| {
                 unpack!(strand, args => func);
                 match definition(strand.vm(), &func) {
                     Some((source, span)) => location(strand, source, span, out),
-                    None => out.store(Value::NIL),
+                    None => Output::set(strand, out, Nil),
                 }
                 Ok(())
             })
