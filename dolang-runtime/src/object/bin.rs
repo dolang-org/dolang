@@ -206,7 +206,7 @@ impl<'v> Protocol<'v> for BinObj {
     ) -> Result<'v, 's, ()> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             let eq = with_pin!(strand, oslice, |oslice| oslice.bytes() == this.bytes());
-            out.store(Value::from_bool(eq));
+            Output::set(strand, &mut out, Value::from_bool(eq));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -221,7 +221,7 @@ impl<'v> Protocol<'v> for BinObj {
     ) -> Result<'v, 's, ()> {
         if let Some(oslice) = other.downcast_ref(strand.builtin_types().bin) {
             let lt = with_pin!(strand, oslice, |oslice| this.bytes() < oslice.bytes());
-            out.store(Value::from_bool(lt));
+            Output::set(strand, &mut out, Value::from_bool(lt));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))

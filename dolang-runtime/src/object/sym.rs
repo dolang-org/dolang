@@ -88,7 +88,11 @@ impl<'v> Protocol<'v> for SymObj {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
-            out.store(Value::from_bool(osym.tag() == this.get().tag));
+            Output::set(
+                strand,
+                &mut out,
+                Value::from_bool(osym.tag() == this.get().tag),
+            );
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -111,7 +115,11 @@ impl<'v> Protocol<'v> for SymObj {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         if let Some(osym) = other.downcast_ref(strand.builtin_types().sym) {
-            out.store(Value::from_bool(this.get().name.as_str() < osym.name()));
+            Output::set(
+                strand,
+                &mut out,
+                Value::from_bool(this.get().name.as_str() < osym.name()),
+            );
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))

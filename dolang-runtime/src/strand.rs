@@ -1054,18 +1054,6 @@ impl<'v> StrandInner<'v> {
         &self.output
     }
 
-    /// Exchange the strand's input with the value in `slot`.
-    pub(crate) fn swap_input(&self, slot: &mut Slot<'v, '_>) {
-        // Safety: see the field
-        Output::swap(unsafe { self.input.slot() }, slot)
-    }
-
-    /// Exchange the strand's output with the value in `slot`.
-    pub(crate) fn swap_output(&self, slot: &mut Slot<'v, '_>) {
-        // Safety: see the field
-        Output::swap(unsafe { self.output.slot() }, slot)
-    }
-
     pub(crate) fn errors(&self) -> &ErrorTable<'v> {
         &self.errors
     }
@@ -1569,7 +1557,7 @@ impl<'v, 's> Strand<'v, 's> {
             }
             assert!(items.next().is_none(), "tuple items more than their length");
             let embryo = tuple::embryo(strand, len);
-            embryo.finish(strand, (0..len).map(|i| cells.at(i).take()), out)
+            embryo.finish_moving(strand, cells.iter_mut(), out)
         })
     }
 
@@ -1580,7 +1568,11 @@ impl<'v, 's> Strand<'v, 's> {
             Output::set(strand, Slot::reborrow(&mut start_slot), start);
             Output::set(strand, Slot::reborrow(&mut end_slot), end);
             let embryo = strand.builtin_types().range.embryo(strand);
-            let range = range::Range::new(start_slot.take(), end_slot.take(), Value::NIL);
+            // SAFETY: the range is allocated; the bounds move from their rooted slots
+            // straight into it
+            let range = unsafe {
+                range::Range::new(start_slot.take(strand), end_slot.take(strand), Value::NIL)
+            };
             embryo.finish_imm(strand, range, out)
         })
     }
@@ -1647,18 +1639,34 @@ impl<'v, 's> Strand<'v, 's> {
         self.vm().check_trap_gc(self)
     }
 
+    /// Exchange the strand's input with the value in `slot`.
+    pub(crate) fn swap_input(&mut self, slot: &mut Slot<'v, '_>) {
+        let inner = self.inner;
+        // Safety: see the field
+        Output::swap(self, unsafe { inner.input.slot() }, slot)
+    }
+
+    /// Exchange the strand's output with the value in `slot`.
+    pub(crate) fn swap_output(&mut self, slot: &mut Slot<'v, '_>) {
+        let inner = self.inner;
+        // Safety: see the field
+        Output::swap(self, unsafe { inner.output.slot() }, slot)
+    }
+
     /// Get current iterator.
-    pub fn input(&self, mut out: impl Output<'v>) {
+    pub fn input(&mut self, out: impl Output<'v>) {
+        let inner = self.inner;
         // SAFETY: nothing writes the cell during the read, and the copy moves straight
         // into `out`
-        Slot::from_output(&mut out).store(unsafe { self.inner.input().as_ref().dup() });
+        Output::set(self, out, unsafe { inner.input().as_ref().dup() });
     }
 
     /// Get current sink.
-    pub fn output(&self, mut out: impl Output<'v>) {
+    pub fn output(&mut self, out: impl Output<'v>) {
+        let inner = self.inner;
         // SAFETY: nothing writes the cell during the read, and the copy moves straight
         // into `out`
-        Slot::from_output(&mut out).store(unsafe { self.inner.output().as_ref().dup() });
+        Output::set(self, out, unsafe { inner.output().as_ref().dup() });
     }
 
     /// Spawn a new strand scoped to this strand which executes `f`.
@@ -1704,7 +1712,7 @@ impl<'v, 's> Strand<'v, 's> {
                         method: None,
                     },
                 );
-                Err(e.migrate(self))
+                Err(e.migrate(&mut strand, self.inner))
             }
         }
     }
@@ -1825,23 +1833,23 @@ impl<'v, 's> Strand<'v, 's> {
             let group = StrandGroup::new();
             let _guard = unsafe { inner.init_group_leader(&group) };
             unsafe { inner.link_top_level() };
+            let _sp = unsafe { inner.push_sp(frame::Ptr::Native(NonNull::from_ref(&native))) };
+            // Safety: native outlives strand
+            let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
             // `inner` is scanned from here on: take over the pending values
             {
                 // SAFETY: the future owns `inner`, and no other slot over `pending` lives
                 let [mut start, mut input, mut output] =
                     pending.each_ref().map(|cell| unsafe { cell.slot() });
-                Output::swap(unsafe { inner.start.slot() }, &mut start);
+                Output::swap(&mut strand, unsafe { inner.start.slot() }, &mut start);
                 // Without a stream the strand keeps the channels `derived` copied
                 if close_on_exit {
-                    inner.swap_input(&mut input);
-                    inner.swap_output(&mut output);
+                    strand.swap_input(&mut input);
+                    strand.swap_output(&mut output);
                 }
             }
             drop(pending_scan);
             drop(pending);
-            let _sp = unsafe { inner.push_sp(frame::Ptr::Native(NonNull::from_ref(&native))) };
-            // Safety: native outlives strand
-            let mut strand = unsafe { Strand::from_native_frame(&inner, &native) };
 
             with_slots!(strand, |mut out, mut tmp, mut poison_err, mut poison_bt| {
                 let result = strand
@@ -1887,12 +1895,12 @@ impl<'v, 's> Strand<'v, 's> {
                     let close = Sym::well_known(sym::CLOSE);
                     let backtrace_key = Sym::well_known(sym::BACKTRACE);
                     Output::set(strand, &mut tmp, Singleton::Null);
-                    strand.inner.swap_input(&mut tmp);
+                    strand.swap_input(&mut tmp);
                     if !tmp.is_nil() {
                         let _ = method!(strand, &tmp, close, &mut out);
                     }
                     Output::set(strand, &mut tmp, Singleton::Null);
-                    strand.inner.swap_output(&mut tmp);
+                    strand.swap_output(&mut tmp);
                     if !tmp.is_nil() {
                         let _ = if poisoned {
                             method!(
@@ -2136,12 +2144,12 @@ impl<'v, 'a, 's> RedirectGuard<'v, 'a, 's> {
         let [mut saved_input, mut saved_output] = saved;
         let input = input.map(|input| {
             Output::set(strand, &mut saved_input, input);
-            strand.inner.swap_input(&mut saved_input);
+            strand.swap_input(&mut saved_input);
             saved_input
         });
         let output = output.map(|output| {
             Output::set(strand, &mut saved_output, output);
-            strand.inner.swap_output(&mut saved_output);
+            strand.swap_output(&mut saved_output);
             saved_output
         });
         Self {
@@ -2171,10 +2179,10 @@ impl<'v, 's> DerefMut for RedirectGuard<'v, '_, 's> {
 impl Drop for RedirectGuard<'_, '_, '_> {
     fn drop(&mut self) {
         if let Some(input) = &mut self.input {
-            self.strand.inner.swap_input(input);
+            self.strand.swap_input(input);
         }
         if let Some(output) = &mut self.output {
-            self.strand.inner.swap_output(output);
+            self.strand.swap_output(output);
         }
     }
 }
@@ -2299,7 +2307,8 @@ mod scan_tests {
     fn make_tuple<'v>(strand: &mut Strand<'v, '_>, mut slot: Slot<'v, '_>) -> Value<'v> {
         let item = Value::from_i16(1);
         tuple::create(strand, [item], Slot::reborrow(&mut slot));
-        slot.take()
+        // SAFETY: the test only inspects the tuple's header
+        unsafe { slot.take(strand) }
     }
 
     #[test]

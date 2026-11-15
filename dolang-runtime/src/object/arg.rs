@@ -115,11 +115,14 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
                 let mut pack = this.borrow_mut(strand)?;
                 for arg in args {
                     match arg {
-                        Arg::Pos(mut value) => pack.push((None, value.take())),
+                        // SAFETY: the value moves straight into the borrowed pack
+                        Arg::Pos(mut value) => pack.push((None, unsafe { value.take(strand) })),
                         Arg::Key(key, mut value) => {
                             // SAFETY: the symbol and the value move straight into the
                             // borrowed pack
-                            pack.push((Some(unsafe { strand.sym_obj(key) }), value.take()));
+                            pack.push((Some(unsafe { strand.sym_obj(key) }), unsafe {
+                                value.take(strand)
+                            }));
                         }
                     }
                 }

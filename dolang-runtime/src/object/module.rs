@@ -142,14 +142,14 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
-        mut value: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let re = this.get();
         match re.map.binary_search_by_key(&field, |(s, _)| *s) {
             Ok(index) => {
                 unsafe {
                     re.upvars
-                        .set_var(re.map.get_unchecked(index).1, value.take());
+                        .set_var(strand, re.map.get_unchecked(index).1, value);
                 }
                 Ok(())
             }
@@ -502,7 +502,8 @@ impl<'v> Namespace<'v> {
                         NamespaceInner::Normal(module),
                     ));
                 } else {
-                    self.inner = NamespaceInner::Custom(slot.take());
+                    // SAFETY: the value moves straight into the borrowed namespace
+                    self.inner = NamespaceInner::Custom(unsafe { slot.take(strand) });
                 }
                 Ok(())
             }
@@ -608,7 +609,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                     Ok(index) => {
                         let var = module.map[index].1;
                         // Safety: nothing borrows across a write to an upvar
-                        unsafe { module.upvars.set_var(var, value.take()) };
+                        unsafe { module.upvars.set_var(strand, var, value) };
                         return Ok(());
                     }
                     Err(_) => return Err(Error::field(strand, field)),

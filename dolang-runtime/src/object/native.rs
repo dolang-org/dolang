@@ -88,7 +88,7 @@ impl<'v, T: Object<'v>> gc::TailAnnex<ValueCell<'v>> for ObjectAnnexPrefix<'v, T
     fn clear(&self, slots: &[ValueCell<'v>]) {
         for slot in slots {
             // Safety: the collector clears only unreachable objects
-            unsafe { slot.slot().store(Value::NIL) }
+            unsafe { slot.clear() }
         }
     }
 }
@@ -592,12 +592,12 @@ impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
     #[inline]
     fn input_take<'b>(
         &'b mut self,
-        _alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe {
+        Output::set(&mut alloc, out, unsafe {
             match self.delegator {
                 Some(delegator) => delegator.dup(),
                 None => Value::from_object(Base::upcast(self.receiver.to_strong())),
@@ -2097,7 +2097,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(eq)")),
             T::eq(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2114,7 +2114,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(req)")),
             T::req(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2131,7 +2131,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(ne)")),
             T::ne(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
     fn op_rne<'a, 's>(
@@ -2147,7 +2147,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(rne)")),
             T::rne(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2515,7 +2515,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(lt)")),
             T::lt(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2532,7 +2532,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(lte)")),
             T::lte(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2549,7 +2549,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(gt)")),
             T::gt(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2566,7 +2566,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             Some(Cow::Borrowed("(gte)")),
             T::gte(Instance::from_recv(&this), strand, other)
         )?;
-        out.store(Value::from_bool(result));
+        Output::set(strand, &mut out, Value::from_bool(result));
         Ok(())
     }
 
@@ -2646,13 +2646,13 @@ impl<'v, T: Object<'v>> Clone for Type<'v, T> {
 impl<'v, T: Object<'v>> Input<'v> for Type<'v, T> {
     fn input_take<'b>(
         &'b mut self,
-        alloc: &mut dyn Alloc<'v>,
-        mut out: Slot<'v, '_>,
+        mut alloc: &mut dyn Alloc<'v>,
+        out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.singleton(vm).dup() });
+        Output::set(&mut alloc, out, unsafe { self.singleton(vm).dup() });
         None
     }
 }
@@ -4163,7 +4163,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         if this.is(other) {
-            out.store(Value::TRUE);
+            Output::set(strand, &mut out, Value::TRUE);
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -4301,7 +4301,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
             .get()
             .native
             .repr_eq(&this.get().native);
-        out.store(Value::from_bool(same));
+        Output::set(strand, &mut out, Value::from_bool(same));
         Ok(())
     }
 
@@ -4518,7 +4518,7 @@ mod tests {
         strand::with_slots_dynamic,
         sym,
         test_support::{args_from_slots, with_builder},
-        value::TypeObject,
+        value::{Nil, TypeObject},
         vm::{Builder, StateTag},
     };
 
@@ -4781,7 +4781,7 @@ mod tests {
             proxy
                 .op_get(strand, state.make_sym, Slot::reborrow(&mut saved))
                 .unwrap();
-            proxy.store(Value::NIL);
+            Output::set(strand, &mut proxy, Nil);
             strand.vm().collect_full();
             call!(strand, &saved, &ty, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
@@ -4798,7 +4798,7 @@ mod tests {
                 &mut saved
             )
             .unwrap();
-            proxy.store(Value::NIL);
+            Output::set(strand, &mut proxy, Nil);
             strand.vm().collect_full();
             call!(strand, &saved, &mut out).unwrap();
             assert!(state.slot_ty.cast(&out).is_some());
@@ -5014,7 +5014,7 @@ mod tests {
                     .await
                     .unwrap();
                 assert_eq!(out.at(0).to_i64(strand).unwrap(), 4);
-                tail.store(out.at(1).take());
+                Output::set(strand, &mut tail, out.at(1));
             });
 
             owner
@@ -5053,7 +5053,7 @@ mod tests {
                 Variadic::Capture,
             );
             with_slots_dynamic!(strand, 2, |mut out| {
-                out.at(0).store(Value::from_i16(99));
+                Output::set(strand, out.at(0), 99);
                 let err = tail
                     .op_unpack(strand, &bad_sig, unsafe { Slots::new(out.as_inner()) })
                     .await
@@ -5086,8 +5086,8 @@ mod tests {
                 Variadic::NONE,
             );
             with_slots_dynamic!(strand, 2, |mut out| {
-                out.at(0).store(Value::from_i16(90));
-                out.at(1).store(Value::from_i16(91));
+                Output::set(strand, out.at(0), 90);
+                Output::set(strand, out.at(1), 91);
                 let err = proxy
                     .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
                     .await

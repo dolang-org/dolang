@@ -11,7 +11,7 @@ use crate::{
     object::{protocol::GcObj, sym::SymObj},
     strand::{SlotScope, Strand},
     sym::Sym,
-    value::{self, Input, Slot, ValueCell},
+    value::{self, Input, Output, Slot, ValueCell},
     vm::Alloc,
 };
 
@@ -96,13 +96,7 @@ impl<'v, 'i, const N: usize> ArgFrame<'v, 'i, N> {
         };
         // Safety: the cells are only read by the scan, never mutably borrowed
         let args = unsafe { Args::new(cells.as_ref(), sig, 1) };
-        (
-            ArgScope {
-                _guard: guard,
-                scope,
-            },
-            args,
-        )
+        (ArgScope { guard, scope }, args)
     }
 }
 
@@ -117,9 +111,17 @@ impl<const N: usize> Default for ArgFrame<'_, '_, N> {
 /// arguments back to the rooted locations they were taken from, then pops the frame.
 #[doc(hidden)]
 pub struct ArgScope<'v, 's, 'i, 'f> {
-    // Dropped first, so values move back while the cells are still rooted
-    _guard: ArgGuard<'v, 'i, 'f>,
+    guard: ArgGuard<'v, 'i, 'f>,
     scope: SlotScope<'v, 's, 'f>,
+}
+
+impl Drop for ArgScope<'_, '_, '_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        // Before the scope pops the frame, so values move back while the cells are
+        // still rooted
+        restore(&mut self.scope, self.guard.cells, self.guard.replace);
+    }
 }
 
 impl<'v, 's> Deref for ArgScope<'v, 's, '_, '_> {
@@ -138,17 +140,11 @@ impl<'v, 's> DerefMut for ArgScope<'v, 's, '_, '_> {
     }
 }
 
-/// Moves arguments back to the rooted locations they were taken from when dropped.
+/// The rooted locations arguments were taken from, which [`ArgScope`] moves them
+/// back to when dropped.
 struct ArgGuard<'v, 'i, 'f> {
     cells: &'f [ValueCell<'v>],
     replace: &'f mut [Option<Slot<'v, 'i>>],
-}
-
-impl Drop for ArgGuard<'_, '_, '_> {
-    #[inline]
-    fn drop(&mut self) {
-        restore(self.cells, self.replace);
-    }
 }
 
 #[inline(never)]
@@ -166,11 +162,15 @@ fn marshal<'v, 'i>(
 }
 
 #[inline(never)]
-fn restore<'v>(cells: &[ValueCell<'v>], replace: &mut [Option<Slot<'v, '_>>]) {
+fn restore<'v>(
+    strand: &mut Strand<'v, '_>,
+    cells: &[ValueCell<'v>],
+    replace: &mut [Option<Slot<'v, '_>>],
+) {
     for (cell, replace) in cells.iter().zip(replace) {
-        if let Some(mut replace) = replace.take() {
+        if let Some(replace) = replace.take() {
             // Safety: the call is over, so nothing else accesses the cell
-            replace.store(unsafe { cell.slot() }.take())
+            Output::set(strand, replace, unsafe { cell.slot() })
         }
     }
 }

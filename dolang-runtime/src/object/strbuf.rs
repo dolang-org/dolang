@@ -231,9 +231,11 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            out.store(Value::from_bool(
-                this_borrow.as_str() == other_borrow.as_str(),
-            ));
+            Output::set(
+                strand,
+                &mut out,
+                Value::from_bool(this_borrow.as_str() == other_borrow.as_str()),
+            );
             Ok(())
         })
     }
@@ -250,9 +252,11 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            out.store(Value::from_bool(
-                this_borrow.as_str() < other_borrow.as_str(),
-            ));
+            Output::set(
+                strand,
+                &mut out,
+                Value::from_bool(this_borrow.as_str() < other_borrow.as_str()),
+            );
             Ok(())
         })
     }

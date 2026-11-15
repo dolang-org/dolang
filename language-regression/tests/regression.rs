@@ -871,7 +871,7 @@ mod detail {
                     .function("async", async |strand, args, mut out| {
                         unpack!(strand, args => mut value);
                         DummyAsync::new(()).await;
-                        Output::swap(&mut out, &mut value);
+                        Output::swap(strand, &mut out, &mut value);
                         Ok(())
                     })
                     .function("callme", async move |strand, args, out| {

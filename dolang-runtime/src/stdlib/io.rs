@@ -44,7 +44,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{
-        BinEmbryo, Input, Output, Slot, TypeObject, Value,
+        BinEmbryo, Input, Nil, Output, Slot, TypeObject, Value,
         private::Sealed,
         view::{PinBin, PinStr},
     },
@@ -1041,7 +1041,7 @@ impl Concat {
                     .await?
                 {
                     this.state = ConcatState::Done;
-                    Mut::slot_mut::<0>(this).store(Value::NIL);
+                    Output::set(strand, Mut::slot_mut::<0>(this), Nil);
                     break;
                 }
                 if let Some(b) = item.as_bin(strand.vm()) {
@@ -1121,7 +1121,7 @@ impl<'v> Object<'v> for Concat {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.state = ConcatState::Closed;
                 borrow.pending = Vec::new();
-                Mut::slot_mut::<0>(&mut borrow).store(Value::NIL);
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Nil);
                 Ok(())
             })
     }
@@ -1510,7 +1510,7 @@ impl<'v> Object<'v> for Cursor {
             .method("close", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
-                Mut::slot_mut::<0>(&mut borrow).store(Value::NIL);
+                Output::set(strand, Mut::slot_mut::<0>(&mut borrow), Nil);
                 let unfinished = !borrow.held.is_empty();
                 borrow.open = false;
                 borrow.held = Vec::new();

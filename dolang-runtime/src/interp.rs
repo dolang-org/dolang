@@ -344,7 +344,9 @@ impl<'v> Vm<'v> {
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => mut start, mut end, mut step);
         let embryo = strand.builtin_types().range.embryo(strand);
-        let range = range::Range::new(start.take(), end.take(), step.take());
+        // SAFETY: the range is allocated; the values move straight into it
+        let range =
+            unsafe { range::Range::new(start.take(strand), end.take(strand), step.take(strand)) };
         embryo.finish_imm(strand, range, out);
         Ok(())
     }
@@ -374,7 +376,7 @@ impl<'v> Vm<'v> {
         let mut acc = StrEmbryo::new();
         for arg in args {
             let value = match arg {
-                Arg::Pos(mut slot) => slot.take(),
+                Arg::Pos(slot) => slot.into_ref(),
                 Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
             };
             value.op_display(strand, &mut acc)?;
@@ -392,7 +394,7 @@ impl<'v> Vm<'v> {
         let mut acc: Vec<u8> = Vec::new();
         for arg in args {
             let value = match arg {
-                Arg::Pos(mut slot) => slot.take(),
+                Arg::Pos(slot) => slot.into_ref(),
                 Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
             };
             with_u8_slice!(strand, value, |bytes| acc.extend_from_slice(bytes)).ok_or_else(
@@ -412,7 +414,7 @@ impl<'v> Vm<'v> {
         let mut acc = StrEmbryo::new();
         for arg in args {
             let value = match arg {
-                Arg::Pos(mut slot) => slot.take(),
+                Arg::Pos(slot) => slot.into_ref(),
                 Arg::Key(sym, _) => return Err(Error::unexpected_key(strand, sym)),
             };
             value.op_verbatim(strand, &mut acc)?;
@@ -428,9 +430,8 @@ impl<'v> Vm<'v> {
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let embryo = strand.builtin_types().arg_acc.embryo(strand);
-        let vm = strand.vm();
         // SAFETY: the accumulator is allocated; the items move straight into it
-        let items = unsafe { pack::pack_items(vm, args) };
+        let items = unsafe { pack::pack_items(strand, args) };
         embryo.finish(strand, ArgAcc::new(items), out);
         Ok(())
     }
@@ -816,7 +817,7 @@ impl<'v> Vm<'v> {
                     StoreUpvar => {
                         let index = reader.usize();
                         let depth = reader.usize();
-                        frame.set_upvar(index, depth, frame.top_slot());
+                        frame.set_upvar(strand, index, depth, frame.top_slot());
                         frame.sp.update(|s| s - 1);
                     }
                     Get => {
@@ -857,10 +858,10 @@ impl<'v> Vm<'v> {
                     }
                     PushUpvars => {
                         let count = reader.usize();
-                        frame.push_upvars(self.arena(), count)
+                        frame.push_upvars(strand, count)
                     }
                     // SAFETY: the popped frame is dropped at once
-                    PopUpvars => drop(frame.pop_upvars()),
+                    PopUpvars => drop(frame.pop_upvars(strand)),
                     Call => {
                         // Set current PC in frame header in case a backtrace is needed
                         frame.pc.set(reader.offset());
@@ -1101,7 +1102,7 @@ impl<'v> Vm<'v> {
                         let embryo = self.builtin_types().module.embryo(strand);
                         // SAFETY: the program and the popped upvar frame move straight
                         // into the allocated module
-                        let upvars = frame.pop_upvars();
+                        let upvars = frame.pop_upvars(strand);
                         let value = Module::from_upvars_syms(
                             frame.program.dup(),
                             upvars,
@@ -1197,7 +1198,7 @@ impl<'v> Vm<'v> {
                     NlGuard => {
                         frame.pc.set(reader.offset());
                         // Push marker upvar frame used as NlBranch target
-                        frame.push_upvars(self.arena(), 0);
+                        frame.push_upvars(strand, 0);
                         let index = reader.usize();
                         let mut func = Slot::reborrow(&mut scratch1);
                         let mut res = Slot::reborrow(&mut scratch2);
@@ -1214,7 +1215,7 @@ impl<'v> Vm<'v> {
                         // it fail
                         // SAFETY: the popped frame is only compared and dropped below;
                         // nothing allocates while it is held
-                        let guard = frame.pop_upvars();
+                        let guard = frame.pop_upvars(strand);
                         guard.read(|p| p.annex().prefix.stale.set(true));
                         // Check if this was a normal return or a caught NlBranch
                         match call_result {

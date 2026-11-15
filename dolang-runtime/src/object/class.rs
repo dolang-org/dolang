@@ -31,7 +31,7 @@ use crate::{
     strand::{Strand, with_scan, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{Nil, Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
+    value::{Input, Nil, Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
     vm::{Alloc, Builder, StateTag, Vm},
     with_instance, with_slots, with_str,
 };
@@ -316,7 +316,11 @@ async fn build<'v, 's>(
                         "class_create: superclass must be a type object",
                     ));
                 }
-                tables.supers.borrow_mut().push(slot.take());
+                // SAFETY: the value moves straight into the scanned builder tables
+                tables
+                    .supers
+                    .borrow_mut()
+                    .push(unsafe { slot.take(strand) });
             }
             sym::FIELD
             | sym::FIELD_THUNK
@@ -357,10 +361,12 @@ async fn build<'v, 's>(
                 };
                 let index = {
                     let mut defaults = defaults.borrow_mut();
+                    // SAFETY: the value moves straight into the scanned builder tables
+                    let default = unsafe { default.take(strand) };
                     defaults.push(if is_thunk {
-                        FieldDefault::Thunk(default.take())
+                        FieldDefault::Thunk(default)
                     } else {
-                        FieldDefault::Value(default.take())
+                        FieldDefault::Value(default)
                     });
                     defaults.len() - 1
                 };
@@ -421,24 +427,26 @@ async fn build<'v, 's>(
                 };
                 if scope != MemberScope::Instance {
                     reject_disallowed_type_member(strand, sym)?;
+                }
+                // SAFETY: the value moves into an entry, which is inserted into the
+                // scanned builder tables at once
+                let value = unsafe { value.take(strand) };
+                if scope != MemberScope::Instance {
                     let inherited = scope == MemberScope::Class;
                     let entry = match accessor {
                         Some(_) => ClassTypeEntry::Property {
-                            property: property(value.take()).unwrap(),
+                            property: property(value).unwrap(),
                             inherited,
                         },
-                        None => ClassTypeEntry::Method {
-                            value: value.take(),
-                            inherited,
-                        },
+                        None => ClassTypeEntry::Method { value, inherited },
                     };
                     insert_type_member(strand, &tables.local_type_entries, sym, entry)?;
                     continue;
                 }
 
                 let entry = match accessor {
-                    Some(_) => ClassEntry::Property(property(value.take()).unwrap()),
-                    None => ClassEntry::Method(value.take()),
+                    Some(_) => ClassEntry::Property(property(value).unwrap()),
+                    None => ClassEntry::Method(value),
                 };
                 if !insert_entry(&tables.local_entries, sym, entry) {
                     return Err(duplicate_member(strand, sym));
@@ -654,7 +662,11 @@ async fn build<'v, 's>(
             if !thunk.is_nil() {
                 call!(strand, &thunk, &mut value)?;
             }
-            tables.type_fields.borrow_mut().push(value.take());
+            // SAFETY: the value moves straight into the scanned builder tables
+            tables
+                .type_fields
+                .borrow_mut()
+                .push(unsafe { value.take(strand) });
         });
     }
 
@@ -839,14 +851,14 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
     ) -> Result<'v, 's, ()> {
         let kind = this.get().0;
         unpack!(strand, args => mut func);
+        let embryo = strand.builtin_types().accessor.embryo(strand);
+        // SAFETY: the accessor is allocated; the function moves from its rooted slot
+        // straight into it
         let accessor = Accessor {
             kind,
-            func: func.take(),
+            func: unsafe { func.take(strand) },
         };
-        strand
-            .builtin_types()
-            .accessor
-            .create_imm(strand, accessor, out);
+        embryo.finish_imm(strand, accessor, out);
         Ok(())
     }
 }
@@ -1382,7 +1394,8 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
             Some(ClassTypeEntry::Field { slot, .. }) => {
                 let slot = *slot;
                 let mut borrow = this.borrow_mut(strand)?;
-                borrow.type_fields[slot] = value.take();
+                // SAFETY: the value moves straight into the borrowed class
+                borrow.type_fields[slot] = unsafe { value.take(strand) };
                 Ok(())
             }
             Some(ClassTypeEntry::Property {
@@ -1511,7 +1524,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                 }
             }
             sym::SET_METHOD => {
-                unpack!(strand, args => obj, field, mut value);
+                unpack!(strand, args => obj, field, value);
                 let field = field
                     .as_sym(strand)
                     .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
@@ -1529,7 +1542,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             Some(ClassEntry::Field(slot_idx)) => *slot_idx,
                             _ => return Err(Error::field(strand, field)),
                         };
-                        recv.set_field(slot_idx, value.take());
+                        recv.set_field(strand, slot_idx, value);
                         Ok(())
                     }
                     Some(ClassEntry::Property(Property {
@@ -1730,11 +1743,13 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                         .map(|_| ValueCell::default())
                         .collect(),
                 },
-                // SAFETY: the instance is allocated; each field moves from its rooted
-                // slot into the annex with no allocation in between
-                (0..field_count).map(|index| unsafe {
-                    ValueCell::from_value(fields.unchecked_at(index).take())
-                }),
+                // SAFETY: the instance is allocated; each field is copied from its
+                // rooted slot into the annex with no allocation in between. The
+                // slots release their references when the frame exits.
+                fields
+                    .as_inner()
+                    .iter()
+                    .map(|cell| unsafe { ValueCell::from_value(cell.as_ref().dup()) }),
                 &mut inst,
             );
         });
@@ -1861,7 +1876,7 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         let same = with_pin!(strand, other, |other| {
             other.get().class.repr_eq(&this.get().class)
         });
-        out.store(Value::from_bool(same));
+        Output::set(strand, &mut out, Value::from_bool(same));
         Ok(())
     }
 
@@ -2008,9 +2023,9 @@ impl<'v> ClassInstanceAnnex<'v> {
     }
 
     /// Stores `value` into field `idx`. The old value is dropped after the write.
-    pub(crate) fn set_field(&self, idx: usize, value: Value<'v>) {
+    pub(crate) fn set_field(&self, alloc: &mut impl Alloc<'v>, idx: usize, value: impl Input<'v>) {
         // Safety: as for `field`
-        unsafe { self.tail[idx].slot().store(value) }
+        Output::set(alloc, unsafe { self.tail[idx].slot() }, value)
     }
 }
 
@@ -2028,7 +2043,7 @@ impl<'v> gc::TailAnnex<ValueCell<'v>> for ClassInstancePrefix<'v> {
     fn clear(&self, tail: &[ValueCell<'v>]) {
         for cell in tail {
             // Safety: the collector clears only unreachable instances
-            unsafe { cell.slot().store(Value::NIL) }
+            unsafe { cell.clear() }
         }
     }
 }
@@ -2092,12 +2107,12 @@ impl<'v> GcObj<'v, ClassInstance<'v>> {
     }
 
     /// Stores `value` into field `idx`; see [`ClassInstanceAnnex::set_field`].
-    pub(crate) fn set_field(&self, idx: usize, value: Value<'v>) {
+    pub(crate) fn set_field(&self, alloc: &mut impl Alloc<'v>, idx: usize, value: impl Input<'v>) {
         // SAFETY: a transient pin; dropping the old value may run a finalizer, which
         // has no strand and cannot collect
         unsafe { self.pin_unchecked() }
             .annex()
-            .set_field(idx, value)
+            .set_field(alloc, idx, value)
     }
 }
 
@@ -2605,12 +2620,12 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         field: Sym<'v, 'a>,
-        mut value: Slot<'v, 'a>,
+        value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry(field) {
             Some(ClassEntry::Field(slot_idx)) => {
-                annex.set_field(*slot_idx, value.take());
+                annex.set_field(strand, *slot_idx, value);
                 Ok(())
             }
             Some(ClassEntry::Property(Property {
@@ -2854,11 +2869,10 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::SPREAD_METHOD) {
             Some(ClassEntry::Method(v)) => {
-                let proxy = with_slots!(strand, |mut proxy| {
+                with_slots!(strand, |mut proxy| {
                     call!(strand, v, &this, &mut proxy)?;
-                    Ok(proxy.take())
-                })?;
-                proxy.op_spread(strand, context, sink).await
+                    proxy.op_spread(strand, context, sink).await
+                })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
                 let native = annex
@@ -3182,7 +3196,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         } else {
             Self::op_eq(this, strand, other, Slot::reborrow(&mut out))?;
             let equal = out.op_bool(strand)?;
-            out.store(Value::from_bool(!equal));
+            Output::set(strand, &mut out, Value::from_bool(!equal));
             Ok(())
         }
     }

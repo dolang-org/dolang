@@ -142,7 +142,7 @@ impl<'v> Protocol<'v> for StrObj {
     ) -> Result<'v, 's, ()> {
         if let Some(ostr) = other.downcast_native(strand, strand.builtin_types().str) {
             let eq = with_pin!(strand, ostr, |ostr| ostr.str() == this.str());
-            out.store(Value::from_bool(eq));
+            Output::set(strand, &mut out, Value::from_bool(eq));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`==`"))
@@ -157,7 +157,7 @@ impl<'v> Protocol<'v> for StrObj {
     ) -> Result<'v, 's, ()> {
         if let Some(ostr) = other.downcast_ref(strand.builtin_types().str) {
             let lt = with_pin!(strand, ostr, |ostr| this.str() < ostr.str());
-            out.store(Value::from_bool(lt));
+            Output::set(strand, &mut out, Value::from_bool(lt));
             Ok(())
         } else {
             Err(Error::unsupported(strand, "`<`"))

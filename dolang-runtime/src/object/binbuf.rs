@@ -257,9 +257,11 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            out.store(Value::from_bool(
-                this_borrow.as_slice() == other_borrow.as_slice(),
-            ));
+            Output::set(
+                strand,
+                &mut out,
+                Value::from_bool(this_borrow.as_slice() == other_borrow.as_slice()),
+            );
             Ok(())
         })
     }
@@ -276,9 +278,11 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
         let this_borrow = this.borrow(strand)?;
         with_pin!(strand, other, |other| {
             let other_borrow = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-            out.store(Value::from_bool(
-                this_borrow.as_slice() < other_borrow.as_slice(),
-            ));
+            Output::set(
+                strand,
+                &mut out,
+                Value::from_bool(this_borrow.as_slice() < other_borrow.as_slice()),
+            );
             Ok(())
         })
     }

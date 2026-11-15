@@ -592,9 +592,11 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let Some(other) = other.downcast_ref(strand.builtin_types().array_view) else {
             return Err(Error::unsupported(strand, "`==`"));
         };
-        out.store(Value::from_bool(
-            this.as_header() == gc::Base::as_ptr(other).cast(),
-        ));
+        Output::set(
+            strand,
+            &mut out,
+            Value::from_bool(this.as_header() == gc::Base::as_ptr(other).cast()),
+        );
         Ok(())
     }
 
@@ -692,7 +694,7 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
                 }
                 drop(guard);
                 if let Some(mut default) = default {
-                    out.store(default.take());
+                    Output::set(strand, &mut out, &mut default);
                 } else if let Some(or_else) = or_else {
                     call!(strand, or_else, out)?;
                 } else {

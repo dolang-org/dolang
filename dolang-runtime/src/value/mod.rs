@@ -1059,7 +1059,8 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
-                out.store(Value::from_bool(left.op_eq(strand, &right)));
+                let flag = left.op_eq(strand, &right);
+                Output::set(strand, &mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1079,7 +1080,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                out.store(Value::from_bool(self.repr_eq(other)));
+                Output::set(strand, &mut out, Value::from_bool(self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1094,7 +1095,8 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
-                out.store(Value::from_bool(left.op_eq(strand, &right)));
+                let flag = left.op_eq(strand, &right);
+                Output::set(strand, &mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1114,7 +1116,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                out.store(Value::from_bool(self.repr_eq(other)));
+                Output::set(strand, &mut out, Value::from_bool(self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1129,7 +1131,8 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
-                out.store(Value::from_bool(left.op_ne(strand, &right)));
+                let flag = left.op_ne(strand, &right);
+                Output::set(strand, &mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1149,7 +1152,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                out.store(Value::from_bool(!self.repr_eq(other)));
+                Output::set(strand, &mut out, Value::from_bool(!self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -1164,7 +1167,8 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         let result = match (self.case(), other.case()) {
             (Case::Prim(left), Case::Prim(right)) => {
-                out.store(Value::from_bool(left.op_ne(strand, &right)));
+                let flag = left.op_ne(strand, &right);
+                Output::set(strand, &mut out, flag);
                 Ok(())
             }
             (Case::Object(left), Case::Prim(_)) => {
@@ -1184,7 +1188,7 @@ impl<'v> Value<'v> {
         };
         match result {
             Err(error) if error.kind() == ErrorKind::Unsupported => {
-                out.store(Value::from_bool(!self.repr_eq(other)));
+                Output::set(strand, &mut out, Value::from_bool(!self.repr_eq(other)));
                 Ok(())
             }
             result => result,
@@ -2854,7 +2858,7 @@ impl<'v> BinEmbryo<'v> {
     }
 
     /// Finalizes the embryo into a Do `Bin` and writes it to `out`.
-    pub fn finish(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
+    pub fn finish(self, alloc: &mut impl Alloc<'v>, out: impl Output<'v>) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: the new value is stored into `out` right after, with no allocation
         // in between
@@ -2872,7 +2876,7 @@ impl<'v> BinEmbryo<'v> {
                 ))),
             }
         };
-        Slot::from_output(&mut out).store(value);
+        Output::set(alloc, out, value);
     }
 
     /// Finalizes the embryo into a Do `Str` after validating it as UTF-8.
@@ -2889,7 +2893,7 @@ impl<'v> BinEmbryo<'v> {
     /// Finalizes the embryo into a Do `Str` *without validation*
     /// # Safety
     /// The initialized bytes must be valid UTF-8.
-    pub unsafe fn finish_str_unchecked(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
+    pub unsafe fn finish_str_unchecked(self, alloc: &mut impl Alloc<'v>, out: impl Output<'v>) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let header = unsafe { Header::new(vm.arena(), vm.builtin_types().str.vtbl) };
         // SAFETY: the new value is stored into `out` right after, with no allocation
@@ -2900,7 +2904,7 @@ impl<'v> BinEmbryo<'v> {
                 None => Value::from_object(gc::Base::from_str(vm.arena(), header, StrObj, "")),
             }
         };
-        Slot::from_output(&mut out).store(value);
+        Output::set(alloc, out, value);
     }
 
     fn allocate(alloc: &mut dyn Alloc<'v>, capacity: usize) -> gc::Embryo<'v, Header, BinObj> {
@@ -3062,7 +3066,7 @@ impl<'v> StrEmbryo<'v> {
     }
 
     /// Finalizes the embryo into a Do `Str` and writes it to `out`.
-    pub fn finish(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
+    pub fn finish(self, alloc: &mut impl Alloc<'v>, out: impl Output<'v>) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: the new value is stored into `out` right after, with no allocation
         // in between
@@ -3073,7 +3077,7 @@ impl<'v> StrEmbryo<'v> {
                 None => Value::from_object(gc::Base::from_str(vm.arena(), header, StrObj, "")),
             }
         };
-        Slot::from_output(&mut out).store(value)
+        Output::set(alloc, out, value)
     }
 }
 
@@ -3132,7 +3136,7 @@ impl<'v> Weak<'v> {
 
     /// Store the referent into `out` if it is still alive. False if it was released.
     #[expect(dead_code)]
-    pub(crate) fn upgrade(&self, mut out: impl Output<'v>) -> bool {
+    pub(crate) fn upgrade(&self, alloc: &mut impl Alloc<'v>, out: impl Output<'v>) -> bool {
         let live = unsafe {
             match self.0.decode() {
                 Decode::Object(base) => base.cast::<arena::Header>().as_ref().try_retain(),
@@ -3141,7 +3145,7 @@ impl<'v> Weak<'v> {
         };
         if live {
             // The retained reference moves straight into `out`
-            Slot::from_output(&mut out).store(Value(self.0.clone(), PhantomData));
+            Output::set(alloc, out, Value(self.0.clone(), PhantomData));
         }
         live
     }
@@ -3222,7 +3226,7 @@ pub trait Output<'v>: Sized {
     }
 
     /// Swap with another output.
-    fn swap(mut this: Self, mut other: impl Output<'v>) {
+    fn swap(_alloc: &mut impl Alloc<'v>, mut this: Self, mut other: impl Output<'v>) {
         let this = Output::as_slot(&mut this, private::Sealed);
         let other = Output::as_slot(&mut other, private::Sealed);
         // Safety: each slot has exclusive access to its location, so the two cannot
@@ -3277,23 +3281,29 @@ impl<'v, 'a> Slot<'v, 'a> {
         unsafe { self.0.as_ref() }
     }
 
-    /// Replaces the value, returning the old one.
+    /// Replaces the value with no [`Alloc`] witness, returning the old one.
     #[inline]
-    pub(crate) fn replace(&mut self, value: Value<'v>) -> Value<'v> {
+    fn replace_raw(&mut self, value: Value<'v>) -> Value<'v> {
         // Safety: the slot has exclusive access; the `&mut` lives only for the write.
         unsafe { mem::replace(self.0.as_mut(), value) }
     }
 
-    #[inline]
-    pub(crate) fn take(&mut self) -> Value<'v> {
-        self.replace(Value::NIL)
-    }
-
-    pub(crate) fn store(&mut self, value: Value<'v>) {
+    /// Stores `value` with no [`Alloc`] witness, for the [`Input`] impls, which
+    /// receive one.
+    fn write(&mut self, value: Value<'v>) {
         // Drop the old value only after the write: a drop can run native code that
         // reaches this slot.
-        let old = self.replace(value);
+        let old = self.replace_raw(value);
         drop(old);
+    }
+
+    /// Moves the value out, leaving nil.
+    ///
+    /// # Safety
+    /// The result is loose, as for [`Value::dup`].
+    #[inline]
+    pub(crate) unsafe fn take(&mut self, _alloc: &mut dyn Alloc<'v>) -> Value<'v> {
+        self.replace_raw(Value::NIL)
     }
 
     #[doc(hidden)]
@@ -3333,7 +3343,7 @@ impl<'v, 'a> Input<'v> for Slot<'v, 'a> {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(self.take());
+        out.write(self.replace_raw(Value::NIL));
         Some(Slot::reborrow(self))
     }
 }
@@ -3346,7 +3356,7 @@ impl<'v, 'a> Input<'v> for &Slot<'v, 'a> {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.dup() });
+        out.write(unsafe { self.dup() });
         None
     }
 }
@@ -3359,7 +3369,7 @@ impl<'v, 'a> Input<'v> for &mut Slot<'v, 'a> {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(self.take());
+        out.write(self.replace_raw(Value::NIL));
         Some(Slot::reborrow(self))
     }
 }
@@ -3373,7 +3383,7 @@ impl<'v> Input<'v> for Value<'v> {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(mem::replace(self, Value::NIL));
+        out.write(mem::replace(self, Value::NIL));
         None
     }
 }
@@ -3386,7 +3396,7 @@ impl<'v> Input<'v> for &Value<'v> {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.dup() });
+        out.write(unsafe { self.dup() });
         None
     }
 }
@@ -3394,7 +3404,7 @@ impl<'v> Input<'v> for &Value<'v> {
 /// Stores an `int`, immediate when it fits.
 fn int_into<'v>(mut alloc: &mut dyn Alloc<'v>, value: i128, mut out: Slot<'v, '_>) {
     match i64::try_from(value).ok().and_then(Repr::from_i64) {
-        Some(repr) => out.store(Value(repr, PhantomData)),
+        Some(repr) => out.write(Value(repr, PhantomData)),
         None => {
             let vm = alloc.alloc_vm(crate::vm::private::Sealed);
             vm.builtin_types().int.create_imm(&mut alloc, value, out);
@@ -3405,7 +3415,7 @@ fn int_into<'v>(mut alloc: &mut dyn Alloc<'v>, value: i128, mut out: Slot<'v, '_
 /// Stores a `float`, immediate when it fits.
 fn f64_into<'v>(mut alloc: &mut dyn Alloc<'v>, value: f64, mut out: Slot<'v, '_>) {
     match Repr::from_f64(value) {
-        Some(repr) => out.store(Value(repr, PhantomData)),
+        Some(repr) => out.write(Value(repr, PhantomData)),
         None => {
             let vm = alloc.alloc_vm(crate::vm::private::Sealed);
             vm.builtin_types().f64.create_imm(&mut alloc, value, out);
@@ -3475,10 +3485,10 @@ impl<'v> Input<'v> for Prim {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         match *self {
-            Prim::Nil => out.store(Value::NIL),
+            Prim::Nil => out.write(Value::NIL),
             Prim::Int(v) => int_into(alloc, v, out),
             Prim::F64(v) => f64_into(alloc, v, out),
-            Prim::Bool(v) => out.store(Value::from_bool(v)),
+            Prim::Bool(v) => out.write(Value::from_bool(v)),
         }
         None
     }
@@ -3491,7 +3501,7 @@ impl<'v> Input<'v> for bool {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(Value::from_bool(*self));
+        out.write(Value::from_bool(*self));
         None
     }
 }
@@ -3505,7 +3515,7 @@ impl<'v> Input<'v> for &str {
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: stored into the scanned `out` at once
-        out.store(unsafe { Value::from_str(vm, self) });
+        out.write(unsafe { Value::from_str(vm, self) });
         None
     }
 }
@@ -3519,7 +3529,7 @@ impl<'v> Input<'v> for &[u8] {
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: stored into the scanned `out` at once
-        out.store(unsafe { Value::from_u8_slice(vm, self) });
+        out.write(unsafe { Value::from_u8_slice(vm, self) });
         None
     }
 }
@@ -3619,7 +3629,7 @@ impl<'v> Input<'v> for &Root<'v> {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.dup() });
+        out.write(unsafe { self.dup() });
         None
     }
 }
@@ -3636,7 +3646,7 @@ impl<'v> Input<'v> for &mut Root<'v> {
         let inner = self.0.try_get_mut().unwrap();
         // Safety: as for the `Output` impl above, the root's cell is scanned and stable.
         unsafe {
-            out.store((*inner).0.take());
+            out.write((*inner).0.take());
             Some(Slot::new(NonNull::from(&mut (*inner).0)))
         }
     }
@@ -3700,6 +3710,17 @@ impl<'v> ValueCell<'v> {
         unsafe { &*self.0.get() }
     }
 
+    /// Clear the cell to nil with no [`Alloc`] witness.
+    ///
+    /// # Safety
+    /// The cell belongs to an object the collector is clearing as unreachable, or no
+    /// strand can run, and no other access to the cell is alive.
+    #[inline]
+    pub(crate) unsafe fn clear(&self) {
+        // SAFETY: as for `slot`; the caller excludes collections
+        unsafe { self.slot() }.write(Value::NIL)
+    }
+
     /// Obtain a [`Slot`] for writing the cell.
     ///
     /// # Safety
@@ -3735,7 +3756,7 @@ impl<'v> Input<'v> for &ValueCell<'v> {
         // Dup rather than peek: the same cell may be written through a `Slot` while
         // the input is in use.
         // Safety: a `Slot` into the cell never keeps a `&mut` alive across this read
-        out.store(unsafe { (*self.0.get()).dup() });
+        out.write(unsafe { (*self.0.get()).dup() });
         None
     }
 }
@@ -3753,6 +3774,13 @@ impl<'v, 'a> Slots<'v, 'a> {
 
     pub(crate) fn at<'b>(&'b mut self, index: usize) -> Slot<'v, 'b> {
         unsafe { self.0[index].slot() }
+    }
+
+    /// The slots in order, each borrowed from `self`.
+    pub(crate) fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = Slot<'v, '_>> {
+        // SAFETY: the cells are distinct, and `self` is borrowed for as long as any
+        // of the slots lives
+        self.0.iter().map(|cell| unsafe { cell.slot() })
     }
 
     pub(crate) fn as_inner(&self) -> &'a [ValueCell<'v>] {
@@ -3902,7 +3930,7 @@ impl<'v> Input<'v> for TypeObject {
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.value(vm).dup() });
+        out.write(unsafe { self.value(vm).dup() });
         None
     }
 }
@@ -3918,7 +3946,7 @@ impl<'v> Input<'v> for Nil {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(Value::NIL);
+        out.write(Value::NIL);
         None
     }
 }
@@ -3948,7 +3976,7 @@ impl<'v> Input<'v> for Singleton {
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         // SAFETY: the copy is stored into the scanned `out` at once
-        out.store(unsafe { self.value(vm).dup() });
+        out.write(unsafe { self.value(vm).dup() });
         None
     }
 }

@@ -262,11 +262,10 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
         let left = this.get();
         with_pin!(strand, other, |right| {
             let right = right.get();
-            out.store(Value::from_bool(
-                left.start.eq(strand, &right.start)?
-                    && left.end.eq(strand, &right.end)?
-                    && left.step.eq(strand, &right.step)?,
-            ));
+            let flag = left.start.eq(strand, &right.start)?
+                && left.end.eq(strand, &right.end)?
+                && left.step.eq(strand, &right.step)?;
+            Output::set(strand, &mut out, flag);
             Ok(())
         })
     }
@@ -301,16 +300,15 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             let embryo = strand.builtin_types().range_iter.embryo(strand);
             // SAFETY: the iterator is allocated; the bounds move from their rooted slots
             // straight into it
-            embryo.finish(
-                strand,
+            let iter = unsafe {
                 Iter {
-                    cur: start.take(),
-                    end: unsafe { borrow.end.dup() },
-                    step: step.take(),
+                    cur: start.take(strand),
+                    end: borrow.end.dup(),
+                    step: step.take(strand),
                     direction,
-                },
-                out,
-            );
+                }
+            };
+            embryo.finish(strand, iter, out);
             Ok(())
         })
     }
@@ -532,7 +530,8 @@ impl<'v> Protocol<'v> for Iter<'v> {
                 borrow
                     .cur
                     .op_add(strand, &borrow.step, Slot::reborrow(&mut next))?;
-                borrow.cur = next.take();
+                // SAFETY: the value moves straight into the borrowed iterator
+                borrow.cur = unsafe { next.take(strand) };
                 Ok(())
             })?;
         }
@@ -648,11 +647,15 @@ impl<'v> Protocol<'v> for Type {
         }
         let mut end = end.ok_or_else(|| Error::missing_key(strand, Sym::well_known(sym::END)))?;
         let embryo = strand.builtin_types().range.embryo(strand);
-        let range = Range::new(
-            start.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),
-            end.take(),
-            step.as_mut().map(Slot::take).unwrap_or_else(|| Value::NIL),
-        );
+        // SAFETY: the range is allocated; the values move from their rooted slots
+        // straight into it
+        let range = unsafe {
+            Range::new(
+                start.map_or(Value::NIL, |mut start| start.take(strand)),
+                end.take(strand),
+                step.map_or(Value::NIL, |mut step| step.take(strand)),
+            )
+        };
         embryo.finish_imm(strand, range, out);
         Ok(())
     }

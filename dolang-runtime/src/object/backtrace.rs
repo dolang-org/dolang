@@ -344,7 +344,7 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
                 if let Some(method) = this.get().entry.method() {
                     Output::set(strand, out, method.as_ref());
                 } else {
-                    out.store(Value::NIL);
+                    Output::set(strand, &mut out, Value::NIL);
                 }
                 Ok(())
             }
@@ -352,7 +352,7 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
                 if let Some((source, span)) = this.get().entry.source() {
                     crate::stdlib::inspect::location(strand, source.into(), span, out);
                 } else {
-                    out.store(Value::NIL);
+                    Output::set(strand, &mut out, Value::NIL);
                 }
                 Ok(())
             }

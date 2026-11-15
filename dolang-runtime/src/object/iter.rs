@@ -256,7 +256,7 @@ async fn iter_extrema<'v, 'a, 's>(
     with_slots!(strand, |mut item| {
         if !obj.next(strand, &mut out).await? {
             if let Some(mut default) = default {
-                out.store(default.take());
+                Output::set(strand, &mut out, &mut default);
                 return Ok(());
             }
             return Err(Error::iter_stop(strand));
@@ -268,7 +268,7 @@ async fn iter_extrema<'v, 'a, 's>(
                 out.lt(strand, &item)?
             };
             if replace {
-                Slot::swap(Slot::reborrow(&mut out), &mut item);
+                Slot::swap(strand, Slot::reborrow(&mut out), &mut item);
             }
             strand.check_trap_gc()?;
         }
@@ -286,7 +286,7 @@ async fn iter_all_any<'v, 'a, 's>(
     let has_pred = pred.is_some();
     with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
         if let Some(mut pred) = pred {
-            pred_fn.store(pred.take());
+            Output::set(strand, &mut pred_fn, &mut pred);
         }
         while obj.next(strand, &mut item).await? {
             let passed = if has_pred {
@@ -296,16 +296,16 @@ async fn iter_all_any<'v, 'a, 's>(
                 item.to_bool(strand)?
             };
             if want_all && !passed {
-                out.store(Value::FALSE);
+                Output::set(strand, &mut out, Value::FALSE);
                 return Ok(());
             }
             if !want_all && passed {
-                out.store(Value::TRUE);
+                Output::set(strand, &mut out, Value::TRUE);
                 return Ok(());
             }
             strand.check_trap_gc()?;
         }
-        out.store(Value::from_bool(want_all));
+        Output::set(strand, &mut out, Value::from_bool(want_all));
         Ok(())
     })
 }
@@ -337,14 +337,14 @@ async fn iter_fold<'v, 'a, 's>(
     mut out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     with_slots!(strand, |mut acc, mut next_acc, mut item, mut func_slot| {
-        acc.store(init.take());
-        func_slot.store(func.take());
+        Output::set(strand, &mut acc, &mut init);
+        Output::set(strand, &mut func_slot, &mut func);
         while obj.next(strand, &mut item).await? {
             call!(strand, &func_slot, &acc, &item, &mut next_acc)?;
-            Slot::swap(Slot::reborrow(&mut acc), &mut next_acc);
+            Slot::swap(strand, Slot::reborrow(&mut acc), &mut next_acc);
             strand.check_trap_gc()?;
         }
-        out.store(acc.take());
+        Output::set(strand, &mut out, &mut acc);
         Ok(())
     })
 }
@@ -374,17 +374,17 @@ async fn iter_find<'v, 'a, 's>(
         return Err(Error::unexpected_key(strand, Sym::well_known(sym::ELSE)));
     }
     with_slots!(strand, |mut item, mut pred_fn, mut pred_out| {
-        pred_fn.store(pred.take());
+        Output::set(strand, &mut pred_fn, &mut pred);
         while obj.next(strand, &mut item).await? {
             call!(strand, &pred_fn, &item, &mut pred_out)?;
             if pred_out.to_bool(strand)? {
-                out.store(item.take());
+                Output::set(strand, &mut out, &mut item);
                 return Ok(());
             }
             strand.check_trap_gc()?;
         }
         if let Some(mut default) = default {
-            out.store(default.take());
+            Output::set(strand, &mut out, &mut default);
             return Ok(());
         }
         if let Some(or_else) = or_else {
@@ -408,7 +408,7 @@ pub(crate) async fn iter_next<'v, 'a, 's>(
         return Ok(());
     }
     if let Some(mut default) = default {
-        out.store(default.take());
+        Output::set(strand, &mut out, &mut default);
         return Ok(());
     }
     if let Some(or_else) = or_else {
@@ -1038,7 +1038,8 @@ impl<'v> Protocol<'v> for Zip<'v> {
                     return Ok(false);
                 }
             }
-            tuple::create(strand, (len..2 * len).map(|i| slots.at(i).take()), out);
+            let embryo = tuple::embryo(strand, len);
+            embryo.finish_moving(strand, slots.iter_mut().skip(len), out);
             Ok(true)
         })
     }
@@ -2810,15 +2811,14 @@ pub(crate) fn create_map<'v>(
     out: impl Output<'v>,
 ) {
     let embryo = strand.builtin_types().map_iter.embryo(strand);
-    // SAFETY: the adapter is allocated; the copies move straight into it
-    embryo.finish(
-        strand,
+    // SAFETY: the adapter is allocated; the value and the copy move straight into it
+    let adapter = unsafe {
         Map {
-            func: func.take(),
-            obj: unsafe { obj.dup() },
-        },
-        out,
-    );
+            func: func.take(strand),
+            obj: obj.dup(),
+        }
+    };
+    embryo.finish(strand, adapter, out);
 }
 
 pub(crate) fn create_premap<'v>(
@@ -2828,15 +2828,14 @@ pub(crate) fn create_premap<'v>(
     out: impl Output<'v>,
 ) {
     let embryo = strand.builtin_types().premap_iter.embryo(strand);
-    // SAFETY: the adapter is allocated; the copies move straight into it
-    embryo.finish(
-        strand,
+    // SAFETY: the adapter is allocated; the value and the copy move straight into it
+    let adapter = unsafe {
         Premap {
-            func: func.take(),
-            obj: unsafe { obj.dup() },
-        },
-        out,
-    );
+            func: func.take(strand),
+            obj: obj.dup(),
+        }
+    };
+    embryo.finish(strand, adapter, out);
 }
 
 pub(crate) fn create_filter<'v>(
@@ -2846,15 +2845,14 @@ pub(crate) fn create_filter<'v>(
     out: impl Output<'v>,
 ) {
     let embryo = strand.builtin_types().filter_iter.embryo(strand);
-    // SAFETY: the adapter is allocated; the copies move straight into it
-    embryo.finish(
-        strand,
+    // SAFETY: the adapter is allocated; the value and the copy move straight into it
+    let adapter = unsafe {
         Filter {
-            pred: pred.take(),
-            obj: unsafe { obj.dup() },
-        },
-        out,
-    );
+            pred: pred.take(strand),
+            obj: obj.dup(),
+        }
+    };
+    embryo.finish(strand, adapter, out);
 }
 
 pub(crate) fn create_prefilter<'v>(
@@ -2864,15 +2862,14 @@ pub(crate) fn create_prefilter<'v>(
     out: impl Output<'v>,
 ) {
     let embryo = strand.builtin_types().prefilter_iter.embryo(strand);
-    // SAFETY: the adapter is allocated; the copies move straight into it
-    embryo.finish(
-        strand,
+    // SAFETY: the adapter is allocated; the value and the copy move straight into it
+    let adapter = unsafe {
         Prefilter {
-            pred: pred.take(),
-            obj: unsafe { obj.dup() },
-        },
-        out,
-    );
+            pred: pred.take(strand),
+            obj: obj.dup(),
+        }
+    };
+    embryo.finish(strand, adapter, out);
 }
 
 pub(crate) fn create_chomp<'v>(strand: &mut Strand<'v, '_>, obj: &Value<'v>, out: impl Output<'v>) {
@@ -2962,23 +2959,41 @@ pub(crate) fn create_precrimp<'v, 's>(
     Ok(())
 }
 
-pub(crate) fn create_chain<'v>(
+/// Creates a chain of the values in `sources`, moving them out and leaving the slots
+/// nil.
+pub(crate) fn create_chain<'v, 'a>(
     strand: &mut Strand<'v, '_>,
-    sources: impl IntoIterator<Item = Value<'v>>,
+    sources: impl IntoIterator<Item = Slot<'v, 'a>>,
     out: impl Output<'v>,
-) {
+) where
+    'v: 'a,
+{
     let embryo = strand.builtin_types().chain_iter.embryo(strand);
-    let sources = sources.into_iter().collect();
+    // SAFETY: the adapter is allocated; the values move from their rooted slots
+    // straight into it
+    let sources = sources
+        .into_iter()
+        .map(|mut slot| unsafe { slot.take(strand) })
+        .collect();
     embryo.finish(strand, Chain { sources, index: 0 }, out);
 }
 
-pub(crate) fn create_zip<'v>(
+/// Creates a zip of the values in `sources`, moving them out and leaving the slots
+/// nil.
+pub(crate) fn create_zip<'v, 'a>(
     strand: &mut Strand<'v, '_>,
-    sources: impl IntoIterator<Item = Value<'v>>,
+    sources: impl IntoIterator<Item = Slot<'v, 'a>>,
     out: impl Output<'v>,
-) {
+) where
+    'v: 'a,
+{
     let embryo = strand.builtin_types().zip_iter.embryo(strand);
-    let sources = sources.into_iter().collect();
+    // SAFETY: the adapter is allocated; the values move from their rooted slots
+    // straight into it
+    let sources = sources
+        .into_iter()
+        .map(|mut slot| unsafe { slot.take(strand) })
+        .collect();
     embryo.finish(strand, Zip { sources }, out);
 }
 
@@ -3052,7 +3067,7 @@ pub(crate) async fn create_chain_from_args<'v, 'a, 's>(
     let len = args.len();
     with_slots_dynamic!(strand, len, |mut sources| {
         collect_sources(strand, args, &mut sources).await?;
-        create_chain(strand, (0..len).map(|i| sources.at(i).take()), out);
+        create_chain(strand, sources.iter_mut(), out);
         Ok(())
     })
 }
@@ -3065,7 +3080,7 @@ pub(crate) async fn create_zip_from_args<'v, 'a, 's>(
     let len = args.len();
     with_slots_dynamic!(strand, len, |mut sources| {
         collect_sources(strand, args, &mut sources).await?;
-        create_zip(strand, (0..len).map(|i| sources.at(i).take()), out);
+        create_zip(strand, sources.iter_mut(), out);
         Ok(())
     })
 }

@@ -42,7 +42,7 @@ enum SendResult {
 enum RecvFuture<'v, 's, 'a> {
     Ready(Result<'v, 's, bool>),
     Pend {
-        strand: &'s StrandInner<'v>,
+        strand: &'a mut Strand<'v, 's>,
         recv: gc::Pin<'v, 'a, Header, Receiver<'v>>,
         out: Slot<'v, 'a>,
     },
@@ -68,12 +68,16 @@ pub(crate) struct Receiver<'v> {
 }
 
 impl<'v> Receiver<'v> {
-    fn recv(&mut self, cx: Option<&mut task::Context<'_>>, mut out: Slot<'v, '_>) -> RecvResult {
+    fn recv(
+        &mut self,
+        mut alloc: &mut dyn Alloc<'v>,
+        cx: Option<&mut task::Context<'_>>,
+        out: Slot<'v, '_>,
+    ) -> RecvResult {
         if self.recv_closed {
             RecvResult::Closed
         } else if let Some(value) = self.queue.pop_front() {
-            // Polling has no `Alloc`, so the value moves straight into the output
-            out.store(value);
+            Output::set(&mut alloc, out, value);
             if let Some(wake) = self.senders.pop_front() {
                 wake.wake();
             }
@@ -120,12 +124,12 @@ impl<'v, 's, 'a> Future for RecvFuture<'v, 's, 'a> {
             RecvFuture::Ready(res) => Poll::Ready(mem::replace(res, Ok(false))),
             RecvFuture::Pend { strand, recv, out } => {
                 let Some(mut borrow) = recv.borrow_mut() else {
-                    return Poll::Ready(Err(Error::concurrency_raw(strand)));
+                    return Poll::Ready(Err(Error::concurrency_raw(strand.inner)));
                 };
-                let res = borrow.recv(Some(cx), Slot::reborrow(out));
+                let res = borrow.recv(*strand, Some(cx), Slot::reborrow(out));
                 if let RecvResult::Poisoned = res {
                     let (value, backtrace) = borrow.poison.as_ref().unwrap();
-                    let err = Error::from_value_backtrace_raw(strand, value, backtrace);
+                    let err = Error::from_value_backtrace(strand, value, backtrace);
                     return Poll::Ready(Err(err.unwrap_or_else(|e| e)));
                 }
                 mem::drop(borrow);
@@ -134,9 +138,10 @@ impl<'v, 's, 'a> Future for RecvFuture<'v, 's, 'a> {
                     RecvResult::Poisoned => unreachable!(),
                     RecvResult::Pending => Poll::Pending,
                     RecvResult::Stop => Poll::Ready(Ok(false)),
-                    RecvResult::Closed => {
-                        Poll::Ready(Err(Error::runtime_raw(strand, "receive on closed channel")))
-                    }
+                    RecvResult::Closed => Poll::Ready(Err(Error::runtime_raw(
+                        strand.inner,
+                        "receive on closed channel",
+                    ))),
                 }
             }
         }
@@ -231,7 +236,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
         let Ok(mut borrow) = this.borrow_mut(strand) else {
             return RecvFuture::Ready(Err(Error::concurrency(strand)));
         };
-        let res = borrow.recv(None, Slot::reborrow(&mut out));
+        let res = borrow.recv(strand, None, Slot::reborrow(&mut out));
         if let RecvResult::Poisoned = res {
             let (value, backtrace) = borrow.poison.as_ref().unwrap();
             let err = Error::from_value_backtrace(strand, value, backtrace);
@@ -242,7 +247,7 @@ impl<'v> Protocol<'v> for Receiver<'v> {
             RecvResult::Ok => RecvFuture::Ready(Ok(true)),
             RecvResult::Poisoned => unreachable!(),
             RecvResult::Pending => RecvFuture::Pend {
-                strand: strand.inner,
+                strand,
                 recv: this.receiver,
                 out,
             },
@@ -398,15 +403,19 @@ impl<'v> Protocol<'v> for SenderObj<'v> {
                     }
                     None => None,
                 };
-                let poison_err = err.map(|mut err| err.take());
-                let poison_backtrace = poison_backtrace.map(|mut s| s.take());
                 with_pin!(strand, this.get().receiver, |receiver| {
                     let mut borrow = receiver
                         .borrow_mut()
                         .ok_or_else(|| Error::concurrency(strand))?;
                     borrow.send_closed = true;
-                    if let Some(poison_err) = poison_err {
-                        borrow.poison = Some((poison_err, poison_backtrace.unwrap_or(Value::NIL)));
+                    if let Some(mut err) = err {
+                        // SAFETY: the values move straight into the borrowed receiver
+                        let poison = unsafe {
+                            let backtrace = poison_backtrace
+                                .map_or(Value::NIL, |mut backtrace| backtrace.take(strand));
+                            (err.take(strand), backtrace)
+                        };
+                        borrow.poison = Some(poison);
                     }
                     for wake in borrow.receivers.drain(0..) {
                         wake.wake()

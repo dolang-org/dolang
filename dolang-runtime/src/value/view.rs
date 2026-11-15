@@ -409,7 +409,8 @@ impl<'v, 'a> Array<'v, 'a> {
                 };
                 match borrow.inner.get_mut(index) {
                     Some(v) => {
-                        *v = value_slot.take();
+                        // SAFETY: the value moves straight into the borrowed array
+                        *v = unsafe { value_slot.take(strand) };
                         Ok(true)
                     }
                     None => Ok(false),
@@ -432,7 +433,8 @@ impl<'v, 'a> Array<'v, 'a> {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
                 };
-                borrow.inner.push(value.take());
+                // SAFETY: the value moves straight into the borrowed array
+                borrow.inner.push(unsafe { value.take(strand) });
                 Ok(())
             })
         })
@@ -449,7 +451,10 @@ impl<'v, 'a> Array<'v, 'a> {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
             };
-            borrow.inner.extend(values.iter_mut().map(Slot::take));
+            // SAFETY: the values move straight into the borrowed array
+            borrow
+                .inner
+                .extend(values.iter_mut().map(|value| unsafe { value.take(strand) }));
             Ok(())
         })
     }
@@ -472,7 +477,11 @@ impl<'v, 'a> Array<'v, 'a> {
             }
             borrow
                 .inner
-                .splice(index..index, values.iter_mut().map(Slot::take));
+                // SAFETY: the values move straight into the borrowed array
+                .splice(
+                    index..index,
+                    values.iter_mut().map(|value| unsafe { value.take(strand) }),
+                );
             Ok(true)
         })
     }

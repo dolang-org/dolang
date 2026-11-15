@@ -18,7 +18,7 @@ use crate::{
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, Slots, TypeObject, Value},
-    vm::Vm,
+    vm::{Alloc, Vm},
     with_slots,
 };
 
@@ -85,9 +85,8 @@ impl<'v> Pack<'v> {
         out: impl Output<'v>,
     ) {
         let embryo = strand.builtin_types().pack.embryo(strand);
-        let vm = strand.vm();
         // SAFETY: the pack is allocated; the items move straight into it
-        let items = unsafe { pack_items(vm, args) };
+        let items = unsafe { pack_items(strand, args) };
         embryo.finish_imm(strand, Self::new(items), out);
     }
 
@@ -116,11 +115,17 @@ impl<'v> Pack<'v> {
 /// # Safety
 /// The items are loose, so build them between allocating the target's embryo and
 /// finishing it.
-pub(crate) unsafe fn pack_items<'v>(vm: &Vm<'v>, args: arg::Args<'v, '_>) -> Vec<ArgItem<'v>> {
-    args.map(|arg| match arg {
-        Arg::Pos(mut value) => (None, value.take()),
-        // SAFETY: the caller's contract
-        Arg::Key(key, mut value) => (Some(unsafe { vm.sym_obj(key) }), value.take()),
+pub(crate) unsafe fn pack_items<'v>(
+    alloc: &mut dyn Alloc<'v>,
+    args: arg::Args<'v, '_>,
+) -> Vec<ArgItem<'v>> {
+    let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+    // SAFETY: the caller's contract
+    args.map(|arg| unsafe {
+        match arg {
+            Arg::Pos(mut value) => (None, value.take(alloc)),
+            Arg::Key(key, mut value) => (Some(vm.sym_obj(key)), value.take(alloc)),
+        }
     })
     .collect()
 }
@@ -910,7 +915,8 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         };
         let left = this.get();
         let right = other.items();
-        out.store(Value::from_bool(eq_items(strand, &left.items, right)?));
+        let flag = eq_items(strand, &left.items, right)?;
+        Output::set(strand, &mut out, flag);
         Ok(())
     }
 
@@ -925,7 +931,8 @@ impl<'v> Protocol<'v> for PackObj<'v> {
         };
         let left = this.get();
         let right = other.items();
-        out.store(Value::from_bool(lt_items(strand, &left.items, right)?));
+        let flag = lt_items(strand, &left.items, right)?;
+        Output::set(strand, &mut out, flag);
         Ok(())
     }
 
@@ -1001,12 +1008,12 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                     Output::set(strand, &mut out, value);
                     Ok(())
                 } else if let Some(mut default) = default {
-                    out.store(default.take());
+                    Output::set(strand, &mut out, &mut default);
                     Ok(())
                 } else if let Some(or_else) = or_else {
                     call!(strand, or_else, out)
                 } else {
-                    out.store(Value::NIL);
+                    Output::set(strand, &mut out, Value::NIL);
                     Ok(())
                 }
             }
@@ -1172,7 +1179,7 @@ impl<'v> PackPairs<'_, 'v> {
             // SAFETY: the symbol and the value move straight into the borrowed
             // accumulator
             let key = key.map(|key| unsafe { strand.sym_obj(key) });
-            pack.push((key, value.take()));
+            pack.push((key, unsafe { value.take(strand) }));
             Ok(())
         })
     }

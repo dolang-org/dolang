@@ -16,7 +16,6 @@ use crate::{
     gc::arena::Visit,
     method,
     object::{
-        array::Array,
         backtrace, channel,
         native::{Mut, Object, Ref, Type, TypeBuilder},
         strand::{StrandInfo, StrandRef, Stream, StreamIter, StreamSink},
@@ -589,7 +588,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 let res = tmp.next(strand, &mut out).await?;
                 if !res {
                     if let Some(mut default) = default {
-                        out.store(default.take());
+                        Output::set(strand, out, &mut default);
                         return Ok(());
                     } else if let Some(or_else) = or_else {
                         return call!(strand, or_else, out);
@@ -659,7 +658,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             }
                             let len = infos.len();
                             let embryo = tuple::embryo(strand, len);
-                            embryo.finish(strand, (0..len).map(|i| infos.at(i).take()), out);
+                            embryo.finish_moving(strand, infos.iter_mut(), out);
                         })
                     )
                 };
@@ -746,122 +745,131 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
                 // We must avoid being dropped until we've awaited all strands we create
                 with_interrupt_mask!(strand, InterruptMask::all(), {
-                    async {
-                        let mut last_recv = Value::NIL;
-                        let mut out = Some(out);
-                        let mut strands = Vec::new();
-                        let mut pipes = Vec::with_capacity(count.saturating_sub(1));
-                        let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                        // Resolve the caller's redirects up front, in place.
-                        // Doing this in the stage body would put a fallible
-                        // await ahead of the call, and an early return from it
-                        // would skip closing the stage's pipe ends.
-                        if let Some(input) = &mut redir_input {
-                            input.iter(strand, &mut tmp).await?;
-                            input.store(tmp.take());
-                        }
-                        if let Some(output) = &mut redir_output {
-                            output.sink(strand, &mut tmp).await?;
-                            output.store(tmp.take());
-                        }
-                        for _ in 0..count.saturating_sub(1) {
-                            let pair = with_slots!(strand, |mut send, mut recv| {
-                                pipe_pair(strand, &mut send, &mut recv);
-                                (send.take(), recv.take())
-                            });
-                            pipes.push(Some(pair));
-                        }
-                        for (i, thunk) in thunks.into_iter().enumerate() {
-                            let (send, recv, mut out, redir_output) = if i < count - 1 {
-                                let (send, recv) = pipes[i].take().unwrap();
-                                (Some(send), Some(recv), None, None)
-                            } else {
-                                (None, None, out.take(), redir_output.take())
-                            };
-                            let redir_input = if i == 0 { redir_input.take() } else { None };
+                    // The pipe ends stay rooted here until every stage has finished;
+                    // each stage copies its own ends into its slots
+                    with_slots_dynamic!(strand, 2 * count.saturating_sub(1), |mut pipe_slots| {
+                        async {
+                            let mut out = Some(out);
+                            let mut strands = Vec::new();
+                            let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
+                            // Resolve the caller's redirects up front, in place.
+                            // Doing this in the stage body would put a fallible
+                            // await ahead of the call, and an early return from it
+                            // would skip closing the stage's pipe ends.
+                            if let Some(input) = &mut redir_input {
+                                input.iter(strand, &mut tmp).await?;
+                                Output::set(strand, input, &mut tmp);
+                            }
+                            if let Some(output) = &mut redir_output {
+                                output.sink(strand, &mut tmp).await?;
+                                Output::set(strand, output, &mut tmp);
+                            }
+                            for i in 0..count.saturating_sub(1) {
+                                let mut pair = pipe_slots.iter_mut().skip(2 * i);
+                                let send = pair.next().unwrap();
+                                let recv = pair.next().unwrap();
+                                pipe_pair(strand, send, recv);
+                            }
+                            // Nothing writes the pipe slots from here on
+                            let pipes = pipe_slots.as_inner();
+                            for (i, thunk) in thunks.into_iter().enumerate() {
+                                let (send, mut out, redir_output) = if i < count - 1 {
+                                    (Some(&pipes[2 * i]), None, None)
+                                } else {
+                                    (None, out.take(), redir_output.take())
+                                };
+                                let recv = i.checked_sub(1).map(|prev| &pipes[2 * prev + 1]);
+                                let redir_input = if i == 0 { redir_input.take() } else { None };
 
-                            strands.push(strand.spawn_scoped(
-                                Some(interrupt.clone()),
-                                async move |strand| {
-                                    if let Err(e) = async {
-                                        with_slots!(strand, |mut s, mut r, mut tmp, mut tmp2| {
-                                            let input = if !last_recv.is_nil() {
-                                                r.store(last_recv);
-                                                Some(&*r)
-                                            } else {
-                                                redir_input.as_deref()
-                                            };
-                                            let output = if let Some(send) = send {
-                                                s.store(send);
-                                                Some(&*s)
-                                            } else {
-                                                redir_output.as_deref()
-                                            };
-                                            let res = redirect!(
+                                strands.push(strand.spawn_scoped(
+                                    Some(interrupt.clone()),
+                                    async move |strand| {
+                                        if let Err(e) = async {
+                                            with_slots!(
                                                 strand,
-                                                ?input: input,
-                                                ?output: output,
-                                                call!(
-                                                    strand,
-                                                    thunk,
-                                                    out.as_mut().map_or_else(
-                                                        || Slot::reborrow(&mut tmp),
-                                                        Slot::reborrow
-                                                    )
-                                                )
-                                            );
-                                            // Close both ends even if the
-                                            // first close fails, so a
-                                            // failure cannot strand the
-                                            // other end open.
-                                            let closed_recv = if !r.is_nil() {
-                                                method!(strand, r, close, &mut tmp2)
-                                            } else {
-                                                Ok(())
-                                            };
-                                            let closed_send = if !s.is_nil() {
-                                                method!(strand, s, close, &mut tmp2)
-                                            } else {
-                                                Ok(())
-                                            };
-                                            closed_recv?;
-                                            closed_send?;
-                                            res
-                                        })
-                                    }
-                                    .await
-                                        && !matches!(
+                                                |mut s, mut r, mut tmp, mut tmp2| {
+                                                    let input = if let Some(recv) = recv {
+                                                        Output::set(strand, &mut r, recv);
+                                                        Some(&*r)
+                                                    } else {
+                                                        redir_input.as_deref()
+                                                    };
+                                                    let output = if let Some(send) = send {
+                                                        Output::set(strand, &mut s, send);
+                                                        Some(&*s)
+                                                    } else {
+                                                        redir_output.as_deref()
+                                                    };
+                                                    let res = redirect!(
+                                                        strand,
+                                                        ?input: input,
+                                                        ?output: output,
+                                                        call!(
+                                                            strand,
+                                                            thunk,
+                                                            out.as_mut().map_or_else(
+                                                                || Slot::reborrow(&mut tmp),
+                                                                Slot::reborrow
+                                                            )
+                                                        )
+                                                    );
+                                                    // Close both ends even if the
+                                                    // first close fails, so a
+                                                    // failure cannot strand the
+                                                    // other end open.
+                                                    let closed_recv = if !r.is_nil() {
+                                                        method!(strand, r, close, &mut tmp2)
+                                                    } else {
+                                                        Ok(())
+                                                    };
+                                                    let closed_send = if !s.is_nil() {
+                                                        method!(strand, s, close, &mut tmp2)
+                                                    } else {
+                                                        Ok(())
+                                                    };
+                                                    closed_recv?;
+                                                    closed_send?;
+                                                    res
+                                                }
+                                            )
+                                        }
+                                        .await
+                                            && !matches!(
+                                                e.kind(),
+                                                ErrorKind::IterStop | ErrorKind::SinkStop
+                                            )
+                                        {
+                                            strand.interrupt_token().cancel();
+                                            return Err(e);
+                                        }
+                                        Ok(())
+                                    },
+                                ));
+                            }
+                            for (i, res) in join_all(strands).await.into_iter().enumerate() {
+                                if let Err(e) = res {
+                                    // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
+                                    // but the final element
+                                    if i != count - 1 {
+                                        if matches!(
                                             e.kind(),
                                             ErrorKind::IterStop | ErrorKind::SinkStop
-                                        )
-                                    {
-                                        strand.interrupt_token().cancel();
-                                        return Err(e);
+                                        ) {
+                                            continue;
+                                        }
+                                        if interrupt.is_canceled()
+                                            && e.kind() == ErrorKind::Canceled
+                                        {
+                                            continue;
+                                        }
                                     }
-                                    Ok(())
-                                },
-                            ));
-                            last_recv = recv.unwrap_or(Value::NIL);
-                        }
-                        for (i, res) in join_all(strands).await.into_iter().enumerate() {
-                            if let Err(e) = res {
-                                // Suppress Input/SinkStop errors (broken pipe) or cancellation from all
-                                // but the final element
-                                if i != count - 1 {
-                                    if matches!(e.kind(), ErrorKind::IterStop | ErrorKind::SinkStop)
-                                    {
-                                        continue;
-                                    }
-                                    if interrupt.is_canceled() && e.kind() == ErrorKind::Canceled {
-                                        continue;
-                                    }
+                                    return Err(e);
                                 }
-                                return Err(e);
                             }
+                            Ok(())
                         }
-                        Ok(())
-                    }
-                    .await
+                        .await
+                    })
                 })
             })
             .function_with_slots(
@@ -932,17 +940,16 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                             output.put(strand, &mut item).await?;
                             strand.check_trap_gc()?
                         }
-                        out.store(arg.take());
+                        Output::set(strand, out, &mut arg);
                     } else {
-                        let mut acc = Vec::new();
+                        // Allocate the array first, so each item is rooted as soon as it
+                        // arrives
+                        strand.new_array(&mut out);
                         while input.next(strand, &mut item).await? {
-                            acc.push(item.take())
+                            let vm = strand.vm();
+                            let array = out.as_array(vm).expect("collect accumulator");
+                            array.push(strand, &mut item)?;
                         }
-                        strand
-                            .vm()
-                            .builtin_types()
-                            .array
-                            .create(strand, Array { inner: acc }, out);
                     }
                     Ok(())
                 },
@@ -985,19 +992,21 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     let builtin_types = strand.builtin_types();
                     let ty = builtin_types.strand_handle;
                     let task = handle.downcast_ref(ty).expect("strand handle");
-                    // SAFETY (here and below): the handle moves straight into the
-                    // allocated object
+                    // SAFETY (here and below): the handle and the endpoints move straight
+                    // into the allocated object
                     let embryo = builtin_types.stream_sink.embryo(strand);
-                    let sink = StreamSink::new(in_send.take(), unsafe { task.dup() });
+                    let sink = unsafe { StreamSink::new(in_send.take(strand), task.dup()) };
                     embryo.finish(strand, sink, &mut input);
                     let embryo = builtin_types.stream_iter.embryo(strand);
-                    let iter = StreamIter::new(out_recv.take(), unsafe { task.dup() });
+                    let iter = unsafe { StreamIter::new(out_recv.take(strand), task.dup()) };
                     embryo.finish(strand, iter, &mut output);
                     let embryo = builtin_types.stream.embryo(strand);
-                    let stream = Stream {
-                        handle: unsafe { task.dup() },
-                        input: input.take(),
-                        output: output.take(),
+                    let stream = unsafe {
+                        Stream {
+                            handle: task.dup(),
+                            input: input.take(strand),
+                            output: output.take(strand),
+                        }
                     };
                     embryo.finish_imm(strand, stream, &mut out);
                     Ok(())
@@ -1117,7 +1126,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         .await;
                         result?;
                         let embryo = tuple::embryo(strand, count);
-                        embryo.finish(strand, (0..count).map(|i| results.at(i).take()), out);
+                        embryo.finish_moving(strand, results.iter_mut(), out);
                         Ok(())
                     })
                 })
