@@ -30,7 +30,7 @@ use crate::{
     method,
     object::{BuiltinTypes, Singletons, protocol::GcObj, range, strand::Handle, tuple},
     sym::{self, Sym},
-    value::{Input, Output, Singleton, Slot, Value, ValueCell},
+    value::{Input, Output, Singleton, Slot, Slots, Value, ValueCell},
     vm::{Alloc, AllocExt, Vm},
 };
 
@@ -61,11 +61,11 @@ use crate::{
 #[macro_export]
 macro_rules! with_slots {
     ($strand:ident, |$($slot:pat_param),+ $(,)?| $body:expr) => {{
-        let frame = $crate::strand::SlotFrame::new();
+        let cells = $crate::strand::SlotCells::new();
+        let mut scope = $strand.slot_scope(&cells);
         // Safety: the scope is a local of this block that nothing can move or forget
         #[allow(unused_unsafe)]
-        let (mut scope, [$($slot),+]) = unsafe { $strand.enter_slot_frame(&frame) };
-        let $strand = &mut *scope;
+        let ($strand, [$($slot),+]) = unsafe { scope.enter_slots() };
         $body
     }};
 }
@@ -152,59 +152,153 @@ macro_rules! with_interrupt_token {
 #[doc(hidden)]
 pub struct PinScope;
 
-/// Scratch slots for [`with_slots!`](crate::with_slots), rooted while entered.
+/// Scratch cells for [`with_slots!`](crate::with_slots), declared outside the
+/// [`ScanScope`] that roots them.
 #[doc(hidden)]
-pub struct SlotFrame<'v, const N: usize> {
-    values: [ValueCell<'v>; N],
-    scan: OnceCell<frame::Scan<'v>>,
-}
+pub struct SlotCells<'v, const N: usize>([ValueCell<'v>; N]);
 
-impl<'v, const N: usize> SlotFrame<'v, N> {
+impl<'v, const N: usize> SlotCells<'v, N> {
     #[inline]
     pub fn new() -> Self {
-        Self {
-            values: std::array::from_fn(|_| ValueCell::default()),
-            scan: OnceCell::new(),
-        }
+        Self(std::array::from_fn(|_| ValueCell::default()))
     }
 }
 
-impl<'v, const N: usize> Default for SlotFrame<'v, N> {
+impl<'v, const N: usize> Default for SlotCells<'v, N> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// A [`Strand`] handle whose frame pointer is an entered [`SlotFrame`], which pops the frame
-/// when dropped.
+/// A rooting frame over borrowed data, linked onto a strand by [`Self::enter`] and
+/// unlinked when dropped.
+///
+/// It holds a [`Strand`] handle whose frame pointer becomes the frame once entered.
 #[doc(hidden)]
-pub struct SlotScope<'v, 's, 'f> {
+pub struct ScanScope<'v, 's, 'f, T> {
+    scan: frame::Scan<'v, T>,
     strand: Strand<'v, 's>,
-    prior: Option<frame::Ptr<'v>>,
+    // The strand's prior stack top, once entered
+    prior: Option<Option<frame::Ptr<'v>>>,
     _borrow: PhantomData<&'f mut Strand<'v, 's>>,
 }
 
-impl<'v, 's> Deref for SlotScope<'v, 's, '_> {
-    type Target = Strand<'v, 's>;
-
+impl<'v, 's, 'f, T> ScanScope<'v, 's, 'f, T> {
+    /// A scope on `strand` whose frame visits `data` through `visit`.
     #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.strand
+    pub(crate) fn new(
+        strand: &'f mut Strand<'v, 's>,
+        data: T,
+        visit: fn(&T, &mut dyn Visit) -> ControlFlow<()>,
+    ) -> Self {
+        Self {
+            scan: frame::Scan::new(Some(strand.fp), data, visit),
+            strand: Strand {
+                inner: strand.inner,
+                fp: strand.fp,
+                phantom: PhantomData,
+            },
+            prior: None,
+            _borrow: PhantomData,
+        }
+    }
+
+    /// Link the frame, returning a handle on the strand with the frame as its frame
+    /// pointer, and the rooted data.
+    ///
+    /// # Safety
+    ///
+    /// Once entered, the scope must be dropped, not moved or forgotten.  Until then, each
+    /// visit must visit every GC reference the rooted data owns, exactly once, and nothing
+    /// else: the collector counts visits against reference counts, so a missed, repeated,
+    /// or foreign visit can free a live object.  The rooted data must not change while a
+    /// collection runs, so every visit within one collection sees the same references.
+    /// Data that changes between collections needs interior mutability, such as a
+    /// [`Cell`] or [`RefCell`], since the frame holds it by shared reference.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope was entered before.
+    #[inline]
+    pub unsafe fn enter(&mut self) -> (&mut Strand<'v, 's>, &T) {
+        assert!(self.prior.is_none(), "scan scope entered twice");
+        let fp = self.scan.link();
+        self.prior = Some(self.strand.inner.sp.replace(Some(fp)));
+        self.strand.fp = fp;
+        (&mut self.strand, self.scan.data())
+    }
+
+    /// The handle and rooted data, if entered.
+    #[inline]
+    pub(crate) fn entered(&mut self) -> Option<(&mut Strand<'v, 's>, &T)> {
+        self.prior?;
+        Some((&mut self.strand, self.scan.data()))
     }
 }
 
-impl<'v, 's> DerefMut for SlotScope<'v, 's, '_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.strand
-    }
-}
-
-impl Drop for SlotScope<'_, '_, '_> {
+impl<T> Drop for ScanScope<'_, '_, '_, T> {
     #[inline]
     fn drop(&mut self) {
-        self.strand.inner.sp.set(self.prior);
+        if let Some(prior) = self.prior {
+            self.strand.inner.sp.set(prior);
+        }
+    }
+}
+
+impl<'v, 's, 'f, 'a, const N: usize> ScanScope<'v, 's, 'f, &'a SlotCells<'v, N>> {
+    /// [`Self::enter`], returning slots over the cells.
+    ///
+    /// This backs [`with_slots!`](crate::with_slots).
+    ///
+    /// # Safety
+    ///
+    /// Once entered, the scope must be dropped, not moved or forgotten.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope was entered before.
+    #[inline]
+    pub unsafe fn enter_slots(&mut self) -> (&mut Strand<'v, 's>, [Slot<'v, '_>; N]) {
+        // Safety: the caller's contract; the frame visits each cell once
+        let (strand, cells) = unsafe { self.enter() };
+        let cells: &'a SlotCells<'v, N> = cells;
+        // Safety: the slots are the cells' only writers; the frame only reads
+        let slots = cells.0.each_ref().map(|cell| unsafe { cell.slot() });
+        (strand, slots)
+    }
+}
+
+/// Scratch cells for [`with_slots_dynamic!`], sized at run time.
+pub(crate) struct DynSlotCells<'v>(pub(crate) Box<[ValueCell<'v>]>);
+
+impl<'v> DynSlotCells<'v> {
+    #[inline]
+    pub(crate) fn new(len: usize) -> Self {
+        Self((0..len).map(|_| ValueCell::default()).collect())
+    }
+}
+
+impl<'v, 's, 'f, 'a> ScanScope<'v, 's, 'f, &'a DynSlotCells<'v>> {
+    /// [`Self::enter`], returning slots over the cells.
+    ///
+    /// This backs [`with_slots_dynamic!`].
+    ///
+    /// # Safety
+    ///
+    /// Once entered, the scope must be dropped, not moved or forgotten.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope was entered before.
+    #[inline]
+    pub(crate) unsafe fn enter_slots(&mut self) -> (&mut Strand<'v, 's>, Slots<'v, '_>) {
+        // Safety: the caller's contract; the frame visits each cell once
+        let (strand, cells) = unsafe { self.enter() };
+        let cells: &'a DynSlotCells<'v> = cells;
+        // Safety: the slots are the cells' only writers; the frame only reads
+        let slots = unsafe { Slots::new(&cells.0) };
+        (strand, slots)
     }
 }
 
@@ -241,34 +335,20 @@ impl Drop for InterruptTokenGuard<'_, '_> {
     }
 }
 
-/// Scratch slots for [`with_slots_dynamic!`], sized at run time and rooted while entered.
-pub(crate) struct DynSlotFrame<'v> {
-    values: Vec<ValueCell<'v>>,
-    scan: OnceCell<frame::Scan<'v>>,
-}
-
-impl<'v> DynSlotFrame<'v> {
-    #[inline]
-    pub(crate) fn new(len: usize) -> Self {
-        Self {
-            values: (0..len).map(|_| ValueCell::default()).collect(),
-            scan: OnceCell::new(),
-        }
-    }
-}
-
 /// Run a block with a runtime-sized scratch [`Slots`](crate::value::Slots) allocation.
 ///
 /// Like [`with_slots!`](crate::with_slots), the body runs inline with `strand` rebound to a
 /// handle whose frame roots the slots: `?` and `return` leave the enclosing function.
 macro_rules! with_slots_dynamic {
     ($strand:ident, $len:expr, |$slots:pat_param| $body:expr) => {{
-        let frame = $crate::strand::DynSlotFrame::new($len);
-        // Safety: the scope is a local of this block that nothing can move or forget
-        #[allow(unused_unsafe)]
-        let (mut scope, $slots) = unsafe { $strand.enter_dyn_slot_frame(&frame) };
-        #[allow(unused_variables)]
-        let $strand = &mut *scope;
+        let cells = $crate::strand::DynSlotCells::new($len);
+        let mut scope = $crate::strand::ScanScope::new($strand, &cells, |cells, visitor| {
+            cells.0.iter().try_for_each(|cell| cell.accept(visitor))
+        });
+        // Safety: the scope is a local of this block that nothing can move or forget; the
+        // frame visits each cell once
+        #[allow(unused_unsafe, unused_variables)]
+        let ($strand, $slots) = unsafe { scope.enter_slots() };
         $body
     }};
 }
@@ -279,16 +359,16 @@ pub(crate) use with_slots_dynamic;
 /// As with [`with_slots_dynamic!`], the body runs inline with `strand` rebound to a handle
 /// whose frame is the scan: `?` and `return` leave the enclosing function.
 ///
-/// The expansion calls [`Strand::enter_scan`] without an `unsafe` block of its own, so it
+/// The expansion calls [`ScanScope::enter`] without an `unsafe` block of its own, so it
 /// must be written inside one, with a SAFETY comment showing that `visit` meets that
 /// function's contract for the whole body.
 macro_rules! with_scan {
     ($strand:ident, $visit:expr, $body:expr) => {{
         let visit = $visit;
-        let scan = $crate::frame::Scan::new(Some($strand.fp), &visit);
-        let mut scope = $strand.enter_scan(&scan);
+        let mut scope =
+            $crate::strand::ScanScope::new($strand, &visit, |visit, visitor| visit(visitor));
         #[allow(unused_variables)]
-        let $strand = &mut *scope;
+        let ($strand, _) = scope.enter();
         $body
     }};
 }
@@ -1109,9 +1189,8 @@ impl<'v> StrandInner<'v> {
                         ptr = frame.parent;
                     }
                     frame::Ptr::Scan(scan_ptr) => {
-                        let scan = scan_ptr.as_ref();
-                        scan.scan(visitor)?;
-                        ptr = scan.parent;
+                        frame::ScanFrame::scan(scan_ptr, visitor)?;
+                        ptr = scan_ptr.as_ref().parent;
                     }
                     frame::Ptr::Native(native_ptr) => {
                         let native = native_ptr.as_ref();
@@ -1452,87 +1531,18 @@ impl<'v, 's> Strand<'v, 's> {
         f(&access)
     }
 
-    /// Push `frame`, returning a handle on this strand with `frame` as its frame pointer, and
-    /// the frame's slots.
+    /// A scope rooting `cells`, whose [`ScanScope::enter_slots`] links it.
     ///
     /// This backs [`with_slots!`](crate::with_slots).
-    ///
-    /// # Safety
-    ///
-    /// The scope must be dropped, not forgotten, before `frame` is.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `frame` was entered before.
     #[doc(hidden)]
     #[inline]
-    pub unsafe fn enter_slot_frame<'f, const N: usize>(
+    pub fn slot_scope<'f, 'a, const N: usize>(
         &'f mut self,
-        frame: &'f SlotFrame<'v, N>,
-    ) -> (SlotScope<'v, 's, 'f>, [Slot<'v, 'f>; N]) {
-        let scan = frame::Scan::cells(Some(self.fp), &frame.values);
-        assert!(frame.scan.set(scan).is_ok(), "slot frame entered twice");
-        // Safety: the caller's contract; the scan reads `frame.values`, which `'f` keeps live
-        let scope = unsafe { self.enter_scan(frame.scan.get().unwrap()) };
-        // Safety: the slots are the cells' only writers; the scan only reads
-        let slots = frame.values.each_ref().map(|value| unsafe { value.slot() });
-        (scope, slots)
-    }
-
-    /// Push `frame`, returning a handle on this strand with `frame` as its frame pointer, and
-    /// the frame's slots.
-    ///
-    /// This backs [`with_slots_dynamic!`].
-    ///
-    /// # Safety
-    ///
-    /// The scope must be dropped, not forgotten, before `frame` is.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `frame` was entered before.
-    #[inline]
-    pub(crate) unsafe fn enter_dyn_slot_frame<'f>(
-        &'f mut self,
-        frame: &'f DynSlotFrame<'v>,
-    ) -> (SlotScope<'v, 's, 'f>, crate::value::Slots<'v, 'f>) {
-        let scan = frame::Scan::cells(Some(self.fp), &frame.values);
-        assert!(frame.scan.set(scan).is_ok(), "slot frame entered twice");
-        // Safety: the caller's contract; the scan reads `frame.values`, which `'f` keeps live
-        let scope = unsafe { self.enter_scan(frame.scan.get().unwrap()) };
-        // Safety: the slots are the cells' only writers; the scan only reads
-        let slots = unsafe { crate::value::Slots::new(frame.values.as_slice()) };
-        (scope, slots)
-    }
-
-    /// Push the rooting frame `scan`, returning a handle on this strand with `scan` as its
-    /// frame pointer.
-    ///
-    /// # Safety
-    ///
-    /// The scope must be dropped, not forgotten, before `scan` is.  Until then, each visit
-    /// must visit every GC reference the rooted data owns, exactly once, and nothing else:
-    /// the collector counts visits against reference counts, so a missed, repeated, or
-    /// foreign visit can free a live object.  The rooted data must not change while a
-    /// collection runs, so every visit within one collection sees the same references.
-    /// Data that changes between collections needs interior mutability, such as a
-    /// [`Cell`] or [`RefCell`], since the scan holds a shared borrow of it.
-    #[inline]
-    pub(crate) unsafe fn enter_scan<'f>(
-        &'f mut self,
-        scan: &'f frame::Scan<'v>,
-    ) -> SlotScope<'v, 's, 'f> {
-        let fp = frame::Ptr::Scan(NonNull::from_ref(scan));
-        let prior = self.inner.sp.replace(Some(fp));
-        SlotScope {
-            strand: Strand {
-                inner: self.inner,
-                fp,
-                phantom: PhantomData,
-            },
-            prior,
-            _borrow: PhantomData,
-        }
+        cells: &'a SlotCells<'v, N>,
+    ) -> ScanScope<'v, 's, 'f, &'a SlotCells<'v, N>> {
+        ScanScope::new(self, cells, |cells, visitor| {
+            cells.0.iter().try_for_each(|cell| cell.accept(visitor))
+        })
     }
 
     /// Store a new tuple of `items` into `out`.
@@ -2268,9 +2278,9 @@ mod interrupt_tests {
 mod scan_tests {
     use std::{future, ops::ControlFlow, pin::pin, ptr::NonNull};
 
-    use super::{Error, InterruptMask, Strand, frame};
+    use super::{Error, InterruptMask, ScanScope, Strand};
     use crate::{
-        gc::arena::{Header, Visit},
+        gc::arena::Header,
         object::tuple,
         test_support::with_vm,
         value::{Slot, Value},
@@ -2317,12 +2327,12 @@ mod scan_tests {
             let held = make_tuple(strand, tmp);
             let target = header(&held);
             assert!(!scanned(strand).contains(&target));
-            let visit = |visitor: &mut dyn Visit| held.accept(visitor);
-            let scan = frame::Scan::new(Some(strand.fp), &visit);
             {
-                // Safety: `held` owns one reference, which `visit` visits
-                let scope = unsafe { strand.enter_scan(&scan) };
-                assert!(scanned(&scope).contains(&target));
+                let mut scope = ScanScope::new(strand, &held, |held, visitor| held.accept(visitor));
+                // Safety: `held` owns one reference, which the frame visits; the scope is a
+                // local that nothing moves or forgets
+                let (strand, _) = unsafe { scope.enter() };
+                assert!(scanned(strand).contains(&target));
             }
             assert!(!scanned(strand).contains(&target));
         });
@@ -2370,13 +2380,11 @@ mod scan_tests {
         with_vm(async |strand, [tmp]| {
             let held = make_tuple(strand, tmp);
             let target = header(&held);
-            let visit = |visitor: &mut dyn Visit| held.accept(visitor);
-            let frame = frame::Scan::new(Some(strand.fp), &visit);
             {
-                // Safety: `held` owns one reference, which `visit` visits; the scope is
-                // dropped before `frame`
-                let mut scope = unsafe { strand.enter_scan(&frame) };
-                let strand = &mut *scope;
+                let mut scope = ScanScope::new(strand, &held, |held, visitor| held.accept(visitor));
+                // Safety: `held` owns one reference, which the frame visits; the scope is a
+                // local that nothing moves or forgets
+                let (strand, _) = unsafe { scope.enter() };
                 with_slots!(strand, |mut inner| {
                     let item = Value::from_i16(2);
                     tuple::create(strand, [item], Slot::reborrow(&mut inner));

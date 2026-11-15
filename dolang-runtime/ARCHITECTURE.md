@@ -56,25 +56,28 @@ collector counts objects in its initialization pass and subtracts objects it
 clears. Miri uses a fixed threshold of 10 to exercise collection frequently.
 
 Native code may hold a GC reference across an await only where the collector
-visits it: a `with_slots!` slot, data visited by a `frame::Scan` entered with
-`Strand::enter_scan`, an error (whose value and backtrace live in a slot of the
-strand's `ErrorTable`), or a GC-visited object. Both push a `frame::Scan`
-rooting frame, which `scan_stack` visits. `with_slots!` declares a `SlotFrame`
-of value cells in the enclosing future and pushes it, so the body runs inline
-with `strand` rebound to a `SlotScope`: a `Strand` handle on the same
-`StrandInner` whose frame pointer is the pushed frame, which it pops on drop.
-`with_slots_dynamic!` does the same with a runtime-sized `DynSlotFrame`. A scan
-frame's closure visits that holds a shared borrow of what it roots, so rooted
-data that changes needs interior mutability (`Cell`, `RefCell`, or
-`UnsafeCell`). Setup code outside any strand, such as `ModuleBuilder`, roots
-what it holds with `Arena::scan` instead: a guard that owns a closure visiting
-the data. The current collector never calls it, but a tracing collector would
-treat each live guard as a root. Outside those, a reference may sit unvisited,
-such as in a local on the Rust stack, only while no collection can happen at
-all; a tracing collector would miss it. Count every GC allocation, and any code
-reached with a `Strand`, as a possible collection, even though collections
-currently happen only at explicit safepoints. `Slot::new` is `unsafe` for this
-reason: creating a slot over a location claims the collector can see it.
+visits it: a `with_slots!` slot, data visited by a `strand::ScanScope` (as
+`with_scan!` sets up), an error (whose value and backtrace live in a slot of the
+strand's `ErrorTable`), or a GC-visited object. A `ScanScope` owns a
+`frame::Scan`: borrowed data and a function that visits it, headed by a
+type-erased `frame::ScanFrame` that its unsafe `enter` links onto the frame
+chain, where `scan_stack` visits it, and that drop unlinks. `enter` also hands
+back a `Strand` handle on the same `StrandInner` whose frame pointer is the
+linked frame. `with_slots!` declares `SlotCells` in the enclosing future,
+outside the scope that roots them, so the body runs inline with `strand` rebound
+to that handle; `with_slots_dynamic!` does the same with runtime-sized
+`DynSlotCells`, and `call!`/`method!` with `ArgCells`. A scan frame holds a
+shared borrow of what it roots, so rooted data that changes needs interior
+mutability (`Cell`, `RefCell`, or `UnsafeCell`). Setup code outside any strand,
+such as `ModuleBuilder`, roots what it holds with `Arena::scan` instead: a guard
+that owns a closure visiting the data. The current collector never calls it, but
+a tracing collector would treat each live guard as a root. Outside those, a
+reference may sit unvisited, such as in a local on the Rust stack, only while no
+collection can happen at all; a tracing collector would miss it. Count every GC
+allocation, and any code reached with a `Strand`, as a possible collection, even
+though collections currently happen only at explicit safepoints. `Slot::new` is
+`unsafe` for this reason: creating a slot over a location claims the collector
+can see it.
 
 An owned reference outside a scanned location is _loose_. GC handles are not
 `Clone`: duplicating one is `gc::Base::dup`, which is `unsafe`, as are functions
