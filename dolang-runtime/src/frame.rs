@@ -41,9 +41,6 @@ pub(crate) struct CallFrame<'v> {
     pub(crate) pc: Cell<usize>,
     pub(crate) sp: Cell<usize>,
     pub(crate) slots: Vec<ValueCell<'v>>,
-    pub(crate) scratch1: ValueCell<'v>,
-    pub(crate) scratch2: ValueCell<'v>,
-    pub(crate) scratch3: ValueCell<'v>,
     /// Owned arguments of the call being marshaled or made, rooted by [`Self::scan`]
     pub(crate) items: UnsafeCell<Vec<OwnedItem<'v>>>,
     phantom: PhantomData<&'v ()>,
@@ -334,9 +331,6 @@ impl<'v> CallFrame<'v> {
             phantom: PhantomData,
             sp: Cell::new(locals),
             slots: (0..slots).map(|_| ValueCell::default()).collect(),
-            scratch1: ValueCell::default(),
-            scratch2: ValueCell::default(),
-            scratch3: ValueCell::default(),
             items: UnsafeCell::new(Default::default()),
         }
     }
@@ -589,7 +583,7 @@ impl<'v> CallFrame<'v> {
         }
     }
 
-    /// Scan the frame's GC roots: program, upvars, live slots, scratch slots and items.
+    /// Scan the frame's GC roots: program, upvars, live slots and items.
     ///
     /// # Safety
     ///
@@ -601,9 +595,6 @@ impl<'v> CallFrame<'v> {
             for i in 0..self.sp.get() {
                 self.slots.get_unchecked(i).accept(visitor)?;
             }
-            self.scratch1.accept(visitor)?;
-            self.scratch2.accept(visitor)?;
-            self.scratch3.accept(visitor)?;
             for (sym, value) in &*self.items.get() {
                 if let Some(sym) = sym {
                     sym.accept(visitor)?;
