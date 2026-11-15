@@ -22,7 +22,7 @@ use crate::{
     },
     object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
     sig,
-    strand::{PinScope, Pinned, SlotFrame, Strand, in_native_frame},
+    strand::{PinScope, Pinned, SlotCells, Strand, in_native_frame},
     sym::{self, Sym},
     unpack,
     value::{Case, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed},
@@ -3431,10 +3431,11 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.method(name, async move |this, strand, args, out| {
-            let frame = SlotFrame::new();
-            // Safety: the scope is dropped before `frame`
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(this, &mut scope, args, out, slots).await
+            let cells = SlotCells::new();
+            let mut scope = strand.slot_scope(&cells);
+            // Safety: the scope is a local that nothing can move or forget
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(this, strand, args, out, slots).await
         })
     }
 
@@ -3452,10 +3453,11 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.get(name, move |this, strand, out| {
-            let frame = SlotFrame::<N>::new();
+            let cells = SlotCells::<N>::new();
+            let mut scope = strand.slot_scope(&cells);
             // Safety: the scope is a local that nothing can move or forget
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(this, &mut scope, out, slots)
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(this, strand, out, slots)
         })
     }
 
@@ -3473,10 +3475,11 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.set(name, move |this, strand, val| {
-            let frame = SlotFrame::<N>::new();
+            let cells = SlotCells::<N>::new();
+            let mut scope = strand.slot_scope(&cells);
             // Safety: the scope is a local that nothing can move or forget
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(this, &mut scope, val, slots)
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(this, strand, val, slots)
         })
     }
 
@@ -3550,10 +3553,11 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.type_method(name, async move |this, strand, args, out| {
-            let frame = SlotFrame::new();
-            // Safety: the scope is dropped before `frame`
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(this, &mut scope, args, out, slots).await
+            let cells = SlotCells::new();
+            let mut scope = strand.slot_scope(&cells);
+            // Safety: the scope is a local that nothing can move or forget
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(this, strand, args, out, slots).await
         })
     }
 
@@ -3569,10 +3573,11 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.type_get(name, move |this, strand, out| {
-            let frame = SlotFrame::<N>::new();
+            let cells = SlotCells::<N>::new();
+            let mut scope = strand.slot_scope(&cells);
             // Safety: the scope is a local that nothing can move or forget
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(this, &mut scope, out, slots)
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(this, strand, out, slots)
         })
     }
 
@@ -3588,10 +3593,11 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             + 'v,
     {
         self.type_set(name, move |this, strand, val| {
-            let frame = SlotFrame::<N>::new();
+            let cells = SlotCells::<N>::new();
+            let mut scope = strand.slot_scope(&cells);
             // Safety: the scope is a local that nothing can move or forget
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(this, &mut scope, val, slots)
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(this, strand, val, slots)
         })
     }
 

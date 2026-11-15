@@ -3,7 +3,7 @@ use std::{
     cell::{Cell, UnsafeCell},
     marker::PhantomData,
     ops::ControlFlow,
-    ptr::{self, NonNull},
+    ptr::NonNull,
 };
 
 use bitvec::{array::BitArray, bitbox, slice::BitSlice};
@@ -234,69 +234,82 @@ pub(crate) struct Native<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
 }
 
-/// A rooting frame: native-held GC references visited by a closure or held in cells.
+/// The type-erased head of a [`Scan`]: the link on the frame chain and the glue that
+/// visits through it.
 ///
-/// [`Strand::enter_scan`](crate::strand::Strand::enter_scan) pushes one;
+/// [`ScanScope::enter`](crate::strand::ScanScope::enter) links one;
 /// [`Strand::scan_stack`](crate::strand::StrandInner::scan_stack) visits it, and
 /// backtraces skip it.
-pub(crate) struct Scan<'v> {
+pub(crate) struct ScanFrame<'v> {
     pub(crate) parent: Option<Ptr<'v>>,
-    data: *const (),
-    visit: unsafe fn(*const (), &mut dyn Visit) -> ControlFlow<()>,
+    glue: unsafe fn(NonNull<ScanFrame<'v>>, &mut dyn Visit) -> ControlFlow<()>,
 }
 
-impl<'v> Scan<'v> {
-    /// A frame that visits through `visit`.
-    ///
-    /// The frame borrows `visit` without a lifetime, so `visit` must outlive
-    /// every use of the frame, including its time on the frame chain.
-    pub(crate) fn new<F: Fn(&mut dyn Visit) -> ControlFlow<()>>(
-        parent: Option<Ptr<'v>>,
-        visit: &F,
-    ) -> Self {
-        unsafe fn glue<F: Fn(&mut dyn Visit) -> ControlFlow<()>>(
-            data: *const (),
-            visitor: &mut dyn Visit,
-        ) -> ControlFlow<()> {
-            unsafe { (*data.cast::<F>())(visitor) }
-        }
-        Scan {
-            parent,
-            data: (visit as *const F).cast(),
-            visit: glue::<F>,
-        }
-    }
-
-    /// A frame that visits each cell of `cells`.
-    ///
-    /// The frame borrows `cells` without a lifetime, as [`Self::new`] borrows its
-    /// closure, and keeps the address of `cells` itself, so a `Vec` stays put while its
-    /// contents may grow between collections.
-    pub(crate) fn cells<T: AsRef<[ValueCell<'v>]>>(parent: Option<Ptr<'v>>, cells: &T) -> Self {
-        unsafe fn glue<'v, T: AsRef<[ValueCell<'v>]>>(
-            data: *const (),
-            visitor: &mut dyn Visit,
-        ) -> ControlFlow<()> {
-            let cells = unsafe { &*data.cast::<T>() };
-            cells
-                .as_ref()
-                .iter()
-                .try_for_each(|cell| cell.accept(visitor))
-        }
-        Scan {
-            parent,
-            data: ptr::from_ref(cells).cast(),
-            visit: glue::<T>,
-        }
-    }
-
-    /// Visit the frame's roots.
+impl<'v> ScanFrame<'v> {
+    /// Visit the roots of the [`Scan`] that `frame` heads.
     ///
     /// # Safety
     ///
-    /// The closure or cells passed to [`Self::new`] or [`Self::cells`] must still be live.
-    pub(crate) unsafe fn scan(&self, visitor: &mut dyn Visit) -> ControlFlow<()> {
-        unsafe { (self.visit)(self.data, visitor) }
+    /// `frame` must come from [`Scan::link`] on a [`Scan`] that is still live and unmoved.
+    pub(crate) unsafe fn scan(frame: NonNull<Self>, visitor: &mut dyn Visit) -> ControlFlow<()> {
+        // Safety: the caller's contract
+        unsafe { (frame.as_ref().glue)(frame, visitor) }
+    }
+}
+
+/// A rooting frame: native-held GC references in `data`, visited by `visit`.
+///
+/// The frame chain holds the erased [`ScanFrame`] head, whose glue casts back to the
+/// whole `Scan`; `repr(C)` keeps the head at offset 0.
+#[repr(C)]
+pub(crate) struct Scan<'v, T> {
+    frame: ScanFrame<'v>,
+    data: T,
+    visit: fn(&T, &mut dyn Visit) -> ControlFlow<()>,
+}
+
+impl<'v, T> Scan<'v, T> {
+    /// A frame under `parent` that visits `data` through `visit`.
+    pub(crate) fn new(
+        parent: Option<Ptr<'v>>,
+        data: T,
+        visit: fn(&T, &mut dyn Visit) -> ControlFlow<()>,
+    ) -> Self {
+        unsafe fn glue<'v, T>(
+            frame: NonNull<ScanFrame<'v>>,
+            visitor: &mut dyn Visit,
+        ) -> ControlFlow<()> {
+            // Safety: `frame` came from `Scan::link` on a live `Scan<'v, T>`, so it points
+            // at offset 0 of one with provenance over all of it
+            let scan = unsafe { frame.cast::<Scan<'v, T>>().as_ref() };
+            scan.scan(visitor)
+        }
+        Scan {
+            frame: ScanFrame {
+                parent,
+                glue: glue::<T>,
+            },
+            data,
+            visit,
+        }
+    }
+
+    /// The rooted data.
+    pub(crate) fn data(&self) -> &T {
+        &self.data
+    }
+
+    /// Visit the frame's roots.
+    pub(crate) fn scan(&self, visitor: &mut dyn Visit) -> ControlFlow<()> {
+        (self.visit)(&self.data, visitor)
+    }
+
+    /// The frame-chain link to this frame.
+    ///
+    /// The link erases `T`, so it is valid only while `self` is live and unmoved.
+    pub(crate) fn link(&self) -> Ptr<'v> {
+        // Derived from the whole `Scan`, not its head, so the glue may read `data`
+        Ptr::Scan(NonNull::from_ref(self).cast())
     }
 }
 
@@ -305,7 +318,7 @@ pub(crate) enum Ptr<'v> {
     Do(NonNull<CallFrame<'v>>),
     Native(NonNull<Native<'v>>),
     Boundary(NonNull<Native<'v>>),
-    Scan(NonNull<Scan<'v>>),
+    Scan(NonNull<ScanFrame<'v>>),
 }
 
 impl<'v> CallFrame<'v> {

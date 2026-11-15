@@ -48,7 +48,7 @@ use crate::{
     sig::{self, UnpackKey, UnpackKeyKind},
     stdlib,
     strand::{
-        Local, LocalKey, LocalRootKey, LocalVtbl, SlotFrame, Strand, StrandGroup, StrandInner,
+        Local, LocalKey, LocalRootKey, LocalVtbl, SlotCells, Strand, StrandGroup, StrandInner,
         StrandRing, with_slots_dynamic,
     },
     sym::{self, Sym},
@@ -1026,10 +1026,11 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         + 'v,
     ) -> Self {
         self.function(name, async move |strand, args, out| {
-            let frame = SlotFrame::new();
-            // Safety: the scope is dropped before `frame`
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(&mut scope, args, out, slots).await
+            let cells = SlotCells::new();
+            let mut scope = strand.slot_scope(&cells);
+            // Safety: the scope is a local that nothing can move or forget
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(strand, args, out, slots).await
         })
     }
 
@@ -1071,10 +1072,11 @@ impl<'v, 'a> ModuleBuilder<'v, 'a> {
         + 'v,
     ) -> Self {
         self.get(name, move |strand, out| {
-            let frame = SlotFrame::<N>::new();
+            let cells = SlotCells::<N>::new();
+            let mut scope = strand.slot_scope(&cells);
             // Safety: the scope is a local that nothing can move or forget
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(&mut scope, out, slots)
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(strand, out, slots)
         })
     }
 
@@ -1686,10 +1688,11 @@ impl<'v> Builder<'v> {
         f: impl for<'a> AsyncFnOnce(&mut Strand<'v, '_>, [Slot<'v, 'a>; N]) -> R,
     ) -> R {
         self.enter(async move |strand| {
-            let frame = SlotFrame::new();
-            // Safety: the scope is dropped before `frame`
-            let (mut scope, slots) = unsafe { strand.enter_slot_frame(&frame) };
-            f(&mut scope, slots).await
+            let cells = SlotCells::new();
+            let mut scope = strand.slot_scope(&cells);
+            // Safety: the scope is a local that nothing can move or forget
+            let (strand, slots) = unsafe { scope.enter_slots() };
+            f(strand, slots).await
         })
         .await
     }

@@ -1,15 +1,9 @@
-use std::{
-    cell::OnceCell,
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ops::{Deref, DerefMut},
-};
+use std::{marker::PhantomData, mem::MaybeUninit};
 
 use crate::{
     error::{Error, Result},
-    frame,
     object::{protocol::GcObj, sym::SymObj},
-    strand::{SlotScope, Strand},
+    strand::{ScanScope, Strand},
     sym::Sym,
     value::{self, Input, Slot, ValueCell},
     vm::{Alloc, AllocExt},
@@ -35,116 +29,91 @@ impl<T, const N: usize> AsRef<[T]> for HeadroomCells<T, N> {
 }
 
 /// Argument cells for [`call!`](crate::call) and [`method!`](crate::method), declared in
-/// the caller's frame and rooted by a scan frame while the call runs.
+/// the caller's frame outside the [`ArgScope`] that roots them.
 #[doc(hidden)]
-pub struct ArgFrame<'v, 'i, const N: usize> {
+pub struct ArgCells<'v, const N: usize>(
     // N+1 contiguous cells: head is headroom (NIL), tail[0..N] hold the arguments
-    cells: HeadroomCells<ValueCell<'v>, N>,
-    // Where each argument moved from, restored after the call
-    replace: [Option<Slot<'v, 'i>>; N],
-    scan: OnceCell<frame::Scan<'v>>,
-}
+    HeadroomCells<ValueCell<'v>, N>,
+);
 
-impl<'v, 'i, const N: usize> ArgFrame<'v, 'i, N> {
+impl<'v, const N: usize> ArgCells<'v, N> {
     #[inline]
     pub fn new() -> Self {
-        Self {
-            cells: HeadroomCells {
-                head: ValueCell::default(),
-                tail: std::array::from_fn(|_| ValueCell::default()),
-            },
-            replace: [const { None }; N],
-            scan: OnceCell::new(),
-        }
-    }
-
-    /// Root the frame's cells on `strand`, take `inputs` into them, and return the
-    /// arguments with a scope that moves values taken from rooted locations back, then
-    /// pops the frame, when dropped.
-    ///
-    /// # Safety
-    ///
-    /// The scope must be dropped, not forgotten, before the frame is.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the frame was entered before.
-    #[inline]
-    pub unsafe fn enter<'s, 'f>(
-        &'f mut self,
-        strand: &'f mut Strand<'v, 's>,
-        inputs: &'i mut [&mut dyn Input<'v>; N],
-        sig: &'f [Option<Sym<'v, 'f>>; N],
-    ) -> (ArgScope<'v, 's, 'i, 'f>, Args<'v, 'f>) {
-        let Self {
-            cells,
-            replace,
-            scan,
-        } = self;
-        let cells: &'f HeadroomCells<_, N> = cells;
-        assert!(
-            scan.set(frame::Scan::cells(Some(strand.fp), cells)).is_ok(),
-            "argument frame entered twice"
-        );
-        // Safety: the caller's contract; the scan reads `cells`, which `'f` keeps live, and
-        // visits each cell once
-        let mut scope = unsafe { strand.enter_scan(scan.get().unwrap()) };
-        marshal(&mut scope, &cells.tail, inputs, replace);
-        let guard = ArgGuard {
-            cells: &cells.tail,
-            replace,
-        };
-        // Safety: the cells are only read by the scan, never mutably borrowed
-        let args = unsafe { Args::new(cells.as_ref(), sig, 1) };
-        (ArgScope { guard, scope }, args)
+        Self(HeadroomCells {
+            head: ValueCell::default(),
+            tail: std::array::from_fn(|_| ValueCell::default()),
+        })
     }
 }
 
-impl<const N: usize> Default for ArgFrame<'_, '_, N> {
+impl<const N: usize> Default for ArgCells<'_, N> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// A [`Strand`] handle whose frame roots an entered [`ArgFrame`].  Dropping it moves
-/// arguments back to the rooted locations they were taken from, then pops the frame.
+/// A rooting frame over [`ArgCells`] for one call.  Once entered, dropping it moves
+/// arguments back to the rooted locations they were taken from, then unlinks the frame.
 #[doc(hidden)]
-pub struct ArgScope<'v, 's, 'i, 'f> {
-    guard: ArgGuard<'v, 'i, 'f>,
-    scope: SlotScope<'v, 's, 'f>,
+pub struct ArgScope<'v, 's, 'f, 'i, 'a, const N: usize> {
+    scope: ScanScope<'v, 's, 'f, &'a ArgCells<'v, N>>,
+    // Where each argument moved from, restored after the call
+    replace: [Option<Slot<'v, 'i>>; N],
 }
 
-impl Drop for ArgScope<'_, '_, '_, '_> {
+impl<'v, 's, 'f, 'i, 'a, const N: usize> ArgScope<'v, 's, 'f, 'i, 'a, N> {
+    /// A scope on `strand` rooting `cells`.
+    #[inline]
+    pub fn new(strand: &'f mut Strand<'v, 's>, cells: &'a ArgCells<'v, N>) -> Self {
+        Self {
+            scope: ScanScope::new(strand, cells, |cells, visitor| {
+                cells
+                    .0
+                    .as_ref()
+                    .iter()
+                    .try_for_each(|cell| cell.accept(visitor))
+            }),
+            replace: [const { None }; N],
+        }
+    }
+
+    /// Link the frame, take `inputs` into the cells, and return a handle on the strand
+    /// with the frame as its frame pointer, and the arguments.
+    ///
+    /// # Safety
+    ///
+    /// Once entered, the scope must be dropped, not moved or forgotten.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the scope was entered before.
+    #[inline]
+    pub unsafe fn enter<'g>(
+        &'g mut self,
+        inputs: &'i mut [&mut dyn Input<'v>; N],
+        sig: &'g [Option<Sym<'v, 'g>>; N],
+    ) -> (&'g mut Strand<'v, 's>, Args<'v, 'g>) {
+        let Self { scope, replace } = self;
+        // Safety: the caller's contract; the frame visits each cell once
+        let (strand, cells) = unsafe { scope.enter() };
+        let cells: &'a ArgCells<'v, N> = cells;
+        marshal(strand, &cells.0.tail, inputs, replace);
+        // Safety: the cells are only read by the frame, never mutably borrowed
+        let args = unsafe { Args::new(cells.0.as_ref(), sig, 1) };
+        (strand, args)
+    }
+}
+
+impl<const N: usize> Drop for ArgScope<'_, '_, '_, '_, '_, N> {
     #[inline]
     fn drop(&mut self) {
-        // Before the scope pops the frame, so values move back while the cells are
+        // Before the scope unlinks the frame, so values move back while the cells are
         // still rooted
-        restore(&mut self.scope, self.guard.cells, self.guard.replace);
+        if let Some((strand, cells)) = self.scope.entered() {
+            restore(strand, &cells.0.tail, &mut self.replace);
+        }
     }
-}
-
-impl<'v, 's> Deref for ArgScope<'v, 's, '_, '_> {
-    type Target = Strand<'v, 's>;
-
-    #[inline]
-    fn deref(&self) -> &Self::Target {
-        &self.scope
-    }
-}
-
-impl<'v, 's> DerefMut for ArgScope<'v, 's, '_, '_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.scope
-    }
-}
-
-/// The rooted locations arguments were taken from, which [`ArgScope`] moves them
-/// back to when dropped.
-struct ArgGuard<'v, 'i, 'f> {
-    cells: &'f [ValueCell<'v>],
-    replace: &'f mut [Option<Slot<'v, 'i>>],
 }
 
 #[inline(never)]
@@ -717,12 +686,13 @@ macro_rules! call {
             let rcvr = $rcvr;
             let mut out = $out;
             let strand: &mut $crate::strand::Strand<'_, '_> = $strand;
-            let mut frame = $crate::arg::ArgFrame::new();
+            let cells = $crate::arg::ArgCells::new();
+            let mut scope = $crate::arg::ArgScope::new(strand, &cells);
             // Safety: the scope is a local of this block that nothing can move or forget
             #[allow(unused_unsafe)]
-            let (mut scope, args) = unsafe { frame.enter(strand, &mut inputs, &sig) };
+            let (strand, args) = unsafe { scope.enter(&mut inputs, &sig) };
             let out = $crate::value::Slot::from_output(&mut out);
-            $crate::value::Value::op_call(&rcvr, &mut *scope, args, out).await
+            $crate::value::Value::op_call(&rcvr, strand, args, out).await
         }
     };
     ($strand: expr, $rcvr: expr, $($rest: tt)+) => {
@@ -774,12 +744,13 @@ macro_rules! method {
             let method = $method;
             let mut out = $out;
             let strand: &mut $crate::strand::Strand<'_, '_> = $strand;
-            let mut frame = $crate::arg::ArgFrame::new();
+            let cells = $crate::arg::ArgCells::new();
+            let mut scope = $crate::arg::ArgScope::new(strand, &cells);
             // Safety: the scope is a local of this block that nothing can move or forget
             #[allow(unused_unsafe)]
-            let (mut scope, args) = unsafe { frame.enter(strand, &mut inputs, &sig) };
+            let (strand, args) = unsafe { scope.enter(&mut inputs, &sig) };
             let out = $crate::value::Slot::from_output(&mut out);
-            $crate::value::Value::op_mcall(&rcvr, &mut *scope, method, args, out).await
+            $crate::value::Value::op_mcall(&rcvr, strand, method, args, out).await
         }
     };
     ($strand: expr, $rcvr: expr, $method: expr, $($rest: tt)+) => {

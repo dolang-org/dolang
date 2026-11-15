@@ -314,7 +314,7 @@ impl<'v> Arena<'v> {
     ///
     /// # Safety
     ///
-    /// As for [`Strand::enter_scan`](crate::strand::Strand::enter_scan): each visit must
+    /// As for [`ScanScope::enter`](crate::strand::ScanScope::enter): each visit must
     /// visit every GC reference the rooted data owns, exactly once, and nothing else.  The
     /// rooted data must not change while a collection runs, so data that changes between
     /// collections needs interior mutability.
