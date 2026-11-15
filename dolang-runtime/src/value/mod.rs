@@ -7,7 +7,7 @@ use std::{
     cell::UnsafeCell,
     convert::Into,
     hash::DefaultHasher,
-    marker::PhantomData,
+    marker::{PhantomData, PhantomPinned},
     mem::{self, MaybeUninit},
     ops::{ControlFlow, Deref},
     ptr::{self, NonNull},
@@ -78,8 +78,11 @@ pub(crate) enum Case<'v, 'a> {
 /// the garbage collector.  A [`Slot`] is the usual way to receive or store an
 /// owned value temporarily.  For holding a value long-term, use a [`Root`]
 /// or the [`Object::SLOTS`](crate::object::native::Object::SLOTS) mechanism.
+///
+/// A value is `!Unpin`, so a pinned value can't be moved by safe code. Moving one
+/// between collector scans is otherwise fine.
 #[repr(transparent)]
-pub struct Value<'v>(Repr, PhantomData<&'v mut &'v ()>);
+pub struct Value<'v>(Repr, PhantomData<(&'v mut &'v (), PhantomPinned)>);
 
 /// Growable binary buffer that can be finalized directly into a Do `Bin` or `Str`.
 ///
