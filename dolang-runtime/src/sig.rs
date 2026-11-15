@@ -1,4 +1,7 @@
+use std::ops::ControlFlow;
+
 use crate::{
+    gc::arena::Visit,
     strand::Strand,
     sym::Sym,
     value::{Input, Output, Slot, Slots, Value, private},
@@ -19,9 +22,12 @@ impl<'v, 'a> Input<'v> for &UnpackKeyKind<'v, 'a> {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(match self {
-            UnpackKeyKind::Sym(sym) => Value::from_object(vm.sym_obj(*sym)),
-            UnpackKeyKind::Const(value) => value.dup(),
+        // SAFETY: stored into the scanned `out` at once
+        out.store(unsafe {
+            match self {
+                UnpackKeyKind::Sym(sym) => Value::from_object(vm.sym_obj(*sym)),
+                UnpackKeyKind::Const(value) => value.dup(),
+            }
         });
         None
     }
@@ -66,6 +72,23 @@ impl<'v, 'a> Unpack<'v, 'a> {
             sym_index,
             variadic,
         }
+    }
+
+    /// Visit the values the signature owns: its optional defaults, constant keys and key
+    /// defaults.
+    pub(crate) fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        for value in &self.optional {
+            value.accept(visit)?;
+        }
+        for key in &self.keys {
+            if let UnpackKeyKind::Const(value) = &key.kind {
+                value.accept(visit)?;
+            }
+            if let Some(value) = &key.default {
+                value.accept(visit)?;
+            }
+        }
+        ControlFlow::Continue(())
     }
 
     pub(crate) fn len(&self) -> usize {

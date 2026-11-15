@@ -90,7 +90,8 @@ impl<'v> Struct<'v> {
         embryo.finish(
             strand,
             Self {
-                items: pack::pack_items(vm, args),
+                // SAFETY: the struct is allocated; the items move straight into it
+                items: unsafe { pack::pack_items(vm, args) },
             },
             out,
         );
@@ -117,24 +118,23 @@ impl<'v> Struct<'v> {
     }
 }
 
-/// A `Pack` holding the items of `this` as they are now, for iteration and
-/// unpacking.
+/// Store a `Pack` holding the items of `this` as they are now into `out`, for iteration
+/// and unpacking.
 fn snapshot<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: &Recv<'v, '_, Struct<'v>>,
-) -> Result<'v, 's, GcObj<'v, pack::PackObj<'v>>> {
-    let items = this
-        .borrow(strand)?
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    let borrow = this.borrow(strand)?;
+    let embryo = strand.builtin_types().pack.embryo(strand);
+    // SAFETY: the pack is allocated; the copies move straight into it
+    let items = borrow
         .items
         .iter()
-        // SAFETY: TODO(#1707): as loose as the `Value::dup` beside it
-        .map(|(key, value)| (key.as_ref().map(|key| unsafe { key.dup() }), value.dup()))
+        .map(|(key, value)| unsafe { (key.as_ref().map(|key| key.dup()), value.dup()) })
         .collect();
-    Ok(GcObj::new_imm(
-        strand.vm().arena(),
-        strand.builtin_types().pack,
-        pack::Pack::new(items),
-    ))
+    embryo.finish_imm(strand, pack::Pack::new(items), out);
+    Ok(())
 }
 
 impl<'v> Protocol<'v> for Struct<'v> {
@@ -247,8 +247,10 @@ impl<'v> Protocol<'v> for Struct<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if let Some(key) = key.as_sym(strand) {
-            let key = strand.sym_obj(key);
-            this.borrow_mut(strand)?.set(key, value.take());
+            let mut borrow = this.borrow_mut(strand)?;
+            // SAFETY: the symbol and the value move straight into the borrowed struct
+            let key = unsafe { strand.sym_obj(key) };
+            borrow.set(key, value.take());
             return Ok(());
         }
         if !key.is_int(strand) {
@@ -292,8 +294,10 @@ impl<'v> Protocol<'v> for Struct<'v> {
         field: Sym<'v, 'a>,
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let key = strand.sym_obj(field);
-        this.borrow_mut(strand)?.set(key, value.take());
+        let mut borrow = this.borrow_mut(strand)?;
+        // SAFETY: the symbol and the value move straight into the borrowed struct
+        let key = unsafe { strand.sym_obj(field) };
+        borrow.set(key, value.take());
         Ok(())
     }
 
@@ -308,17 +312,14 @@ impl<'v> Protocol<'v> for Struct<'v> {
             return instance_mcall_fallback(strand, &this, method, args, out);
         }
         // A plain name calls its item
-        let callee = {
-            let borrow = this.borrow(strand)?;
-            borrow
-                .position(method)
-                .map(|index| borrow.items[index].1.dup())
-        };
-        let Some(callee) = callee else {
-            return Err(Error::field(strand, method));
-        };
         with_slots!(strand, |mut slot| {
-            slot.store(callee);
+            {
+                let borrow = this.borrow(strand)?;
+                let Some(index) = borrow.position(method) else {
+                    return Err(Error::field(strand, method));
+                };
+                Output::set(strand, &mut slot, &borrow.items[index].1);
+            }
             slot.call(strand, args, out).await
         })
     }
@@ -328,13 +329,18 @@ impl<'v> Protocol<'v> for Struct<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let snapshot = snapshot(strand, &this)?;
-        strand.builtin_types().pack_iter.create(
-            strand,
-            pack::Iter::new(snapshot, HashSet::new(), 0, 0),
-            out,
-        );
-        Ok(())
+        with_slots!(strand, |mut items| {
+            snapshot(strand, &this, &mut items)?;
+            let items = items
+                .downcast_ref(strand.builtin_types().pack)
+                .expect("pack");
+            let embryo = strand.builtin_types().pack_iter.embryo(strand);
+            // SAFETY: the iterator is allocated; the copy of the rooted snapshot moves
+            // straight into it
+            let items = unsafe { items.dup() };
+            embryo.finish(strand, pack::Iter::new(items, HashSet::new(), 0, 0), out);
+            Ok(())
+        })
     }
 
     async fn op_spread<'a, 's>(
@@ -353,8 +359,13 @@ impl<'v> Protocol<'v> for Struct<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let snapshot = snapshot(strand, &this)?;
-        pack::unpack(strand, snapshot, sig, out)
+        with_slots!(strand, |mut items| {
+            snapshot(strand, &this, &mut items)?;
+            let items = items
+                .downcast_ref(strand.builtin_types().pack)
+                .expect("pack");
+            pack::unpack(strand, items, sig, out)
+        })
     }
 }
 
@@ -448,14 +459,15 @@ impl<'v> Protocol<'v> for Class {
                 if default.is_some() && or_else.is_some() {
                     return Err(Error::unexpected_key(strand, else_key));
                 }
-                let found = {
-                    with_pin!(strand, expect_struct(strand, &target)?, |target| {
-                        let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                        Ok(pack::find(strand, &borrow.items, &key).map(Value::dup))
-                    })?
-                };
-                if let Some(value) = found {
-                    out.store(value);
+                let found = with_pin!(strand, expect_struct(strand, &target)?, |target| {
+                    let borrow = target.borrow().ok_or_else(|| Error::concurrency(strand))?;
+                    let found = pack::find(strand, &borrow.items, &key);
+                    if let Some(value) = found {
+                        Output::set(strand, &mut out, value);
+                    }
+                    Ok(found.is_some())
+                })?;
+                if found {
                     Ok(())
                 } else if let Some(mut default) = default {
                     out.store(default.take());

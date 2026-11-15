@@ -135,10 +135,17 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) fn dup(&self) -> Self {
+    /// Duplicate the value, taking a new reference to its object if it has one.
+    ///
+    /// Safe code copies a value by passing `&value` as an [`Input`] instead.
+    ///
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn dup(&self) -> Self {
         match self.case() {
             // SAFETY: the handle is forgotten at once; its count backs the returned
-            // value, which is as loose as any other `Value::dup` result
+            // value, whose looseness the caller takes over
             Case::Object(base) => mem::forget(unsafe { base.dup() }),
             Case::Prim(_) => (),
         }
@@ -169,33 +176,47 @@ impl<'v> Value<'v> {
         )
     }
 
-    pub(crate) fn from_str(vm: &Vm<'v>, value: &str) -> Self {
-        Self::from_object(gc::Base::upcast(unsafe {
-            gc::Base::from_str(
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn from_str(vm: &Vm<'v>, value: &str) -> Self {
+        // SAFETY: the caller takes over the result's looseness
+        unsafe {
+            Self::from_object(gc::Base::upcast(gc::Base::from_str(
                 vm.arena(),
                 Header::new(vm.arena(), vm.builtin_types().str.vtbl),
                 StrObj,
                 value,
-            )
-        }))
+            )))
+        }
     }
 
-    pub(crate) fn from_u8_slice(vm: &Vm<'v>, value: &[u8]) -> Self {
-        Self::from_object(gc::Base::upcast(unsafe {
-            gc::Base::from_bytes(
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn from_u8_slice(vm: &Vm<'v>, value: &[u8]) -> Self {
+        // SAFETY: the caller takes over the result's looseness
+        unsafe {
+            Self::from_object(gc::Base::upcast(gc::Base::from_bytes(
                 vm.arena(),
                 Header::new(vm.arena(), vm.builtin_types().bin.vtbl),
                 BinObj,
                 value,
-            )
-        }))
+            )))
+        }
     }
 
-    pub(crate) fn from_object<T: ?Sized + Protocol<'v>>(value: GcObj<'v, T>) -> Self {
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn from_object<T: ?Sized + Protocol<'v>>(value: GcObj<'v, T>) -> Self {
         Self(Repr::from_object(value), PhantomData)
     }
 
-    pub(crate) fn from_input(alloc: &mut dyn Alloc<'v>, mut input: impl Input<'v>) -> Self {
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn from_input(alloc: &mut dyn Alloc<'v>, mut input: impl Input<'v>) -> Self {
         let mut value = Value::NIL;
         // Safety: an input allocates at most once, to produce the value it writes, so
         // nothing allocates after the write; see `Slot::new`.
@@ -397,16 +418,17 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) fn op_type<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, mut out: Slot<'v, 'a>) {
+    pub(crate) fn op_type<'a, 's>(&self, strand: &'a mut Strand<'v, 's>, out: Slot<'v, 'a>) {
         match self.case() {
             Case::Prim(prim) => {
                 let builtin = strand.singletons();
-                out.store(match prim {
-                    Prim::Nil => builtin.nil.dup(),
-                    Prim::Int(_) => builtin.int.dup(),
-                    Prim::F64(_) => builtin.float.dup(),
-                    Prim::Bool(_) => builtin.bool.dup(),
-                })
+                let ty = match prim {
+                    Prim::Nil => &builtin.nil,
+                    Prim::Int(_) => &builtin.int,
+                    Prim::F64(_) => &builtin.float,
+                    Prim::Bool(_) => &builtin.bool,
+                };
+                Output::set(strand, out, ty)
             }
             Case::Object(o) => o.op_type(strand, out),
         }
@@ -2834,6 +2856,8 @@ impl<'v> BinEmbryo<'v> {
     /// Finalizes the embryo into a Do `Bin` and writes it to `out`.
     pub fn finish(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        // SAFETY: the new value is stored into `out` right after, with no allocation
+        // in between
         let value = unsafe {
             let header = Header::new(vm.arena(), vm.builtin_types().bin.vtbl);
             match self.embryo {
@@ -2868,12 +2892,12 @@ impl<'v> BinEmbryo<'v> {
     pub unsafe fn finish_str_unchecked(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
         let header = unsafe { Header::new(vm.arena(), vm.builtin_types().str.vtbl) };
-        let value = match self.embryo {
-            Some(embryo) => {
-                Value::from_object(unsafe { embryo.finalize_str_unchecked(header, StrObj) })
-            }
-            None => {
-                Value::from_object(unsafe { gc::Base::from_str(vm.arena(), header, StrObj, "") })
+        // SAFETY: the new value is stored into `out` right after, with no allocation
+        // in between
+        let value = unsafe {
+            match self.embryo {
+                Some(embryo) => Value::from_object(embryo.finalize_str_unchecked(header, StrObj)),
+                None => Value::from_object(gc::Base::from_str(vm.arena(), header, StrObj, "")),
             }
         };
         Slot::from_output(&mut out).store(value);
@@ -3040,6 +3064,8 @@ impl<'v> StrEmbryo<'v> {
     /// Finalizes the embryo into a Do `Str` and writes it to `out`.
     pub fn finish(self, alloc: &mut impl Alloc<'v>, mut out: impl Output<'v>) {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
+        // SAFETY: the new value is stored into `out` right after, with no allocation
+        // in between
         let value = unsafe {
             let header = Header::new(vm.arena(), vm.builtin_types().str.vtbl);
             match self.embryo {
@@ -3319,7 +3345,8 @@ impl<'v, 'a> Input<'v> for &Slot<'v, 'a> {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(self.dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.dup() });
         None
     }
 }
@@ -3358,7 +3385,8 @@ impl<'v> Input<'v> for &Value<'v> {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(self.dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.dup() });
         None
     }
 }
@@ -3476,7 +3504,8 @@ impl<'v> Input<'v> for &str {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_str(vm, self));
+        // SAFETY: stored into the scanned `out` at once
+        out.store(unsafe { Value::from_str(vm, self) });
         None
     }
 }
@@ -3489,7 +3518,8 @@ impl<'v> Input<'v> for &[u8] {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(Value::from_u8_slice(vm, self));
+        // SAFETY: stored into the scanned `out` at once
+        out.store(unsafe { Value::from_u8_slice(vm, self) });
         None
     }
 }
@@ -3588,7 +3618,8 @@ impl<'v> Input<'v> for &Root<'v> {
         mut out: Slot<'v, '_>,
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(self.dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.dup() });
         None
     }
 }
@@ -3622,22 +3653,34 @@ impl<'v> Input<'v> for &mut Root<'v> {
 pub(crate) struct ValueCell<'v>(UnsafeCell<Value<'v>>);
 
 /// An owned value moves in, with no allocation.
-impl<'v> From<Value<'v>> for ValueCell<'v> {
+impl<'v> ValueCell<'v> {
+    /// Wrap an owned value in a cell.
+    ///
+    /// # Safety
+    /// The cell is loose until it lands in a scanned location, so `value` must reach
+    /// one with no allocation or strand access in between.
     #[inline]
-    fn from(value: Value<'v>) -> Self {
+    pub(crate) unsafe fn from_value(value: Value<'v>) -> Self {
         Self(UnsafeCell::new(value))
     }
-}
 
-impl<'v> ValueCell<'v> {
+    /// Unwrap the cell into its owned value.
+    ///
+    /// # Safety
+    /// The value is loose, so it must reach a scanned location with no allocation or
+    /// strand access in between.
     #[inline]
-    pub(crate) fn new(alloc: &mut dyn Alloc<'v>, input: impl Input<'v>) -> Self {
-        Self(UnsafeCell::new(Value::from_input(alloc, input)))
+    pub(crate) unsafe fn into_value(self) -> Value<'v> {
+        self.0.into_inner()
     }
 
     #[inline]
-    pub(crate) fn get_mut(&mut self) -> &mut Value<'v> {
-        self.0.get_mut()
+    /// # Safety
+    /// The cell is loose until it lands in a scanned location; as for
+    /// [`Value::from_input`].
+    pub(crate) unsafe fn new(alloc: &mut dyn Alloc<'v>, input: impl Input<'v>) -> Self {
+        // SAFETY: the caller takes over the result's looseness
+        Self(UnsafeCell::new(unsafe { Value::from_input(alloc, input) }))
     }
 
     /// Visit the stored value for the garbage collector.
@@ -3858,7 +3901,8 @@ impl<'v> Input<'v> for TypeObject {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(self.value(vm).dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.value(vm).dup() });
         None
     }
 }
@@ -3903,7 +3947,8 @@ impl<'v> Input<'v> for Singleton {
         _: private::Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(self.value(vm).dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.value(vm).dup() });
         None
     }
 }

@@ -6,8 +6,8 @@ use crate::{
         array::Array, class, dict::Dict, float, int, pack, record::Record, structure::Struct, tuple,
     },
     unpack,
-    value::{Output, StrEmbryo, Value},
-    vm::Builder,
+    value::{Output, StrEmbryo},
+    vm::{AllocExt, Builder},
     with_str,
 };
 
@@ -26,94 +26,94 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let bc = builder.singletons();
 
     // Core types
-    let value = bc.value.dup();
-    let num = bc.num.dup();
-    let type_obj = bc.type_obj.dup();
-    let int = bc.int.dup();
-    let float = bc.float.dup();
-    let bool = bc.bool.dup();
-    let nil = bc.nil.dup();
-    let str = bc.str.dup();
-    let strbuf = bc.strbuf.dup();
-    let sym = bc.sym.dup();
-    let array = bc.array.dup();
-    let dict = bc.dict.dup();
-    let set = bc.set.dup();
-    let tuple = bc.tuple.dup();
-    let func = bc.func.dup();
-    let range = bc.range.dup();
-    let module = bc.module.dup();
-    let pack_class = bc.pack.dup();
-    let record = bc.record.dup();
-    let structure = bc.structure.dup();
-    let bin = bc.bin.dup();
-    let binbuf = bc.binbuf.dup();
+    let value = &bc.value;
+    let num = &bc.num;
+    let type_obj = &bc.type_obj;
+    let int = &bc.int;
+    let float = &bc.float;
+    let bool = &bc.bool;
+    let nil = &bc.nil;
+    let str = &bc.str;
+    let strbuf = &bc.strbuf;
+    let sym = &bc.sym;
+    let array = &bc.array;
+    let dict = &bc.dict;
+    let set = &bc.set;
+    let tuple = &bc.tuple;
+    let func = &bc.func;
+    let range = &bc.range;
+    let module = &bc.module;
+    let pack_class = &bc.pack;
+    let record = &bc.record;
+    let structure = &bc.structure;
+    let bin = &bc.bin;
+    let binbuf = &bc.binbuf;
 
     // Iterator protocol types (from former std.iter)
-    let iter_type = bc.input_iter.dup();
-    let sink_type = bc.output_iter.dup();
-    let iterable_type = bc.iterable.dup();
-    let sinkable_type = bc.sinkable.dup();
-    let getter = bc.getter.dup();
-    let setter = bc.setter.dup();
-    let null = bc.null.dup();
-    let null_type = bc.null_type.dup();
-    let error_sink_stop = bc.error_sink_stop.dup();
-    let error_iter_stop = bc.error_iter_stop.dup();
+    let iter_type = &bc.input_iter;
+    let sink_type = &bc.output_iter;
+    let iterable_type = &bc.iterable;
+    let sinkable_type = &bc.sinkable;
+    let getter = &bc.getter;
+    let setter = &bc.setter;
+    let null = &bc.null;
+    let null_type = &bc.null_type;
+    let error_sink_stop = &bc.error_sink_stop;
+    let error_iter_stop = &bc.error_iter_stop;
 
     // Error types (from former std.error)
-    let error = bc.error.dup();
-    let error_unsupported = bc.error_unsupported.dup();
-    let error_immutable = bc.error_immutable.dup();
-    let error_concurrency = bc.error_concurrency.dup();
-    let error_type = bc.error_type.dup();
-    let error_value = bc.error_value.dup();
-    let error_data = bc.error_data.dup();
-    let error_shape = bc.error_shape.dup();
-    let error_missing_item = bc.error_missing_item.dup();
-    let error_unexpected_item = bc.error_unexpected_item.dup();
-    let error_state = bc.error_state.dup();
-    let error_index = bc.error_index.dup();
-    let error_field = bc.error_field.dup();
-    let error_unexpected_pos = bc.error_unexpected_pos.dup();
-    let error_unexpected_key = bc.error_unexpected_key.dup();
-    let error_missing_pos = bc.error_missing_pos.dup();
-    let error_missing_key = bc.error_missing_key.dup();
-    let error_overflow = bc.error_overflow.dup();
-    let error_zerodiv = bc.error_zerodiv.dup();
-    let error_cyclic_import = bc.error_cyclic_import.dup();
-    let error_import = bc.error_import.dup();
-    let error_compile = bc.error_compile.dup();
-    let error_runtime = bc.error_runtime.dup();
-    let error_abort = bc.error_abort.dup();
-    let error_canceled = bc.error_canceled.dup();
-    let error_timed_out = bc.error_timed_out.dup();
+    let error = &bc.error;
+    let error_unsupported = &bc.error_unsupported;
+    let error_immutable = &bc.error_immutable;
+    let error_concurrency = &bc.error_concurrency;
+    let error_type = &bc.error_type;
+    let error_value = &bc.error_value;
+    let error_data = &bc.error_data;
+    let error_shape = &bc.error_shape;
+    let error_missing_item = &bc.error_missing_item;
+    let error_unexpected_item = &bc.error_unexpected_item;
+    let error_state = &bc.error_state;
+    let error_index = &bc.error_index;
+    let error_field = &bc.error_field;
+    let error_unexpected_pos = &bc.error_unexpected_pos;
+    let error_unexpected_key = &bc.error_unexpected_key;
+    let error_missing_pos = &bc.error_missing_pos;
+    let error_missing_key = &bc.error_missing_key;
+    let error_overflow = &bc.error_overflow;
+    let error_zerodiv = &bc.error_zerodiv;
+    let error_cyclic_import = &bc.error_cyclic_import;
+    let error_import = &bc.error_import;
+    let error_compile = &bc.error_compile;
+    let error_runtime = &bc.error_runtime;
+    let error_abort = &bc.error_abort;
+    let error_canceled = &bc.error_canceled;
+    let error_timed_out = &bc.error_timed_out;
 
     builder
         .module("std")
         // Core types
-        .value("Value", &value)
-        .value("Num", &num)
-        .value("Type", &type_obj)
-        .value("Int", &int)
-        .value("Float", &float)
-        .value("Bool", &bool)
-        .value("Nil", &nil)
-        .value("Str", &str)
-        .value("StrBuf", &strbuf)
-        .value("Sym", &sym)
-        .value("Array", &array)
+        .value("Value", value)
+        .value("Num", num)
+        .value("Type", type_obj)
+        .value("Int", int)
+        .value("Float", float)
+        .value("Bool", bool)
+        .value("Nil", nil)
+        .value("Str", str)
+        .value("StrBuf", strbuf)
+        .value("Sym", sym)
+        .value("Array", array)
         // A type-only split of `Array`; the same class at runtime
-        .value("BaseArray", &array)
-        .value("Dict", &dict)
+        .value("BaseArray", array)
+        .value("Dict", dict)
         // A type-only split of `Dict` for the type checker; the same class at runtime
-        .value("BaseDict", &dict)
-        .value("Set", &set)
-        .value("Tuple", &tuple)
-        .value("Func", &func)
-        .value("Range", &range)
-        .value("getter", &getter)
-        .value("setter", &setter)
+        .value("BaseDict", dict)
+        .value("Set", set)
+        .value("Tuple", tuple)
+        .value("Func", func)
+        .value("Range", range)
+        .value("getter", getter)
+        .value("setter", setter)
         .value("class", member_scopes.class)
         .value("static", member_scopes.statik)
         .function("fields", async move |strand, args, out| {
@@ -132,56 +132,56 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
             Output::set(strand, out, class);
             Ok(())
         })
-        .value("Module", &module)
-        .value("Pack", &pack_class)
-        .value("Record", &record)
+        .value("Module", module)
+        .value("Pack", pack_class)
+        .value("Record", record)
         // A type-only split of `Record`; the same class at runtime
-        .value("BaseRecord", &record)
-        .value("Struct", &structure)
+        .value("BaseRecord", record)
+        .value("Struct", structure)
         // A type-only split of `Struct`; the same class at runtime
-        .value("BaseStruct", &structure)
-        .value("Bin", &bin)
-        .value("BinBuf", &binbuf)
+        .value("BaseStruct", structure)
+        .value("Bin", bin)
+        .value("BinBuf", binbuf)
         .value("FmtSpec", fmt.types.spec)
         .value("FmtValue", fmt.types.value)
         .value("FmtParam", fmt.types.param)
         .value("Fmt", fmt.types.fmt)
         // Iterator protocol types
-        .value("Iterable", &iterable_type)
-        .value("Sinkable", &sinkable_type)
-        .value("Iter", &iter_type)
-        .value("Sink", &sink_type)
-        .value("Null", &null_type)
-        .value("null", &null)
-        .value("SinkStop", &error_sink_stop)
-        .value("IterStop", &error_iter_stop)
+        .value("Iterable", iterable_type)
+        .value("Sinkable", sinkable_type)
+        .value("Iter", iter_type)
+        .value("Sink", sink_type)
+        .value("Null", null_type)
+        .value("null", null)
+        .value("SinkStop", error_sink_stop)
+        .value("IterStop", error_iter_stop)
         // Error types
-        .value("Error", &error)
-        .value("UnsupportedError", &error_unsupported)
-        .value("ImmutableError", &error_immutable)
-        .value("ConcurrencyError", &error_concurrency)
-        .value("TypeError", &error_type)
-        .value("ValueError", &error_value)
-        .value("DataError", &error_data)
-        .value("ShapeError", &error_shape)
-        .value("MissingItemError", &error_missing_item)
-        .value("UnexpectedItemError", &error_unexpected_item)
-        .value("StateError", &error_state)
-        .value("IndexError", &error_index)
-        .value("FieldError", &error_field)
-        .value("UnexpectedPosError", &error_unexpected_pos)
-        .value("UnexpectedKeyError", &error_unexpected_key)
-        .value("MissingPosError", &error_missing_pos)
-        .value("MissingKeyError", &error_missing_key)
-        .value("OverflowError", &error_overflow)
-        .value("ZeroDivError", &error_zerodiv)
-        .value("CyclicImportError", &error_cyclic_import)
-        .value("ImportError", &error_import)
-        .value("CompileError", &error_compile)
-        .value("RuntimeError", &error_runtime)
-        .value("AbortError", &error_abort)
-        .value("CanceledError", &error_canceled)
-        .value("TimedOutError", &error_timed_out)
+        .value("Error", error)
+        .value("UnsupportedError", error_unsupported)
+        .value("ImmutableError", error_immutable)
+        .value("ConcurrencyError", error_concurrency)
+        .value("TypeError", error_type)
+        .value("ValueError", error_value)
+        .value("DataError", error_data)
+        .value("ShapeError", error_shape)
+        .value("MissingItemError", error_missing_item)
+        .value("UnexpectedItemError", error_unexpected_item)
+        .value("StateError", error_state)
+        .value("IndexError", error_index)
+        .value("FieldError", error_field)
+        .value("UnexpectedPosError", error_unexpected_pos)
+        .value("UnexpectedKeyError", error_unexpected_key)
+        .value("MissingPosError", error_missing_pos)
+        .value("MissingKeyError", error_missing_key)
+        .value("OverflowError", error_overflow)
+        .value("ZeroDivError", error_zerodiv)
+        .value("CyclicImportError", error_cyclic_import)
+        .value("ImportError", error_import)
+        .value("CompileError", error_compile)
+        .value("RuntimeError", error_runtime)
+        .value("AbortError", error_abort)
+        .value("CanceledError", error_canceled)
+        .value("TimedOutError", error_timed_out)
         // Collection factories
         .function("array", async move |strand, args, out| {
             Array::from_args(strand, args, out)
@@ -253,8 +253,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 Output::set(strand, out, value);
                 Ok(())
             } else if let Some(value) = value.as_str(strand) {
-                let sym = with_str!(strand, value, |value| strand.sym_register_obj(value));
-                Output::set(strand, out, Value::from_object(sym));
+                with_str!(strand, value, |value| strand.intern_sym(value, out));
                 Ok(())
             } else {
                 Err(Error::type_error(strand, "sym: expected Str or Sym"))

@@ -182,7 +182,9 @@ impl<'v> Set<'v> {
         {
             Ok(_) => Ok(false),
             Err(insert) => {
-                self.insert_at_index(hash, insert, value.dup());
+                // SAFETY: the copy moves straight into this set, an object's scanned
+                // payload
+                self.insert_at_index(hash, insert, unsafe { value.dup() });
                 Ok(true)
             }
         }
@@ -233,8 +235,14 @@ impl<'v> Set<'v> {
         Ok(true)
     }
 
-    fn cloned(&self) -> Set<'v> {
+    /// A copy with the same values in the same order.
+    ///
+    /// # Safety
+    /// The copies are loose: the caller must store the set in an allocated object's
+    /// payload with no allocation in between.
+    unsafe fn cloned(&self) -> Set<'v> {
         let mut set = Set::new();
+        // SAFETY: the buckets are live; the copies' looseness is the caller's
         unsafe {
             for entry in &self.order {
                 let Some(bucket) = entry else {
@@ -610,7 +618,8 @@ impl<'v> Protocol<'v> for Set<'v> {
                 let borrow = this.borrow(strand)?;
                 // The copies move straight into the allocated set
                 let embryo = strand.builtin_types().set.embryo(strand);
-                embryo.finish(strand, borrow.cloned(), out);
+                // SAFETY: the set is allocated; the copies move straight into it
+                embryo.finish(strand, unsafe { borrow.cloned() }, out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -640,7 +649,9 @@ impl<'v> Protocol<'v> for Set<'v> {
                             fill_new_set(
                                 strand,
                                 out,
-                                || this.cloned(),
+                                // SAFETY: `fill_new_set` calls this after allocating
+                                // the set, whose payload it becomes at once
+                                || unsafe { this.cloned() },
                                 |strand, result| result.extend_from(strand, &other),
                             )
                         })?;
@@ -764,16 +775,15 @@ impl<'v> Protocol<'v> for Set<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let epoch = this.borrow(strand)?.epoch;
+        let embryo = strand.builtin_types().set_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
         let iter = Iter {
             index: Cell::new(0),
-            epoch: this.borrow(strand)?.epoch,
-            set: this.to_strong(),
+            epoch,
+            set: unsafe { this.to_strong() },
         };
-        strand
-            .vm()
-            .builtin_types()
-            .set_iter
-            .create(strand, iter, out);
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 

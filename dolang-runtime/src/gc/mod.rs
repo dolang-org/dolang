@@ -674,7 +674,11 @@ impl<'v, 'p, T: Upcast<Header>> BasePin<'v, 'p, T> {
         }
     }
 
-    pub(crate) fn to_strong(self) -> Base<'v, T> {
+    /// # Safety
+    /// The result is a loose owned reference: it must move straight into a scanned
+    /// location, with no allocation or strand access in between.
+    pub(crate) unsafe fn to_strong(self) -> Base<'v, T> {
+        // SAFETY: the pin keeps the object alive; the caller takes over the looseness
         unsafe {
             self.base.cast::<Header>().as_ref().retain();
             Base::from_raw(self.base)

@@ -79,8 +79,13 @@ reason: creating a slot over a location claims the collector can see it.
 An owned reference outside a scanned location is _loose_. GC handles are not
 `Clone`: duplicating one is `gc::Base::dup`, which is `unsafe`, as are functions
 whose results hold loose handles, such as `UnwindEntry::dup` and the backtrace
-walkers. The usual justification is that the reference moves straight into a
-scanned location, with no allocation or strand access in between. Allocating
+walkers. The same holds for `Value`: `Value::dup`, `Value::from_object`,
+`from_input`, `ValueCell::new` and `from_value` are `unsafe`, as are the
+producers of fresh handles (`GcObj::new`, `Recv::to_strong`, `Vm::sym_obj` and
+the symbol registration functions). Safe code copies a value by passing `&value`
+as an `Input` to an `Output`. The usual justification is that the reference
+moves straight into a scanned location, with no allocation or strand access in
+between. Allocating
 an embryo first (below) and duplicating into its payload is the common way to
 arrange that; helpers that create an object from a reference take a closure
 that they call after allocating. `PinStr` and `PinBin` own their references as

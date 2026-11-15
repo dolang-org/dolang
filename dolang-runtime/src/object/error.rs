@@ -146,10 +146,11 @@ impl<'v> Protocol<'v> for BoxedObj<'v> {
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) {
         let kind = this.get().kind();
-        out.store(variant_singleton(strand, kind).dup())
+        let ty = variant_singleton(strand, kind);
+        Output::set(strand, out, ty)
     }
 
     fn op_display<'a, 's>(

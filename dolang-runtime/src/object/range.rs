@@ -298,11 +298,14 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             if step.is_nil() {
                 Output::set(strand, &mut step, 1);
             }
-            strand.builtin_types().range_iter.create(
+            let embryo = strand.builtin_types().range_iter.embryo(strand);
+            // SAFETY: the iterator is allocated; the bounds move from their rooted slots
+            // straight into it
+            embryo.finish(
                 strand,
                 Iter {
                     cur: start.take(),
-                    end: borrow.end.dup(),
+                    end: unsafe { borrow.end.dup() },
                     step: step.take(),
                     direction,
                 },

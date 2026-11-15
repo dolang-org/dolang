@@ -137,15 +137,24 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let parent = create_view(owner, view, strand);
-        strand.builtin_types().array_view_iter.create_imm(
-            strand,
-            Iter {
-                parent,
-                index: 0.into(),
-            },
-            out,
-        );
+        with_slots!(strand, |mut parent| {
+            create(strand, owner, view, &mut parent);
+            let parent = parent
+                .downcast_ref(strand.builtin_types().array_view)
+                .expect("array view");
+            let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+            // SAFETY: the iterator is allocated; the view, rooted in `parent`, is copied
+            // straight into its payload
+            let parent = unsafe { parent.dup() };
+            embryo.finish_imm(
+                strand,
+                Iter {
+                    parent,
+                    index: 0.into(),
+                },
+                out,
+            );
+        });
         Ok(())
     }
 
@@ -173,8 +182,13 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
         strand: &mut Strand<'v, 's>,
         unpack: NativeUnpack<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let parent = create_view(owner, view, strand);
-        unpack_native(strand, parent, unpack, false)
+        with_slots!(strand, |mut parent| {
+            create(strand, owner, view, &mut parent);
+            let parent = parent
+                .downcast_ref(strand.builtin_types().array_view)
+                .expect("array view");
+            unpack_native(strand, parent, unpack, false)
+        })
     }
 
     /// Like [`unpack`](Self::unpack), for an owner that is itself an
@@ -185,27 +199,14 @@ impl<'v, I: ArrayLike<'v>> ArrayView<'v, I> {
         strand: &mut Strand<'v, 's>,
         unpack: NativeUnpack<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let parent = create_view(owner, view, strand);
-        unpack_native(strand, parent, unpack, true)
+        with_slots!(strand, |mut parent| {
+            create(strand, owner, view, &mut parent);
+            let parent = parent
+                .downcast_ref(strand.builtin_types().array_view)
+                .expect("array view");
+            unpack_native(strand, parent, unpack, true)
+        })
     }
-}
-
-fn create_view<'v, I: ArrayLike<'v>>(
-    owner: Instance<'v, '_, I::Object>,
-    view: I,
-    strand: &mut Strand<'v, '_>,
-) -> GcObj<'v, ViewObj<'v>> {
-    let ty = owner.ty(strand.vm());
-    let owner = Value::from_input(strand, owner);
-    GcObj::new_imm(
-        strand.vm().arena(),
-        strand.builtin_types().array_view,
-        alias::Box::new(View {
-            owner,
-            glue: Box::new(Glue { view, ty }),
-            busy: Cell::new(false),
-        }),
-    )
 }
 
 /// Store a new array view of `owner` into `out`.
@@ -218,7 +219,9 @@ pub(crate) fn create<'v, I: ArrayLike<'v>>(
     let vm = alloc.alloc_vm(crate::vm::private::Sealed);
     let ty = owner.ty(vm);
     let embryo = vm.builtin_types().array_view.embryo(alloc);
-    let owner = Value::from_input(alloc, owner);
+    // SAFETY: the view is allocated; the owner, rooted as an instance, is copied
+    // straight into its payload
+    let owner = unsafe { Value::from_input(alloc, owner) };
     embryo.finish_imm(
         alloc,
         alias::Box::new(View {
@@ -296,7 +299,9 @@ pub(super) fn unpack_bin<'v>(
     out: Slot<'v, '_>,
 ) {
     let embryo = strand.builtin_types().array_view.embryo(strand);
-    let owner = Value::from_input(strand, owner);
+    // SAFETY: the view is allocated; the owner moves from its input straight into the
+    // payload
+    let owner = unsafe { Value::from_input(strand, owner) };
     embryo.finish_imm(
         strand,
         alias::Box::new(View {
@@ -727,10 +732,12 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        strand.builtin_types().array_view_iter.create_imm(
+        let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+        embryo.finish_imm(
             strand,
             Iter {
-                parent: this.to_strong(),
+                parent: unsafe { this.to_strong() },
                 index: Cell::new(0),
             },
             out,
@@ -755,7 +762,15 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         let view = this.get();
         let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, 0)?;
         if let Some(i) = sig.pos_rest_slot() {
-            store_rest(strand, || this.to_strong(), consumed, false, out.at(i));
+            // SAFETY: `store_rest` calls this after allocating the rest, whose payload
+            // the copy of the pinned receiver becomes at once
+            store_rest(
+                strand,
+                || unsafe { this.to_strong() },
+                consumed,
+                false,
+                out.at(i),
+            );
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -1005,7 +1020,7 @@ fn spread_from<'v, 's>(
 
 fn unpack_native<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    parent: GcObj<'v, ViewObj<'v>>,
+    parent: &GcObj<'v, ViewObj<'v>>,
     mut unpack: NativeUnpack<'v, '_>,
     iterator: bool,
 ) -> Result<'v, 's, ()> {
@@ -1038,8 +1053,8 @@ fn unpack_native<'v, 's>(
                 }
             }
             UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
-                // SAFETY: TODO(#1707): `parent` is itself loose, fresh from
-                // `create_view`
+                // SAFETY: `store_rest` calls the closure after allocating the rest, so
+                // the copy of the rooted `parent` moves straight into its payload
                 store_rest(strand, || unsafe { parent.dup() }, position, iterator, slot);
             }
             UnpackItem::KeyRest { slot } => NativeUnpack::empty_key_rest(strand, slot),
@@ -1074,12 +1089,12 @@ fn unpack_from<'v, 's>(
     }
     if len < pos_count {
         for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            out.at(min + i).store(default.dup());
+            Output::set(strand, out.at(min + i), default);
         }
     }
     for (i, key) in sig.keys.iter().enumerate() {
         if let Some(default) = &key.default {
-            out.at(pos_count + i).store(default.dup());
+            Output::set(strand, out.at(pos_count + i), default);
         } else {
             return Err(match &key.kind {
                 UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -1218,8 +1233,8 @@ mod tests {
             index: usize,
             out: Slot<'v, 'a>,
         ) -> Result<'v, 's, ()> {
-            let value = this.borrow(strand)?.0[index].dup();
-            Output::set(strand, out, &value);
+            let borrow = this.borrow(strand)?;
+            Output::set(strand, out, &borrow.0[index]);
             Ok(())
         }
     }

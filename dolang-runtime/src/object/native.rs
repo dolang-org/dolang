@@ -1,11 +1,13 @@
 use std::{
     borrow::Cow,
+    cell::RefCell,
     future,
     hash::Hasher,
     marker::PhantomData,
-    mem::ManuallyDrop,
+    mem::{self, ManuallyDrop},
     ops::{ControlFlow, Deref, DerefMut},
     ptr::{self, NonNull},
+    rc::Rc,
 };
 
 use crate::value::fmt::{Format, Spec};
@@ -15,7 +17,7 @@ use crate::{
     error::{Error, ErrorKind, Result},
     gc::{
         self, Base, Collect,
-        arena::{self, Upcast, Visit},
+        arena::{self, Scan, Upcast, Visit},
         with_pin,
     },
     object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
@@ -594,9 +596,12 @@ impl<'v, 'a, T: Object<'v>> Input<'v> for Instance<'v, 'a, T> {
         mut out: Slot<'v, '_>,
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
-        out.store(match self.delegator {
-            Some(delegator) => delegator.dup(),
-            None => Value::from_object(Base::upcast(self.receiver.to_strong())),
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe {
+            match self.delegator {
+                Some(delegator) => delegator.dup(),
+                None => Value::from_object(Base::upcast(self.receiver.to_strong())),
+            }
         });
         None
     }
@@ -2646,7 +2651,8 @@ impl<'v, T: Object<'v>> Input<'v> for Type<'v, T> {
         _: Sealed,
     ) -> Option<Slot<'v, 'b>> {
         let vm = alloc.alloc_vm(crate::vm::private::Sealed);
-        out.store(self.singleton(vm).dup());
+        // SAFETY: the copy is stored into the scanned `out` at once
+        out.store(unsafe { self.singleton(vm).dup() });
         None
     }
 }
@@ -2679,7 +2685,7 @@ impl<'v, T: Object<'v>> Type<'v, T> {
         self.vtbl.create_tail(
             alloc,
             ObjectWrap::new(value),
-            ObjectAnnexPrefix { inner: annex },
+            || ObjectAnnexPrefix { inner: annex },
             (0..T::SLOTS).map(|_| ValueCell::default()),
             out,
         )
@@ -2931,8 +2937,71 @@ struct FinishResult<'v, 'a> {
     inst_vtbl: NonNull<ObjectVtbl<'v>>,
     type_vtbl: NonNull<TypeVtbl<'v>>,
     singleton_idx: usize,
-    supertypes: Vec<Value<'v>>,
-    nominal_supertypes: Vec<Value<'v>>,
+    supers: Rc<Supers<'v>>,
+    supers_scan: Scan<'v>,
+}
+
+/// The supertypes a [`TypeBuilderInner`] has staged, rooted by its arena scan until the
+/// type object takes them over.
+#[derive(Default)]
+pub(crate) struct Supers<'v> {
+    abstract_types: RefCell<Vec<ValueCell<'v>>>,
+    nominal: RefCell<Vec<ValueCell<'v>>>,
+}
+
+impl<'v> Supers<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.abstract_types
+            .borrow()
+            .iter()
+            .chain(self.nominal.borrow().iter())
+            .try_for_each(|cell| cell.accept(visit))
+    }
+
+    /// Stage `supertype` at the end of `list` unless it is already there; true if it was
+    /// added.
+    ///
+    /// No `borrow_mut` of the list is held across the allocation that may produce the
+    /// value, so a collector visiting the list could borrow it.
+    fn stage(
+        alloc: &mut Register<'v>,
+        list: &RefCell<Vec<ValueCell<'v>>>,
+        supertype: impl Input<'v>,
+    ) -> bool {
+        list.borrow_mut().push(ValueCell::default());
+        {
+            let list = list.borrow();
+            let cell = list.last().expect("just pushed");
+            // SAFETY: the cell is rooted by the builder's scan, and nothing else writes
+            // it while this slot lives
+            Output::set(alloc, unsafe { cell.slot() }, supertype);
+        }
+        let mut list = list.borrow_mut();
+        let (new, old) = list.split_last().expect("just pushed");
+        // SAFETY: nothing writes the cells while they are compared
+        let new = unsafe { new.as_ref() };
+        if old
+            .iter()
+            .any(|existing| unsafe { existing.as_ref() }.repr_eq(new))
+        {
+            drop(list.pop());
+            return false;
+        }
+        true
+    }
+
+    /// Move the staged values of `list` out, for an object payload finished at once.
+    ///
+    /// # Safety
+    /// The values are loose: the caller must allocate the object first, then store them
+    /// in its payload with no allocation in between.
+    unsafe fn take(list: &RefCell<Vec<ValueCell<'v>>>) -> alias::Box<[Value<'v>]> {
+        mem::take(&mut *list.borrow_mut())
+            .into_iter()
+            // SAFETY: the caller's contract
+            .map(|cell| unsafe { cell.into_value() })
+            .collect()
+    }
 }
 
 /// Non-generic inner state of [`TypeBuilder`].
@@ -2943,8 +3012,8 @@ pub struct TypeBuilderInner<'v, 'a> {
     pub(crate) vm: &'a mut Register<'v>,
     pub(crate) entries: Vec<(Sym<'v, 'v>, Entry<'v>)>,
     pub(crate) type_entries: Vec<(Sym<'v, 'v>, Entry<'v>)>,
-    pub(crate) supertypes: Vec<Value<'v>>,
-    pub(crate) nominal_supertypes: Vec<Value<'v>>,
+    pub(crate) supers: Rc<Supers<'v>>,
+    supers_scan: Scan<'v>,
 }
 
 impl<'v, 'a> Deref for TypeBuilderInner<'v, 'a> {
@@ -2962,12 +3031,15 @@ impl<'v, 'a> DerefMut for TypeBuilderInner<'v, 'a> {
 
 impl<'v, 'a> TypeBuilderInner<'v, 'a> {
     fn new(vm: &'a mut Register<'v>) -> Self {
+        let supers = Rc::new(Supers::default());
+        let arena = vm.inner.arena();
         Self {
             vm,
             entries: Vec::new(),
             type_entries: Vec::new(),
-            supertypes: Vec::new(),
-            nominal_supertypes: Vec::new(),
+            supers: supers.clone(),
+            // SAFETY: visits every value the staged supertypes own
+            supers_scan: unsafe { arena.scan(move |visit| supers.accept(visit)) },
         }
     }
 
@@ -2988,14 +3060,13 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
     /// Panics if the provided type object does not support inheritance or is not abstract.
     #[inline(never)]
     pub fn supertype(&mut self, supertype: impl Input<'v>) {
-        let supertype = Value::from_input(self.vm, supertype);
-        if self
-            .supertypes
-            .iter()
-            .any(|existing| existing.repr_eq(&supertype))
-        {
+        let supers = self.supers.clone();
+        if !Supers::stage(self.vm, &supers.abstract_types, supertype) {
             return;
         }
+        let list = supers.abstract_types.borrow();
+        // SAFETY: nothing writes the cell while this reference lives
+        let supertype = unsafe { list.last().expect("just staged").as_ref() };
         let Some(inspect) = supertype.op_inspect(self.vm) else {
             panic!("native object supertype must support inspect");
         };
@@ -3006,7 +3077,6 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
                  its interface directly"
             );
         }
-        self.supertypes.push(supertype);
     }
 
     /// Register an abstract nominal supertype used only for subtype checks.
@@ -3016,18 +3086,16 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
     /// Panics if the provided type object does not support inspect.
     #[inline(never)]
     pub fn nominal_supertype(&mut self, supertype: impl Input<'v>) {
-        let supertype = Value::from_input(self.vm, supertype);
-        if self
-            .nominal_supertypes
-            .iter()
-            .any(|existing| existing.repr_eq(&supertype))
-        {
+        let supers = self.supers.clone();
+        if !Supers::stage(self.vm, &supers.nominal, supertype) {
             return;
         }
+        let list = supers.nominal.borrow();
+        // SAFETY: nothing writes the cell while this reference lives
+        let supertype = unsafe { list.last().expect("just staged").as_ref() };
         if supertype.op_inspect(self.vm).is_none() {
             panic!("native object nominal supertype must support inspect");
         }
-        self.nominal_supertypes.push(supertype);
     }
 
     /// Synthesize delegate entries from abstract supertypes, sort and merge
@@ -3044,7 +3112,14 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         self.supertype(TypeObject::Value);
         // Synthesize delegated entries from abstract supertypes.
         let mut seen: FxHashSet<_> = self.entries.iter().map(|&(sym, _)| sym).collect();
-        for (supertype_idx, supertype) in self.supertypes.iter().enumerate() {
+        let supers = self.supers.clone();
+        let abstract_types = supers.abstract_types.borrow();
+        // SAFETY (both lists): nothing writes the cells while they are read
+        for (supertype_idx, supertype) in abstract_types
+            .iter()
+            .map(|cell| unsafe { cell.as_ref() })
+            .enumerate()
+        {
             let inspect = supertype
                 .op_inspect(self.vm)
                 .expect("native object supertype must support inspect");
@@ -3067,7 +3142,10 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
         // Derive the reported error kind from the nominal supertypes rather than
         // taking it as a separate builder setting, so it cannot drift from the
         // subtype relation the same declaration establishes.
-        let error_kind = self.nominal_supertypes.iter().find_map(|supertype| {
+        drop(abstract_types);
+        let nominal = supers.nominal.borrow();
+        let error_kind = nominal.iter().find_map(|cell| {
+            let supertype = unsafe { cell.as_ref() };
             let variant = supertype.downcast_ref(self.vm.builtin_types().error_variant_type)?;
             let kind = variant.read(|p| p.get().0);
             assert!(
@@ -3193,8 +3271,8 @@ impl<'v, 'a> TypeBuilderInner<'v, 'a> {
             inst_vtbl,
             type_vtbl,
             singleton_idx: idx,
-            supertypes: self.supertypes,
-            nominal_supertypes: self.nominal_supertypes,
+            supers: self.supers,
+            supers_scan: self.supers_scan,
         }
     }
 }
@@ -3531,20 +3609,26 @@ impl<'v, 'a, T: Object<'v>> TypeBuilder<'v, 'a, T> {
             class_instance: result.vm.inner.builtin_types().class_instance,
         };
 
-        let annex = alias::Box::new(TypeAnnexInner {
-            proxy: result.vm.inner.types.register_type_handle(),
-            scope: result.vm.inner.types.register_type_handle(),
-            inner: self.type_annex,
-            supertypes: result.supertypes.into(),
-            nominal_supertypes: result.nominal_supertypes.into(),
-        });
+        let proxy = result.vm.inner.types.register_type_handle();
+        let scope = result.vm.inner.types.register_type_handle();
         let vm: &'v Vm<'v> = result.vm.inner;
-        ty.type_vtbl.create_with_annex(
+        let embryo = ty.type_vtbl.embryo(result.vm);
+        // SAFETY: the object is allocated; the supertypes move from their rooted cells
+        // into its annex with no allocation in between
+        let annex = alias::Box::new(TypeAnnexInner {
+            proxy,
+            scope,
+            inner: self.type_annex,
+            supertypes: unsafe { Supers::take(&result.supers.abstract_types) },
+            nominal_supertypes: unsafe { Supers::take(&result.supers.nominal) },
+        });
+        embryo.finish_with_annex(
             result.vm,
             TypeObjectWrap(self.type_value, PhantomData),
             annex,
             crate::vm::root_slot(&vm.type_singletons),
         );
+        drop(result.supers_scan);
 
         ty
     }
@@ -3860,9 +3944,12 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
         with_slots!(strand, |mut namespace| {
             let embryo = this.annex().scope.embryo(strand);
             let scope = NativeTypeScope {
-                native: Value::from_object(this.to_strong()),
+                // SAFETY: the scope is allocated; the pinned receiver is copied straight
+                // into its payload
+                native: unsafe { Value::from_object(this.to_strong()) },
                 ty: this.ty(strand.vm()),
-                receiver: receiver.dup(),
+                // SAFETY: as for `native`
+                receiver: unsafe { receiver.dup() },
             };
             embryo.finish_imm(strand, scope, Slot::reborrow(&mut namespace));
             BoundMethod::create(strand, &namespace, field, out);
@@ -3878,7 +3965,9 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
     ) {
         let embryo = this.annex().proxy.embryo(strand);
         let proxy = NativeTypeProxy {
-            native: Value::from_object(this.to_strong()),
+            // SAFETY: the proxy is allocated; the pinned receiver is copied straight into
+            // its payload
+            native: unsafe { Value::from_object(this.to_strong()) },
             ty: this.ty(strand.vm()),
         };
         embryo.finish_imm(strand, proxy, out);
@@ -5390,7 +5479,7 @@ mod tests {
             type_value(strand, state.slot_ty, Slot::reborrow(&mut ty_slot));
             make_slot_fixture(strand, 4, "u", Slot::reborrow(&mut inst_slot));
             let ty_value: &Value = &ty_slot;
-            let inst_value = inst_slot.dup();
+            let inst_value: &Value = &inst_slot;
 
             with_instance!(
                 strand,
@@ -5415,7 +5504,7 @@ mod tests {
 
                     // Unbound instance-method call: `SlotFixture.bump(instance)`.
                     with_slots_dynamic!(strand, 1, |mut arg_slots| {
-                        Output::set(strand, arg_slots.at(0), &inst_value);
+                        Output::set(strand, arg_slots.at(0), inst_value);
                         let sig = [None];
                         let args = args_from_slots(&mut arg_slots, &sig, 0);
                         TypeObjectWrap::<SlotFixture>::op_mcall(

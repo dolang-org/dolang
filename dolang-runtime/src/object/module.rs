@@ -18,6 +18,7 @@ use crate::{
     strand::{Strand, in_native_frame},
     sym::Sym,
     value::{Output, Slot, TypeObject, Value, ValueCell},
+    vm::AllocExt,
     with_slots,
 };
 
@@ -161,15 +162,13 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let sr = this.to_strong();
-        strand.builtin_types().module_iter.create(
-            strand,
-            Iter {
-                module: sr,
-                index: 0,
-            },
-            out,
-        );
+        let embryo = strand.builtin_types().module_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+        let iter = Iter {
+            module: unsafe { this.to_strong() },
+            index: 0,
+        };
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 
@@ -438,8 +437,7 @@ impl<'v> Namespace<'v> {
     ) -> Result<'v, 's, ()> {
         match components.split_first() {
             Some((&first, rest)) => with_slots!(strand, |mut sym, mut ns_slot| {
-                let obj = Value::from_object(strand.sym_register_obj(first));
-                sym.store(obj);
+                strand.intern_sym(first, &mut sym);
                 let inserted = with_pin!(strand, self.dict, |dict| 'body: {
                     let dict = dict.borrow().ok_or_else(|| Error::concurrency(strand))?;
                     let Some(value) = dict.get(strand, &sym, Some(0))? else {
@@ -588,7 +586,7 @@ impl<'v> Protocol<'v> for Namespace<'v> {
                     .get(strand, &key, Some(0))?
                 {
                     Some(value) => {
-                        out.store(value.dup());
+                        Output::set(strand, &mut out, value);
                         Ok(())
                     }
                     None => Err(Error::field(strand, field)),

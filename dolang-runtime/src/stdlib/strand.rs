@@ -47,10 +47,7 @@ fn pipe_pair<'v>(
             Slot::from_output(&mut recv),
         );
     } else {
-        let vm = strand.vm();
-        let (s, r) = channel::pair(vm, 1);
-        Output::set(strand, send, Value::from_object(s));
-        Output::set(strand, recv, Value::from_object(r));
+        channel::pair(strand, 1, send, recv);
     }
 }
 
@@ -565,16 +562,16 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         let close = reg.sym("close");
         let default = reg.sym("default");
         let else_key = reg.sym("else");
-        let strand_class = reg.singletons().strand.dup();
-        let task_class = reg.singletons().task.dup();
-        let stream_class = reg.singletons().stream.dup();
-        let strand_info_class = reg.singletons().strand_info.dup();
+        let strand_class = &reg.singletons().strand;
+        let task_class = &reg.singletons().task;
+        let stream_class = &reg.singletons().stream;
+        let strand_info_class = &reg.singletons().strand_info;
 
         reg.module("strand")
-            .value("Strand", &strand_class)
-            .value("Task", &task_class)
-            .value("Stream", &stream_class)
-            .value("StrandInfo", &strand_info_class)
+            .value("Strand", strand_class)
+            .value("Task", task_class)
+            .value("Stream", stream_class)
+            .value("StrandInfo", strand_info_class)
             .value("Key", state.types.key)
             .value("Resource", state.types.resource)
             // Implicit I/O functions (moved from former std.iter)
@@ -723,10 +720,10 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                     None => 1,
                     Some(limit) => limit.to_index(strand)?,
                 };
-                let embryo = tuple::embryo(strand, 2);
-                let (send, recv) = channel::pair(strand, limit);
-                let items = [Value::from_object(send), Value::from_object(recv)];
-                embryo.finish(strand, items, out);
+                with_slots!(strand, |mut send, mut recv| {
+                    channel::pair(strand, limit, &mut send, &mut recv);
+                    tuple::create_pair(strand, &send, &recv, out);
+                });
                 Ok(())
             })
             .function_with_slots("pipeline", async move |strand, args, out, [mut tmp]| {

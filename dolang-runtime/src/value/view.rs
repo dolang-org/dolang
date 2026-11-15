@@ -24,7 +24,7 @@ use crate::{
     stdlib::fmt as stdfmt,
     strand::{Access, PinScope, Strand},
     sym::Sym,
-    value::{Input, Output, Slot, Value, fmt::Spec},
+    value::{Input, Output, Slot, fmt::Spec},
     vm::Alloc,
     with_instance, with_slots,
 };
@@ -577,7 +577,9 @@ impl<'v, 'a> Array<'v, 'a> {
                 Some(b) => b,
                 None => return Err(Error::concurrency(strand)),
             };
-            tuple::create(strand, borrow.inner.iter().map(Value::dup), out);
+            // SAFETY: `create` allocates the tuple before it runs the iterator, so the
+            // copies move straight into it
+            tuple::create(strand, borrow.inner.iter().map(|v| unsafe { v.dup() }), out);
             Ok(())
         })
     }

@@ -42,10 +42,6 @@ impl<'v> GcObj<'v, SymObj> {
         self.read(|p| p.get().tag)
     }
 
-    pub(crate) fn private(&self) -> bool {
-        self.read(|p| p.get().private)
-    }
-
     /// The symbol's name, which lives out of line.
     pub(crate) fn name(&self) -> &str {
         self.project(|p| &p.get().name)

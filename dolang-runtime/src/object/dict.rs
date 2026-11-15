@@ -232,14 +232,19 @@ impl<'v> Dict<'v> {
 
     /// A copy with the same pairs in the same order, made without running any code, as
     /// [`Self::rehash`] moves them.
-    fn cloned(&self) -> Self {
+    ///
+    /// # Safety
+    /// The copies are loose: the caller must store the dict in an allocated object's
+    /// payload with no allocation in between.
+    unsafe fn cloned(&self) -> Self {
         let mut table = RawTable::with_capacity(self.table.len());
         let mut remap: Vec<Option<Bucket<Entry<'v>>>> = vec![None; self.table.buckets()];
         let mut index = Vec::with_capacity(self.total_pairs);
         for (old_bucket, subindex) in self.index.iter().flatten() {
             let old_index = unsafe { self.table.bucket_index(old_bucket) };
             let old = unsafe { old_bucket.as_ref() };
-            let value = old.value.at(*subindex).dup();
+            // SAFETY (here and for the key): the caller's contract
+            let value = unsafe { old.value.at(*subindex).dup() };
             let i = index.len();
             let (bucket, subindex) = match &remap[old_index] {
                 // A later instance of a key already copied
@@ -267,7 +272,7 @@ impl<'v> Dict<'v> {
                 }
                 None => {
                     let entry = Entry {
-                        key: old.key.dup(),
+                        key: unsafe { old.key.dup() },
                         value: EntryValue::Single { value, index: i },
                         hash: old.hash,
                     };
@@ -752,7 +757,7 @@ impl<'v> Dict<'v> {
         container: &GcObj<'v, Dict<'v>>,
         epoch: u64,
         strand: &mut Strand<'v, 's>,
-        f: impl FnOnce(&Dict<'v>) -> Result<'v, 's, R>,
+        f: impl FnOnce(&mut Strand<'v, 's>, &Dict<'v>) -> Result<'v, 's, R>,
     ) -> Result<'v, 's, R> {
         with_pin!(strand, container, |container| {
             let dict = container
@@ -764,7 +769,7 @@ impl<'v> Dict<'v> {
                     "collection was modified during iteration",
                 ));
             }
-            f(&dict)
+            f(strand, &dict)
         })
     }
 
@@ -827,10 +832,10 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, bool> {
-        Self::with_iter_inner(container, epoch, strand, |dict| {
+        Self::with_iter_inner(container, epoch, strand, |strand, dict| {
             if let Some((next_index, value)) = Self::next_value_from_index(dict, index.get()) {
                 index.set(next_index);
-                out.store(value.dup());
+                Output::set(strand, &mut out, value);
                 Ok(true)
             } else {
                 Ok(false)
@@ -846,12 +851,12 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, bool> {
-        Self::with_iter_inner(container, epoch, strand, |dict| {
+        Self::with_iter_inner(container, epoch, strand, |strand, dict| {
             if let Some((next_index, value)) =
                 Self::next_value_from_bucket(dict, bucket, index.get())
             {
                 index.set(next_index);
-                out.store(value.dup());
+                Output::set(strand, &mut out, value);
                 Ok(true)
             } else {
                 Ok(false)
@@ -867,7 +872,7 @@ impl<'v> Dict<'v> {
         strand: &mut Strand<'v, 's>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, bool> {
-        Self::with_iter_inner(container, epoch, strand, |dict| {
+        Self::with_iter_inner(container, epoch, strand, |strand, dict| {
             let mut visited = visited.borrow_mut();
             let mut pending = Vec::with_capacity(1);
             if let Some((next_index, key)) =
@@ -877,7 +882,7 @@ impl<'v> Dict<'v> {
                     visited.set(bucket_index, true);
                 }
                 index.set(next_index);
-                out.store(key.dup());
+                Output::set(strand, &mut out, key);
                 Ok(true)
             } else {
                 Ok(false)
@@ -935,9 +940,9 @@ impl<'v> Protocol<'v> for Values<'v> {
                     sig,
                     &mut out,
                     borrow.index.get(),
-                    |_, i, mut out| {
+                    |strand, i, mut out| {
                         Dict::next_value_from_index(&dict, i).map(|(next, value)| {
-                            out.store(value.dup());
+                            Output::set(strand, &mut out, value);
                             next
                         })
                     },
@@ -1048,10 +1053,10 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
                     sig,
                     &mut out,
                     borrow.index.get(),
-                    |_, i, mut out| {
+                    |strand, i, mut out| {
                         Dict::next_value_from_bucket(&dict, borrow.bucket.clone(), i).map(
                             |(next, value)| {
-                                out.store(value.dup());
+                                Output::set(strand, &mut out, value);
                                 next
                             },
                         )
@@ -1173,10 +1178,10 @@ impl<'v> Protocol<'v> for Keys<'v> {
                     sig,
                     &mut out,
                     borrow.index.get(),
-                    |_, i, mut out| {
+                    |strand, i, mut out| {
                         Dict::next_key_from_index(&dict, i, &visited, &mut pending).map(
                             |(next, key)| {
-                                out.store(key.dup());
+                                Output::set(strand, &mut out, key);
                                 next
                             },
                         )
@@ -1446,8 +1451,8 @@ impl<'v> Protocol<'v> for Unpack<'v> {
                     }
                     let pair = state.next_pair(&dict);
                     Ok(pair.map(|(k, v)| {
-                        key.store(k.dup());
-                        value.store(v.dup());
+                        Output::set(strand, &mut key, k);
+                        Output::set(strand, &mut value, v);
                     }))
                 })?
                 .is_some();
@@ -1871,48 +1876,43 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 let epoch = borrow.epoch;
-                let dict = this.to_strong();
-                strand.builtin_types().dict_keys.create(
-                    strand,
-                    Keys {
-                        index: Cell::new(0),
-                        epoch,
-                        visited: RefCell::new(bitbox![0; borrow.table.buckets()]),
-                        container: dict,
-                    },
-                    out,
-                );
+                let embryo = strand.builtin_types().dict_keys.embryo(strand);
+                // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+                let keys = Keys {
+                    index: Cell::new(0),
+                    epoch,
+                    visited: RefCell::new(bitbox![0; borrow.table.buckets()]),
+                    container: unsafe { this.to_strong() },
+                };
+                embryo.finish(strand, keys, out);
                 Ok(())
             }
             sym::VALUES => {
                 unpack!(strand, args => ?key);
                 let epoch = this.borrow(strand)?.epoch;
-                let dict = this.to_strong();
                 if let Some(key) = key {
                     let mut hasher = strand.vm().hasher();
                     key.op_hash(strand, &mut hasher)?;
                     let hv = hasher.finish();
                     let bucket = this.borrow(strand)?.find(strand, hv, &key)?;
-                    strand.builtin_types().dict_key_values.create(
-                        strand,
-                        KeyValues {
-                            index: Cell::new(0),
-                            epoch,
-                            container: dict,
-                            bucket,
-                        },
-                        out,
-                    );
+                    let embryo = strand.builtin_types().dict_key_values.embryo(strand);
+                    // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+                    let values = KeyValues {
+                        index: Cell::new(0),
+                        epoch,
+                        container: unsafe { this.to_strong() },
+                        bucket,
+                    };
+                    embryo.finish(strand, values, out);
                 } else {
-                    strand.builtin_types().dict_values.create(
-                        strand,
-                        Values {
-                            index: Cell::new(0),
-                            epoch,
-                            container: dict,
-                        },
-                        out,
-                    );
+                    let embryo = strand.builtin_types().dict_values.embryo(strand);
+                    // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
+                    let values = Values {
+                        index: Cell::new(0),
+                        epoch,
+                        container: unsafe { this.to_strong() },
+                    };
+                    embryo.finish(strand, values, out);
                 }
                 Ok(())
             }
@@ -1930,9 +1930,9 @@ impl<'v> Protocol<'v> for Dict<'v> {
                     });
                 }
                 let borrow = this.borrow(strand)?;
-                // The copies move straight into the allocated dict
                 let embryo = strand.builtin_types().dict.embryo(strand);
-                embryo.finish(strand, borrow.cloned(), out);
+                // SAFETY: the dict is allocated; the copies move straight into it
+                embryo.finish(strand, unsafe { borrow.cloned() }, out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -1984,16 +1984,15 @@ impl<'v> Protocol<'v> for Dict<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        let epoch = this.borrow(strand)?.epoch;
+        let embryo = strand.builtin_types().dict_iter.embryo(strand);
+        // SAFETY: the iterator is allocated; the pinned receiver is copied straight into it
         let iter = Iter {
             index: Cell::new(0),
-            dict: this.to_strong(),
-            epoch: this.borrow(strand)?.epoch,
+            dict: unsafe { this.to_strong() },
+            epoch,
         };
-        strand
-            .vm()
-            .builtin_types()
-            .dict_iter
-            .create(strand, iter, out);
+        embryo.finish(strand, iter, out);
         Ok(())
     }
 
@@ -2033,7 +2032,17 @@ impl<'v> Protocol<'v> for Dict<'v> {
         dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
         let epoch = dict.epoch;
         drop(dict);
-        dict_rests(strand, sig, &mut out, || this.to_strong(), epoch, 0, skip);
+        // SAFETY: `dict_rests` calls this after allocating each rest, whose payload the
+        // copy of the pinned receiver becomes at once
+        dict_rests(
+            strand,
+            sig,
+            &mut out,
+            || unsafe { this.to_strong() },
+            epoch,
+            0,
+            skip,
+        );
         Ok(())
     }
 }
@@ -2140,7 +2149,7 @@ impl<'v> Dict<'v> {
         }
         let pos_count = sig.optional.len();
         for (i, default) in sig.optional.iter().enumerate() {
-            out.at(i).store(default.dup());
+            Output::set(strand, out.at(i), default);
         }
 
         with_slots!(strand, |mut key_value| {
@@ -2157,9 +2166,9 @@ impl<'v> Dict<'v> {
                     unsafe { bucket.as_ref() }.value.get(Some(instance))
                 });
                 if let Some(value) = found {
-                    out.at(pos_count + i).store(value.dup())
+                    Output::set(strand, out.at(pos_count + i), value)
                 } else if let Some(default) = &key.default {
-                    out.at(pos_count + i).store(default.dup())
+                    Output::set(strand, out.at(pos_count + i), default)
                 } else {
                     return Err(match &key.kind {
                         UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -2263,7 +2272,7 @@ impl<'v> Dict<'v> {
             .map(|s| s.to_i64(strand).map_err(|_| Error::index(strand)))
             .transpose()?;
         if let Some(value) = this.borrow(strand)?.get(strand, &key, subindex)? {
-            out.store(value.dup());
+            Output::set(strand, &mut out, value);
             Ok(())
         } else if let Some(mut default) = default {
             out.store(default.take());

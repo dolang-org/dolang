@@ -21,7 +21,7 @@ use crate::{
     strand::{Strand, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View},
+    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, view::View},
     vm::Vm,
     with_slots,
 };
@@ -206,14 +206,14 @@ pub(crate) fn unpack_cursor<'v, 's>(
             if let Some(next_index) = next(strand, index, out.at(i)) {
                 index = next_index;
             } else if i >= sig.required {
-                out.at(i).store(sig.optional[i - sig.required].dup());
+                Output::set(strand, out.at(i), &sig.optional[i - sig.required]);
             } else {
                 return Err(Error::missing_positional(strand, i));
             }
         } else {
             let key = &sig.keys[i - pos_count];
             if let Some(default) = &key.default {
-                out.at(i).store(default.dup());
+                Output::set(strand, out.at(i), default);
             } else {
                 return Err(match &key.kind {
                     sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
@@ -941,19 +941,21 @@ impl<'v> Protocol<'v> for Chain<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        loop {
-            let source = {
-                let borrow = this.borrow(strand)?;
-                match borrow.sources.get(borrow.index) {
-                    Some(source) => source.dup(),
-                    None => return Ok(false),
+        with_slots!(strand, |mut source| {
+            loop {
+                {
+                    let borrow = this.borrow(strand)?;
+                    match borrow.sources.get(borrow.index) {
+                        Some(next) => Output::set(strand, &mut source, next),
+                        None => return Ok(false),
+                    }
                 }
-            };
-            if source.next(strand, Slot::reborrow(&mut out)).await? {
-                return Ok(true);
+                if source.next(strand, Slot::reborrow(&mut out)).await? {
+                    return Ok(true);
+                }
+                this.borrow_mut(strand)?.index += 1;
             }
-            this.borrow_mut(strand)?.index += 1;
-        }
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1016,23 +1018,27 @@ impl<'v> Protocol<'v> for Zip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let sources = this
-            .borrow(strand)?
-            .sources
-            .iter()
-            .map(Value::dup)
-            .collect::<Vec<_>>();
-        if sources.is_empty() {
+        let len = this.borrow(strand)?.sources.len();
+        if len == 0 {
             return Ok(false);
         }
-        with_slots_dynamic!(strand, sources.len(), |mut items| {
-            for (i, source) in sources.iter().enumerate() {
-                if !source.next(strand, items.at(i)).await? {
+        // The first `len` slots root the sources, the rest their items
+        with_slots_dynamic!(strand, 2 * len, |mut slots| {
+            {
+                let borrow = this.borrow(strand)?;
+                for (i, source) in borrow.sources.iter().enumerate() {
+                    Output::set(strand, slots.at(i), source);
+                }
+            }
+            for i in 0..len {
+                // SAFETY: distinct cells of the frame, each borrowed by one slot
+                let (source, item) =
+                    unsafe { (slots.unchecked_at(i), slots.unchecked_at(len + i)) };
+                if !source.next(strand, item).await? {
                     return Ok(false);
                 }
             }
-            let len = sources.len();
-            tuple::create(strand, (0..len).map(|i| items.at(i).take()), out);
+            tuple::create(strand, (len..2 * len).map(|i| slots.at(i).take()), out);
             Ok(true)
         })
     }
@@ -1175,18 +1181,20 @@ impl<'v> Protocol<'v> for Take<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let source = {
-            let borrow = this.borrow(strand)?;
-            if borrow.remaining == 0 {
+        with_slots!(strand, |mut source| {
+            {
+                let borrow = this.borrow(strand)?;
+                if borrow.remaining == 0 {
+                    return Ok(false);
+                }
+                Output::set(strand, &mut source, &borrow.source);
+            }
+            if !source.next(strand, out).await? {
                 return Ok(false);
             }
-            borrow.source.dup()
-        };
-        if !source.next(strand, out).await? {
-            return Ok(false);
-        }
-        this.borrow_mut(strand)?.remaining -= 1;
-        Ok(true)
+            this.borrow_mut(strand)?.remaining -= 1;
+            Ok(true)
+        })
     }
 
     fn op_get<'a, 's>(
@@ -1249,15 +1257,16 @@ impl<'v> Protocol<'v> for Skip<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        with_slots!(strand, |mut item| {
+        with_slots!(strand, |mut item, mut source| {
             loop {
-                let (source, skipping) = {
+                let skipping = {
                     let mut borrow = this.borrow_mut(strand)?;
                     let skipping = borrow.remaining > 0;
                     if skipping {
                         borrow.remaining -= 1;
                     }
-                    (borrow.source.dup(), skipping)
+                    Output::set(strand, &mut source, &borrow.source);
+                    skipping
                 };
                 if !skipping {
                     return source.next(strand, out).await;
@@ -1330,10 +1339,11 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        with_slots!(strand, |mut item| {
-            let (source, index) = {
+        with_slots!(strand, |mut item, mut source| {
+            let index = {
                 let borrow = this.borrow(strand)?;
-                (borrow.source.dup(), borrow.index)
+                Output::set(strand, &mut source, &borrow.source);
+                borrow.index
             };
             if !source.next(strand, &mut item).await? {
                 return Ok(false);
@@ -1406,15 +1416,25 @@ impl<'v> Protocol<'v> for Kv<'v> {
             sym_index: vec![],
             variadic: Variadic::NONE,
         };
-        with_slots!(strand, |mut iter, mut item, mut key, mut value| {
-            let source = this.borrow(strand)?.source.dup();
+        with_slots!(strand, |mut source,
+                             mut iter,
+                             mut item,
+                             mut key,
+                             mut value| {
+            {
+                let borrow = this.borrow(strand)?;
+                Output::set(strand, &mut source, &borrow.source);
+            }
             source.iter(strand, &mut iter).await?;
             while iter.next(strand, &mut item).await? {
-                let cells = [ValueCell::default(), ValueCell::default()];
-                item.op_unpack(strand, &unpack, unsafe { Slots::new(&cells) })
-                    .await?;
-                Output::set(strand, &mut key, unsafe { cells[0].slot() });
-                Output::set(strand, &mut value, unsafe { cells[1].slot() });
+                with_slots_dynamic!(strand, 2, |mut pair| {
+                    // SAFETY: the cells are the frame's, rooted for the call, and `pair` is
+                    // not used while the copy lives
+                    item.op_unpack(strand, &unpack, unsafe { Slots::new(pair.as_inner()) })
+                        .await?;
+                    Output::set(strand, &mut key, pair.at(0));
+                    Output::set(strand, &mut value, pair.at(1));
+                });
                 sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
             }
             Ok(())
@@ -1822,8 +1842,8 @@ impl<'v> Protocol<'v> for Map<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut func, mut item| {
             let borrow = this.borrow(strand)?;
-            input.store(borrow.obj.dup());
-            func.store(borrow.func.dup());
+            Output::set(strand, &mut input, &borrow.obj);
+            Output::set(strand, &mut func, &borrow.func);
             drop(borrow);
             if input.next(strand, &mut item).await? {
                 call!(strand, &func, &item, out)?;
@@ -1930,8 +1950,8 @@ impl<'v> Protocol<'v> for Premap<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut func| {
             let borrow = this.borrow(strand)?;
-            func.store(borrow.func.dup());
-            output.store(borrow.obj.dup());
+            Output::set(strand, &mut func, &borrow.func);
+            Output::set(strand, &mut output, &borrow.obj);
             drop(borrow);
             call!(strand, &func, value, &mut output)?;
             this.borrow(strand)?.obj.put(strand, output).await
@@ -2027,8 +2047,8 @@ impl<'v> Protocol<'v> for Filter<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut pred, mut res| {
             let borrow = this.borrow(strand)?;
-            pred.store(borrow.pred.dup());
-            input.store(borrow.obj.dup());
+            Output::set(strand, &mut pred, &borrow.pred);
+            Output::set(strand, &mut input, &borrow.obj);
             drop(borrow);
             loop {
                 if !input.next(strand, &mut out).await? {
@@ -2138,8 +2158,8 @@ impl<'v> Protocol<'v> for Prefilter<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut pred| {
             let borrow = this.borrow(strand)?;
-            pred.store(borrow.pred.dup());
-            output.store(borrow.obj.dup());
+            Output::set(strand, &mut pred, &borrow.pred);
+            Output::set(strand, &mut output, &borrow.obj);
             drop(borrow);
             call!(strand, &pred, &value, &mut output)?;
             if output.to_bool(strand)? {
@@ -2330,7 +2350,7 @@ impl<'v> Protocol<'v> for Chomp<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut item| {
             let borrow = this.borrow(strand)?;
-            input.store(borrow.obj.dup());
+            Output::set(strand, &mut input, &borrow.obj);
             drop(borrow);
             if input.next(strand, &mut item).await? {
                 chomp_value(strand, &item, out, "iter.chomp")?;
@@ -2434,7 +2454,7 @@ impl<'v> Protocol<'v> for Prechomp<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut chomped| {
             let borrow = this.borrow(strand)?;
-            output.store(borrow.obj.dup());
+            Output::set(strand, &mut output, &borrow.obj);
             drop(borrow);
             chomp_value(strand, &value, &mut chomped, "sink.prechomp")?;
             output.put(strand, chomped).await
@@ -2534,10 +2554,10 @@ impl<'v> Protocol<'v> for Crimp<'v> {
     ) -> Result<'v, 's, bool> {
         with_slots!(strand, |mut input, mut item, mut term| {
             let borrow = this.borrow(strand)?;
-            input.store(borrow.obj.dup());
+            Output::set(strand, &mut input, &borrow.obj);
             let has_term = match &borrow.terminator {
                 Some(terminator) => {
-                    term.store(terminator.dup());
+                    Output::set(strand, &mut term, terminator);
                     true
                 }
                 None => false,
@@ -2653,10 +2673,10 @@ impl<'v> Protocol<'v> for Precrimp<'v> {
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut output, mut crimped, mut term| {
             let borrow = this.borrow(strand)?;
-            output.store(borrow.obj.dup());
+            Output::set(strand, &mut output, &borrow.obj);
             let has_term = match &borrow.terminator {
                 Some(terminator) => {
-                    term.store(terminator.dup());
+                    Output::set(strand, &mut term, terminator);
                     true
                 }
                 None => false,
@@ -2789,11 +2809,13 @@ pub(crate) fn create_map<'v>(
     mut func: Slot<'v, '_>,
     out: impl Output<'v>,
 ) {
-    strand.builtin_types().map_iter.create(
+    let embryo = strand.builtin_types().map_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copies move straight into it
+    embryo.finish(
         strand,
         Map {
             func: func.take(),
-            obj: obj.dup(),
+            obj: unsafe { obj.dup() },
         },
         out,
     );
@@ -2805,11 +2827,13 @@ pub(crate) fn create_premap<'v>(
     mut func: Slot<'v, '_>,
     out: impl Output<'v>,
 ) {
-    strand.builtin_types().premap_iter.create(
+    let embryo = strand.builtin_types().premap_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copies move straight into it
+    embryo.finish(
         strand,
         Premap {
             func: func.take(),
-            obj: obj.dup(),
+            obj: unsafe { obj.dup() },
         },
         out,
     );
@@ -2821,11 +2845,13 @@ pub(crate) fn create_filter<'v>(
     mut pred: Slot<'v, '_>,
     out: impl Output<'v>,
 ) {
-    strand.builtin_types().filter_iter.create(
+    let embryo = strand.builtin_types().filter_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copies move straight into it
+    embryo.finish(
         strand,
         Filter {
             pred: pred.take(),
-            obj: obj.dup(),
+            obj: unsafe { obj.dup() },
         },
         out,
     );
@@ -2837,21 +2863,28 @@ pub(crate) fn create_prefilter<'v>(
     mut pred: Slot<'v, '_>,
     out: impl Output<'v>,
 ) {
-    strand.builtin_types().prefilter_iter.create(
+    let embryo = strand.builtin_types().prefilter_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copies move straight into it
+    embryo.finish(
         strand,
         Prefilter {
             pred: pred.take(),
-            obj: obj.dup(),
+            obj: unsafe { obj.dup() },
         },
         out,
     );
 }
 
 pub(crate) fn create_chomp<'v>(strand: &mut Strand<'v, '_>, obj: &Value<'v>, out: impl Output<'v>) {
-    strand
-        .builtin_types()
-        .chomp_iter
-        .create(strand, Chomp { obj: obj.dup() }, out);
+    let embryo = strand.builtin_types().chomp_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copy moves straight into it
+    embryo.finish(
+        strand,
+        Chomp {
+            obj: unsafe { obj.dup() },
+        },
+        out,
+    );
 }
 
 pub(crate) fn create_prechomp<'v>(
@@ -2859,10 +2892,15 @@ pub(crate) fn create_prechomp<'v>(
     obj: &Value<'v>,
     out: impl Output<'v>,
 ) {
-    strand
-        .builtin_types()
-        .prechomp_iter
-        .create(strand, Prechomp { obj: obj.dup() }, out);
+    let embryo = strand.builtin_types().prechomp_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copy moves straight into it
+    embryo.finish(
+        strand,
+        Prechomp {
+            obj: unsafe { obj.dup() },
+        },
+        out,
+    );
 }
 
 /// Validates an explicit `crimp`/`precrimp` terminator, rejecting anything that
@@ -2871,11 +2909,11 @@ fn check_terminator<'v, 's>(
     strand: &mut Strand<'v, 's>,
     terminator: Option<&Value<'v>>,
     who: &str,
-) -> Result<'v, 's, Option<Value<'v>>> {
+) -> Result<'v, 's, ()> {
     match terminator {
-        None => Ok(None),
+        None => Ok(()),
         Some(terminator) => match terminator.view(strand) {
-            View::Str(_) | View::Bin(_) => Ok(Some(terminator.dup())),
+            View::Str(_) | View::Bin(_) => Ok(()),
             _ => Err(Error::type_error(
                 strand,
                 format!("{who}: terminator must be `Str` or `Bin`"),
@@ -2890,12 +2928,14 @@ pub(crate) fn create_crimp<'v, 's>(
     terminator: Option<&Value<'v>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let terminator = check_terminator(strand, terminator, "iter.crimp")?;
-    strand.builtin_types().crimp_iter.create(
+    check_terminator(strand, terminator, "iter.crimp")?;
+    let embryo = strand.builtin_types().crimp_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copies move straight into it
+    embryo.finish(
         strand,
         Crimp {
-            obj: obj.dup(),
-            terminator,
+            obj: unsafe { obj.dup() },
+            terminator: terminator.map(|terminator| unsafe { terminator.dup() }),
         },
         out,
     );
@@ -2908,12 +2948,14 @@ pub(crate) fn create_precrimp<'v, 's>(
     terminator: Option<&Value<'v>>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let terminator = check_terminator(strand, terminator, "sink.precrimp")?;
-    strand.builtin_types().precrimp_iter.create(
+    check_terminator(strand, terminator, "sink.precrimp")?;
+    let embryo = strand.builtin_types().precrimp_iter.embryo(strand);
+    // SAFETY: the adapter is allocated; the copies move straight into it
+    embryo.finish(
         strand,
         Precrimp {
-            obj: obj.dup(),
-            terminator,
+            obj: unsafe { obj.dup() },
+            terminator: terminator.map(|terminator| unsafe { terminator.dup() }),
         },
         out,
     );
@@ -2946,11 +2988,12 @@ pub(crate) fn create_take<'v>(
     remaining: usize,
     out: impl Output<'v>,
 ) {
+    // SAFETY: the adapter is allocated; the copy moves straight into it
     let embryo = strand.builtin_types().take_iter.embryo(strand);
     embryo.finish(
         strand,
         Take {
-            source: source.dup(),
+            source: unsafe { source.dup() },
             remaining,
         },
         out,
@@ -2963,11 +3006,12 @@ pub(crate) fn create_skip<'v>(
     remaining: usize,
     out: impl Output<'v>,
 ) {
+    // SAFETY: the adapter is allocated; the copy moves straight into it
     let embryo = strand.builtin_types().skip_iter.embryo(strand);
     embryo.finish(
         strand,
         Skip {
-            source: source.dup(),
+            source: unsafe { source.dup() },
             remaining,
         },
         out,
@@ -2979,20 +3023,22 @@ pub(crate) fn create_enumerate<'v>(
     source: &Value<'v>,
     out: impl Output<'v>,
 ) {
+    // SAFETY: the adapter is allocated; the copy moves straight into it
     let embryo = strand.builtin_types().enumerate_iter.embryo(strand);
     let enumerate = Enumerate {
-        source: source.dup(),
+        source: unsafe { source.dup() },
         index: 0,
     };
     embryo.finish(strand, enumerate, out);
 }
 
 pub(crate) fn create_kv<'v>(strand: &mut Strand<'v, '_>, source: &Value<'v>, out: impl Output<'v>) {
+    // SAFETY: the adapter is allocated; the copy moves straight into it
     let embryo = strand.builtin_types().kv_iter.embryo(strand);
     embryo.finish(
         strand,
         Kv {
-            source: source.dup(),
+            source: unsafe { source.dup() },
         },
         out,
     );
@@ -3134,7 +3180,7 @@ impl<'v> Protocol<'v> for Null {
             return Err(Error::missing_positional(strand, sig.required));
         }
         for (i, default) in sig.optional.iter().enumerate() {
-            out.at(i).store(default.dup());
+            Output::set(strand, out.at(i), default);
         }
         let keyed = sig.optional.len();
         for (i, key) in sig.keys.iter().enumerate() {
@@ -3144,7 +3190,7 @@ impl<'v> Protocol<'v> for Null {
                     sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
                 });
             };
-            out.at(keyed + i).store(default.dup());
+            Output::set(strand, out.at(keyed + i), default);
         }
         if let Some(i) = sig.pos_rest_slot() {
             Output::set(strand, out.at(i), &this);

@@ -127,49 +127,52 @@ pub(crate) fn location<'v>(
 ///
 /// Reads only class tables and debug info, so it runs no user code.
 fn definition<'v>(vm: &Vm<'v>, value: &Value<'v>) -> Option<(Box<str>, Span)> {
+    definition_within(vm, value, MAX_UNWRAP)
+}
+
+/// [`definition`], looking at most `depth` levels deep. Each step recurses
+/// while the previous one's pin is live, so the walk only ever borrows.
+fn definition_within<'v>(vm: &Vm<'v>, value: &Value<'v>, depth: usize) -> Option<(Box<str>, Span)> {
+    let depth = depth.checked_sub(1)?;
     let types = vm.builtin_types();
-    let mut current = value.dup();
-    for _ in 0..MAX_UNWRAP {
-        if let Some(function) = current.downcast_ref(types.function) {
-            return function.read(|function| {
-                let function = function.get();
-                let program = &function.module;
-                let debug = program.funcdebugs().get(function.id)?;
-                let source = &program.debug_strtab()[debug.file.clone()];
-                Some((source.into(), debug.definition))
-            });
-        }
-        let bound = current.downcast_ref(types.bound_method)?;
-        // SAFETY: a transient pin; with only a `Vm`, nothing here can collect
-        let bound = unsafe { bound.pin_unchecked() };
-        let bound = bound.get();
-        let receiver = bound.receiver();
-        let method = bound.method();
-        let next = if let Some(instance) = receiver.downcast_ref(types.class_instance) {
-            match instance.class().entry(method)? {
-                ClassEntry::Method(value) => value.dup(),
-                _ => return None,
-            }
-        } else {
-            // As `ClassObject::op_mcall` dispatches: an inherited native method
-            // shadows the type namespace.
-            let class = receiver.downcast_ref(types.class_object)?;
-            let class = class.annex();
-            if let Some(
-                ClassEntry::Abstract(_, MemberKind::Method)
-                | ClassEntry::Delegate(_, MemberKind::Method),
-            ) = class.entry(method)
-            {
-                return None;
-            }
-            match class.type_entry(method)? {
-                ClassTypeEntry::Method { value, .. } => value.dup(),
-                _ => return None,
-            }
-        };
-        current = next;
+    if let Some(function) = value.downcast_ref(types.function) {
+        return function.read(|function| {
+            let function = function.get();
+            let program = &function.module;
+            let debug = program.funcdebugs().get(function.id)?;
+            let source = &program.debug_strtab()[debug.file.clone()];
+            Some((source.into(), debug.definition))
+        });
     }
-    None
+    let bound = value.downcast_ref(types.bound_method)?;
+    // SAFETY: a transient pin; with only a `Vm`, nothing here can collect
+    let bound = unsafe { bound.pin_unchecked() };
+    let bound = bound.get();
+    let receiver = bound.receiver();
+    let method = bound.method();
+    let next = if let Some(instance) = receiver.downcast_ref(types.class_instance) {
+        match instance.class().entry(method)? {
+            ClassEntry::Method(value) => value,
+            _ => return None,
+        }
+    } else {
+        // As `ClassObject::op_mcall` dispatches: an inherited native method
+        // shadows the type namespace.
+        let class = receiver.downcast_ref(types.class_object)?;
+        let class = class.annex();
+        if let Some(
+            ClassEntry::Abstract(_, MemberKind::Method)
+            | ClassEntry::Delegate(_, MemberKind::Method),
+        ) = class.entry(method)
+        {
+            return None;
+        }
+        match class.type_entry(method)? {
+            ClassTypeEntry::Method { value, .. } => value,
+            _ => return None,
+        }
+    };
+    definition_within(vm, next, depth)
 }
 
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
@@ -178,12 +181,12 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         let state = reg.register_state::<InspectStateTag>(InspectState {
             location: location_type,
         });
-        let backtrace = reg.singletons().backtrace.dup();
-        let frame = reg.singletons().backtrace_frame.dup();
+        let backtrace = &reg.singletons().backtrace;
+        let frame = &reg.singletons().backtrace_frame;
 
         reg.module("inspect")
-            .value("Backtrace", &backtrace)
-            .value("Frame", &frame)
+            .value("Backtrace", backtrace)
+            .value("Frame", frame)
             .value("Location", state.location)
             .function("definition", async move |strand, args, mut out| {
                 unpack!(strand, args => func);
