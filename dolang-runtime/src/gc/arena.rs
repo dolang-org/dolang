@@ -265,6 +265,18 @@ pub(crate) struct Arena<'v>(
     PhantomData<&'v mut &'v ()>,
 );
 
+/// A global GC root for data held outside any strand, such as during VM setup.
+///
+/// The guard owns a closure that visits the rooted data, and the data stays rooted until
+/// the guard drops.  The closure should share ownership of the data, so that forgetting
+/// the guard only leaks the root.  The current collector finds roots by reference count,
+/// so it never calls the closure; a tracing collector would.
+pub(crate) struct Scan<'v> {
+    _visit: Box<ScanFn<'v>>,
+}
+
+type ScanFn<'v> = dyn Fn(&mut dyn Visit) -> ControlFlow<()> + 'v;
+
 impl ArenaInner {
     pub(crate) fn clear(&self) {
         debug_eprintln!(topic: "gc", "GC CLEAR: begin");
@@ -298,6 +310,23 @@ impl ArenaInner {
 }
 
 impl<'v> Arena<'v> {
+    /// Root the data `visit` visits for as long as the returned guard lives.
+    ///
+    /// # Safety
+    ///
+    /// As for [`Strand::enter_scan`](crate::strand::Strand::enter_scan): each visit must
+    /// visit every GC reference the rooted data owns, exactly once, and nothing else.  The
+    /// rooted data must not change while a collection runs, so data that changes between
+    /// collections needs interior mutability.
+    pub(crate) unsafe fn scan(
+        &self,
+        visit: impl Fn(&mut dyn Visit) -> ControlFlow<()> + 'v,
+    ) -> Scan<'v> {
+        Scan {
+            _visit: Box::new(visit),
+        }
+    }
+
     pub(crate) fn new() -> Self {
         let this = alias::Box::new(ArenaInner {
             cyclic: Default::default(),

@@ -17,7 +17,7 @@ use crate::{
     },
     strand::{Strand, in_native_frame},
     sym::Sym,
-    value::{Output, Slot, TypeObject, Value},
+    value::{Output, Slot, TypeObject, Value, ValueCell},
     with_slots,
 };
 
@@ -27,8 +27,18 @@ pub(crate) type ModuleGetter<'v> =
     dyn for<'a, 's> Fn(&mut Strand<'v, 's>, Slot<'v, 'a>) -> Result<'v, 's, ()> + 'v;
 
 pub(crate) enum NativeField<'v> {
-    Value(Value<'v>),
+    Value(ValueCell<'v>),
     Getter(Box<ModuleGetter<'v>>),
+}
+
+impl NativeField<'_> {
+    /// Visit the field's value, if it holds one.
+    pub(crate) fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        match self {
+            NativeField::Value(value) => value.accept(visit),
+            NativeField::Getter(_) => ControlFlow::Continue(()),
+        }
+    }
 }
 
 pub(crate) struct Module<'v> {
@@ -282,8 +292,10 @@ unsafe impl<'v> crate::gc::ImmState for Native<'v> {
 }
 
 impl<'v> crate::gc::Annex for Native<'v> {
-    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
-        ControlFlow::Continue(())
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.map
+            .iter()
+            .try_for_each(|(_, field)| field.accept(visit))
     }
 }
 
