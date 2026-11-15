@@ -159,7 +159,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         Err(Error::type_error(strand, "fill not supported"))
     }
@@ -756,7 +756,7 @@ pub(crate) struct Vtbl<'v> {
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
         _: &'a &'v (),
     ) -> Result<'v, 's, ()>,
     op_provide: for<'a, 's> fn(
@@ -1338,7 +1338,7 @@ fn op_fill_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     this: ErasedRecv<'v, 'a>,
     strand: &'a mut Strand<'v, 's>,
     type_obj: &Value<'v>,
-    native: Value<'v>,
+    native: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
     unsafe { T::op_fill(Recv::from_erased(this), strand, type_obj, native) }
@@ -1786,7 +1786,7 @@ pub(crate) trait Dispatch<'v, 'a> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()>;
 
     fn op_provide<'s>(&self, request: &mut Request<'v, 's, '_>) -> Result<'v, 's, ()>
@@ -2128,7 +2128,7 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
         &self,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unsafe { invoke!(self, op_fill, strand, type_obj, native) }
     }

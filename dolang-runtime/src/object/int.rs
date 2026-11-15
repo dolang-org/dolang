@@ -1041,7 +1041,11 @@ impl<'v> Protocol<'v> for Int {
                 let coerced = construct(&value, strand)?;
                 with_slots!(strand, |mut native| {
                     Output::set(strand, Slot::reborrow(&mut native), coerced);
-                    self_val.op_fill(strand, &strand.singletons().int, native.take())
+                    self_val.op_fill(
+                        strand,
+                        &strand.singletons().int,
+                        Slot::reborrow(&mut native),
+                    )
                 })
             }
             _ => type_mcall_fallback(strand, &strand.singletons().int, method, args, out).await,

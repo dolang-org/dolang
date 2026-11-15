@@ -433,7 +433,11 @@ impl<'v> Protocol<'v> for Class {
                 unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
                     call!(strand, &strand.singletons().structure, items, &mut native)?;
-                    self_val.op_fill(strand, &strand.singletons().structure, native.take())?;
+                    self_val.op_fill(
+                        strand,
+                        &strand.singletons().structure,
+                        Slot::reborrow(&mut native),
+                    )?;
                     Ok(())
                 })
             }

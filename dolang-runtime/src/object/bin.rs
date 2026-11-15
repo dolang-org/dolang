@@ -918,7 +918,11 @@ impl<'v> Protocol<'v> for Class {
                         Output::set(strand, Slot::reborrow(&mut native), slice)
                     })
                     .ok_or_else(|| Error::type_error(strand, "Bin: expected Str or Bin"))?;
-                    self_val.op_fill(strand, &strand.singletons().bin, native.take())
+                    self_val.op_fill(
+                        strand,
+                        &strand.singletons().bin,
+                        Slot::reborrow(&mut native),
+                    )
                 })
             }
             sym::PACK => {

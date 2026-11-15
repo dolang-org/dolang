@@ -359,8 +359,7 @@ impl<'v> Protocol<'v> for VariantTypeObj {
                 unpack!(strand, args => self_val, ...rest);
                 let mut error = construct(kind, strand, rest)?;
                 error.get_value(strand, Slot::reborrow(&mut out));
-                let native = out.take();
-                self_val.op_fill(strand, variant_singleton(strand, kind), native)
+                self_val.op_fill(strand, variant_singleton(strand, kind), out)
             }
             _ => {
                 with_slots!(strand, |mut func| {

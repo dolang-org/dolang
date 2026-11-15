@@ -2589,7 +2589,11 @@ impl<'v> Protocol<'v> for Type {
                 unpack!(strand, args => self_val, items);
                 with_slots!(strand, |mut native| {
                     call!(strand, &strand.singletons().dict, items, &mut native)?;
-                    self_val.op_fill(strand, &strand.singletons().dict, native.take())?;
+                    self_val.op_fill(
+                        strand,
+                        &strand.singletons().dict,
+                        Slot::reborrow(&mut native),
+                    )?;
                     Ok(())
                 })
             }

@@ -18,7 +18,6 @@ use crate::{
     strand::{Strand, in_native_frame},
     sym::Sym,
     value::{Output, Slot, TypeObject, Value},
-    vm::Vm,
     with_slots,
 };
 
@@ -398,11 +397,25 @@ unsafe impl<'v> Collect for Namespace<'v> {
 }
 
 impl<'v> Namespace<'v> {
-    pub(crate) fn new(vm: &Vm<'v>) -> Self {
-        Self {
-            inner: NamespaceInner::Empty,
-            dict: GcObj::new(vm.arena(), vm.builtin_types().dict, Dict::new()),
-        }
+    /// Creates an empty namespace into `out`.
+    pub(crate) fn create(strand: &mut Strand<'v, '_>, out: impl Output<'v>) {
+        with_slots!(strand, |mut dict| {
+            let types = strand.builtin_types();
+            types
+                .dict
+                .create(strand, Dict::new(), Slot::reborrow(&mut dict));
+            let embryo = types.namespace.embryo(strand);
+            embryo.finish(
+                strand,
+                Self {
+                    inner: NamespaceInner::Empty,
+                    // SAFETY: the handle moves straight into the namespace; finishing
+                    // the embryo doesn't allocate
+                    dict: unsafe { dict.downcast_ref(types.dict).unwrap().dup() },
+                },
+                out,
+            );
+        })
     }
 
     pub(crate) fn insert<'s>(
@@ -435,13 +448,18 @@ impl<'v> Namespace<'v> {
                 if inserted {
                     return Ok(());
                 }
-                let mut ns = Self::new(strand);
-                ns.insert(strand, rest, slot)?;
+                Self::create(strand, Slot::reborrow(&mut ns_slot));
+                let ns = ns_slot
+                    .downcast_ref(strand.builtin_types().namespace)
+                    .unwrap();
+                with_pin!(strand, ns, |ns| {
+                    ns.borrow_mut()
+                        .ok_or_else(|| Error::concurrency(strand))?
+                        .insert(strand, rest, slot)
+                })?;
                 let mut hasher = strand.vm().hasher();
                 sym.op_hash(strand, &mut hasher)?;
                 let hv = hasher.finish();
-                let namespace = strand.builtin_types().namespace;
-                namespace.create(strand, ns, Slot::reborrow(&mut ns_slot));
                 with_pin!(strand, self.dict, |dict| {
                     dict.borrow_mut()
                         .ok_or_else(|| Error::concurrency(strand))?

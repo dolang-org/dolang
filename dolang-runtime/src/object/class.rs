@@ -1,9 +1,8 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::{HashMap, hash_map::Entry},
     hash::DefaultHasher,
     marker::PhantomData,
-    mem,
     ops::ControlFlow,
     ptr,
 };
@@ -29,10 +28,10 @@ use crate::{
     },
     redirect,
     sig::Unpack,
-    strand::Strand,
+    strand::{Strand, with_scan},
     sym::{self, Sym},
     unpack,
-    value::{Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
+    value::{Nil, Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
     vm::{Alloc, Builder, StateTag, Vm},
     with_instance, with_slots, with_str,
 };
@@ -63,31 +62,37 @@ fn is_function<'v>(strand: &mut Strand<'v, '_>, value: &Value<'v>) -> bool {
 /// it wraps and reporting which namespace that member belongs to.
 fn unwrap_member_scope<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    value: &mut Value<'v>,
+    value: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, MemberScope> {
     let scopes = strand.vm().state::<crate::object::class::MemberScopeTag>();
-    let (scope, inner) = if let Some(cast) = scopes.class.cast(value) {
-        let inner = with_instance!(strand, cast, |inst| {
-            Ok(native::Ref::slot::<0>(&inst.borrow(strand)?).dup())
-        })?;
-        (MemberScope::Class, inner)
-    } else if let Some(cast) = scopes.statik.cast(value) {
-        let inner = with_instance!(strand, cast, |inst| {
-            Ok(native::Ref::slot::<0>(&inst.borrow(strand)?).dup())
-        })?;
-        (MemberScope::Static, inner)
-    } else {
-        return Ok(MemberScope::Instance);
-    };
+    let scope = with_slots!(strand, |mut inner| {
+        let scope = if let Some(cast) = scopes.class.cast(value) {
+            with_instance!(strand, cast, |inst| {
+                let marker = inst.borrow(strand)?;
+                Output::set(strand, &mut inner, native::Ref::slot::<0>(&marker));
+                Ok(())
+            })?;
+            MemberScope::Class
+        } else if let Some(cast) = scopes.statik.cast(value) {
+            with_instance!(strand, cast, |inst| {
+                let marker = inst.borrow(strand)?;
+                Output::set(strand, &mut inner, native::Ref::slot::<0>(&marker));
+                Ok(())
+            })?;
+            MemberScope::Static
+        } else {
+            return Ok(MemberScope::Instance);
+        };
+        Output::set(strand, Slot::reborrow(value), inner);
+        scope
+    });
 
-    if scopes.class.cast(&inner).is_some() || scopes.statik.cast(&inner).is_some() {
+    if scopes.class.cast(value).is_some() || scopes.statik.cast(value).is_some() {
         return Err(Error::type_error(
             strand,
             "class_create: `class` and `static` cannot be combined",
         ));
     }
-
-    *value = inner;
     Ok(scope)
 }
 
@@ -126,18 +131,17 @@ fn reject_disallowed_type_member<'v, 's>(
 /// intended hard error: both would occupy the same type-object namespace.
 fn insert_type_member<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    map: &mut HashMap<Sym<'v, 'static>, ClassTypeEntry<'v>>,
+    map: &RefCell<HashMap<Sym<'v, 'static>, ClassTypeEntry<'v>>>,
     sym: Sym<'v, 'static>,
-    entry: ClassTypeEntry<'v>,
+    mut entry: ClassTypeEntry<'v>,
 ) -> Result<'v, 's, ()> {
-    match map.entry(sym) {
+    let inserted = match map.borrow_mut().entry(sym) {
         Entry::Vacant(vacant) => {
             vacant.insert(entry);
-            return Ok(());
+            true
         }
-        Entry::Occupied(mut occupied) => {
-            // Merge a getter/setter pair declared under one name.
-            if let (
+        Entry::Occupied(mut occupied) => match (occupied.get_mut(), &mut entry) {
+            (
                 ClassTypeEntry::Property {
                     property: existing,
                     inherited,
@@ -146,27 +150,100 @@ fn insert_type_member<'v, 's>(
                     property: incoming,
                     inherited: incoming_inherited,
                 },
-            ) = (occupied.get_mut(), &entry)
-                && *inherited == *incoming_inherited
-            {
-                if existing.getter.is_none() && incoming.getter.is_some() {
-                    existing.getter = incoming.getter.as_ref().map(Value::dup);
-                    return Ok(());
-                }
-                if existing.setter.is_none() && incoming.setter.is_some() {
-                    existing.setter = incoming.setter.as_ref().map(Value::dup);
-                    return Ok(());
-                }
-            }
-        }
+            ) if *inherited == *incoming_inherited => existing.merge(incoming),
+            _ => false,
+        },
+    };
+    if inserted {
+        Ok(())
+    } else {
+        Err(duplicate_member(strand, sym))
     }
-    Err(Error::runtime(
+}
+
+/// Insert a member into the instance namespace, merging a getter with its matching
+/// setter. Returns `false` on any other collision.
+fn insert_entry<'v>(
+    map: &RefCell<HashMap<Sym<'v, 'static>, ClassEntry<'v>>>,
+    sym: Sym<'v, 'static>,
+    mut entry: ClassEntry<'v>,
+) -> bool {
+    match map.borrow_mut().entry(sym) {
+        Entry::Vacant(vacant) => {
+            vacant.insert(entry);
+            true
+        }
+        Entry::Occupied(mut occupied) => match (occupied.get_mut(), &mut entry) {
+            (ClassEntry::Property(existing), ClassEntry::Property(incoming)) => {
+                existing.merge(incoming)
+            }
+            _ => false,
+        },
+    }
+}
+
+fn duplicate_member<'v, 's>(strand: &mut Strand<'v, 's>, sym: Sym<'v, '_>) -> Error<'v, 's> {
+    Error::runtime(
         strand,
         format!(
             "class_create: duplicate class member `{}`",
             sym.as_str(strand)
         ),
-    ))
+    )
+}
+
+/// The tables [`create`] gathers before it allocates the class, which an ad-hoc frame
+/// roots meanwhile.
+///
+/// Each table has its own cell, so one can be read across code that allocates while
+/// another changes. None is borrowed mutably across an allocation.
+#[derive(Default)]
+struct ClassTables<'v> {
+    supers: RefCell<Vec<Value<'v>>>,
+    symbols: RefCell<Vec<GcObj<'v, SymObj>>>,
+    local_entries: RefCell<HashMap<Sym<'v, 'static>, ClassEntry<'v>>>,
+    local_type_entries: RefCell<HashMap<Sym<'v, 'static>, ClassTypeEntry<'v>>>,
+    field_defaults: RefCell<Vec<FieldDefault<'v>>>,
+    type_field_defaults: RefCell<Vec<FieldDefault<'v>>>,
+    native_supers: RefCell<Vec<Value<'v>>>,
+    abstract_supers: RefCell<Vec<Value<'v>>>,
+    entries: RefCell<HashMap<Sym<'v, 'static>, ClassEntry<'v>>>,
+    type_entries: RefCell<HashMap<Sym<'v, 'static>, ClassTypeEntry<'v>>>,
+    type_fields: RefCell<Vec<Value<'v>>>,
+}
+
+impl<'v> ClassTables<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        for values in [
+            &self.supers,
+            &self.native_supers,
+            &self.abstract_supers,
+            &self.type_fields,
+        ] {
+            for value in values.borrow().iter() {
+                value.accept(visit)?;
+            }
+        }
+        for sym in self.symbols.borrow().iter() {
+            sym.accept(visit)?;
+        }
+        for entries in [&self.local_entries, &self.entries] {
+            for entry in entries.borrow().values() {
+                entry.accept(visit)?;
+            }
+        }
+        for entries in [&self.local_type_entries, &self.type_entries] {
+            for entry in entries.borrow().values() {
+                entry.accept(visit)?;
+            }
+        }
+        for defaults in [&self.field_defaults, &self.type_field_defaults] {
+            for default in defaults.borrow().iter() {
+                default.accept(visit)?;
+            }
+        }
+        ControlFlow::Continue(())
+    }
 }
 
 #[inline(never)]
@@ -198,13 +275,28 @@ pub(crate) async fn create<'v, 's>(
         }))
     };
 
-    let mut supers = Vec::new();
-    let mut local_entries = HashMap::new();
-    let mut local_type_entries: HashMap<Sym<'v, 'static>, ClassTypeEntry<'v>> = HashMap::new();
-    let mut field_defaults = Vec::new();
-    let mut type_field_defaults: Vec<FieldDefault<'v>> = Vec::new();
-    let mut symbols = Vec::new();
+    let tables = ClassTables::default();
+    let visit = |visitor: &mut dyn Visit| tables.accept(visitor);
+    // SAFETY: `visit` visits every table, and no table is borrowed mutably across an
+    // allocation
+    unsafe {
+        with_scan!(
+            strand,
+            visit,
+            build(strand, &tables, args, name, module_name, out).await
+        )
+    }
+}
 
+/// The body of [`create`], gathering into `tables`.
+async fn build<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    tables: &ClassTables<'v>,
+    mut args: Args<'v, '_>,
+    name: alias::Box<str>,
+    module_name: Option<alias::Box<str>>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
     while let Some(arg) = args.next() {
         let (key, mut slot) = match arg {
             Arg::Pos(_slot) => {
@@ -224,7 +316,7 @@ pub(crate) async fn create<'v, 's>(
                         "class_create: superclass must be a type object",
                     ));
                 }
-                supers.push(slot.take());
+                tables.supers.borrow_mut().push(slot.take());
             }
             sym::FIELD
             | sym::FIELD_THUNK
@@ -243,7 +335,8 @@ pub(crate) async fn create<'v, 's>(
                         })?
                         .into_static_scope_unchecked()
                 };
-                symbols.push(strand.sym_obj(sym));
+                let sym_obj = strand.sym_obj(sym);
+                tables.symbols.borrow_mut().push(sym_obj);
                 let Some(Arg::Pos(mut default)) = args.next() else {
                     return Err(Error::type_error(
                         strand,
@@ -251,48 +344,38 @@ pub(crate) async fn create<'v, 's>(
                     ));
                 };
                 let is_thunk = matches!(key.tag(), sym::FIELD_THUNK | sym::CLASS_FIELD_THUNK);
-                let default = if is_thunk {
-                    if !is_function(strand, &default) {
-                        return Err(Error::type_error(
-                            strand,
-                            "class_create: field thunk must be a function",
-                        ));
-                    }
-                    FieldDefault::Thunk(default.take())
-                } else {
-                    FieldDefault::Value(default.take())
+                if is_thunk && !is_function(strand, &default) {
+                    return Err(Error::type_error(
+                        strand,
+                        "class_create: field thunk must be a function",
+                    ));
+                }
+                let defaults = match scope {
+                    MemberScope::Instance => &tables.field_defaults,
+                    _ => &tables.type_field_defaults,
+                };
+                let index = {
+                    let mut defaults = defaults.borrow_mut();
+                    defaults.push(if is_thunk {
+                        FieldDefault::Thunk(default.take())
+                    } else {
+                        FieldDefault::Value(default.take())
+                    });
+                    defaults.len() - 1
                 };
 
                 if scope != MemberScope::Instance {
-                    let slot = type_field_defaults.len();
-                    type_field_defaults.push(default);
                     insert_type_member(
                         strand,
-                        &mut local_type_entries,
+                        &tables.local_type_entries,
                         sym,
                         ClassTypeEntry::Field {
-                            slot,
+                            slot: index,
                             inherited: scope == MemberScope::Class,
                         },
                     )?;
-                    continue;
-                }
-
-                let slot = field_defaults.len();
-                field_defaults.push(default);
-                match local_entries.entry(sym) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(ClassEntry::Field(slot));
-                    }
-                    Entry::Occupied(_) => {
-                        return Err(Error::runtime(
-                            strand,
-                            format!(
-                                "class_create: duplicate class member `{}`",
-                                sym.as_str(strand)
-                            ),
-                        ));
-                    }
+                } else if !insert_entry(&tables.local_entries, sym, ClassEntry::Field(index)) {
+                    return Err(duplicate_member(strand, sym));
                 }
             }
             sym::METHOD => {
@@ -303,14 +386,14 @@ pub(crate) async fn create<'v, 's>(
                         })?
                         .into_static_scope_unchecked()
                 };
-                symbols.push(strand.sym_obj(sym));
+                let sym_obj = strand.sym_obj(sym);
+                tables.symbols.borrow_mut().push(sym_obj);
                 let Some(Arg::Pos(mut value)) = args.next() else {
                     return Err(Error::type_error(
                         strand,
                         "class_create: method entry must include a value",
                     ));
                 };
-                let mut value = value.take();
 
                 // `#[class]` / `#[static]` wrap the member; unwrap before deciding
                 // what kind of member it is, so the scope composes with `#[getter]`.
@@ -323,95 +406,40 @@ pub(crate) async fn create<'v, 's>(
                         "class_create: method value must be a function",
                     ));
                 }
+                let property = |value| match accessor {
+                    Some(AccessorKind::Getter) => Some(Property {
+                        getter: Some(value),
+                        setter: None,
+                    }),
+                    Some(AccessorKind::Setter) => Some(Property {
+                        getter: None,
+                        setter: Some(value),
+                    }),
+                    None => None,
+                };
                 if scope != MemberScope::Instance {
                     reject_disallowed_type_member(strand, sym)?;
                     let inherited = scope == MemberScope::Class;
                     let entry = match accessor {
-                        Some(AccessorKind::Getter) => ClassTypeEntry::Property {
-                            property: Property {
-                                getter: Some(value),
-                                setter: None,
-                            },
+                        Some(_) => ClassTypeEntry::Property {
+                            property: property(value.take()).unwrap(),
                             inherited,
                         },
-                        Some(AccessorKind::Setter) => ClassTypeEntry::Property {
-                            property: Property {
-                                getter: None,
-                                setter: Some(value),
-                            },
+                        None => ClassTypeEntry::Method {
+                            value: value.take(),
                             inherited,
                         },
-                        None => ClassTypeEntry::Method { value, inherited },
                     };
-                    insert_type_member(strand, &mut local_type_entries, sym, entry)?;
+                    insert_type_member(strand, &tables.local_type_entries, sym, entry)?;
                     continue;
                 }
 
-                if accessor == Some(AccessorKind::Getter) {
-                    match local_entries.entry(sym) {
-                        Entry::Vacant(entry) => {
-                            entry.insert(ClassEntry::Property(Property {
-                                getter: Some(value),
-                                setter: None,
-                            }));
-                        }
-                        Entry::Occupied(mut entry) => match entry.get_mut() {
-                            ClassEntry::Property(Property { getter, .. }) if getter.is_none() => {
-                                *getter = Some(value);
-                            }
-                            _ => {
-                                return Err(Error::runtime(
-                                    strand,
-                                    format!(
-                                        "class_create: duplicate class member `{}`",
-                                        sym.as_str(strand)
-                                    ),
-                                ));
-                            }
-                        },
-                    }
-                    continue;
-                }
-
-                if accessor == Some(AccessorKind::Setter) {
-                    match local_entries.entry(sym) {
-                        Entry::Vacant(entry) => {
-                            entry.insert(ClassEntry::Property(Property {
-                                getter: None,
-                                setter: Some(value),
-                            }));
-                        }
-                        Entry::Occupied(mut entry) => match entry.get_mut() {
-                            ClassEntry::Property(Property { setter, .. }) if setter.is_none() => {
-                                *setter = Some(value);
-                            }
-                            _ => {
-                                return Err(Error::runtime(
-                                    strand,
-                                    format!(
-                                        "class_create: duplicate class member `{}`",
-                                        sym.as_str(strand)
-                                    ),
-                                ));
-                            }
-                        },
-                    }
-                    continue;
-                }
-
-                match local_entries.entry(sym) {
-                    Entry::Vacant(entry) => {
-                        entry.insert(ClassEntry::Method(value));
-                    }
-                    Entry::Occupied(_) => {
-                        return Err(Error::runtime(
-                            strand,
-                            format!(
-                                "class_create: duplicate class member `{}`",
-                                sym.as_str(strand)
-                            ),
-                        ));
-                    }
+                let entry = match accessor {
+                    Some(_) => ClassEntry::Property(property(value.take()).unwrap()),
+                    None => ClassEntry::Method(value.take()),
+                };
+                if !insert_entry(&tables.local_entries, sym, entry) {
+                    return Err(duplicate_member(strand, sym));
                 }
             }
             _ => return Err(Error::unexpected_key(strand, key)),
@@ -422,7 +450,7 @@ pub(crate) async fn create<'v, 's>(
     // marked inherited before any field default runs, so a default can't make one
     // final while this class is still being created; a creation that fails later
     // leaves the mark, which only forbids `#[final]`.
-    for sup in &supers {
+    for sup in tables.supers.borrow().iter() {
         let is_final = match sup.downcast_ref(strand.builtin_types().class_object) {
             Some(cls) => cls.annex().is_final.get(),
             None => sup
@@ -437,7 +465,7 @@ pub(crate) async fn create<'v, 's>(
             ));
         }
     }
-    for sup in &supers {
+    for sup in tables.supers.borrow().iter() {
         if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
             cls.annex().inherited.set(true);
         }
@@ -447,126 +475,136 @@ pub(crate) async fn create<'v, 's>(
     // native_supers: non-abstract native type objects; index == ClassInstance native slot.
     // abstract_supers: abstract native type objects, direct and inherited; entries store
     // the type object directly.
-    // entry_map: built left-to-right with first-insertion-wins (MRO order).
-    let mut native_supers: Vec<Value<'v>> = Vec::new();
-    let mut abstract_supers: Vec<Value<'v>> = Vec::new();
-    let mut entry_map = HashMap::new();
-    let mut type_entry_map = HashMap::new();
+    // entries: built left-to-right with first-insertion-wins (MRO order).
 
     // Every class ends its MRO with `Value`, which supplies the members every
     // value has, unless it names `Value` itself.
     let value = TypeObject::Value.value(strand.vm());
-    let value = (!supers.iter().any(|sup| sup.repr_eq(value))).then_some(value);
+    {
+        let supers = tables.supers.borrow();
+        let value = (!supers.iter().any(|sup| sup.repr_eq(value))).then_some(value);
 
-    for sup in supers.iter().chain(value) {
-        if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
-            let cls = cls.annex();
-            // Inherit parent's native supers (dedup by repr_eq).
-            for type_obj in cls.native_supers.iter() {
-                if native_supers.iter().any(|s| s.repr_eq(type_obj)) {
-                    continue;
-                }
-                native_supers.push(type_obj.dup());
-            }
-            for type_obj in cls.abstract_supers.iter() {
-                if abstract_supers.iter().any(|s| s.repr_eq(type_obj)) {
-                    continue;
-                }
-                abstract_supers.push(type_obj.dup());
-            }
-            // Merge parent's entries (left-wins). Abstract entries copy the value directly.
-            for (sym, entry) in cls.entries.iter() {
-                if entry_map.contains_key(sym) {
-                    continue; // left wins
-                }
-                let new_entry = match entry {
-                    ClassEntry::Field(old_slot) => {
-                        let default = match &cls.field_defaults[*old_slot] {
-                            FieldDefault::Value(v) => FieldDefault::Value(v.dup()),
-                            FieldDefault::Thunk(v) => FieldDefault::Thunk(v.dup()),
-                        };
-                        let new_slot = field_defaults.len();
-                        field_defaults.push(default);
-                        ClassEntry::Field(new_slot)
+        for sup in supers.iter().chain(value) {
+            if let Some(cls) = sup.downcast_ref(strand.builtin_types().class_object) {
+                let cls = cls.annex();
+                let mut native_supers = tables.native_supers.borrow_mut();
+                let mut abstract_supers = tables.abstract_supers.borrow_mut();
+                let mut entries = tables.entries.borrow_mut();
+                let mut type_entries = tables.type_entries.borrow_mut();
+                let mut field_defaults = tables.field_defaults.borrow_mut();
+                let mut type_field_defaults = tables.type_field_defaults.borrow_mut();
+                // Inherit parent's native supers (dedup by repr_eq).
+                for type_obj in cls.native_supers.iter() {
+                    if native_supers.iter().any(|s| s.repr_eq(type_obj)) {
+                        continue;
                     }
-                    ClassEntry::Method(v) => ClassEntry::Method(v.dup()),
-                    ClassEntry::Property(property) => ClassEntry::Property(Property {
-                        getter: property.getter.as_ref().map(Value::dup),
-                        setter: property.setter.as_ref().map(Value::dup),
-                    }),
-                    ClassEntry::Delegate(parent_slot, kind) => {
-                        // Remap via parent's native_supers → our native_supers.
-                        let type_obj = &cls.native_supers[*parent_slot];
-                        let our_slot = native_supers
-                            .iter()
-                            .position(|s| s.repr_eq(type_obj))
-                            .expect("bug: parent Delegate slot not found in our native_supers");
-                        ClassEntry::Delegate(our_slot, *kind)
-                    }
-                    ClassEntry::Abstract(type_obj, kind) => {
-                        ClassEntry::Abstract(type_obj.dup(), *kind)
-                    }
-                };
-                entry_map.insert(*sym, new_entry);
-            }
-            // Type members are inherited independently of the instance namespace.
-            // `static` members are skipped: they belong to the declaring class only.
-            for (sym, entry) in cls.type_entries.iter() {
-                if !entry.inherited() || type_entry_map.contains_key(sym) {
-                    continue; // left wins
+                    native_supers.push(type_obj.dup());
                 }
-                let new_entry = match entry {
-                    // Each class owns its class-field storage, so a subclass gets a
-                    // fresh slot seeded from the declared default rather than sharing
-                    // the parent's cell.
-                    ClassTypeEntry::Field { slot: old_slot, .. } => {
-                        let default = match &cls.type_field_defaults[*old_slot] {
-                            FieldDefault::Value(v) => FieldDefault::Value(v.dup()),
-                            FieldDefault::Thunk(v) => FieldDefault::Thunk(v.dup()),
-                        };
-                        let slot = type_field_defaults.len();
-                        type_field_defaults.push(default);
-                        ClassTypeEntry::Field {
-                            slot,
-                            inherited: true,
+                for type_obj in cls.abstract_supers.iter() {
+                    if abstract_supers.iter().any(|s| s.repr_eq(type_obj)) {
+                        continue;
+                    }
+                    abstract_supers.push(type_obj.dup());
+                }
+                // Merge parent's entries (left-wins). Abstract entries copy the value directly.
+                for (sym, entry) in cls.entries.iter() {
+                    if entries.contains_key(sym) {
+                        continue; // left wins
+                    }
+                    let new_entry = match entry {
+                        ClassEntry::Field(old_slot) => {
+                            let new_slot = field_defaults.len();
+                            field_defaults.push(cls.field_defaults[*old_slot].dup());
+                            ClassEntry::Field(new_slot)
                         }
+                        ClassEntry::Method(v) => ClassEntry::Method(v.dup()),
+                        ClassEntry::Property(property) => ClassEntry::Property(Property {
+                            getter: property.getter.as_ref().map(Value::dup),
+                            setter: property.setter.as_ref().map(Value::dup),
+                        }),
+                        ClassEntry::Delegate(parent_slot, kind) => {
+                            // Remap via parent's native_supers → our native_supers.
+                            let type_obj = &cls.native_supers[*parent_slot];
+                            let our_slot = native_supers
+                                .iter()
+                                .position(|s| s.repr_eq(type_obj))
+                                .expect("bug: parent Delegate slot not found in our native_supers");
+                            ClassEntry::Delegate(our_slot, *kind)
+                        }
+                        ClassEntry::Abstract(type_obj, kind) => {
+                            ClassEntry::Abstract(type_obj.dup(), *kind)
+                        }
+                    };
+                    entries.insert(*sym, new_entry);
+                }
+                // Type members are inherited independently of the instance namespace.
+                // `static` members are skipped: they belong to the declaring class only.
+                for (sym, entry) in cls.type_entries.iter() {
+                    if !entry.inherited() || type_entries.contains_key(sym) {
+                        continue; // left wins
                     }
-                    other => other.dup(),
-                };
-                type_entry_map.insert(*sym, new_entry);
-            }
-        } else {
-            let inspect = sup.op_inspect(strand).ok_or_else(|| {
-                Error::type_error(strand, "inheritance not supported by superclass")
-            })?;
-            for member in inspect.type_members {
-                type_entry_map
-                    .entry(member.sym)
-                    .or_insert_with(|| ClassTypeEntry::Delegate(sup.dup(), member.kind));
-            }
-
-            // Direct native super. Skip if already seen (inherited via a ClassObject parent).
-            if native_supers.iter().any(|s| s.repr_eq(sup))
-                || abstract_supers.iter().any(|s| s.repr_eq(sup))
-            {
-                continue;
-            }
-            if inspect.is_abstract {
-                // Abstract super: store the type-object directly in each entry.
-                abstract_supers.push(sup.dup());
-                for member in inspect.members {
-                    entry_map
-                        .entry(member.sym)
-                        .or_insert_with(|| ClassEntry::Abstract(sup.dup(), member.kind));
+                    let new_entry = match entry {
+                        // Each class owns its class-field storage, so a subclass gets a
+                        // fresh slot seeded from the declared default rather than sharing
+                        // the parent's cell.
+                        ClassTypeEntry::Field { slot: old_slot, .. } => {
+                            let slot = type_field_defaults.len();
+                            type_field_defaults.push(cls.type_field_defaults[*old_slot].dup());
+                            ClassTypeEntry::Field {
+                                slot,
+                                inherited: true,
+                            }
+                        }
+                        other => other.dup(),
+                    };
+                    type_entries.insert(*sym, new_entry);
                 }
             } else {
-                // Concrete native super: members dispatched via instance native slot.
-                let our_slot = native_supers.len();
-                native_supers.push(sup.dup());
-                for member in inspect.members {
-                    entry_map
-                        .entry(member.sym)
-                        .or_insert(ClassEntry::Delegate(our_slot, member.kind));
+                let inspect = sup.op_inspect(strand).ok_or_else(|| {
+                    Error::type_error(strand, "inheritance not supported by superclass")
+                })?;
+                // SAFETY: native member symbols remain rooted by their registered native
+                // type vtables
+                let member_sym =
+                    |member: &Member<'v, '_>| unsafe { member.sym.into_static_scope_unchecked() };
+                {
+                    let mut type_entries = tables.type_entries.borrow_mut();
+                    for member in inspect.type_members {
+                        type_entries
+                            .entry(member_sym(member))
+                            .or_insert_with(|| ClassTypeEntry::Delegate(sup.dup(), member.kind));
+                    }
+                }
+
+                // Direct native super. Skip if already seen (inherited via a ClassObject parent).
+                if tables.native_supers.borrow().iter().any(|s| s.repr_eq(sup))
+                    || tables
+                        .abstract_supers
+                        .borrow()
+                        .iter()
+                        .any(|s| s.repr_eq(sup))
+                {
+                    continue;
+                }
+                let mut entries = tables.entries.borrow_mut();
+                if inspect.is_abstract {
+                    // Abstract super: store the type-object directly in each entry.
+                    tables.abstract_supers.borrow_mut().push(sup.dup());
+                    for member in inspect.members {
+                        entries
+                            .entry(member_sym(member))
+                            .or_insert_with(|| ClassEntry::Abstract(sup.dup(), member.kind));
+                    }
+                } else {
+                    // Concrete native super: members dispatched via instance native slot.
+                    let mut native_supers = tables.native_supers.borrow_mut();
+                    let our_slot = native_supers.len();
+                    native_supers.push(sup.dup());
+                    for member in inspect.members {
+                        entries
+                            .entry(member_sym(member))
+                            .or_insert(ClassEntry::Delegate(our_slot, member.kind));
+                    }
                 }
             }
         }
@@ -574,50 +612,46 @@ pub(crate) async fn create<'v, 's>(
 
     // Type-object members inherit the protocol methods inspected from Type.
     // Instance defaults come from the inspected runtime supertypes above.
-    let metatype = strand.singletons().type_obj.dup();
+    let metatype = &strand.singletons().type_obj;
     let inspect = metatype
         .op_inspect(strand)
         .expect("Type supports inspection");
-    for member in inspect.members {
-        type_entry_map.insert(
-            member.sym,
-            ClassTypeEntry::Delegate(metatype.dup(), member.kind),
-        );
-    }
-
-    // Apply this class's own entries, overriding
-    for (sym, entry) in local_entries {
-        entry_map.insert(sym, entry);
-    }
-    for (sym, entry) in local_type_entries {
-        type_entry_map.insert(sym, entry);
-    }
-
-    // Evaluate class-level field defaults. Thunks run once per class, which is
-    // what gives each class in a hierarchy its own storage.
-    let mut type_fields: Vec<Value<'v>> = Vec::with_capacity(type_field_defaults.len());
-    for default in type_field_defaults.iter() {
-        match default {
-            FieldDefault::Value(value) => type_fields.push(value.dup()),
-            FieldDefault::Thunk(thunk) => {
-                let value = with_slots!(strand, |mut tmp| {
-                    call!(strand, thunk, &mut tmp)?;
-                    Ok(tmp.take())
-                })?;
-                type_fields.push(value);
-            }
+    {
+        let mut type_entries = tables.type_entries.borrow_mut();
+        for member in inspect.members {
+            // SAFETY: as for the native super members above
+            let sym = unsafe { member.sym.into_static_scope_unchecked() };
+            type_entries.insert(sym, ClassTypeEntry::Delegate(metatype.dup(), member.kind));
         }
     }
 
-    // Sort entries by sym
-    let mut entries: Vec<_> = entry_map.into_iter().collect();
-    entries.sort_by_key(|(s, _)| *s);
-    let mut type_entries: Vec<_> = type_entry_map.into_iter().collect();
-    type_entries.sort_by_key(|(s, _)| *s);
+    // Apply this class's own entries, overriding
+    let local_entries = tables.local_entries.take();
+    tables.entries.borrow_mut().extend(local_entries);
+    let local_type_entries = tables.local_type_entries.take();
+    tables.type_entries.borrow_mut().extend(local_type_entries);
 
-    let members = entries
+    // Evaluate class-level field defaults. Thunks run once per class, which is
+    // what gives each class in a hierarchy its own storage.
+    let count = tables.type_field_defaults.borrow().len();
+    for index in 0..count {
+        with_slots!(strand, |mut thunk, mut value| {
+            match &tables.type_field_defaults.borrow()[index] {
+                FieldDefault::Value(default) => Output::set(strand, &mut value, default),
+                FieldDefault::Thunk(default) => Output::set(strand, &mut thunk, default),
+            }
+            if !thunk.is_nil() {
+                call!(strand, &thunk, &mut value)?;
+            }
+            tables.type_fields.borrow_mut().push(value.take());
+        });
+    }
+
+    let mut members = tables
+        .entries
+        .borrow()
         .iter()
-        .filter(|(sym, _)| !strand.sym_obj(*sym).private())
+        .filter(|(sym, _)| !strand.sym_obj(**sym).private())
         .map(|(sym, entry)| {
             Member::new(
                 *sym,
@@ -630,9 +664,12 @@ pub(crate) async fn create<'v, 's>(
             )
         })
         .collect::<Vec<_>>();
-    let type_members = type_entries
+    members.sort_by_key(|member| member.sym);
+    let mut type_members = tables
+        .type_entries
+        .borrow()
         .iter()
-        .filter(|(sym, _)| !strand.sym_obj(*sym).private())
+        .filter(|(sym, _)| !strand.sym_obj(**sym).private())
         .map(|(sym, entry)| {
             Member::new(
                 *sym,
@@ -645,42 +682,34 @@ pub(crate) async fn create<'v, 's>(
             )
         })
         .collect::<Vec<_>>();
-    // SAFETY: the member symbols are rooted by the same roots as the entry tables.
-    let members =
-        unsafe { mem::transmute::<Vec<Member<'_, '_>>, Vec<Member<'v, 'static>>>(members) };
-    let type_members =
-        unsafe { mem::transmute::<Vec<Member<'_, '_>>, Vec<Member<'v, 'static>>>(type_members) };
+    type_members.sort_by_key(|member| member.sym);
+
+    // The tables move out only once the class is allocated
+    let embryo = strand.vm().builtin_types().class_object.embryo(strand);
+    let mut entries: Vec<_> = tables.entries.take().into_iter().collect();
+    entries.sort_by_key(|(s, _)| *s);
+    let mut type_entries: Vec<_> = tables.type_entries.take().into_iter().collect();
+    type_entries.sort_by_key(|(s, _)| *s);
     let class_annex = ClassObjectAnnex {
         members: members.into(),
         type_members: type_members.into(),
         name,
         module_name,
-        symbols: symbols.into(),
-        entries: unsafe {
-            // SAFETY: every symbol in `entries` is explicitly rooted by the
-            // corresponding object in `_symbols`, which this ClassObject owns.
-            mem::transmute::<Vec<_>, Vec<(Sym<'v, 'static>, ClassEntry<'v>)>>(entries)
-        }
-        .into(),
-        type_entries: unsafe {
-            // SAFETY: inherited Do symbols remain rooted by `supers`, and native
-            // symbols remain rooted by their registered native type vtables.
-            mem::transmute::<Vec<_>, Vec<(Sym<'v, 'static>, ClassTypeEntry<'v>)>>(type_entries)
-        }
-        .into(),
-        supers: supers.into(),
-        field_defaults: field_defaults.into(),
-        type_field_defaults: type_field_defaults.into(),
-        native_supers: native_supers.into(),
-        abstract_supers: abstract_supers.into(),
+        symbols: tables.symbols.take().into(),
+        entries: entries.into(),
+        type_entries: type_entries.into(),
+        supers: tables.supers.take().into(),
+        field_defaults: tables.field_defaults.take().into(),
+        type_field_defaults: tables.type_field_defaults.take().into(),
+        native_supers: tables.native_supers.take().into(),
+        abstract_supers: tables.abstract_supers.take().into(),
         is_final: Cell::new(false),
         inherited: Cell::new(false),
     };
-
-    strand.vm().builtin_types().class_object.create_with_annex(
+    embryo.finish_with_annex(
         strand,
         ClassObject {
-            type_fields: type_fields.into(),
+            type_fields: tables.type_fields.take().into(),
         },
         alias::Box::new(class_annex),
         out,
@@ -813,12 +842,19 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
 
 /// If `value` is an [`Accessor`], replace it with the function it wraps and
 /// return which half of a property it supplies.
-fn unwrap_accessor<'v>(strand: &Strand<'v, '_>, value: &mut Value<'v>) -> Option<AccessorKind> {
-    let (kind, func) = value
-        .downcast_ref(strand.builtin_types().accessor)?
-        .read(|accessor| (accessor.get().kind, accessor.get().func.dup()));
-    *value = func;
-    Some(kind)
+fn unwrap_accessor<'v>(
+    strand: &mut Strand<'v, '_>,
+    value: &mut Slot<'v, '_>,
+) -> Option<AccessorKind> {
+    with_slots!(strand, |mut func| {
+        let accessor = value.downcast_ref(strand.builtin_types().accessor)?;
+        let kind = with_pin!(strand, accessor, |accessor| {
+            Output::set(strand, &mut func, &accessor.get().func);
+            accessor.get().kind
+        });
+        Output::set(strand, Slot::reborrow(value), func);
+        Some(kind)
+    })
 }
 
 /// Marker wrapper produced by the prelude `class` decorator.
@@ -937,7 +973,28 @@ pub(crate) struct Property<'v> {
     pub(crate) setter: Option<Value<'v>>,
 }
 
-impl Property<'_> {
+impl<'v> Property<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        for accessor in [&self.getter, &self.setter].into_iter().flatten() {
+            accessor.accept(visit)?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// Fill in whichever accessor `incoming` has and this lacks, taking it from
+    /// `incoming`. Returns `false` if there is none.
+    fn merge(&mut self, incoming: &mut Self) -> bool {
+        if self.getter.is_none() && incoming.getter.is_some() {
+            self.getter = incoming.getter.take();
+            true
+        } else if self.setter.is_none() && incoming.setter.is_some() {
+            self.setter = incoming.setter.take();
+            true
+        } else {
+            false
+        }
+    }
+
     fn kind(&self) -> MemberKind {
         match (self.getter.is_some(), self.setter.is_some()) {
             (true, true) => MemberKind::Property,
@@ -951,6 +1008,31 @@ impl Property<'_> {
 pub(crate) enum FieldDefault<'v> {
     Value(Value<'v>),
     Thunk(Value<'v>),
+}
+
+impl<'v> FieldDefault<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        match self {
+            Self::Value(v) | Self::Thunk(v) => v.accept(visit),
+        }
+    }
+
+    fn dup(&self) -> Self {
+        match self {
+            Self::Value(v) => Self::Value(v.dup()),
+            Self::Thunk(v) => Self::Thunk(v.dup()),
+        }
+    }
+}
+
+impl<'v> ClassEntry<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        match self {
+            Self::Method(v) | Self::Abstract(v, _) => v.accept(visit),
+            Self::Property(property) => property.accept(visit),
+            Self::Field(_) | Self::Delegate(..) => ControlFlow::Continue(()),
+        }
+    }
 }
 
 /// A single entry in a class's unified symbol table.
@@ -991,6 +1073,14 @@ pub(crate) enum ClassTypeEntry<'v> {
 }
 
 impl<'v> ClassTypeEntry<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        match self {
+            Self::Field { .. } => ControlFlow::Continue(()),
+            Self::Method { value, .. } | Self::Delegate(value, _) => value.accept(visit),
+            Self::Property { property, .. } => property.accept(visit),
+        }
+    }
+
     fn inherited(&self) -> bool {
         match self {
             Self::Field { inherited, .. }
@@ -1124,42 +1214,17 @@ impl<'v> Annex for ClassObjectAnnex<'v> {
             sym.accept(visit)?;
         }
         for (_, entry) in self.entries.iter() {
-            match entry {
-                ClassEntry::Method(v) | ClassEntry::Abstract(v, _) => v.accept(visit)?,
-                ClassEntry::Property(property) => {
-                    if let Some(getter) = &property.getter {
-                        getter.accept(visit)?;
-                    }
-                    if let Some(setter) = &property.setter {
-                        setter.accept(visit)?;
-                    }
-                }
-                _ => {}
-            }
+            entry.accept(visit)?;
         }
         for (_, entry) in self.type_entries.iter() {
-            match entry {
-                ClassTypeEntry::Field { .. } => {}
-                ClassTypeEntry::Method { value, .. } => value.accept(visit)?,
-                ClassTypeEntry::Property { property, .. } => {
-                    if let Some(getter) = &property.getter {
-                        getter.accept(visit)?;
-                    }
-                    if let Some(setter) = &property.setter {
-                        setter.accept(visit)?;
-                    }
-                }
-                ClassTypeEntry::Delegate(type_obj, _) => type_obj.accept(visit)?,
-            }
+            entry.accept(visit)?;
         }
         for v in self
             .field_defaults
             .iter()
             .chain(self.type_field_defaults.iter())
         {
-            match v {
-                FieldDefault::Value(v) | FieldDefault::Thunk(v) => v.accept(visit)?,
-            }
+            v.accept(visit)?;
         }
         for v in self.native_supers.iter().chain(self.abstract_supers.iter()) {
             v.accept(visit)?;
@@ -1898,16 +1963,16 @@ impl<'v> ClassInstanceAnnex<'v> {
         self.prefix.natives.iter().filter_map(native_value)
     }
 
-    /// Initializes native super slot `idx` with `native`, which must not be nil.
-    /// Fails if the slot is already initialized.
-    fn init_native(&self, idx: usize, native: Value<'v>) -> std::result::Result<(), Value<'v>> {
+    /// Moves `native`, which must not be nil, into native super slot `idx`.
+    /// Returns `false`, leaving `native` in place, if the slot is already initialized.
+    fn init_native(&self, alloc: &mut impl Alloc<'v>, idx: usize, native: Slot<'v, '_>) -> bool {
         debug_assert!(!native.is_nil());
         if self.native(idx).is_some() {
-            return Err(native);
+            return false;
         }
         // Safety: an uninitialized slot is never borrowed
-        unsafe { self.prefix.natives[idx].slot().store(native) };
-        Ok(())
+        Output::set(alloc, unsafe { self.prefix.natives[idx].slot() }, native);
+        true
     }
 
     /// Field `idx`'s cell, to read as an [`Input`].
@@ -2269,7 +2334,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         type_obj: &Value<'v>,
-        native: Value<'v>,
+        native: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         let idx = annex
@@ -2286,6 +2351,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         // Check if slot is already set with the same value (idempotent for diamond inheritance)
         if let Some(existing) = annex.native(idx) {
             if existing.repr_eq(&native) {
+                Output::set(strand, native, Nil);
                 return Ok(());
             } else {
                 return Err(Error::runtime(
@@ -2295,9 +2361,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             }
         }
 
-        annex
-            .init_native(idx, native)
-            .map_err(|_| Error::state_error(strand, "native slot already initialized"))
+        if annex.init_native(strand, idx, native) {
+            Ok(())
+        } else {
+            Err(Error::state_error(
+                strand,
+                "native slot already initialized",
+            ))
+        }
     }
 
     fn op_provide<'a, 's>(
@@ -3255,5 +3326,84 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             this.receiver.into_raw().hash(hasher);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        strand::with_slots_dynamic,
+        test_support::{args_from_slots, with_vm},
+        vm::AllocExt,
+    };
+
+    #[test]
+    fn create_roots_its_tables_across_collections() {
+        with_vm::<4, _>(
+            async |strand, [mut method, mut field, mut class, mut out]| {
+                let vm = strand.vm();
+                Output::set(
+                    strand,
+                    Slot::reborrow(&mut method),
+                    Value::from_object(vm.sym_register_obj("m")),
+                );
+                Output::set(
+                    strand,
+                    Slot::reborrow(&mut field),
+                    Value::from_object(vm.sym_register_obj("x")),
+                );
+                with_slots_dynamic!(strand, 7, |mut slots| {
+                    Output::set(strand, slots.at(1), "C");
+                    Output::set(strand, slots.at(2), "test");
+                    Output::set(strand, slots.at(3), &method);
+                    strand.native_function(
+                        async |strand, args, out| {
+                            unpack!(strand, args =>);
+                            Output::set(strand, out, Nil);
+                            Ok(())
+                        },
+                        slots.at(4),
+                    );
+                    Output::set(strand, slots.at(5), &field);
+                    strand.native_function(
+                        async |strand, args, out| {
+                            unpack!(strand, args =>);
+                            // The method was taken from its argument, so only the class's
+                            // tables hold it
+                            strand.vm().collect_full();
+                            strand.new_array(out);
+                            Ok(())
+                        },
+                        slots.at(6),
+                    );
+                    let sig = [
+                        None,
+                        None,
+                        Some(Sym::well_known(sym::METHOD)),
+                        None,
+                        Some(Sym::well_known(sym::CLASS_FIELD_THUNK)),
+                        None,
+                    ];
+                    let args = args_from_slots(&mut slots, &sig, 1);
+                    create(strand, args, Slot::reborrow(&mut class))
+                        .await
+                        .unwrap();
+                });
+                strand.vm().collect_full();
+
+                let method = method.as_sym(strand).unwrap();
+                let cls = class
+                    .downcast_ref(strand.builtin_types().class_object)
+                    .unwrap();
+                assert!(matches!(
+                    cls.annex().entry(method),
+                    Some(ClassEntry::Method(func)) if is_function(strand, func)
+                ));
+                let field = field.as_sym(strand).unwrap();
+                class.get(strand, field, &mut out).unwrap();
+                assert!(out.as_array(strand).is_some());
+            },
+        );
     }
 }
