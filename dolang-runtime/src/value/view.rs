@@ -668,7 +668,13 @@ impl<'v, 'a> Dict<'v, 'a> {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
                 };
-                borrow.insert(strand, key_slot.take(), value_slot.take(), hv, unique)?;
+                borrow.insert(
+                    strand,
+                    Slot::reborrow(&mut key_slot),
+                    Slot::reborrow(&mut value_slot),
+                    hv,
+                    unique,
+                )?;
                 Ok(())
             })
         })
@@ -764,7 +770,7 @@ impl<'v, 'a> Set<'v, 'a> {
                     Some(b) => b,
                     None => return Err(Error::concurrency(strand)),
                 };
-                borrow.insert(strand, value_slot.take(), hash)
+                borrow.insert(strand, value_slot, hash)
             })
         })
     }

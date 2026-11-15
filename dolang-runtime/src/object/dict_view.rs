@@ -1,6 +1,6 @@
 //! Lazy dictionary-like projections over native objects.
 
-use std::{convert::Infallible, hash::Hasher, marker::PhantomData, ops::ControlFlow};
+use std::{cell::RefCell, convert::Infallible, marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -11,14 +11,14 @@ use crate::{
     arg::{Arg, Args},
     call,
     error::{Error, Result},
-    gc::{self, Collect, arena::Visit},
+    gc::{self, Collect, arena::Visit, with_pin},
     object::{
         BoundMethod, dict,
         native::{Instance, Object, Spread, SpreadContext, Type as NativeType, Unpack, UnpackItem},
-        protocol::{Inspect, Protocol, Recv, members},
+        protocol::{GcObj, Inspect, Protocol, Recv, members},
     },
     sig,
-    strand::Strand,
+    strand::{Strand, with_scan},
     sym,
     sym::Sym,
     unpack,
@@ -27,9 +27,12 @@ use crate::{
     with_slots,
 };
 
+type Pairs<'v> = Vec<(Value<'v>, Value<'v>)>;
+
 /// Receives ordered key/value pairs while a dictionary view is flattened.
 pub struct DictViewSink<'v, 'a> {
-    pairs: &'a mut Vec<(Value<'v>, Value<'v>)>,
+    // Rooted by the scan of the flatten that lends it
+    pairs: &'a RefCell<Pairs<'v>>,
 }
 
 impl<'v> DictViewSink<'v, '_> {
@@ -40,11 +43,14 @@ impl<'v> DictViewSink<'v, '_> {
         key: impl Input<'v>,
         value: impl Input<'v>,
     ) {
-        let pair = (
-            Value::from_input(strand, key),
-            Value::from_input(strand, value),
-        );
-        self.pairs.push(pair);
+        // Either input may allocate, so each lands in a slot before the other is made
+        with_slots!(strand, |mut key_slot, mut value_slot| {
+            Output::set(strand, &mut key_slot, key);
+            Output::set(strand, &mut value_slot, value);
+            self.pairs
+                .borrow_mut()
+                .push((key_slot.take(), value_slot.take()));
+        })
     }
 }
 
@@ -140,22 +146,25 @@ pub trait DictLike<'v>: 'v {
         strand: &mut Strand<'v, 's>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let expected = self.len(this, strand);
-        let mut pairs = Vec::with_capacity(expected);
-        self.flatten(this, strand, &mut DictViewSink { pairs: &mut pairs })?;
-        strand.new_array(&mut out);
-        let array = out.as_array(strand).unwrap();
-        let mut seen: Vec<Value<'v>> = Vec::with_capacity(pairs.len());
-        'keys: for (key, _) in pairs {
-            for seen in &seen {
-                if seen.eq(strand, &key)? {
-                    continue 'keys;
+        with_slots!(strand, |mut rest| {
+            flatten(self, this, strand, &mut rest)?;
+            strand.new_array(&mut out);
+            let array = out.as_array(strand).unwrap();
+            with_rest_pairs(strand, &rest, |strand, pairs| {
+                // Indices of the first instance of each key so far
+                let mut seen: Vec<usize> = Vec::with_capacity(pairs.len());
+                'keys: for (index, (key, _)) in pairs.iter().enumerate() {
+                    for &seen in &seen {
+                        if pairs[seen].0.eq(strand, key)? {
+                            continue 'keys;
+                        }
+                    }
+                    array.push(strand, key)?;
+                    seen.push(index);
                 }
-            }
-            array.push(strand, &key)?;
-            seen.push(key);
-        }
-        Ok(())
+                Ok(())
+            })
+        })
     }
 
     /// Writes an array of every value stored for `key`, in insertion order,
@@ -211,12 +220,11 @@ impl<'v, I: DictLike<'v>> DictView<'v, I> {
         strand: &mut Strand<'v, 's>,
         out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
-        let pairs = flatten(view, owner, strand)?;
-        strand
-            .builtin_types()
-            .dict_view_iter
-            .create(strand, Iter { pairs, index: 0 }, out);
-        Ok(())
+        with_slots!(strand, |mut rest| {
+            flatten(view, owner, strand, &mut rest)?;
+            create_iter(strand, &rest, 0, out);
+            Ok(())
+        })
     }
 
     /// Implements [`Object::spread`] directly without constructing a view object.
@@ -227,8 +235,12 @@ impl<'v, I: DictLike<'v>> DictView<'v, I> {
         _context: SpreadContext,
         sink: &mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let pairs = flatten(view, owner, strand)?;
-        spread_pairs(strand, &pairs, sink)
+        with_slots!(strand, |mut rest| {
+            flatten(view, owner, strand, &mut rest)?;
+            with_rest_pairs(strand, &rest, |strand, pairs| {
+                spread_pairs(strand, pairs, sink)
+            })
+        })
     }
 
     /// Implements [`Object::unpack`] directly without constructing a view object.
@@ -238,8 +250,12 @@ impl<'v, I: DictLike<'v>> DictView<'v, I> {
         strand: &mut Strand<'v, 's>,
         unpack: Unpack<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let pairs = flatten(view, owner, strand)?;
-        unpack_pairs(strand, pairs, unpack)
+        with_slots!(strand, |mut rest| {
+            flatten(view, owner, strand, &mut rest)?;
+            with_rest_pairs(strand, &rest, |strand, pairs| {
+                unpack_pairs(strand, pairs, unpack)
+            })
+        })
     }
 }
 
@@ -302,7 +318,7 @@ trait DictViewGlue<'v>: 'v {
         &self,
         owner: &Value<'v>,
         strand: &mut Strand<'v, 's>,
-        pairs: &mut Vec<(Value<'v>, Value<'v>)>,
+        sink: &mut DictViewSink<'v, '_>,
     ) -> Result<'v, 's, ()>;
     fn keys<'s>(
         &self,
@@ -390,10 +406,10 @@ impl<'v, I: DictLike<'v>> DictViewGlue<'v> for Glue<'v, I> {
         &self,
         owner: &Value<'v>,
         strand: &mut Strand<'v, 's>,
-        pairs: &mut Vec<(Value<'v>, Value<'v>)>,
+        sink: &mut DictViewSink<'v, '_>,
     ) -> Result<'v, 's, ()> {
         Instance::with_native_value(owner, strand, self.ty, |strand, inst| {
-            self.view.flatten(inst, strand, &mut DictViewSink { pairs })
+            self.view.flatten(inst, strand, sink)
         })
     }
     fn keys<'s>(
@@ -424,29 +440,36 @@ pub(crate) struct View<'v> {
     glue: Box<dyn DictViewGlue<'v> + 'v>,
 }
 
+/// An iterator over a [`Rest`]'s pairs, from `index` on.
 pub(crate) struct Iter<'v> {
-    pairs: Vec<(Value<'v>, Value<'v>)>,
+    rest: GcObj<'v, RestObj<'v>>,
     index: usize,
 }
 
-/// A keyed rest: a snapshot of the pairs left over.
+/// A snapshot of a view's pairs, or of the pairs an unpack left over, which never changes
+/// once made.
 pub(crate) struct Rest<'v> {
-    pairs: Vec<(Value<'v>, Value<'v>)>,
+    pairs: Pairs<'v>,
 }
 
-unsafe impl<'v> Collect for Rest<'v> {
+unsafe impl<'v> crate::gc::ImmState for Rest<'v> {
     const CYCLIC: bool = true;
-    type Annex = ();
+}
+
+impl<'v> crate::gc::Annex for Rest<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        for (key, value) in &self.pairs {
-            key.accept(visit)?;
-            value.accept(visit)?;
-        }
-        ControlFlow::Continue(())
+        accept_pairs(&self.pairs, visit)
     }
-    fn clear(&mut self) {
-        self.pairs.clear()
+}
+
+pub(crate) type RestObj<'v> = crate::gc::Imm<Rest<'v>>;
+
+fn accept_pairs(pairs: &Pairs<'_>, visit: &mut dyn Visit) -> ControlFlow<()> {
+    for (key, value) in pairs {
+        key.accept(visit)?;
+        value.accept(visit)?;
     }
+    ControlFlow::Continue(())
 }
 
 unsafe impl<'v> crate::gc::ImmState for View<'v> {
@@ -465,64 +488,114 @@ unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
     type Annex = ();
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        for (key, value) in &self.pairs {
-            key.accept(visit)?;
-            value.accept(visit)?;
-        }
-        ControlFlow::Continue(())
+        self.rest.accept(visit)
     }
-    fn clear(&mut self) {
-        self.pairs.clear()
-    }
+    // A cycle through the iterator also passes through its immutable rest, and so through
+    // mutable state older than the rest, which is cleared
+    fn clear(&mut self) {}
 }
 
-fn flatten<'v, 's, I: DictLike<'v>>(
+/// Flattens `view` of `owner` into a new [`Rest`] in `out`.
+fn flatten<'v, 's, I: DictLike<'v> + ?Sized>(
     view: &I,
     owner: Instance<'v, '_, I::Object>,
     strand: &mut Strand<'v, 's>,
-) -> Result<'v, 's, Vec<(Value<'v>, Value<'v>)>> {
+    out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
     let expected = view.len(owner, strand);
-    let mut pairs = Vec::with_capacity(expected);
-    view.flatten(owner, strand, &mut DictViewSink { pairs: &mut pairs })?;
-    if pairs.len() != expected {
-        return Err(Error::runtime(
-            strand,
-            "dictionary view length changed while flattening",
-        ));
-    }
-    Ok(pairs)
+    collect_rest(strand, expected, out, |strand, sink| {
+        view.flatten(owner, strand, sink)
+    })
 }
 
+/// Flattens `view` into a new [`Rest`] in `out`.
 fn flatten_glue<'v, 's>(
     view: &View<'v>,
     strand: &mut Strand<'v, 's>,
-) -> Result<'v, 's, Vec<(Value<'v>, Value<'v>)>> {
-    let expected = view.glue.len(&view.owner, strand);
-    let mut pairs = Vec::with_capacity(expected);
-    view.glue.flatten(&view.owner, strand, &mut pairs)?;
-    if pairs.len() != expected {
-        return Err(Error::runtime(
-            strand,
-            "dictionary view length changed while flattening",
-        ));
-    }
-    Ok(pairs)
-}
-
-fn snapshot_dict<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    pairs: Vec<(Value<'v>, Value<'v>)>,
     out: impl Output<'v>,
 ) -> Result<'v, 's, ()> {
-    let mut snapshot = dict::Dict::new();
-    for (key, value) in pairs {
-        let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
-        let hash = hasher.finish();
-        snapshot.insert(strand, key, value, hash, false)?;
+    let expected = view.glue.len(&view.owner, strand);
+    collect_rest(strand, expected, out, |strand, sink| {
+        view.glue.flatten(&view.owner, strand, sink)
+    })
+}
+
+/// Stores a [`Rest`] of the pairs `fill` pushes into `out`, checking that there are
+/// `expected` of them.
+fn collect_rest<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    expected: usize,
+    out: impl Output<'v>,
+    fill: impl FnOnce(&mut Strand<'v, 's>, &mut DictViewSink<'v, '_>) -> Result<'v, 's, ()>,
+) -> Result<'v, 's, ()> {
+    let pairs = RefCell::new(Vec::with_capacity(expected));
+    // Never borrowed mutably across an allocation
+    let visit = |visitor: &mut dyn Visit| accept_pairs(&pairs.borrow(), visitor);
+    // SAFETY: `visit` visits each gathered pair once; the list changes only by pushes,
+    // which do not allocate, and by the final take, which follows the last allocation
+    unsafe {
+        with_scan!(strand, visit, {
+            fill(strand, &mut DictViewSink { pairs: &pairs })?;
+            if pairs.borrow().len() != expected {
+                return Err(Error::runtime(
+                    strand,
+                    "dictionary view length changed while flattening",
+                ));
+            }
+            let embryo = strand.builtin_types().dict_view_rest.embryo(strand);
+            embryo.finish_imm(
+                strand,
+                Rest {
+                    pairs: pairs.take(),
+                },
+                out,
+            );
+            Ok(())
+        })
     }
-    strand.builtin_types().dict.create(strand, snapshot, out);
-    Ok(())
+}
+
+/// Runs `f` over the pairs of the [`Rest`] in `rest`.
+fn with_rest_pairs<'v, 's, R>(
+    strand: &mut Strand<'v, 's>,
+    rest: &Value<'v>,
+    f: impl FnOnce(&mut Strand<'v, 's>, &[(Value<'v>, Value<'v>)]) -> R,
+) -> R {
+    let rest = rest
+        .downcast_ref(strand.builtin_types().dict_view_rest)
+        .expect("flattened rest");
+    with_pin!(strand, rest, |rest| f(strand, &rest.get().pairs))
+}
+
+/// Stores an iterator over the [`Rest`] in `rest`, from `index` on, into `out`.
+fn create_iter<'v>(
+    strand: &mut Strand<'v, '_>,
+    rest: &Value<'v>,
+    index: usize,
+    out: impl Output<'v>,
+) {
+    let embryo = strand.builtin_types().dict_view_iter.embryo(strand);
+    let rest = rest
+        .downcast_ref(strand.builtin_types().dict_view_rest)
+        .expect("flattened rest");
+    // SAFETY: the handle moves straight into the allocated iterator
+    let rest = unsafe { rest.dup() };
+    embryo.finish(strand, Iter { rest, index }, out);
+}
+
+/// Stores a dict of `pairs` into `out`.
+fn snapshot_dict<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    pairs: &[(Value<'v>, Value<'v>)],
+    mut out: impl Output<'v>,
+) -> Result<'v, 's, ()> {
+    // Hashing runs arbitrary code, so the pairs go straight into the allocated dict
+    let mut dict = Slot::from_output(&mut out);
+    strand
+        .builtin_types()
+        .dict
+        .create(strand, dict::Dict::new(), Slot::reborrow(&mut dict));
+    spread_pairs(strand, pairs, &mut dict::DictPairs::new(&dict))
 }
 
 /// Spreads pairs keyed, as a dict does: a symbol key as a symbol, any other
@@ -556,7 +629,7 @@ fn spread_pairs<'v, 's>(
 /// positional item takes its default or is missing, and a `*` rest is empty.
 fn unpack_pairs<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    pairs: Vec<(Value<'v>, Value<'v>)>,
+    pairs: &[(Value<'v>, Value<'v>)],
     mut unpack: Unpack<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let (key_rest, mixed) = (unpack.key_rest(), unpack.mixed_rest());
@@ -596,7 +669,7 @@ fn unpack_pairs<'v, 's>(
                 }
             };
 
-            let found = find_pair(strand, &pairs, &consumed, &key)?;
+            let found = find_pair(strand, pairs, &consumed, &key)?;
             if let Some((index, (_, value))) = found {
                 consumed.set(index, true);
                 Output::set(strand, slot, value);
@@ -610,15 +683,11 @@ fn unpack_pairs<'v, 's>(
         }
         Ok(())
     })?;
-    settle_leftovers(strand, &pairs, &consumed, key_rest, mixed)?;
+    settle_leftovers(strand, pairs, &consumed, key_rest, mixed)?;
     for rest in rests {
         match rest {
             UnpackItem::Rest { slot } | UnpackItem::KeyRest { slot } => {
-                let pairs = unconsumed(&pairs, &consumed);
-                strand
-                    .builtin_types()
-                    .dict_view_rest
-                    .create(strand, Rest { pairs }, slot);
+                store_unconsumed(strand, pairs, &consumed, slot)
             }
             UnpackItem::PosRest { slot } => super::tuple::create(strand, [], slot),
             _ => unreachable!(),
@@ -655,16 +724,22 @@ fn settle_pairs<'v, 's>(
     settle_leftovers(strand, pairs, consumed, sig.key_rest(), mixed)
 }
 
-fn unconsumed<'v>(
+/// Stores a [`Rest`] of the pairs not `consumed` into `out`.
+fn store_unconsumed<'v>(
+    strand: &mut Strand<'v, '_>,
     pairs: &[(Value<'v>, Value<'v>)],
     consumed: &BitBox,
-) -> Vec<(Value<'v>, Value<'v>)> {
-    pairs
+    out: impl Output<'v>,
+) {
+    let embryo = strand.builtin_types().dict_view_rest.embryo(strand);
+    // The copies move straight into the allocated rest
+    let pairs = pairs
         .iter()
         .zip(consumed.iter().by_vals())
         .filter(|(_, consumed)| !*consumed)
         .map(|((key, value), _)| (key.dup(), value.dup()))
-        .collect()
+        .collect();
+    embryo.finish_imm(strand, Rest { pairs }, out);
 }
 
 /// Stores a `*name` rest's tuple, which is empty, and a `**name` rest's
@@ -683,12 +758,24 @@ fn store_split_rests<'v>(
         super::tuple::create(strand, [], out.at(i));
     }
     if let Some(i) = sig.key_rest_slot() {
-        let pairs = unconsumed(pairs, consumed);
-        strand
-            .builtin_types()
-            .dict_view_rest
-            .create(strand, Rest { pairs }, out.at(i));
+        store_unconsumed(strand, pairs, consumed, out.at(i));
     }
+}
+
+/// Matches `pairs` against `sig` into `out`, as an unpack of a view or its rest does.
+fn unpack_rest_pairs<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    pairs: &[(Value<'v>, Value<'v>)],
+    sig: &sig::Unpack<'v, '_>,
+    out: &mut Slots<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let consumed = unpack_sig_pairs(strand, pairs, sig, out)?;
+    settle_pairs(strand, sig, pairs, &consumed)?;
+    store_split_rests(strand, sig, out, pairs, &consumed);
+    if sig.variadic == Variadic::Capture {
+        store_unconsumed(strand, pairs, &consumed, out.at(sig.len() - 1));
+    }
+    Ok(())
 }
 
 fn find_pair<'a, 'v, 's>(
@@ -928,13 +1015,12 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
             let view = this.get();
             return view.glue.values(&view.owner, strand, &key, out);
         }
-        let pairs = {
-            let view = this.get();
-            flatten_glue(view, strand)?
-        };
         // The snapshot is called across an await, so it lives in a scanned slot.
-        with_slots!(strand, |mut snapshot| {
-            snapshot_dict(strand, pairs, &mut snapshot)?;
+        with_slots!(strand, |mut rest, mut snapshot| {
+            flatten_glue(this.get(), strand, &mut rest)?;
+            with_rest_pairs(strand, &rest, |strand, pairs| {
+                snapshot_dict(strand, pairs, &mut snapshot)
+            })?;
             snapshot.op_mcall(strand, method, args, out).await
         })
     }
@@ -943,12 +1029,11 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let pairs = flatten_glue(this.get(), strand)?;
-        strand
-            .builtin_types()
-            .dict_view_iter
-            .create(strand, Iter { pairs, index: 0 }, out);
-        Ok(())
+        with_slots!(strand, |mut rest| {
+            flatten_glue(this.get(), strand, &mut rest)?;
+            create_iter(strand, &rest, 0, out);
+            Ok(())
+        })
     }
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -956,8 +1041,12 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let pairs = flatten_glue(this.get(), strand)?;
-        spread_pairs(strand, &pairs, sink)
+        with_slots!(strand, |mut rest| {
+            flatten_glue(this.get(), strand, &mut rest)?;
+            with_rest_pairs(strand, &rest, |strand, pairs| {
+                spread_pairs(strand, pairs, sink)
+            })
+        })
     }
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -965,19 +1054,12 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let pairs = flatten_glue(this.get(), strand)?;
-        let consumed = unpack_sig_pairs(strand, &pairs, sig, &mut out)?;
-        settle_pairs(strand, sig, &pairs, &consumed)?;
-        store_split_rests(strand, sig, &mut out, &pairs, &consumed);
-        if sig.variadic == Variadic::Capture {
-            let pairs = unconsumed(&pairs, &consumed);
-            strand.builtin_types().dict_view_rest.create(
-                strand,
-                Rest { pairs },
-                out.at(sig.len() - 1),
-            );
-        }
-        Ok(())
+        with_slots!(strand, |mut rest| {
+            flatten_glue(this.get(), strand, &mut rest)?;
+            with_rest_pairs(strand, &rest, |strand, pairs| {
+                unpack_rest_pairs(strand, pairs, sig, &mut out)
+            })
+        })
     }
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1010,12 +1092,20 @@ impl<'v> Protocol<'v> for Iter<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
         let mut iter = this.borrow_mut(strand)?;
-        let Some((key, value)) = iter.pairs.get(iter.index) else {
-            return Ok(false);
-        };
-        super::tuple::create_pair(strand, key, value, out);
-        iter.index += 1;
-        Ok(true)
+        let index = iter.index;
+        let found = with_pin!(strand, iter.rest, |rest| {
+            match rest.get().pairs.get(index) {
+                Some((key, value)) => {
+                    super::tuple::create_pair(strand, key, value, out);
+                    true
+                }
+                None => false,
+            }
+        });
+        if found {
+            iter.index += 1;
+        }
+        Ok(found)
     }
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1024,22 +1114,19 @@ impl<'v> Protocol<'v> for Iter<'v> {
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        let next =
+        let next = with_pin!(strand, iter.rest, |rest| {
+            let pairs = &rest.get().pairs;
             super::iter::unpack_cursor(strand, sig, &mut out, iter.index, |strand, i, out| {
-                let (key, value) = iter.pairs.get(i)?;
+                let (key, value) = pairs.get(i)?;
                 super::tuple::create_pair(strand, key, value, out);
                 Some(i + 1)
-            })?;
+            })
+        })?;
         if let Some(i) = sig.pos_rest_slot() {
-            let pairs = iter.pairs[next..]
-                .iter()
-                .map(|(key, value)| (key.dup(), value.dup()))
-                .collect();
-            strand.builtin_types().dict_view_iter.create(
-                strand,
-                Iter { pairs, index: 0 },
-                out.at(i),
-            );
+            let embryo = strand.builtin_types().dict_view_iter.embryo(strand);
+            // SAFETY: the handle moves straight into the allocated iterator
+            let rest = unsafe { iter.rest.dup() };
+            embryo.finish(strand, Iter { rest, index: next }, out.at(i));
         }
         sig.fill_empty_key_rest(strand, &mut out);
         Ok(())
@@ -1150,7 +1237,7 @@ impl<'v> Protocol<'v> for Type {
     }
 }
 
-impl<'v> Protocol<'v> for Rest<'v> {
+impl<'v> Protocol<'v> for RestObj<'v> {
     fn op_debug<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -1165,35 +1252,17 @@ impl<'v> Protocol<'v> for Rest<'v> {
         sig: &'a sig::Unpack<'v, 'a>,
         mut out: Slots<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let rest = this.borrow(strand)?;
-        let consumed = unpack_sig_pairs(strand, &rest.pairs, sig, &mut out)?;
-        settle_pairs(strand, sig, &rest.pairs, &consumed)?;
-        store_split_rests(strand, sig, &mut out, &rest.pairs, &consumed);
-        if sig.variadic == Variadic::Capture {
-            let pairs = unconsumed(&rest.pairs, &consumed);
-            strand.builtin_types().dict_view_rest.create(
-                strand,
-                Rest { pairs },
-                out.at(sig.len() - 1),
-            );
-        }
-        Ok(())
+        unpack_rest_pairs(strand, &this.get().pairs, sig, &mut out)
     }
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let pairs = this
-            .borrow(strand)?
-            .pairs
-            .iter()
-            .map(|(key, value)| (key.dup(), value.dup()))
-            .collect();
-        strand
-            .builtin_types()
-            .dict_view_iter
-            .create(strand, Iter { pairs, index: 0 }, out);
+        let embryo = strand.builtin_types().dict_view_iter.embryo(strand);
+        // The handle moves straight into the allocated iterator
+        let rest = this.to_strong();
+        embryo.finish(strand, Iter { rest, index: 0 }, out);
         Ok(())
     }
     async fn op_spread<'a, 's>(
@@ -1202,8 +1271,7 @@ impl<'v> Protocol<'v> for Rest<'v> {
         _context: SpreadContext,
         sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        let rest = this.borrow(strand)?;
-        spread_pairs(strand, &rest.pairs, sink)
+        spread_pairs(strand, &this.get().pairs, sink)
     }
 
     fn op_type<'a, 's>(
@@ -1433,6 +1501,130 @@ mod tests {
                     assert_eq!(native.borrow_unwrap().0, vec![(1, Some(10))]);
                 });
             }).await;
+        });
+    }
+
+    /// A view whose flatten makes each pair afresh, so the flattened snapshot is all that
+    /// holds them: `"k<i>"` to a one-element array of `i`.
+    struct Fresh;
+
+    impl<'v> DictLike<'v> for Fresh {
+        type Object = Fixture;
+
+        const NAME: &'v str = "Fresh";
+        const MODULE: &'v str = "test";
+
+        fn len(&self, this: Instance<'v, '_, Fixture>, _strand: &mut Strand<'v, '_>) -> usize {
+            this.borrow_unwrap().0.len()
+        }
+
+        fn get<'a, 's>(
+            &self,
+            _this: Instance<'v, '_, Fixture>,
+            _strand: &'a mut Strand<'v, 's>,
+            _key: &Value<'v>,
+            _instance: i64,
+            _out: Slot<'v, 'a>,
+        ) -> Result<'v, 's, bool> {
+            Ok(false)
+        }
+
+        fn flatten<'s>(
+            &self,
+            this: Instance<'v, '_, Fixture>,
+            strand: &mut Strand<'v, 's>,
+            sink: &mut DictViewSink<'v, '_>,
+        ) -> Result<'v, 's, ()> {
+            for i in 0..this.borrow_unwrap().0.len() {
+                with_slots!(strand, |mut value| {
+                    strand.new_array(&mut value);
+                    value.as_array(strand).unwrap().push(strand, i as i64)?;
+                    // Collect between pairs, while earlier ones are only in the snapshot
+                    strand.vm().collect_full();
+                    sink.push(strand, format!("k{i}").as_str(), &value);
+                    Ok::<_, Error<'v, 's>>(())
+                })?;
+            }
+            Ok(())
+        }
+    }
+
+    /// Checks that `key` and `value` are the `i`th pair [`Fresh`] makes.
+    fn check_fresh<'v>(strand: &mut Strand<'v, '_>, i: usize, key: &Value<'v>, value: &Value<'v>) {
+        let text = key.as_str(strand.vm()).unwrap();
+        let text = strand.access(|access| text.as_str(access).to_owned());
+        assert_eq!(text, format!("k{i}"));
+        with_slots!(strand, |mut element| {
+            let array = value.as_array(strand).unwrap();
+            assert!(array.get(strand, 0, &mut element).unwrap());
+            assert_eq!(element.as_int(strand), Some(i as i128));
+        })
+    }
+
+    /// Collects before checking each pair it receives.
+    struct CheckFresh(usize);
+
+    impl<'v, 's> Spread<'v, 's> for CheckFresh {
+        fn positional(
+            &mut self,
+            _strand: &mut Strand<'v, 's>,
+            _value: Slot<'v, '_>,
+        ) -> Result<'v, 's, ()> {
+            panic!("a view spreads only keyed pairs")
+        }
+
+        fn symbol(
+            &mut self,
+            _strand: &mut Strand<'v, 's>,
+            _key: Sym<'v, '_>,
+            _value: Slot<'v, '_>,
+        ) -> Result<'v, 's, ()> {
+            panic!("the keys are strings")
+        }
+
+        fn keyed(
+            &mut self,
+            strand: &mut Strand<'v, 's>,
+            key: Slot<'v, '_>,
+            value: Slot<'v, '_>,
+        ) -> Result<'v, 's, ()> {
+            strand.vm().collect_full();
+            check_fresh(strand, self.0, &key, &value);
+            self.0 += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn flattened_pairs_survive_collections() {
+        with_builder(async |vm| {
+            let ty = vm.register_type::<Fixture>();
+            vm.enter_with_slots::<4, _>(
+                async move |strand, [mut owner, mut it, mut pair, mut part]| {
+                    ty.create(strand, Fixture(vec![(0, None); 3]), &mut owner);
+                    let cast = ty.cast(&owner).unwrap();
+                    with_instance!(strand, cast, |native| {
+                        let mut sink = CheckFresh(0);
+                        DictView::spread(native, &Fresh, strand, SpreadContext::Pairs, &mut sink)
+                            .unwrap();
+                        assert_eq!(sink.0, 3);
+                        DictView::iter(native, &Fresh, strand, &mut it).unwrap();
+                    });
+                    strand.vm().collect_full();
+                    for i in 0..3 {
+                        assert!(it.op_next(strand, Slot::reborrow(&mut pair)).await.unwrap());
+                        strand.vm().collect_full();
+                        with_slots!(strand, |mut key| {
+                            let tuple = pair.as_tuple(strand.vm()).unwrap();
+                            assert!(tuple.get(strand, 0, &mut key).unwrap());
+                            assert!(tuple.get(strand, 1, &mut part).unwrap());
+                            check_fresh(strand, i, &key, &part);
+                        });
+                    }
+                    assert!(!it.op_next(strand, Slot::reborrow(&mut pair)).await.unwrap());
+                },
+            )
+            .await;
         });
     }
 }

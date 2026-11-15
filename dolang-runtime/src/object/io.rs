@@ -34,7 +34,7 @@ use futures::{
 };
 
 use crate::{
-    arg::{Arg, Args, OwnedItem},
+    arg::{Arg, Args},
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     io::{
@@ -52,13 +52,10 @@ use crate::{
             is_special_mcall, members, recv_special_mcall,
         },
     },
-    strand::{InterruptMask, Strand},
+    strand::{InterruptMask, Strand, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{
-        BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, ValueCell, fmt::Format,
-        with_u8_slice,
-    },
+    value::{BinEmbryo, Input, Output, Root, Slot, TypeObject, Value, fmt::Format, with_u8_slice},
     vm::Vm,
     with_slots,
 };
@@ -422,26 +419,29 @@ async fn write_all<'v, 's>(
     stream: &Value<'v>,
     mut args: Args<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    let mut items: Vec<OwnedItem<'v>> = Vec::with_capacity(args.len() + 1);
-    // Headroom for the receiver.
-    items.push((None, ValueCell::default()));
-    let mut len = 0;
-    for arg in args.reborrow() {
-        let piece = match arg {
-            Arg::Pos(piece) => piece,
-            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        };
-        len += piece_len(strand, &piece)?;
-        items.push((None, ValueCell::new(strand, &piece)));
-    }
-    if len == 0 {
-        return Ok(());
-    }
+    let count_args = args.len();
     with_slots!(strand, |mut count, mut rest| {
-        let write = Sym::well_known(sym::WRITE);
-        stream
-            .method(strand, write, Args::new_owned(&items, 1), &mut count)
-            .await?;
+        let mut len = 0;
+        // The copies sit in rooted slots after one of headroom for the receiver
+        with_slots_dynamic!(strand, count_args + 1, |mut pieces| {
+            for (index, arg) in args.reborrow().enumerate() {
+                let piece = match arg {
+                    Arg::Pos(piece) => piece,
+                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
+                };
+                len += piece_len(strand, &piece)?;
+                Output::set(strand, pieces.at(index + 1), &piece);
+            }
+            if len == 0 {
+                return Ok(());
+            }
+            let sig = vec![None; count_args];
+            // Safety: the cells are only read by the frame's scan, never mutably borrowed,
+            // and there is one per signature entry after the headroom
+            let pieces = unsafe { Args::new(pieces.as_inner(), &sig, 1) };
+            let write = Sym::well_known(sym::WRITE);
+            stream.method(strand, write, pieces, &mut count).await
+        })?;
         let mut skip = written(strand, &count, len)?;
         if skip == len {
             return Ok(());

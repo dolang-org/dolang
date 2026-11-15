@@ -188,10 +188,13 @@ impl<'v> Set<'v> {
         }
     }
 
+    /// Inserts `value`, whose hash is `hash`, unless an equal value is already a member.
+    /// The value stays in its slot, which roots it, until the lookup, which can run code,
+    /// is over.
     pub(crate) fn insert<'s>(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        value: Value<'v>,
+        mut value: Slot<'v, '_>,
         hash: u64,
     ) -> Result<'v, 's, bool> {
         if super::table::find(&self.inner, hash, |entry| value.eq(strand, &entry.value))?.is_some()
@@ -205,7 +208,7 @@ impl<'v> Set<'v> {
         {
             Ok(_) => Ok(false),
             Err(insert) => {
-                self.insert_at_index(hash, insert, value);
+                self.insert_at_index(hash, insert, value.take());
                 Ok(true)
             }
         }
@@ -275,18 +278,47 @@ unsafe impl<'v> Collect for Set<'v> {
     }
 }
 
-struct SetSpread<'a, 'v>(&'a mut Set<'v>);
+/// Stores a set into `out`, made by `init` once its object is allocated, then lets `fill`
+/// add to it there, where what it adds is rooted.
+fn fill_new_set<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    mut out: Slot<'v, '_>,
+    init: impl FnOnce() -> Set<'v>,
+    fill: impl FnOnce(&mut Strand<'v, 's>, &mut Set<'v>) -> Result<'v, 's, ()>,
+) -> Result<'v, 's, ()> {
+    let embryo = strand.builtin_types().set.embryo(strand);
+    embryo.finish(strand, init(), Slot::reborrow(&mut out));
+    let set = out
+        .downcast_ref(strand.builtin_types().set)
+        .expect("new set");
+    with_pin!(strand, set, |set| {
+        let mut set = set.borrow_mut().expect("new set");
+        fill(strand, &mut set)
+    })
+}
+
+/// Collects spread values into a set. The set object is already allocated, so each value is
+/// rooted as soon as it arrives, and is borrowed only for each insert.
+struct SetSpread<'a, 'v>(&'a Value<'v>);
 
 impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
     fn positional(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut value: Slot<'v, '_>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
         value.op_hash(strand, &mut hasher)?;
         let hash = hasher.finish();
-        self.0.insert(strand, value.take(), hash)?;
+        let set = self
+            .0
+            .downcast_ref(strand.builtin_types().set)
+            .expect("set accumulator");
+        with_pin!(strand, set, |set| {
+            set.borrow_mut()
+                .ok_or_else(|| Error::concurrency(strand))?
+                .insert(strand, value, hash)
+        })?;
         Ok(())
     }
 
@@ -547,12 +579,12 @@ impl<'v> Protocol<'v> for Set<'v> {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::ADD => {
-                unpack!(strand, args => mut value);
+                unpack!(strand, args => value);
                 let mut hasher = strand.vm().hasher();
                 value.op_hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let mut borrow = this.borrow_mut(strand)?;
-                borrow.insert(strand, value.take(), hash)?;
+                borrow.insert(strand, value, hash)?;
                 Ok(())
             }
             sym::DELETE => {
@@ -576,11 +608,9 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::COPY => {
                 unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
-                strand
-                    .vm()
-                    .builtin_types()
-                    .set
-                    .create(strand, borrow.cloned(), out);
+                // The copies move straight into the allocated set
+                let embryo = strand.builtin_types().set.embryo(strand);
+                embryo.finish(strand, borrow.cloned(), out);
                 Ok(())
             }
             sym::CONTAINS => {
@@ -605,20 +635,21 @@ impl<'v> Protocol<'v> for Set<'v> {
                 match method.tag() {
                     sym::UNION => {
                         let this = this.borrow(strand)?;
-                        let mut result = this.cloned();
                         with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                            result.extend_from(strand, &other)?;
-                            strand.builtin_types().set.create(strand, result, out);
-                            Ok(())
+                            fill_new_set(
+                                strand,
+                                out,
+                                || this.cloned(),
+                                |strand, result| result.extend_from(strand, &other),
+                            )
                         })?;
                     }
                     sym::INTERSECT => {
                         let left = this.borrow(strand)?;
                         with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                            let mut result = Self::new();
-                            unsafe {
+                            fill_new_set(strand, out, Self::new, |strand, result| unsafe {
                                 for entry in &left.order {
                                     let Some(bucket) = entry else {
                                         continue;
@@ -628,17 +659,15 @@ impl<'v> Protocol<'v> for Set<'v> {
                                         result.insert_unique(strand, &entry.value, entry.hash)?;
                                     }
                                 }
-                            }
-                            strand.builtin_types().set.create(strand, result, out);
-                            Ok(())
+                                Ok(())
+                            })
                         })?;
                     }
                     sym::DIFF => {
                         let left = this.borrow(strand)?;
                         with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                            let mut result = Self::new();
-                            unsafe {
+                            fill_new_set(strand, out, Self::new, |strand, result| unsafe {
                                 for entry in &left.order {
                                     let Some(bucket) = entry else {
                                         continue;
@@ -648,17 +677,15 @@ impl<'v> Protocol<'v> for Set<'v> {
                                         result.insert_unique(strand, &entry.value, entry.hash)?;
                                     }
                                 }
-                            }
-                            strand.builtin_types().set.create(strand, result, out);
-                            Ok(())
+                                Ok(())
+                            })
                         })?;
                     }
                     sym::SYM_DIFF => {
                         let left = this.borrow(strand)?;
                         with_pin!(strand, other, |other| {
                             let other = other.borrow().ok_or_else(|| Error::concurrency(strand))?;
-                            let mut result = Self::new();
-                            unsafe {
+                            fill_new_set(strand, out, Self::new, |strand, result| unsafe {
                                 for entry in &left.order {
                                     let Some(bucket) = entry else {
                                         continue;
@@ -677,9 +704,8 @@ impl<'v> Protocol<'v> for Set<'v> {
                                         result.insert_unique(strand, &entry.value, entry.hash)?;
                                     }
                                 }
-                            }
-                            strand.builtin_types().set.create(strand, result, out);
-                            Ok(())
+                                Ok(())
+                            })
                         })?;
                     }
                     sym::IS_SUBSET => {
@@ -795,19 +821,17 @@ impl<'v> Protocol<'v> for Type {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => ?items);
-        let set = if let Some(items) = items {
-            let mut set = Set::new();
-            let mut spread = SetSpread(&mut set);
-            // FIXME: `set` is not GC-scannable, but then again if it were it would also
-            // be mutably borrowed, which would inhibit GC.  This needs a resolution.
+        // Hashing runs arbitrary code, so the values go straight into the allocated set
+        let mut set = out;
+        strand
+            .builtin_types()
+            .set
+            .create(strand, Set::new(), Slot::reborrow(&mut set));
+        if let Some(items) = items {
             items
-                .op_spread(strand, SpreadContext::Sequence, &mut spread)
+                .op_spread(strand, SpreadContext::Sequence, &mut SetSpread(&set))
                 .await?;
-            set
-        } else {
-            Set::new()
-        };
-        strand.builtin_types().set.create(strand, set, out);
+        }
         Ok(())
     }
 

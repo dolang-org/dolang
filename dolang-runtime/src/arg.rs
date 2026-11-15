@@ -1,9 +1,15 @@
-use std::{marker::PhantomData, mem::MaybeUninit};
+use std::{
+    cell::OnceCell,
+    marker::PhantomData,
+    mem::MaybeUninit,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     error::{Error, Result},
+    frame,
     object::{protocol::GcObj, sym::SymObj},
-    strand::Strand,
+    strand::{SlotScope, Strand},
     sym::Sym,
     value::{self, Input, Slot, ValueCell},
     vm::Alloc,
@@ -20,8 +26,8 @@ struct HeadroomCells<T, const N: usize> {
     tail: [T; N],
 }
 
-impl<T, const N: usize> HeadroomCells<T, N> {
-    fn as_slice(&self) -> &[T] {
+impl<T, const N: usize> AsRef<[T]> for HeadroomCells<T, N> {
+    fn as_ref(&self) -> &[T] {
         // SAFETY: repr(C) guarantees head + tail are laid out contiguously.
         // Pointer derived from &self has provenance over the entire struct.
         unsafe { std::slice::from_raw_parts(self as *const Self as *const T, N + 1) }
@@ -29,13 +35,14 @@ impl<T, const N: usize> HeadroomCells<T, N> {
 }
 
 /// Argument cells for [`call!`](crate::call) and [`method!`](crate::method), declared in
-/// the caller's frame.
+/// the caller's frame and rooted by a scan frame while the call runs.
 #[doc(hidden)]
 pub struct ArgFrame<'v, 'i, const N: usize> {
     // N+1 contiguous cells: head is headroom (NIL), tail[0..N] hold the arguments
     cells: HeadroomCells<ValueCell<'v>, N>,
     // Where each argument moved from, restored after the call
     replace: [Option<Slot<'v, 'i>>; N],
+    scan: OnceCell<frame::Scan<'v>>,
 }
 
 impl<'v, 'i, const N: usize> ArgFrame<'v, 'i, N> {
@@ -47,26 +54,55 @@ impl<'v, 'i, const N: usize> ArgFrame<'v, 'i, N> {
                 tail: std::array::from_fn(|_| ValueCell::default()),
             },
             replace: [const { None }; N],
+            scan: OnceCell::new(),
         }
     }
 
-    /// Take `inputs` into the frame, returning the arguments and a guard that moves values
-    /// taken from rooted locations back when dropped.
+    /// Root the frame's cells on `strand`, take `inputs` into them, and return the
+    /// arguments with a scope that moves values taken from rooted locations back, then
+    /// pops the frame, when dropped.
+    ///
+    /// # Safety
+    ///
+    /// The scope must be dropped, not forgotten, before the frame is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the frame was entered before.
     #[inline]
-    pub fn enter<'f>(
+    pub unsafe fn enter<'s, 'f>(
         &'f mut self,
-        strand: &mut Strand<'v, '_>,
+        strand: &'f mut Strand<'v, 's>,
         inputs: &'i mut [&mut dyn Input<'v>; N],
         sig: &'f [Option<Sym<'v, 'f>>; N],
-    ) -> (ArgGuard<'v, 'i, 'f>, Args<'v, 'f>) {
-        marshal(strand, &self.cells.tail, inputs, &mut self.replace);
+    ) -> (ArgScope<'v, 's, 'i, 'f>, Args<'v, 'f>) {
+        let Self {
+            cells,
+            replace,
+            scan,
+        } = self;
+        let cells: &'f HeadroomCells<_, N> = cells;
+        assert!(
+            scan.set(frame::Scan::cells(Some(strand.fp), cells)).is_ok(),
+            "argument frame entered twice"
+        );
+        // Safety: the caller's contract; the scan reads `cells`, which `'f` keeps live, and
+        // visits each cell once
+        let mut scope = unsafe { strand.enter_scan(scan.get().unwrap()) };
+        marshal(&mut scope, &cells.tail, inputs, replace);
         let guard = ArgGuard {
-            cells: &self.cells.tail,
-            replace: &mut self.replace,
+            cells: &cells.tail,
+            replace,
         };
-        // Safety: the arguments are not scanned, here or during the call
-        let args = unsafe { Args::new(self.cells.as_slice(), sig, 1) };
-        (guard, args)
+        // Safety: the cells are only read by the scan, never mutably borrowed
+        let args = unsafe { Args::new(cells.as_ref(), sig, 1) };
+        (
+            ArgScope {
+                _guard: guard,
+                scope,
+            },
+            args,
+        )
     }
 }
 
@@ -77,9 +113,33 @@ impl<const N: usize> Default for ArgFrame<'_, '_, N> {
     }
 }
 
-/// Moves arguments back to the rooted locations they were taken from when dropped.
+/// A [`Strand`] handle whose frame roots an entered [`ArgFrame`].  Dropping it moves
+/// arguments back to the rooted locations they were taken from, then pops the frame.
 #[doc(hidden)]
-pub struct ArgGuard<'v, 'i, 'f> {
+pub struct ArgScope<'v, 's, 'i, 'f> {
+    // Dropped first, so values move back while the cells are still rooted
+    _guard: ArgGuard<'v, 'i, 'f>,
+    scope: SlotScope<'v, 's, 'f>,
+}
+
+impl<'v, 's> Deref for ArgScope<'v, 's, '_, '_> {
+    type Target = Strand<'v, 's>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.scope
+    }
+}
+
+impl<'v, 's> DerefMut for ArgScope<'v, 's, '_, '_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.scope
+    }
+}
+
+/// Moves arguments back to the rooted locations they were taken from when dropped.
+struct ArgGuard<'v, 'i, 'f> {
     cells: &'f [ValueCell<'v>],
     replace: &'f mut [Option<Slot<'v, 'i>>],
 }
@@ -658,9 +718,11 @@ macro_rules! call {
             let mut out = $out;
             let strand: &mut $crate::strand::Strand<'_, '_> = $strand;
             let mut frame = $crate::arg::ArgFrame::new();
-            let (_guard, args) = frame.enter(strand, &mut inputs, &sig);
+            // Safety: the scope is a local of this block that nothing can move or forget
+            #[allow(unused_unsafe)]
+            let (mut scope, args) = unsafe { frame.enter(strand, &mut inputs, &sig) };
             let out = $crate::value::Slot::from_output(&mut out);
-            $crate::value::Value::op_call(&rcvr, strand, args, out).await
+            $crate::value::Value::op_call(&rcvr, &mut *scope, args, out).await
         }
     };
     ($strand: expr, $rcvr: expr, $($rest: tt)+) => {
@@ -713,9 +775,11 @@ macro_rules! method {
             let mut out = $out;
             let strand: &mut $crate::strand::Strand<'_, '_> = $strand;
             let mut frame = $crate::arg::ArgFrame::new();
-            let (_guard, args) = frame.enter(strand, &mut inputs, &sig);
+            // Safety: the scope is a local of this block that nothing can move or forget
+            #[allow(unused_unsafe)]
+            let (mut scope, args) = unsafe { frame.enter(strand, &mut inputs, &sig) };
             let out = $crate::value::Slot::from_output(&mut out);
-            $crate::value::Value::op_mcall(&rcvr, strand, method, args, out).await
+            $crate::value::Value::op_mcall(&rcvr, &mut *scope, method, args, out).await
         }
     };
     ($strand: expr, $rcvr: expr, $method: expr, $($rest: tt)+) => {
@@ -728,7 +792,8 @@ mod tests {
     use super::{Arg, Args};
     use crate::{
         test_support::with_vm,
-        value::{Nil, ValueCell},
+        value::{Nil, Output, ValueCell},
+        vm::AllocExt,
     };
 
     #[test]
@@ -744,6 +809,31 @@ mod tests {
             args.prepend_self(strand, Nil);
             assert!(matches!(args.next(), Some(Arg::Pos(_))));
             assert!(args.next().is_none());
+        });
+    }
+
+    #[test]
+    fn call_arguments_survive_collections() {
+        with_vm::<3, _>(async |strand, [mut func, mut arg, mut out]| {
+            strand.native_function(
+                async |strand, args, out| {
+                    unpack!(strand, args => value);
+                    // The argument was taken from the caller's slot, so only the call's
+                    // cell holds it
+                    strand.vm().collect_full();
+                    Output::set(strand, out, &value);
+                    Ok(())
+                },
+                &mut func,
+            );
+            strand.new_array(&mut arg);
+            arg.as_array(strand).unwrap().push(strand, 7_i64).unwrap();
+            call!(strand, &func, &mut arg, &mut out).unwrap();
+            strand.vm().collect_full();
+            for value in [&arg, &out] {
+                let array = value.as_array(strand).unwrap();
+                assert_eq!(array.len(strand).unwrap(), 1);
+            }
         });
     }
 }
