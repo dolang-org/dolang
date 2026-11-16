@@ -530,15 +530,16 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
 # ## Unpacking
 #
 # A row unpacks by position, or by symbol naming the column. A `...rest` term
-# yields a read-only [`RowRest`](sqlite.RowRest) over the remaining columns.
-# Unpacking leaves the row unchanged.
+# yields a read-only view of the remaining columns. It iterates name/value
+# pairs if the pattern names a column, and values otherwise. Unpacking leaves
+# the row unchanged, and statement and row invalidation apply to its rests.
 #
 # ```
 # let id :name :age ...rest = row
-# for value = rest
-#   echo $ str value
+# for column value = rest
+#   echo "$column = $(str value)"
 # ```
-pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
+pub class Row: @Index[Int | Str, Value] @Spread[{...}] @Unpack[{...}, Rest: BaseSeq[{...}]]
   # Reads a column by position or by name.
   #
   # ## Errors
@@ -560,20 +561,13 @@ pub class Row: @Index[Int | Str, Value] @Unpack[{...}, Rest: RowRest]
     ...
 
   # Destructures the row by position or by column name.
-  pub def (unpack) self -> Unpack[{...}, Rest: RowRest]
+  pub def (unpack) self -> Unpack[{...}, Rest: BaseSeq[{...}]]
     ...
 
   # Spreads the columns, by name where keys are allowed and by position otherwise.
   pub def (spread) self -> Spread[{...}]
     ...
 
-
-# Reads leftover columns without advancing a cursor.
-#
-# A positional rest spreads and iterates values. A keyed rest iterates
-# name/value pairs and spreads keyed items, so it cannot spread into an array
-# or tuple. Statement and row invalidation apply to the rest.
-pub @class RowRest: Iterable[Value] Unpack[{...}, Rest: RowRest]
 
 
 # A database transaction in progress.

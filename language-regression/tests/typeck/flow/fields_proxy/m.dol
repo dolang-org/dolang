@@ -76,7 +76,7 @@ pub def open_keys o @ Open
 # LL |   view[:other:] = 1
 #    |                   ^
 
-# A rest reads the members left over, and sets none
+# A rest destructures, spreads and iterates the members left over
 pub def unpacks p @ Point
   let :x :y :label = fields(p)
   let _ = [x, y, label]
@@ -85,16 +85,8 @@ pub def unpacks p @ Point
   let :y ..._ = rest
   let _ = y
   #   ^: flow std.Str
-  let _ = rest[:label:]
-  #   ^: flow std.Str
-  rest[:y:] = ""
-  # error: expected `Never`, found `:y:`
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   rest[:y:] = ""
-  #    |        ^^^
-  #    |
-  #    = note: `:y:` does not fit `Never`
+  let _ = rest
+  #       ^~~~: flow std.BaseMap[{y: std.Str, label: std.Str}]
   let :x = fields(p)
   # error: `std.FieldProxy[{x: std.Int, y: std.Str, label: std.Str}, {?x: std.Int, ?y: std.Str}]` can never unpack as this pattern
   #   --> m.dol:LL:LL

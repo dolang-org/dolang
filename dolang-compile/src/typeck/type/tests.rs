@@ -929,6 +929,44 @@ fn substitution_replaces_the_outer_group_and_shifts_under_quantifiers() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn open_groups_count_the_groups_a_type_refers_into() {
+    let mut db = Database::new();
+    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let a = reference(&mut db, 0, 0, Kind::Type);
+    let outer = reference(&mut db, 2, 0, Kind::Type);
+    assert_eq!(db.open_groups(one), 0);
+    assert_eq!(db.open_groups(a), 1);
+    let func = function(&mut db, &[one], outer);
+    assert_eq!(db.open_groups(func), 3);
+    // A quantifier's own references are local, and those past it one nearer
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let closed = quantify(&mut db, vec![binder(Kind::Type)], local);
+    assert_eq!(db.open_groups(closed), 0);
+    let past = reference(&mut db, 1, 0, Kind::Type);
+    let inner = function(&mut db, &[local], past);
+    let open = quantify(&mut db, vec![binder(Kind::Type)], inner);
+    assert_eq!(db.open_groups(open), 1);
+    // The deepest reference still counts exactly
+    let deepest = reference(&mut db, usize::from(u16::MAX), 0, Kind::Type);
+    assert_eq!(db.open_groups(deepest), u32::from(u16::MAX) + 1);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn replacing_a_closed_type_rebuilds_what_contains_it() {
+    let mut db = Database::new();
+    let one = intern(&mut db, Type::Literal(Literal::Int(1)));
+    let two = intern(&mut db, Type::Literal(Literal::Int(2)));
+    let three = intern(&mut db, Type::Literal(Literal::Int(3)));
+    let body = function(&mut db, &[one, two], one);
+    let expected = function(&mut db, &[three, two], three);
+    assert_eq!(db.replace_closed(body, one, three), expected);
+    // A type without it is itself
+    assert_eq!(db.replace_closed(body, three, two), body);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn merging_groups_undoes_splitting() {
     let mut db = Database::new();
     let a = reference(&mut db, 0, 0, Kind::Type);

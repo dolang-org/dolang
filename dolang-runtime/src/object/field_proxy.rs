@@ -21,13 +21,13 @@ use super::protocol::{
 };
 
 /// A live field proxy, or a read-only rest over its unmatched readable fields.
-pub(crate) struct FieldIter<'v> {
+pub(crate) struct FieldProxy<'v> {
     receiver: Value<'v>,
     symbols: VecDeque<GcObj<'v, SymObj>>,
     writable: Vec<GcObj<'v, SymObj>>,
 }
 
-impl<'v> FieldIter<'v> {
+impl<'v> FieldProxy<'v> {
     pub(crate) fn new(receiver: Value<'v>, symbols: VecDeque<GcObj<'v, SymObj>>) -> Self {
         Self {
             receiver,
@@ -37,7 +37,7 @@ impl<'v> FieldIter<'v> {
     }
 }
 
-unsafe impl<'v> Collect for FieldIter<'v> {
+unsafe impl<'v> Collect for FieldProxy<'v> {
     const CYCLIC: bool = true;
     type Annex = ();
 
@@ -74,7 +74,7 @@ fn find_symbol<'v>(symbols: &VecDeque<GcObj<'v, SymObj>>, wanted: Sym<'v, '_>) -
         .ok()
 }
 
-impl<'v> Protocol<'v> for FieldIter<'v> {
+impl<'v> Protocol<'v> for FieldProxy<'v> {
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -135,7 +135,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         embryo.finish(
             strand,
             FieldPairs {
-                fields: FieldIter::new(receiver, symbols),
+                fields: FieldProxy::new(receiver, symbols),
                 index: 0,
             },
             out,
@@ -222,7 +222,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
         }
 
         if let Some(slot) = child {
-            let embryo = strand.builtin_types().field_iter.embryo(strand);
+            let embryo = strand.builtin_types().field_proxy.embryo(strand);
             // SAFETY: the symbols move straight into the allocated proxy
             let symbols = symbols
                 .iter()
@@ -232,7 +232,7 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
                 .collect();
             // SAFETY: as for the symbols
             let receiver = unsafe { receiver.dup() };
-            embryo.finish(strand, FieldIter::new(receiver, symbols), slot);
+            embryo.finish(strand, FieldProxy::new(receiver, symbols), slot);
         }
         Ok(())
     }
@@ -269,7 +269,7 @@ pub(crate) fn create<'v, 's>(
         let inspect = ty
             .op_inspect(strand)
             .ok_or_else(|| Error::unsupported(strand, "field iteration"))?;
-        let embryo = strand.builtin_types().field_iter.embryo(strand);
+        let embryo = strand.builtin_types().field_proxy.embryo(strand);
         let mut symbols = VecDeque::new();
         let mut writable = Vec::new();
         for member in inspect.members {
@@ -288,7 +288,7 @@ pub(crate) fn create<'v, 's>(
         symbols.make_contiguous().sort_by_key(|key| key.tag());
         // SAFETY: the iterator is allocated; the receiver and member names move straight
         // into it
-        let fields = FieldIter {
+        let fields = FieldProxy {
             receiver: unsafe { receiver.dup() },
             symbols,
             writable,
@@ -299,7 +299,7 @@ pub(crate) fn create<'v, 's>(
 }
 
 pub(crate) struct FieldPairs<'v> {
-    fields: FieldIter<'v>,
+    fields: FieldProxy<'v>,
     index: usize,
 }
 

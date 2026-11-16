@@ -9,7 +9,7 @@ pub(crate) mod class;
 pub(crate) mod dict;
 pub mod dict_view;
 pub(crate) mod error;
-pub(crate) mod field_iter;
+pub(crate) mod field_proxy;
 pub mod flags;
 pub(crate) mod float;
 pub(crate) mod function;
@@ -127,8 +127,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) error: TypeHandle<'v, error::BoxedObj<'v>>,
     pub(crate) f64: TypeHandle<'v, float::FloatObj>,
     pub(crate) flags_iter: TypeHandle<'v, flags::IterObj<'v>>,
-    pub(crate) field_pairs: TypeHandle<'v, field_iter::FieldPairs<'v>>,
-    pub(crate) field_iter: TypeHandle<'v, field_iter::FieldIter<'v>>,
+    pub(crate) field_pairs: TypeHandle<'v, field_proxy::FieldPairs<'v>>,
+    pub(crate) field_proxy: TypeHandle<'v, field_proxy::FieldProxy<'v>>,
     pub(crate) function: TypeHandle<'v, function::FunctionObj<'v>>,
     pub(crate) native_function: TypeHandle<'v, function::NativeFunctionObj<'v>>,
     pub(crate) int: TypeHandle<'v, int::IntObj>,
@@ -289,7 +289,7 @@ impl<'v> BuiltinTypes<'v> {
             error: types.register_type_handle(),
             f64: types.register_type_handle(),
             flags_iter: types.register_type_handle(),
-            field_iter: types.register_type_handle(),
+            field_proxy: types.register_type_handle(),
             field_pairs: types.register_type_handle(),
             function: types.register_type_handle(),
             native_function: types.register_type_handle(),

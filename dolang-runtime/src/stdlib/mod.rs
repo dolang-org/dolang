@@ -118,7 +118,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("static", member_scopes.statik)
         .function("fields", async move |strand, args, out| {
             unpack!(strand, args => value);
-            crate::object::field_iter::create(strand, &value, out)
+            crate::object::field_proxy::create(strand, &value, out)
         })
         .function("final", async move |strand, args, out| {
             unpack!(strand, args => class);

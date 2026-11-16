@@ -31,10 +31,10 @@ pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   #       ^: flow std.Bool | std.Str
   let _ ...r = source
   let _ = r
-  #       ^: flow std.Spread[{?std.Str, *std.Bool}]
+  #       ^: flow std.UnpackRest[{?std.Str, *std.Bool}]
   let _ _ ...t = source
   let _ = t
-  #       ^: flow std.Spread[std.Bool]
+  #       ^: flow std.UnpackRest[std.Bool]
 
 pub def keyed()
   let :a ...r = (a: 1, b: "x")
@@ -114,7 +114,7 @@ pub def positional_rests d @ Record[Int, ...Str, a: Bool] ...cmd @ Str
     #       ^~~: flow std.Str
   let _ *t = (1, "a", true)
   let _ = t
-  #       ^: flow (std.Str, std.Bool)
+  #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
 
 # Generic code can iterate a `Seq`'s or `Map`'s rests
 pub def protocol_rests s @ Seq[Int] m @ Map[{Int, a: Str}]
@@ -168,7 +168,24 @@ pub @class Pairs[A, B]: Unpack[{A, B}, Rest: Pairs[A, B]]
 pub def pairs p @ Pairs[Int, Str]
   let _ ...rest = p
   let _ = rest
-  #       ^~~~: flow std.Spread[{std.Str}]
+  #       ^~~~: flow std.UnpackRest[{std.Str}]
+
+# A default rest's own rests destructure the same way
+pub def default_rests source @ Unpack[{Int, Str, *Bool}]
+  let _ ...r = source
+  let _ ...s = r
+  let _ = s
+  #       ^: flow std.UnpackRest[std.Bool]
+
+# A `Rest` may fix a binder to a closed schema, and unfolds the same way each
+# time its bound is checked
+pub @class Tagged[S @ {...}, M @ {...}]: Unpack[S, Rest: Tagged[S, {}]]
+  pub def tags self -> Unpack[M]
+
+pub def tagged t @ Tagged[{Int, Str}, {a: Int}]
+  let _ ...rest = t
+  let _ = rest
+  #       ^~~~: flow m.Tagged[{std.Str}, {}]
 
 pub def possible s @ Str
   let a _b = [4]

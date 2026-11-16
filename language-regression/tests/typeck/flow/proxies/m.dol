@@ -18,11 +18,6 @@ pub def point p @ Point
 
 # A proxy narrower than the declared ancestor gives its own schema
 pub class Narrow: @Unpack[{x: Int | Str}]
-  # error: `Narrow` does not provide `(spread)`, which `Spread` requires
-  #   --> m.dol:LL:LL
-  #    |
-  # LL | pub class Narrow: @Unpack[{x: Int | Str}]
-  #    |                    ^^^^^^
   def (unpack) _self -> Dict[{x: Int}]
     ...
 

@@ -192,7 +192,7 @@ pub @let PortableScope = $
 #
 # Named fields apply the defaults and conversions prescribed by the
 # os-release specification.
-pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] Iterable[Tuple[Str, Str]]
+pub class OsRelease: @Index[Str, Str] @BaseMap[Str, Str] Iterable[Tuple[Str, Str]]
   field values @ Dict[Str, Str]
 
   def (init) self values @ Dict[Str, Str]
@@ -207,7 +207,7 @@ pub class OsRelease: @Index[Str, Str] @Unpack[Str, Str, Rest: Unpack[Str, Str]] 
     self.#values.iter()
 
   # Destructures the parsed `os-release` assignments.
-  pub def (unpack) self -> Unpack[Str, Str, Rest: Unpack[Str, Str]]
+  pub def (unpack) self -> BaseMap[Str, Str]
     self.#values
 
   # Spreads the parsed `os-release` assignments.

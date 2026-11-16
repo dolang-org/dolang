@@ -557,14 +557,20 @@ pub @class Spread[S @ {...}]
   pub def (spread) self -> Spread[S]
 
 
+# An [`Unpack`](std.Unpack) whose rests destructure the same way, all the way
+# down. The default rest of an `Unpack`.
+pub @let UnpackRest[S @ {...}] = Unpack[S, Rest: UnpackRest[S], Pos: UnpackRest[S]]
+
+
 # A value that implements the
 # [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) protocol,
 # destructuring as the items in `S` without changing the receiver.
 #
 # A pattern's rest captures the remaining items as a `Rest`, with the schema of
-# those items in place of `S`. By default, the rest can only be spread. A
-# `*name` rest is a `Pos` instead, which defaults to `Rest`.
-pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S], :Pos @ Spread[S] = Rest]: Spread[S]
+# those items in place of `S`. By default, the rest destructures like its
+# parent. A `*name` rest is a `Pos` instead, which defaults to `Rest`. Neither
+# the value nor its rests need spread.
+pub @class Unpack[S @ {...}, :Rest @ UnpackRest[S] = UnpackRest[S], :Pos @ UnpackRest[S] = Rest]
   field schema @Phantom[...S]
   field rest @Phantom[Rest]
   field pos @Phantom[Pos]
@@ -579,7 +585,7 @@ pub @class Unpack[S @ {...}, :Rest @ Spread[S] = Spread[S], :Pos @ Spread[S] = R
 #
 # Iterating, spreading or unpacking it does not consume it, though changes to
 # its source may show through or raise.
-pub @class BaseSeq[S @ {...}]: Iterable[Values[S]] Unpack[S, Rest: BaseSeq[S]]
+pub @class BaseSeq[S @ {...}]: Iterable[Values[S]] Spread[S] Unpack[S, Rest: BaseSeq[S]]
 
 
 # Iterates as the entries in `S`, and spreads and destructures as `S`, leaving
@@ -590,7 +596,7 @@ pub @class BaseSeq[S @ {...}]: Iterable[Values[S]] Unpack[S, Rest: BaseSeq[S]]
 # Iterating, spreading or unpacking it does not consume it, though changes to
 # its source may show through or raise.
 pub @class BaseMap[S @ {...}]:
-  Iterable[Entries[S]] Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
+  Iterable[Entries[S]] Spread[S] Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
 do
 
 
@@ -628,16 +634,16 @@ pub @class Map[S @ {...}]: BaseMap[S] Index[S]
   pub def pairs self -> Iter[Entries[S]]
 
   # Destructures by key, leaving a rest that can also be destructured.
-  pub def (unpack) self -> Map[S]
+  pub def (unpack) self -> BaseMap[S]
 
 
 # A [`fields`](std.fields) proxy, which reads the members in `S` and sets those
-# in `M`. A captured rest reads the members left over and sets none.
+# in `M`. A captured rest spreads and destructures the members left over.
 pub @class FieldProxy[S @ {...}, M @ {...}]:
-  Iterable[Entries[S]] Index[S] Assign[M] Unpack[S, Rest: FieldProxy[S, {}]]
+  Index[S] Assign[M] BaseMap[S]
 do
-  # Returns this proxy, which destructures by key.
-  pub def (unpack) self -> FieldProxy[S, M]
+  # Returns a value that destructures the proxy by key.
+  pub def (unpack) self -> BaseMap[S]
 
 
 # A [`Map`](std.Map) supporting assignment, which replaces every value of a key.
@@ -1225,7 +1231,7 @@ pub class BaseArray[T]: Iterable[T] @Seq[T]
   # assert_eq $a 1
   # assert_eq $b 2
   # ```
-  pub def (unpack) self -> Unpack[T, Rest: BaseSeq[T]]
+  pub def (unpack) self -> BaseSeq[T]
     ...
 
   # Spreads the items positionally.
@@ -2310,7 +2316,7 @@ do
   # ```
   # let :name age: years = {name: "Alice", age: 30}
   # ```
-  pub def (unpack) self -> BaseDict[S]
+  pub def (unpack) self -> BaseMap[S]
     ...
 
 
@@ -2535,7 +2541,7 @@ do
 
   # Destructures the record: positional patterns take its positional items,
   # and key patterns its keys.
-  pub def (unpack) self -> BaseRecord[...Ts]
+  pub def (unpack) self -> BaseMap[Ts]
     ...
 
 
@@ -4023,7 +4029,7 @@ do
     ...
 
   # Unpacks the items by position and symbol.
-  pub def (unpack) self -> Pack[...Ts]
+  pub def (unpack) self -> BaseMap[Ts]
     ...
 
   # Returns the value at a position or key. Negative positions count from the
@@ -5038,7 +5044,7 @@ do
     ...
 
   # Unpacks items by position and symbol, as a [`Pack`](std.Pack) does.
-  pub def (unpack) self -> BaseStruct[...Ts]
+  pub def (unpack) self -> Unpack[Ts, Rest: BaseMap[Ts], Pos: BaseSeq[Ts]]
     ...
 
 
@@ -5159,7 +5165,7 @@ pub class TimedOutError: RuntimeError
 # explicit import.
 pub class Tuple[*Ts]:
   - @Spread[Ts]
-  - @Unpack[Ts, Rest: BaseSeq[Ts], Pos: Tuple[...Ts]]
+  - @Unpack[Ts, Rest: BaseSeq[Ts]]
   - Iterable[Union[...Ts]]
   - @Index[Ts]
   - @Seq[Union[...Ts]]
@@ -5264,7 +5270,7 @@ do
   # for k v = {name: "Alice", age: 30}
   #   echo "$k = $v"
   # ```
-  pub def (unpack) self -> Tuple[...Ts]
+  pub def (unpack) self -> Unpack[Ts, Rest: BaseSeq[Ts]]
     ...
 
   # Spreads the items.
