@@ -10,7 +10,7 @@ use std::{
     task::{self, Poll, Waker},
 };
 
-use dolang_util::{alias, pin::Arena, ring, ring::Link};
+use dolang_util::{alias, mono::MonoVec, pin::Arena, ring, ring::Link};
 
 bitflags::bitflags! {
     /// Interrupt causes blocked by a strand scope or token boundary.
@@ -270,12 +270,16 @@ impl<'v, 's, 'f, 'a, const N: usize> ScanScope<'v, 's, 'f, &'a SlotCells<'v, N>>
 }
 
 /// Scratch cells for [`with_slots_dynamic!`], sized at run time.
-pub(crate) struct DynSlotCells<'v>(pub(crate) Box<[ValueCell<'v>]>);
+pub(crate) struct DynSlotCells<'v>(pub(crate) MonoVec<ValueCell<'v>>);
 
 impl<'v> DynSlotCells<'v> {
     #[inline]
     pub(crate) fn new(len: usize) -> Self {
-        Self((0..len).map(|_| ValueCell::default()).collect())
+        let cells = MonoVec::with_capacity(len);
+        for _ in 0..len {
+            cells.push(ValueCell::default());
+        }
+        Self(cells)
     }
 }
 
@@ -337,7 +341,8 @@ impl Drop for InterruptTokenGuard<'_, '_> {
 
 /// Run a block with a runtime-sized scratch [`Slots`](crate::value::Slots) allocation.
 ///
-/// Like [`with_slots!`](crate::with_slots), the body runs inline with `strand` rebound to a
+/// The frame starts with `len` nil cells and grows by
+/// [`Slots::push`](crate::value::Slots::push). Like [`with_slots!`](crate::with_slots), the body runs inline with `strand` rebound to a
 /// handle whose frame roots the slots: `?` and `return` leave the enclosing function.
 macro_rules! with_slots_dynamic {
     ($strand:ident, $len:expr, |$slots:pat_param| $body:expr) => {{
@@ -2503,6 +2508,54 @@ mod constructor_tests {
                     .unwrap();
                 assert_eq!(item.as_int(strand), Some(expected));
             }
+        });
+    }
+}
+
+#[cfg(test)]
+mod slots_tests {
+    use crate::{
+        test_support::with_vm,
+        value::{Slot, Value},
+        vm::AllocExt,
+    };
+
+    // Long enough to live on the heap, so a collection would free it
+    fn item(index: usize) -> String {
+        format!("{index:04} pushed into a growable slot frame, kept alive")
+    }
+
+    fn text<'v>(strand: &crate::strand::Strand<'v, '_>, value: &Value<'v>) -> String {
+        String::from(value.as_str(strand.vm()).expect("a string"))
+    }
+
+    #[test]
+    fn pushed_slots_stay_rooted() {
+        with_vm(async |strand, []| {
+            with_slots_dynamic!(strand, 1, |mut slots| {
+                strand.store(slots.at(0), item(0).as_str());
+                // Many pushed slots live at once, across chunk boundaries and collections
+                let mut pushed: Vec<Slot<'_, '_>> = Vec::new();
+                for index in 1..40 {
+                    pushed.push(slots.push());
+                    strand.store(pushed.last_mut().unwrap(), item(index).as_str());
+                    if index % 8 == 0 {
+                        strand.vm().collect_full();
+                    }
+                }
+                for (index, slot) in pushed.iter().enumerate() {
+                    assert_eq!(text(strand, slot), item(index + 1));
+                }
+                drop(pushed);
+                strand.vm().collect_full();
+
+                assert_eq!(slots.len(), 40);
+                let seen: Vec<_> = slots.iter_mut().map(|slot| text(strand, &slot)).collect();
+                assert_eq!(seen, (0..40).map(item).collect::<Vec<_>>());
+                let moved: Vec<_> = slots.into_iter().collect();
+                assert_eq!(moved.len(), 40);
+                assert_eq!(text(strand, &moved[39]), item(39));
+            });
         });
     }
 }

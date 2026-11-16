@@ -667,20 +667,18 @@ impl<'v> Array<'v> {
                     }
                 }
 
-                let keys = unsafe {
-                    std::slice::from_raw_parts_mut(
-                        slots.as_inner().as_ptr().cast::<Value<'v>>().cast_mut(),
-                        len,
-                    )
-                };
+                // The keys stay in their slots; their indices sort with the elements
+                let keys: Vec<_> = slots.iter_mut().collect();
+                let mut order: Vec<usize> = (0..len).collect();
                 drop(borrow);
                 let mut borrow = this.borrow_mut(strand)?;
                 let mut compare_count = 0usize;
-                pairsort::sort_by(keys, borrow.inner.as_mut_slice(), |lhs, rhs| {
+                pairsort::sort_by(&mut order, borrow.inner.as_mut_slice(), |&lhs, &rhs| {
                     compare_count += 1;
                     if compare_count.is_multiple_of(crate::INTERRUPT_INTERVAL) {
                         strand.check_trap()?;
                     }
+                    let (lhs, rhs) = (&*keys[lhs], &*keys[rhs]);
                     if reverse {
                         rhs.lt(strand, lhs)
                     } else {

@@ -1178,9 +1178,8 @@ mod tests {
         error::ErrorKind,
         object::native::Object,
         sig,
-        strand::with_slots_dynamic,
         sym::Sym,
-        test_support::with_builder,
+        test_support::{with_builder, with_cells},
         vm::{Builder, StateTag},
         with_slots,
     };
@@ -1279,12 +1278,12 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(3, vec![], vec![], Variadic::NONE);
-            with_slots_dynamic!(strand, 3, |out| {
+            with_cells!(strand, 3, |out| {
                 let err = unpack_from(
                     strand,
                     // SAFETY: the cells are the frame's, rooted for the call, and `out`
                     // is not used while the `Unpack` lives
-                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    unsafe { Unpack::new(&sig, out) },
                     owner,
                     &glue,
                     0,
@@ -1306,12 +1305,12 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::NONE);
-            with_slots_dynamic!(strand, 1, |out| {
+            with_cells!(strand, 1, |out| {
                 let err = unpack_from(
                     strand,
                     // SAFETY: the cells are the frame's, rooted for the call, and `out`
                     // is not used while the `Unpack` lives
-                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    unsafe { Unpack::new(&sig, out) },
                     owner,
                     &glue,
                     0,
@@ -1333,7 +1332,7 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::Capture);
-            with_slots_dynamic!(strand, 2, |out| {
+            with_cells!(strand, 2, |out| {
                 // The caller's `rest` fills the capture; it learns how many items the
                 // positional parameters consumed
                 let mut consumed = None;
@@ -1341,7 +1340,7 @@ mod tests {
                     strand,
                     // SAFETY: the cells are the frame's, rooted for the call, and `out`
                     // is not used while the `Unpack` lives
-                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    unsafe { Unpack::new(&sig, out) },
                     owner,
                     &glue,
                     0,
@@ -1372,12 +1371,12 @@ mod tests {
                 }],
                 Variadic::NONE,
             );
-            with_slots_dynamic!(strand, 1, |out| {
+            with_cells!(strand, 1, |out| {
                 let err = unpack_from(
                     strand,
                     // SAFETY: the cells are the frame's, rooted for the call, and `out`
                     // is not used while the `Unpack` lives
-                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    unsafe { Unpack::new(&sig, out) },
                     owner,
                     &glue,
                     0,
@@ -1411,19 +1410,19 @@ mod tests {
                 }],
                 Variadic::NONE,
             );
-            with_slots_dynamic!(strand, 1, |mut out| {
+            with_cells!(strand, 1, |out| {
                 unpack_from(
                     strand,
                     // SAFETY: the cells are the frame's, rooted for the call, and `out`
                     // is not used while the `Unpack` lives
-                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    unsafe { Unpack::new(&sig, out) },
                     owner,
                     &glue,
                     0,
                     |_, _, _| {},
                 )
                 .unwrap();
-                let filled = out.at(0).to_i64(strand).unwrap();
+                let filled = unsafe { out[0].slot() }.to_i64(strand).unwrap();
                 assert_eq!(filled, 42);
             });
         });

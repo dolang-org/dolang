@@ -1746,9 +1746,8 @@ pub(crate) async fn instantiate<'v, 'a, 's>(
                 // rooted slot into the annex with no allocation in between. The
                 // slots release their references when the frame exits.
                 fields
-                    .as_inner()
-                    .iter()
-                    .map(|cell| unsafe { ValueCell::from_value(cell.as_ref().dup()) }),
+                    .iter_mut()
+                    .map(|slot| unsafe { ValueCell::from_value(slot.dup()) }),
                 &mut inst,
             );
         });
@@ -3372,7 +3371,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
 mod tests {
     use super::*;
     use crate::{
-        test_support::{args_from_slots, with_vm},
+        test_support::{with_cells, with_vm},
         vm::AllocExt,
     };
 
@@ -3384,19 +3383,19 @@ mod tests {
 
                 strand.intern_sym("x", Slot::reborrow(&mut field));
 
-                with_slots_dynamic!(strand, 7, |mut slots| {
-                    strand.store(slots.at(1), "C");
-                    strand.store(slots.at(2), "test");
-                    strand.store(slots.at(3), &method);
+                with_cells!(strand, 7, |slots| {
+                    strand.store(unsafe { slots[1].slot() }, "C");
+                    strand.store(unsafe { slots[2].slot() }, "test");
+                    strand.store(unsafe { slots[3].slot() }, &method);
                     strand.native_function(
                         async |strand, args, out| {
                             unpack!(strand, args =>);
                             strand.store(out, Nil);
                             Ok(())
                         },
-                        slots.at(4),
+                        unsafe { slots[4].slot() },
                     );
-                    strand.store(slots.at(5), &field);
+                    strand.store(unsafe { slots[5].slot() }, &field);
                     strand.native_function(
                         async |strand, args, out| {
                             unpack!(strand, args =>);
@@ -3406,7 +3405,7 @@ mod tests {
                             strand.new_array(out);
                             Ok(())
                         },
-                        slots.at(6),
+                        unsafe { slots[6].slot() },
                     );
                     let sig = [
                         None,
@@ -3416,7 +3415,7 @@ mod tests {
                         Some(Sym::well_known(sym::CLASS_FIELD_THUNK)),
                         None,
                     ];
-                    let args = args_from_slots(&mut slots, &sig, 1);
+                    let args = unsafe { Args::new(slots, &sig, 1) };
                     create(strand, args, Slot::reborrow(&mut class))
                         .await
                         .unwrap();

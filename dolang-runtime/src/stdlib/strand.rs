@@ -746,8 +746,8 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 // We must avoid being dropped until we've awaited all strands we create
                 with_interrupt_mask!(strand, InterruptMask::all(), {
                     // The pipe ends stay rooted here until every stage has finished;
-                    // each stage copies its own ends into its slots
-                    with_slots_dynamic!(strand, 2 * count.saturating_sub(1), |mut pipe_slots| {
+                    // each end moves into the one stage that uses it
+                    with_slots_dynamic!(strand, 2 * count.saturating_sub(1), |pipe_slots| {
                         async {
                             let mut out = Some(out);
                             let mut strands = Vec::new();
@@ -764,74 +764,66 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                                 output.sink(strand, &mut tmp).await?;
                                 strand.store(output, &mut tmp);
                             }
-                            for i in 0..count.saturating_sub(1) {
-                                let mut pair = pipe_slots.iter_mut().skip(2 * i);
-                                let send = pair.next().unwrap();
-                                let recv = pair.next().unwrap();
-                                pipe_pair(strand, send, recv);
+                            let mut ends = pipe_slots.into_iter();
+                            let mut pipes = Vec::with_capacity(count - 1);
+                            while let (Some(mut send), Some(mut recv)) = (ends.next(), ends.next())
+                            {
+                                pipe_pair(strand, &mut send, &mut recv);
+                                pipes.push((send, recv));
                             }
-                            // Nothing writes the pipe slots from here on
-                            let pipes = pipe_slots.as_inner();
+                            let mut pipes = pipes.into_iter();
+                            // The receiving end of the previous stage's pipe
+                            let mut next_recv = None;
                             for (i, thunk) in thunks.into_iter().enumerate() {
-                                let (send, mut out, redir_output) = if i < count - 1 {
-                                    (Some(&pipes[2 * i]), None, None)
-                                } else {
-                                    (None, out.take(), redir_output.take())
+                                let (send, after, mut out, redir_output) = match pipes.next() {
+                                    Some((send, recv)) => (Some(send), Some(recv), None, None),
+                                    None => (None, None, out.take(), redir_output.take()),
                                 };
-                                let recv = i.checked_sub(1).map(|prev| &pipes[2 * prev + 1]);
+                                let recv = std::mem::replace(&mut next_recv, after);
                                 let redir_input = if i == 0 { redir_input.take() } else { None };
 
                                 strands.push(strand.spawn_scoped(
                                     Some(interrupt.clone()),
                                     async move |strand| {
                                         if let Err(e) = async {
-                                            with_slots!(
-                                                strand,
-                                                |mut s, mut r, mut tmp, mut tmp2| {
-                                                    let input = if let Some(recv) = recv {
-                                                        strand.store(&mut r, recv);
-                                                        Some(&*r)
-                                                    } else {
-                                                        redir_input.as_deref()
-                                                    };
-                                                    let output = if let Some(send) = send {
-                                                        strand.store(&mut s, send);
-                                                        Some(&*s)
-                                                    } else {
-                                                        redir_output.as_deref()
-                                                    };
-                                                    let res = redirect!(
+                                            with_slots!(strand, |mut tmp, mut tmp2| {
+                                                let input =
+                                                    recv.as_deref().or(redir_input.as_deref());
+                                                let output =
+                                                    send.as_deref().or(redir_output.as_deref());
+                                                let res = redirect!(
+                                                    strand,
+                                                    ?input: input,
+                                                    ?output: output,
+                                                    call!(
                                                         strand,
-                                                        ?input: input,
-                                                        ?output: output,
-                                                        call!(
-                                                            strand,
-                                                            thunk,
-                                                            out.as_mut().map_or_else(
-                                                                || Slot::reborrow(&mut tmp),
-                                                                Slot::reborrow
-                                                            )
+                                                        thunk,
+                                                        out.as_mut().map_or_else(
+                                                            || Slot::reborrow(&mut tmp),
+                                                            Slot::reborrow
                                                         )
-                                                    );
-                                                    // Close both ends even if the
-                                                    // first close fails, so a
-                                                    // failure cannot strand the
-                                                    // other end open.
-                                                    let closed_recv = if !r.is_nil() {
-                                                        method!(strand, r, close, &mut tmp2)
-                                                    } else {
-                                                        Ok(())
-                                                    };
-                                                    let closed_send = if !s.is_nil() {
-                                                        method!(strand, s, close, &mut tmp2)
-                                                    } else {
-                                                        Ok(())
-                                                    };
-                                                    closed_recv?;
-                                                    closed_send?;
-                                                    res
-                                                }
-                                            )
+                                                    )
+                                                );
+                                                // Close both ends even if the
+                                                // first close fails, so a
+                                                // failure cannot strand the
+                                                // other end open.
+                                                let closed_recv = match &recv {
+                                                    Some(recv) => {
+                                                        method!(strand, recv, close, &mut tmp2)
+                                                    }
+                                                    None => Ok(()),
+                                                };
+                                                let closed_send = match &send {
+                                                    Some(send) => {
+                                                        method!(strand, send, close, &mut tmp2)
+                                                    }
+                                                    None => Ok(()),
+                                                };
+                                                closed_recv?;
+                                                closed_send?;
+                                                res
+                                            })
                                         }
                                         .await
                                             && !matches!(
@@ -1091,10 +1083,9 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                         let result = async {
                             let mut strands = Vec::with_capacity(count);
                             let interrupt = strand.interrupt_token().nested(InterruptMask::empty());
-                            for (i, thunk) in thunks.into_iter().enumerate() {
-                                // Safety: each child gets a distinct index, and every child
-                                // is joined before the slots are read again
-                                let mut result_slot = unsafe { results.unchecked_at(i) };
+                            for (thunk, mut result_slot) in
+                                thunks.into_iter().zip(results.iter_mut())
+                            {
                                 strands.push(strand.spawn_scoped(
                                     Some(interrupt.clone()),
                                     async move |strand| {

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, marker::PhantomData, ops::ControlFlow};
+use std::{marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -8,10 +8,10 @@ use crate::{
     error::{Error, Result},
     gc::{self, Collect, arena::Visit, with_pin},
     object::protocol::{Protocol, Recv, Unpack, instance_get_fallback, members},
-    strand::{Strand, with_scan},
+    strand::{Strand, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, TypeObject, Value},
+    value::{Input, Output, Slot, Slots, TypeObject, Value},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -189,7 +189,7 @@ pub(crate) async fn from_builtin_args<'v, 's>(
             }
             match args.next() {
                 // SAFETY: the value moves straight into the borrowed sink
-                Some(Arg::Pos(mut item)) => sink.0.borrow_mut().push(unsafe { item.take(strand) }),
+                Some(Arg::Pos(item)) => strand.store(sink.0.push(), item),
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
                     expand
                         .op_spread(strand, SpreadContext::Sequence, sink)
@@ -206,43 +206,29 @@ pub(crate) async fn from_builtin_args<'v, 's>(
 /// Store a tuple of the values `fill` gathers into its sink, whose number is known only
 /// once it returns, into `out`.
 ///
-/// The values gather in a list that an ad-hoc frame roots until the tuple is allocated.
+/// The values gather in slots pushed onto a frame until the tuple is allocated.
 async fn gather<'v, 's>(
     strand: &mut Strand<'v, 's>,
     out: impl Output<'v>,
-    fill: impl AsyncFnOnce(&mut Strand<'v, 's>, &mut TupleSpread<'_, 'v>) -> Result<'v, 's, ()>,
+    fill: impl AsyncFnOnce(&mut Strand<'v, 's>, &mut TupleSpread<'v, '_>) -> Result<'v, 's, ()>,
 ) -> Result<'v, 's, ()> {
-    let values = RefCell::new(Vec::<Value<'v>>::new());
-    let visit = |visitor: &mut dyn Visit| {
-        // Never borrowed mutably across an allocation
-        values
-            .borrow()
-            .iter()
-            .try_for_each(|value| value.accept(visitor))
-    };
-    // SAFETY: `visit` visits each gathered value once; the list changes only by pushes,
-    // which do not allocate, and by the final drain, which follows the last allocation
-    unsafe {
-        with_scan!(strand, visit, {
-            fill(strand, &mut TupleSpread(&values)).await?;
-            let len = values.borrow().len();
-            let embryo = embryo(strand, len);
-            embryo.finish(strand, values.borrow_mut().drain(..), out);
-            Ok(())
-        })
-    }
+    with_slots_dynamic!(strand, 0, |mut values| {
+        fill(strand, &mut TupleSpread(&values)).await?;
+        let embryo = embryo(strand, values.len());
+        embryo.finish_moving(strand, values.iter_mut(), out);
+        Ok(())
+    })
 }
 
-struct TupleSpread<'a, 'v>(&'a RefCell<Vec<Value<'v>>>);
+struct TupleSpread<'v, 'a>(&'a Slots<'v, 'a>);
 
-impl<'a, 'v, 's> Spread<'v, 's> for TupleSpread<'a, 'v> {
+impl<'v, 's> Spread<'v, 's> for TupleSpread<'v, '_> {
     fn positional(
         &mut self,
         strand: &mut Strand<'v, 's>,
-        mut value: Slot<'v, '_>,
+        value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        // SAFETY: the value moves straight into the scanned accumulator
-        self.0.borrow_mut().push(unsafe { value.take(strand) });
+        strand.store(self.0.push(), value);
         Ok(())
     }
 

@@ -18,10 +18,10 @@ use crate::{
         tuple,
     },
     sig,
-    strand::{Strand, with_slots_dynamic},
+    strand::{Strand, with_scan, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, view::View},
+    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View},
     vm::{AllocExt, Vm},
     with_slots,
 };
@@ -979,23 +979,22 @@ impl<'v> Protocol<'v> for Zip<'v> {
             return Ok(false);
         }
         // The first `len` slots root the sources, the rest their items
-        with_slots_dynamic!(strand, 2 * len, |mut slots| {
+        with_slots_dynamic!(strand, 2 * len, |slots| {
+            let mut slots: Vec<_> = slots.into_iter().collect();
+            let (sources, items) = slots.split_at_mut(len);
             {
                 let borrow = this.borrow(strand)?;
-                for (i, source) in borrow.sources.iter().enumerate() {
-                    strand.store(slots.at(i), source);
+                for (slot, source) in sources.iter_mut().zip(borrow.sources.iter()) {
+                    strand.store(slot, source);
                 }
             }
-            for i in 0..len {
-                // SAFETY: distinct cells of the frame, each borrowed by one slot
-                let (source, item) =
-                    unsafe { (slots.unchecked_at(i), slots.unchecked_at(len + i)) };
-                if !source.next(strand, item).await? {
+            for (source, item) in sources.iter().zip(items) {
+                if !source.next(strand, Slot::reborrow(item)).await? {
                     return Ok(false);
                 }
             }
             let embryo = tuple::embryo(strand, len);
-            embryo.finish_moving(strand, slots.iter_mut().skip(len), out);
+            embryo.finish_moving(strand, slots.drain(len..), out);
             Ok(true)
         })
     }
@@ -1384,14 +1383,18 @@ impl<'v> Protocol<'v> for Kv<'v> {
             }
             source.iter(strand, &mut iter).await?;
             while iter.next(strand, &mut item).await? {
-                with_slots_dynamic!(strand, 2, |mut pair| {
-                    // SAFETY: the cells are the frame's, rooted for the call, and `pair` is
-                    // not used while the copy lives
-                    item.op_unpack(strand, unsafe { Unpack::new(&unpack, pair.as_inner()) })
-                        .await?;
-                    strand.store(&mut key, pair.at(0));
-                    strand.store(&mut value, pair.at(1));
-                });
+                let pair: [ValueCell<'v>; 2] = Default::default();
+                let visit =
+                    |visitor: &mut dyn Visit| pair.iter().try_for_each(|cell| cell.accept(visitor));
+                // SAFETY: `visit` visits both cells, which only the `Unpack` writes; they are
+                // read only once it is gone
+                unsafe {
+                    with_scan!(strand, visit, {
+                        item.op_unpack(strand, Unpack::new(&unpack, &pair)).await?;
+                        strand.store(&mut key, &pair[0]);
+                        strand.store(&mut value, &pair[1]);
+                    })
+                }
                 sink.keyed(strand, Slot::reborrow(&mut key), Slot::reborrow(&mut value))?;
             }
             Ok(())
