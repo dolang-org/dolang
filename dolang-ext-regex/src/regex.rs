@@ -1,11 +1,11 @@
 use crate::global::Tag;
 
-use std::{borrow::Cow, mem};
+use std::{borrow::Cow, mem, rc::Rc};
 
 use dolang::runtime::object::fmt;
 
 use dolang::runtime::{
-    AllocExt, Args, Error, Instance, Object, Result, Slot, State, Strand, Type, Value, call,
+    AllocExt, Args, Error, Input, Instance, Object, Result, Slot, State, Strand, Type, Value, call,
     object::{Mut, Ref, Rest, TypeBuilder, Unpack, UnpackItem},
     unpack,
     value::{
@@ -110,6 +110,7 @@ impl<'v> Object<'v> for PatternError {
 pub(crate) struct RegexAnnex<'v> {
     global: State<'v, Global<'v>>,
     regex: rx::Regex,
+    groups: Rc<Groups>,
 }
 
 impl<'v> Object<'v> for Regex {
@@ -132,7 +133,17 @@ impl<'v> Object<'v> for Regex {
             .pin();
         let regex = rx::Regex::new(&pattern).map_err(|err| pattern_error(strand, err))?;
         let global = strand.state::<Tag>();
-        this.create_with_annex(strand, Regex, RegexAnnex { global, regex }, out);
+        let groups = Rc::new(Groups::new(&regex));
+        this.create_with_annex(
+            strand,
+            Regex,
+            RegexAnnex {
+                global,
+                regex,
+                groups,
+            },
+            out,
+        );
         Ok(())
     }
 
@@ -160,17 +171,16 @@ impl<'v> Object<'v> for Regex {
                             },
                             CapturesAnnex {
                                 global: annex.global,
+                                groups: annex.groups.clone(),
                             },
                             &mut out,
                         );
 
-                        // Store haystack GC object in slot 0 and regex in slot 1 of the
-                        // Captures object
+                        // Store the haystack in slot 0 of the Captures object
                         let cast = annex.global.types.captures.cast(&out).unwrap();
                         with_instance!(strand, cast, |inst| {
                                 let mut captures = inst.borrow_mut_unwrap();
                                 strand.store(Mut::slot_mut::<0>(&mut captures), haystack_value);
-                                strand.store(Mut::slot_mut::<1>(&mut captures), this);
                             });
                     }
                     None => {
@@ -205,6 +215,7 @@ impl<'v> Object<'v> for Regex {
                     },
                     FindAnnex {
                         global: annex.global,
+                        groups: annex.groups.clone(),
                     },
                     &mut out,
                 );
@@ -266,7 +277,13 @@ impl<'v> Object<'v> for Regex {
                             }
                             let matched = caps.get(0).unwrap();
                             result.push_str(&haystack[last_end..matched.start()]);
-                            render_replacement(strand, &replacement, &caps, &mut result)?;
+                            render_replacement(
+                                strand,
+                                &replacement,
+                                &annex.groups,
+                                &caps,
+                                &mut result,
+                            )?;
                             last_end = matched.end();
                         }
                         result.push_str(&haystack[last_end..]);
@@ -298,10 +315,11 @@ impl<'v> Object<'v> for Regex {
                                 },
                                 CapturesAnnex {
                                     global: annex.global,
+                                    groups: annex.groups.clone(),
                                 },
                                 &mut caps_slot,
                             );
-                            // Store haystack in Captures slot 0 and regex in slot 1
+                            // Store the haystack in Captures slot 0
                             let cast = annex.global.types.captures.cast(&caps_slot).unwrap();
                             with_instance!(strand, cast, |inst| {
                                     let mut captures_mut = inst.borrow_mut_unwrap();
@@ -309,7 +327,6 @@ impl<'v> Object<'v> for Regex {
                                         Mut::slot_mut::<0>(&mut captures_mut),
                                         &haystack_value,
                                     );
-                                    strand.store(Mut::slot_mut::<1>(&mut captures_mut), this);
                                 });
 
                             // Call the replacement function with the Captures
@@ -510,6 +527,7 @@ fn replacement_limit<'v, 's>(
 fn render_replacement<'v, 's>(
     strand: &mut Strand<'v, 's>,
     template: &Value<'v>,
+    groups: &Groups,
     captures: &rx::Captures<'_>,
     out: &mut dyn Format<'v>,
 ) -> Result<'v, 's, ()> {
@@ -529,7 +547,7 @@ fn render_replacement<'v, 's>(
                     bound.value(strand, &mut value)?;
                     if kind == Kind::Str && value.as_fmt(strand.vm()).is_some() {
                         let mut padded = Pad::new(spec, out);
-                        render_replacement(strand, &value, captures, &mut padded)?;
+                        render_replacement(strand, &value, groups, captures, &mut padded)?;
                         padded.finish(strand)?;
                     } else {
                         value.fmt(strand, &spec, out)?;
@@ -539,15 +557,14 @@ fn render_replacement<'v, 's>(
                     let mut spec = param.spec(strand);
                     spec.kind.get_or_insert(Kind::Str);
                     param.name(strand, &mut value)?;
-                    let matched = match value.view(strand.vm()) {
+                    let lookup = match value.view(strand.vm()) {
                         View::Int(index) => usize::try_from(index)
-                            .ok()
-                            .and_then(|index| captures.get(index))
-                            .ok_or_else(|| missing_capture(strand, &value))?,
-                        View::Sym(name) => captures
-                            .name(name.as_str(strand))
-                            .ok_or_else(|| missing_capture(strand, &value))?,
+                            .map_or(Lookup::NoSuchGroup, |index| groups.pos(captures, index)),
+                        View::Sym(name) => groups.key(captures, name.as_str(strand)),
                         _ => unreachable!("FmtParam names are Int or Sym"),
+                    };
+                    let Lookup::Present(matched) = lookup else {
+                        return Err(missing_capture(strand, &value));
                     };
                     strand.store(&mut value, matched.as_str());
                     value.fmt(strand, &spec, out)?;
@@ -569,23 +586,313 @@ fn missing_capture<'v, 's>(strand: &mut Strand<'v, 's>, name: &Value<'v>) -> Err
     }
 }
 
+/// How a `Regex` numbers its groups: the overall match, then each unnamed group,
+/// are positional; named groups are keyed and take no number.
+pub(crate) struct Groups {
+    /// Crate indices of the positional items.
+    positional: Box<[usize]>,
+    /// Named groups in pattern order, with their crate indices. A group's place
+    /// in this list is its ordinal.
+    named: Box<[(Box<str>, usize)]>,
+}
+
+/// The result of looking up a group in a set of captures.
+enum Lookup<'h> {
+    /// The pattern has no such group.
+    NoSuchGroup,
+    /// The group didn't participate in the match.
+    Absent,
+    Present(rx::Match<'h>),
+}
+
+impl Groups {
+    fn new(regex: &rx::Regex) -> Self {
+        let mut positional = Vec::new();
+        let mut named = Vec::new();
+        for (index, name) in regex.capture_names().enumerate() {
+            match name {
+                Some(name) => named.push((Box::from(name), index)),
+                None => positional.push(index),
+            }
+        }
+        Self {
+            positional: positional.into(),
+            named: named.into(),
+        }
+    }
+
+    fn ordinal(&self, name: &str) -> Option<usize> {
+        self.named.iter().position(|(group, _)| &**group == name)
+    }
+
+    fn lookup<'h>(captures: &rx::Captures<'h>, index: Option<usize>) -> Lookup<'h> {
+        match index {
+            None => Lookup::NoSuchGroup,
+            Some(index) => captures.get(index).map_or(Lookup::Absent, Lookup::Present),
+        }
+    }
+
+    /// Looks up positional item `n`.
+    fn pos<'h>(&self, captures: &rx::Captures<'h>, n: usize) -> Lookup<'h> {
+        Self::lookup(captures, self.positional.get(n).copied())
+    }
+
+    /// Looks up the named group with ordinal `ordinal`.
+    fn named<'h>(&self, captures: &rx::Captures<'h>, ordinal: usize) -> Lookup<'h> {
+        Self::lookup(captures, self.named.get(ordinal).map(|(_, index)| *index))
+    }
+
+    /// Looks up the group named `name`.
+    fn key<'h>(&self, captures: &rx::Captures<'h>, name: &str) -> Lookup<'h> {
+        match self.ordinal(name) {
+            Some(ordinal) => self.named(captures, ordinal),
+            None => Lookup::NoSuchGroup,
+        }
+    }
+
+    /// Looks up the group that indexing `captures` with `key` reads.
+    fn index<'v, 's, 'h>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        captures: &rx::Captures<'h>,
+        key: &Value<'v>,
+    ) -> Result<'v, 's, Lookup<'h>> {
+        if let Ok(n) = key.to_i64(strand) {
+            let n: usize = n.try_into().map_err(|_| Error::overflow(strand))?;
+            Ok(self.pos(captures, n))
+        } else if let Some(name) = key.as_str(strand.vm()) {
+            let name = name.pin();
+            Ok(self.key(captures, &name))
+        } else if let Some(name) = key.as_sym(strand.vm()) {
+            Ok(self.key(captures, name.as_str(strand)))
+        } else {
+            Err(Error::type_error(strand, "expected `Int`, `Str` or `Sym`"))
+        }
+    }
+}
+
+/// Stores a `Match` for `matched`, a span of `haystack`, in `out`.
+fn store_match<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    haystack: &Value<'v>,
+    matched: rx::Match<'_>,
+    mut out: Slot<'v, '_>,
+) {
+    // SAFETY: We transmute the match to have 'static lifetime. The haystack pin,
+    // owned by the Match object, keeps the text alive and in place.
+    let matched = unsafe { mem::transmute::<rx::Match<'_>, rx::Match<'static>>(matched) };
+    let pin = haystack.as_str(strand.vm()).unwrap().pin();
+    global.types.match_.create_with_annex(
+        strand,
+        Match {
+            match_: matched,
+            _haystack: pin,
+        },
+        MatchAnnex,
+        &mut out,
+    );
+    // Store the haystack in slot 0 of the Match object
+    with_instance!(strand, global.types.match_.cast(&out).unwrap(), |inst| {
+        let mut borrow = inst.borrow_mut_unwrap();
+        strand.store(Mut::slot_mut::<0>(&mut borrow), haystack);
+    });
+}
+
+/// The items of a `Captures` that a value unpacks.
+#[derive(Clone)]
+pub(crate) struct CapturesView {
+    /// The first positional item, or `None` for no positional items.
+    pos_from: Option<usize>,
+    /// For each named group, whether it was already taken, or `None` for no keyed
+    /// items.
+    taken: Option<Box<[bool]>>,
+}
+
+impl CapturesView {
+    fn full(groups: &Groups) -> Self {
+        Self {
+            pos_from: Some(0),
+            taken: Some(vec![false; groups.named.len()].into()),
+        }
+    }
+}
+
+/// The source of an unpack: a set of captures and the items of it visible.
+struct UnpackSource<'v, 'r> {
+    global: State<'v, Global<'v>>,
+    groups: &'r Groups,
+    captures: &'r rx::Captures<'r>,
+    haystack: &'r Value<'v>,
+    view: &'r CapturesView,
+}
+
+/// Unpacks the items of `source` visible in its view.
+///
+/// Positional items keep their indices: one that didn't participate takes its
+/// default and doesn't shift the rest. A rest is a view of the items left over,
+/// holes included, over `object`, the `Captures` they come from.
+fn unpack_captures<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    source: UnpackSource<'v, '_>,
+    object: impl Input<'v> + Copy,
+    mut unpack: Unpack<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let UnpackSource {
+        global,
+        groups,
+        captures,
+        haystack,
+        view,
+    } = source;
+    let pos_rest = unpack.pos_rest();
+    let key_rest = unpack.key_rest();
+    let mut position = view.pos_from;
+    let mut index = 0;
+    let mut taken = view.taken.clone();
+
+    for item in unpack.iter() {
+        match item {
+            UnpackItem::Pos { slot, default } => {
+                let lookup = position.map_or(Lookup::NoSuchGroup, |n| groups.pos(captures, n));
+                match (lookup, default) {
+                    (Lookup::Present(matched), _) => {
+                        store_match(strand, global, haystack, matched, slot)
+                    }
+                    (_, Some(default)) => strand.store(slot, default),
+                    (_, None) => return Err(Error::missing_positional(strand, index)),
+                }
+                if let Some(n) = &mut position {
+                    *n += 1;
+                }
+                index += 1;
+            }
+            UnpackItem::SymKey { key, slot, default } => {
+                let ordinal = groups.ordinal(key.as_str(strand));
+                let found = take(groups, captures, &mut taken, ordinal);
+                match (found, default) {
+                    (Some(matched), _) => store_match(strand, global, haystack, matched, slot),
+                    (None, Some(default)) => strand.store(slot, default),
+                    (None, None) => return Err(Error::missing_key(strand, key)),
+                }
+            }
+            UnpackItem::ConstKey { key, slot, default } => {
+                let ordinal = key
+                    .as_str(strand.vm())
+                    .and_then(|name| groups.ordinal(&name.pin()));
+                let found = take(groups, captures, &mut taken, ordinal);
+                match (found, default) {
+                    (Some(matched), _) => store_match(strand, global, haystack, matched, slot),
+                    (None, Some(default)) => strand.store(slot, default),
+                    (None, None) => return Err(Error::missing_key(strand, key)),
+                }
+            }
+            UnpackItem::Rest { slot } => {
+                let view = CapturesView {
+                    pos_from: position,
+                    taken: taken.clone(),
+                };
+                store_rest(strand, global, object, view, slot);
+            }
+            UnpackItem::PosRest { slot } => {
+                let view = CapturesView {
+                    pos_from: position,
+                    taken: None,
+                };
+                store_rest(strand, global, object, view, slot);
+            }
+            UnpackItem::KeyRest { slot } => {
+                let view = CapturesView {
+                    pos_from: None,
+                    taken: taken.clone(),
+                };
+                store_rest(strand, global, object, view, slot);
+            }
+        }
+    }
+
+    // A hole is a missing item, so only a participating group is left over.
+    if pos_rest == Rest::None
+        && let Some(position) = position
+        && let Some(extra) = (position..groups.positional.len())
+            .find(|&n| matches!(groups.pos(captures, n), Lookup::Present(_)))
+    {
+        return Err(Error::unexpected_positional(
+            strand,
+            index + extra - position,
+        ));
+    }
+    if key_rest == Rest::None
+        && let Some(taken) = &taken
+        && let Some(extra) = (0..taken.len())
+            .find(|&o| !taken[o] && matches!(groups.named(captures, o), Lookup::Present(_)))
+    {
+        return with_slots!(strand, |mut key| {
+            strand.intern_sym(&groups.named[extra].0, &mut key);
+            Err(Error::unexpected_key(strand, &key))
+        });
+    }
+    Ok(())
+}
+
+/// Takes the participating named group with `ordinal` if it is visible and not
+/// already taken.
+fn take<'h>(
+    groups: &Groups,
+    captures: &rx::Captures<'h>,
+    taken: &mut Option<Box<[bool]>>,
+    ordinal: Option<usize>,
+) -> Option<rx::Match<'h>> {
+    let ordinal = ordinal?;
+    let taken = taken.as_mut()?;
+    if taken[ordinal] {
+        return None;
+    }
+    let Lookup::Present(matched) = groups.named(captures, ordinal) else {
+        return None;
+    };
+    taken[ordinal] = true;
+    Some(matched)
+}
+
+/// Stores a `CapturesRest` over `object` with `view` in `out`.
+fn store_rest<'v>(
+    strand: &mut Strand<'v, '_>,
+    global: State<'v, Global<'v>>,
+    object: impl Input<'v>,
+    view: CapturesView,
+    mut out: Slot<'v, '_>,
+) {
+    let ty = global.types.captures_rest;
+    ty.create_with_annex(
+        strand,
+        CapturesRest,
+        CapturesRestAnnex { global, view },
+        &mut out,
+    );
+    with_instance!(strand, ty.cast(&out).unwrap(), |inst| {
+        let mut borrow = inst.borrow_mut_unwrap();
+        strand.store(Mut::slot_mut::<0>(&mut borrow), object);
+    });
+}
+
 pub(crate) struct Captures<'v> {
     // SAFETY: `caps` is lifetime-transmuted to `'static` but actually borrows from
     // the haystack, which `_haystack` keeps alive and in place; it is declared after
-    // `caps`, so it drops after. Slot 1 holds the `Regex`, whose group names
-    // tell an unmatched group apart from a nonexistent one.
+    // `caps`, so it drops after. Slot 0 holds the haystack value.
     caps: rx::Captures<'static>,
     _haystack: PinStr<'v>,
 }
 
 pub(crate) struct CapturesAnnex<'v> {
     global: State<'v, Global<'v>>,
+    groups: Rc<Groups>,
 }
 
 impl<'v> Object<'v> for Captures<'v> {
     const NAME: &'v str = "Captures";
     const MODULE: &'v str = "regex";
-    const SLOTS: usize = 2;
+    const SLOTS: usize = 1;
     type Annex = CapturesAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -603,86 +910,53 @@ impl<'v> Object<'v> for Captures<'v> {
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         index: &Value<'v>,
-        mut out: Slot<'v, 'a>,
+        out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         let borrow = this.borrow(strand)?;
-
-        let cap = if let Ok(idx) = index.to_i64(strand) {
-            let idx: usize = idx.try_into().map_err(|_| Error::overflow(strand))?;
-            if idx >= borrow.caps.len() {
-                return Err(Error::index(strand));
-            }
-            borrow.caps.get(idx)
-        } else if let Some(name) = index.as_str(strand) {
-            let name = name.pin();
-            let cap = borrow.caps.name(&name);
-            if cap.is_none() {
-                let regex = annex
-                    .global
-                    .types
-                    .regex
-                    .cast(Ref::slot::<1>(&borrow))
-                    .unwrap();
-                let exists = with_instance!(strand, regex, |inst| {
-                    inst.annex()
-                        .regex
-                        .capture_names()
-                        .any(|group| group == Some(&*name))
-                });
-                if !exists {
-                    return Err(Error::index(strand));
-                }
-            }
-            cap
-        } else {
-            return Err(Error::type_error(strand, "expected `Int` or `Str`"));
-        };
-
-        match cap {
-            Some(m) => {
-                // SAFETY: We transmute the match to have 'static lifetime.
-                // The haystack is stored in slot 0 to keep it alive.
-                let m = unsafe { mem::transmute::<rx::Match<'_>, rx::Match<'static>>(m) };
-
-                let haystack = Ref::slot::<0>(&borrow).as_str(strand.vm()).unwrap().pin();
-
-                // Create the Match object directly in out
-                annex.global.types.match_.create_with_annex(
-                    strand,
-                    Match {
-                        match_: m,
-                        _haystack: haystack,
-                    },
-                    MatchAnnex,
-                    &mut out,
-                );
-
-                // Store haystack in slot 0 of the Match object
-                with_instance!(
-                    strand,
-                    annex.global.types.match_.cast(&out).unwrap(),
-                    |inst| {
-                        let mut match_borrow = inst.borrow_mut_unwrap();
-                        strand.store(
-                            Mut::slot_mut::<0>(&mut match_borrow),
-                            Ref::slot::<0>(&borrow),
-                        );
-                    }
-                );
-
+        match annex.groups.index(strand, &borrow.caps, index)? {
+            Lookup::Present(matched) => {
+                store_match(strand, annex.global, Ref::slot::<0>(&borrow), matched, out);
                 Ok(())
             }
-            // The group exists but did not participate in the match
-            None => {
-                strand.store(out, Nil);
-                Ok(())
-            }
+            Lookup::Absent => Err(missing_capture(strand, index)),
+            Lookup::NoSuchGroup => Err(Error::index(strand)),
         }
+    }
+
+    async fn unpack<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        unpack: Unpack<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let annex = this.annex();
+        let borrow = this.borrow(strand)?;
+        let view = CapturesView::full(&annex.groups);
+        let source = UnpackSource {
+            global: annex.global,
+            groups: &annex.groups,
+            captures: &borrow.caps,
+            haystack: Ref::slot::<0>(&borrow),
+            view: &view,
+        };
+        unpack_captures(strand, source, this, unpack)
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
+            .method("get", async move |this, strand, args, out| {
+                unpack!(strand, args => key);
+                let annex = this.annex();
+                let borrow = this.borrow(strand)?;
+                match annex.groups.index(strand, &borrow.caps, &key)? {
+                    Lookup::Present(matched) => {
+                        store_match(strand, annex.global, Ref::slot::<0>(&borrow), matched, out)
+                    }
+                    Lookup::Absent => strand.store(out, Nil),
+                    Lookup::NoSuchGroup => return Err(Error::index(strand)),
+                }
+                Ok(())
+            })
             .get("start", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
                 let input = TryInto::<i64>::try_into(borrow.caps.get_match().start())
@@ -697,6 +971,52 @@ impl<'v> Object<'v> for Captures<'v> {
                 strand.store(out, input);
                 Ok(())
             })
+    }
+}
+
+/// The rest of an unpacked `Captures`, which unpacks the items left over.
+///
+/// Slot 0 holds the `Captures`.
+pub(crate) struct CapturesRest;
+
+pub(crate) struct CapturesRestAnnex<'v> {
+    global: State<'v, Global<'v>>,
+    view: CapturesView,
+}
+
+impl<'v> Object<'v> for CapturesRest {
+    const NAME: &'v str = "CapturesRest";
+    const MODULE: &'v str = "regex";
+    const SLOTS: usize = 1;
+    type Annex = CapturesRestAnnex<'v>;
+    type Type = ();
+    type TypeAnnex = ();
+
+    async fn unpack<'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        unpack: Unpack<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let annex = this.annex();
+        let borrow = this.borrow(strand)?;
+        let captures = annex
+            .global
+            .types
+            .captures
+            .cast(Ref::slot::<0>(&borrow))
+            .unwrap();
+        with_instance!(strand, captures, |inst| {
+            let captures_annex = inst.annex();
+            let captures_borrow = inst.borrow(strand)?;
+            let source = UnpackSource {
+                global: annex.global,
+                groups: &captures_annex.groups,
+                captures: &captures_borrow.caps,
+                haystack: Ref::slot::<0>(&captures_borrow),
+                view: &annex.view,
+            };
+            unpack_captures(strand, source, inst, unpack)
+        })
     }
 }
 
@@ -756,6 +1076,7 @@ pub(crate) struct Find<'v> {
 
 pub(crate) struct FindAnnex<'v> {
     global: State<'v, Global<'v>>,
+    groups: Rc<Groups>,
 }
 
 impl<'v> Object<'v> for Find<'v> {
@@ -809,12 +1130,12 @@ impl<'v> Object<'v> for Find<'v> {
                     },
                     CapturesAnnex {
                         global: annex.global,
+                        groups: annex.groups.clone(),
                     },
                     &mut out,
                 );
 
-                // Copy haystack from Find slot 1 to Captures slot 0, and regex from
-                // Find slot 0 to Captures slot 1
+                // Copy the haystack from Find slot 1 to Captures slot 0
                 with_instance!(
                     strand,
                     annex.global.types.captures.cast(&out).unwrap(),
@@ -823,10 +1144,6 @@ impl<'v> Object<'v> for Find<'v> {
                         strand.store(
                             Mut::slot_mut::<0>(&mut captures_mut),
                             Mut::slot::<1>(&borrow),
-                        );
-                        strand.store(
-                            Mut::slot_mut::<1>(&mut captures_mut),
-                            Mut::slot::<0>(&borrow),
                         );
                     }
                 );
