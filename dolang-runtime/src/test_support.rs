@@ -1,12 +1,6 @@
 //! Shared helpers for in-crate unit tests that need a live VM/`Strand`.
 
-use crate::{
-    arg::Args,
-    strand::Strand,
-    sym::Sym,
-    value::{Slot, Slots},
-    vm::Builder,
-};
+use crate::{strand::Strand, value::Slot, vm::Builder};
 
 /// Build a VM and hand the body the [`Builder`] directly, before any `Strand` exists.
 /// Blocks the calling thread. For tests that need `Builder`-only setup — registering a
@@ -32,20 +26,29 @@ pub(crate) fn with_vm<const N: usize, R: 'static>(
     with_builder(async move |vm| vm.enter_with_slots::<N, _>(body).await)
 }
 
-/// Builds `Args` over the backing storage of an already GC-rooted [`Slots`] value
-/// (e.g. obtained from [`with_slots_dynamic!`](crate::strand::with_slots_dynamic)).
-/// Values must never be held in plain, unrooted Rust stack locals across a call that
-/// could allocate or yield — this keeps the one `unsafe` `Args` construction it takes to
-/// build a call-argument list contained here instead of scattered across test bodies.
+/// Run `body` with `len` nil cells rooted by a raw scan frame, bound as a
+/// `&[ValueCell]` to the given name.
 ///
-/// Takes `slots` by exclusive reference, for the same lifetime as the returned `Args`,
-/// so the borrow checker — not just a documented invariant — prevents the caller from
-/// concurrently obtaining another `Slot` into the same backing storage (e.g. via
-/// `Slots::at`) while `Args` is alive, which `Args::new`'s safety contract requires.
-pub(crate) fn args_from_slots<'v, 'a>(
-    slots: &'a mut Slots<'v, 'a>,
-    sig: &'a [Option<Sym<'v, 'a>>],
-    headroom: usize,
-) -> Args<'v, 'a> {
-    unsafe { Args::new(slots.as_inner(), sig, headroom) }
+/// For tests that need contiguous cells, such as for `Args::new` or `Unpack::new`. As with
+/// [`with_slots!`](crate::with_slots), `strand` is rebound to a handle whose frame roots
+/// the cells. Writing a cell takes `unsafe { cells[i].slot() }`, and the test must form no
+/// slot into a cell that an `Args` or `Unpack` over it can also write.
+macro_rules! with_cells {
+    ($strand:ident, $len:expr, |$cells:ident| $body:expr) => {{
+        let cells: Box<[$crate::value::ValueCell<'_>]> =
+            (0..$len).map(|_| Default::default()).collect();
+        let visit = |visitor: &mut dyn $crate::gc::arena::Visit| {
+            cells.iter().try_for_each(|cell| cell.accept(visitor))
+        };
+        let mut scope =
+            $crate::strand::ScanScope::new($strand, &visit, |visit, visitor| visit(visitor));
+        // SAFETY: the scope is a local of this block that nothing can move or forget, and
+        // `visit` visits each cell once; cells change only through slots, between
+        // collections
+        #[allow(unused_variables)]
+        let ($strand, _) = unsafe { scope.enter() };
+        let $cells: &[$crate::value::ValueCell<'_>] = &cells;
+        $body
+    }};
 }
+pub(crate) use with_cells;

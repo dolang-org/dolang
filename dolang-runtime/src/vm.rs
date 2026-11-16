@@ -688,8 +688,12 @@ impl<'v> Vm<'v> {
         // and move into the program once its allocation exists.
         let nsyms = verified.symtab.content.len();
         let nconsts = verified.consttab.content.len();
-        with_slots_dynamic!(strand, nsyms + nconsts + 1, |mut slots| {
-            strand.store(slots.at(nsyms + nconsts), importer);
+        with_slots_dynamic!(strand, nsyms + nconsts + 1, |slots| {
+            let mut slots: Vec<_> = slots.into_iter().collect();
+            let (syms, rest) = slots.split_at_mut(nsyms);
+            let (consts, importer_slot) = rest.split_at_mut(nconsts);
+            let importer_slot = &mut importer_slot[0];
+            strand.store(&mut *importer_slot, importer);
             let sym_ty = strand.builtin_types().sym;
             for (i, s) in verified.symtab.content.iter().enumerate() {
                 let name = std::str::from_utf8(&main[s.name.clone()]).expect("verified UTF-8");
@@ -701,18 +705,17 @@ impl<'v> Vm<'v> {
                         strand.sym_register_obj(name)
                     }
                 };
-                strand.store(slots.at(i), &sym);
+                strand.store(&mut syms[i], &sym);
             }
-            // SAFETY: the symbol cells stay rooted, unwritten, until the program owns their
-            // symbols, which then root the `Sym`s for the program's life
-            let cells = slots.as_inner();
-            let symroot =
-                |i: usize| unsafe { cells[i].as_ref().downcast_ref(sym_ty).expect("symbol") };
+            // SAFETY (each `Sym`): the symbol slots stay rooted, unwritten, until the program
+            // owns their symbols, which then root the `Sym`s for the program's life
+            let syms = &*syms;
+            let symroot = |i: usize| syms[i].downcast_ref(sym_ty).expect("symbol");
             let symtab: Vec<Sym<'v, 'v>> = (0..nsyms)
                 .map(|i| unsafe { Sym::from_obj(symroot(i)) })
                 .collect();
             for (i, c) in verified.consttab.content.iter().enumerate() {
-                let out = slots.at(nsyms + i);
+                let out = &mut consts[i];
                 match c {
                     file::Const::Nil => strand.store(out, Nil),
                     file::Const::Int(v) => strand.store(out, *v),
@@ -744,9 +747,10 @@ impl<'v> Vm<'v> {
             // SAFETY (from here to the finish): the program is allocated, and nothing
             // allocates before its tables move into it
             let symroots: Vec<_> = (0..nsyms).map(|i| unsafe { symroot(i).dup() }).collect();
-            let importer = unsafe { slots.at(nsyms + nconsts).take(strand) };
-            let consttab: alias::Box<_> = (0..nconsts)
-                .map(|i| unsafe { slots.at(nsyms + i).take(strand) })
+            let importer = unsafe { importer_slot.take(strand) };
+            let consttab: alias::Box<_> = consts
+                .iter_mut()
+                .map(|slot| unsafe { slot.take(strand) })
                 .collect();
 
             let packtab: alias::Box<_> = verified

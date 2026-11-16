@@ -4213,10 +4213,8 @@ mod tests {
     use crate::{
         call,
         error::ErrorKind,
-        method, sig,
-        strand::with_slots_dynamic,
-        sym,
-        test_support::{args_from_slots, with_builder},
+        method, sig, sym,
+        test_support::{with_builder, with_cells},
         value::{Nil, TypeObject},
         vm::{Builder, StateTag},
     };
@@ -4528,10 +4526,10 @@ mod tests {
                 ],
                 Variadic::Capture,
             );
-            with_slots_dynamic!(strand, 5, |slots| {
+            with_cells!(strand, 5, |slots| {
                 // SAFETY: the cells are the frame's, rooted for the call, and `slots` is not used
                 // while the `Unpack` lives
-                let mut unpack = unsafe { Unpack::new(&sig, slots.as_inner()) };
+                let mut unpack = unsafe { Unpack::new(&sig, slots) };
                 assert_eq!(unpack.required(), 1);
                 assert_eq!(unpack.optional(), 1);
                 assert_eq!(unpack.required_keys(), 1);
@@ -4571,10 +4569,10 @@ mod tests {
     fn unpack_iter_exhaustive_without_variadic_has_no_rest_item() {
         with_fixture_vm(async |strand, []| {
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
-            with_slots_dynamic!(strand, 0, |slots| {
+            with_cells!(strand, 0, |slots| {
                 // SAFETY: the cells are the frame's, rooted for the call, and `slots` is not used
                 // while the `Unpack` lives
-                let mut unpack = unsafe { Unpack::new(&sig, slots.as_inner()) };
+                let mut unpack = unsafe { Unpack::new(&sig, slots) };
                 assert_eq!(unpack.pos_rest(), Rest::None);
                 assert_eq!(unpack.key_rest(), Rest::None);
                 assert!(!unpack.mixed_rest());
@@ -4647,12 +4645,12 @@ mod tests {
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
-                with_slots_dynamic!(strand, 0, |slots| {
+                with_cells!(strand, 0, |slots| {
                     let error = ObjectWrap::<Fixture>::op_unpack(
                         recv.clone(),
                         strand,
                         // SAFETY: as above, the frame's cells
-                        unsafe { Unpack::new(&sig, slots.as_inner()) },
+                        unsafe { Unpack::new(&sig, slots) },
                     )
                     .await
                     .unwrap_err();
@@ -4716,13 +4714,13 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            with_slots_dynamic!(strand, 2, |mut out| {
+            with_cells!(strand, 2, |out| {
                 proxy
-                    .op_unpack(strand, unsafe { Unpack::new(&sig, out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&sig, out) })
                     .await
                     .unwrap();
-                assert_eq!(out.at(0).to_i64(strand).unwrap(), 4);
-                strand.store(&mut tail, out.at(1));
+                assert_eq!(unsafe { out[0].slot() }.to_i64(strand).unwrap(), 4);
+                strand.store(&mut tail, unsafe { out[1].slot() });
             });
 
             owner
@@ -4739,9 +4737,9 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            with_slots_dynamic!(strand, 2, |out| {
+            with_cells!(strand, 2, |out| {
                 let error = tail
-                    .op_unpack(strand, unsafe { Unpack::new(&absent_sig, out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&absent_sig, out) })
                     .await
                     .unwrap_err();
                 assert_eq!(error.kind(), ErrorKind::Field);
@@ -4760,9 +4758,9 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            with_slots_dynamic!(strand, 2, |out| {
+            with_cells!(strand, 2, |out| {
                 let err = tail
-                    .op_unpack(strand, unsafe { Unpack::new(&bad_sig, out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&bad_sig, out) })
                     .await
                     .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::Value);
@@ -4791,9 +4789,9 @@ mod tests {
                 ],
                 Variadic::NONE,
             );
-            with_slots_dynamic!(strand, 2, |out| {
+            with_cells!(strand, 2, |out| {
                 let err = proxy
-                    .op_unpack(strand, unsafe { Unpack::new(&sig, out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&sig, out) })
                     .await
                     .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
@@ -4817,9 +4815,9 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
-                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                with_cells!(strand, 0, |arg_slots| {
                     let sig: [Option<Sym>; 0] = [];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<Fixture>::op_mcall(
                         recv.with_delegator(&delegator),
                         strand,
@@ -4843,9 +4841,9 @@ mod tests {
             let value: &Value = &owner;
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
-                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                with_cells!(strand, 0, |arg_slots| {
                     let sig: [Option<Sym>; 0] = [];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<SlotFixture>::op_mcall(
                         recv.with_delegator(&delegator),
                         strand,
@@ -4975,9 +4973,9 @@ mod tests {
             let state = strand.vm().state::<FixtureStateTag>();
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
                 // Registered method entry.
-                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                with_cells!(strand, 0, |arg_slots| {
                     let sig: [Option<Sym>; 0] = [];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<SlotFixture>::op_mcall(
                         recv.clone(),
                         strand,
@@ -4991,10 +4989,10 @@ mod tests {
                 assert_eq!(out.to_i64(strand).unwrap(), 1);
 
                 // Synthetic `(get)` special-cased inside `op_mcall`.
-                with_slots_dynamic!(strand, 1, |mut arg_slots| {
-                    strand.store(arg_slots.at(0), state.counter_sym);
+                with_cells!(strand, 1, |arg_slots| {
+                    strand.store(unsafe { arg_slots[0].slot() }, state.counter_sym);
                     let sig = [None];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<SlotFixture>::op_mcall(
                         recv.clone(),
                         strand,
@@ -5008,12 +5006,12 @@ mod tests {
                 assert_eq!(out.to_i64(strand).unwrap(), 1);
 
                 // Synthetic `(set)` special-cased inside `op_mcall`.
-                with_slots_dynamic!(strand, 2, |mut arg_slots| {
+                with_cells!(strand, 2, |arg_slots| {
                     let prop_sym = state.prop_sym;
-                    strand.store(arg_slots.at(0), prop_sym);
-                    strand.store(arg_slots.at(1), 42_i64);
+                    strand.store(unsafe { arg_slots[0].slot() }, prop_sym);
+                    strand.store(unsafe { arg_slots[1].slot() }, 42_i64);
                     let sig = [None, None];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<SlotFixture>::op_mcall(
                         recv.clone(),
                         strand,
@@ -5026,9 +5024,9 @@ mod tests {
                 });
 
                 // Unregistered special methods use the receiver protocol.
-                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                with_cells!(strand, 0, |arg_slots| {
                     let sig: [Option<Sym>; 0] = [];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<SlotFixture>::op_mcall(
                         recv.clone(),
                         strand,
@@ -5042,9 +5040,9 @@ mod tests {
                 assert!(out.to_bool(strand).unwrap());
 
                 // Falls through to `T::method`'s default field error.
-                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                with_cells!(strand, 0, |arg_slots| {
                     let sig: [Option<Sym>; 0] = [];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     let err = ObjectWrap::<SlotFixture>::op_mcall(
                         recv,
                         strand,
@@ -5189,9 +5187,9 @@ mod tests {
                 |recv| {
                     // Registered type-method entry: instantiates a fresh object.
                     let make_sym = state.make_sym;
-                    with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    with_cells!(strand, 0, |arg_slots| {
                         let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        let args = unsafe { Args::new(arg_slots, &sig, 0) };
                         TypeObjectWrap::<SlotFixture>::op_mcall(
                             recv.clone(),
                             strand,
@@ -5205,10 +5203,10 @@ mod tests {
                     assert!(state.slot_ty.cast(&out).is_some());
 
                     // Unbound instance-method call: `SlotFixture.bump(instance)`.
-                    with_slots_dynamic!(strand, 1, |mut arg_slots| {
-                        strand.store(arg_slots.at(0), inst_value);
+                    with_cells!(strand, 1, |arg_slots| {
+                        strand.store(unsafe { arg_slots[0].slot() }, inst_value);
                         let sig = [None];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        let args = unsafe { Args::new(arg_slots, &sig, 0) };
                         TypeObjectWrap::<SlotFixture>::op_mcall(
                             recv.clone(),
                             strand,
@@ -5222,9 +5220,9 @@ mod tests {
                     assert_eq!(out.to_i64(strand).unwrap(), 5);
 
                     // Falls through to `T::type_method`'s default field error.
-                    with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                    with_cells!(strand, 0, |arg_slots| {
                         let sig: [Option<Sym>; 0] = [];
-                        let args = args_from_slots(&mut arg_slots, &sig, 0);
+                        let args = unsafe { Args::new(arg_slots, &sig, 0) };
                         let err = TypeObjectWrap::<SlotFixture>::op_mcall(
                             recv,
                             strand,
@@ -5528,9 +5526,9 @@ mod tests {
             let state = strand.vm().state::<FixtureStateTag>();
             let with_slot_sym = state.with_slot_sym;
             with_instance!(strand, state.slot_ty.vtbl.cast(value).unwrap(), |recv| {
-                with_slots_dynamic!(strand, 0, |mut arg_slots| {
+                with_cells!(strand, 0, |arg_slots| {
                     let sig: [Option<Sym>; 0] = [];
-                    let args = args_from_slots(&mut arg_slots, &sig, 0);
+                    let args = unsafe { Args::new(arg_slots, &sig, 0) };
                     ObjectWrap::<SlotFixture>::op_mcall(
                         recv,
                         strand,

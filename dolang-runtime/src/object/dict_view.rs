@@ -1,6 +1,6 @@
 //! Lazy dictionary-like projections over native objects.
 
-use std::{cell::RefCell, convert::Infallible, marker::PhantomData, ops::ControlFlow};
+use std::{convert::Infallible, marker::PhantomData, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
@@ -17,11 +17,11 @@ use crate::{
         native::{Instance, Object, Spread, SpreadContext, Type as NativeType, Unpack, UnpackItem},
         protocol::{GcObj, Inspect, Protocol, Recv, members},
     },
-    strand::{Strand, with_scan},
+    strand::{Strand, with_slots_dynamic},
     sym,
     sym::Sym,
     unpack,
-    value::{Input, Output, Slot, TypeObject, Value},
+    value::{Input, Output, Slot, Slots, TypeObject, Value},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -30,8 +30,8 @@ type Pairs<'v> = Vec<(Value<'v>, Value<'v>)>;
 
 /// Receives ordered key/value pairs while a dictionary view is flattened.
 pub struct DictViewSink<'v, 'a> {
-    // Rooted by the scan of the flatten that lends it
-    pairs: &'a RefCell<Pairs<'v>>,
+    // Pushed onto the frame of the flatten that lends it, which roots them
+    slots: &'a Slots<'v, 'a>,
 }
 
 impl<'v> DictViewSink<'v, '_> {
@@ -43,16 +43,8 @@ impl<'v> DictViewSink<'v, '_> {
         value: impl Input<'v>,
     ) {
         // Either input may allocate, so each lands in a slot before the other is made
-        with_slots!(strand, |mut key_slot, mut value_slot| {
-            strand.store(&mut key_slot, key);
-            strand.store(&mut value_slot, value);
-            self.pairs
-                .borrow_mut()
-                // SAFETY: the values move straight into the borrowed accumulator
-                .push((unsafe { key_slot.take(strand) }, unsafe {
-                    value_slot.take(strand)
-                }));
-        })
+        strand.store(self.slots.push(), key);
+        strand.store(self.slots.push(), value);
     }
 }
 
@@ -462,19 +454,15 @@ unsafe impl<'v> crate::gc::ImmState for Rest<'v> {
 
 impl<'v> crate::gc::Annex for Rest<'v> {
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        accept_pairs(&self.pairs, visit)
+        for (key, value) in &self.pairs {
+            key.accept(visit)?;
+            value.accept(visit)?;
+        }
+        ControlFlow::Continue(())
     }
 }
 
 pub(crate) type RestObj<'v> = crate::gc::Imm<Rest<'v>>;
-
-fn accept_pairs(pairs: &Pairs<'_>, visit: &mut dyn Visit) -> ControlFlow<()> {
-    for (key, value) in pairs {
-        key.accept(visit)?;
-        value.accept(visit)?;
-    }
-    ControlFlow::Continue(())
-}
 
 unsafe impl<'v> crate::gc::ImmState for View<'v> {
     const CYCLIC: bool = true;
@@ -532,31 +520,26 @@ fn collect_rest<'v, 's>(
     out: impl Output<'v>,
     fill: impl FnOnce(&mut Strand<'v, 's>, &mut DictViewSink<'v, '_>) -> Result<'v, 's, ()>,
 ) -> Result<'v, 's, ()> {
-    let pairs = RefCell::new(Vec::with_capacity(expected));
-    // Never borrowed mutably across an allocation
-    let visit = |visitor: &mut dyn Visit| accept_pairs(&pairs.borrow(), visitor);
-    // SAFETY: `visit` visits each gathered pair once; the list changes only by pushes,
-    // which do not allocate, and by the final take, which follows the last allocation
-    unsafe {
-        with_scan!(strand, visit, {
-            fill(strand, &mut DictViewSink { pairs: &pairs })?;
-            if pairs.borrow().len() != expected {
-                return Err(Error::runtime(
-                    strand,
-                    "dictionary view length changed while flattening",
-                ));
-            }
-            let embryo = strand.builtin_types().dict_view_rest.embryo(strand);
-            embryo.finish_imm(
+    // Each pair takes two slots: the key, then the value
+    with_slots_dynamic!(strand, 0, |mut slots| {
+        fill(strand, &mut DictViewSink { slots: &slots })?;
+        if slots.len() != 2 * expected {
+            return Err(Error::runtime(
                 strand,
-                Rest {
-                    pairs: pairs.take(),
-                },
-                out,
-            );
-            Ok(())
-        })
-    }
+                "dictionary view length changed while flattening",
+            ));
+        }
+        let embryo = strand.builtin_types().dict_view_rest.embryo(strand);
+        let mut pairs = Vec::with_capacity(expected);
+        let mut slots = slots.iter_mut();
+        while let (Some(mut key), Some(mut value)) = (slots.next(), slots.next()) {
+            // SAFETY: the rest is allocated, and each value moves from its rooted slot
+            // straight into it
+            pairs.push(unsafe { (key.take(strand), value.take(strand)) });
+        }
+        embryo.finish_imm(strand, Rest { pairs }, out);
+        Ok(())
+    })
 }
 
 /// Runs `f` over the pairs of the [`Rest`] in `rest`.

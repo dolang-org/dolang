@@ -14,6 +14,8 @@ use std::{
     result, str,
 };
 
+use dolang_util::mono::MonoVec;
+
 use crate::{
     arg::Args,
     error::{Error, ErrorKind, Result},
@@ -3755,36 +3757,82 @@ impl<'v> Input<'v> for &ValueCell<'v> {
     }
 }
 
-pub(crate) struct Slots<'v, 'a>(&'a [ValueCell<'v>]);
+/// The rooted cells of a [`with_slots_dynamic!`](crate::strand::with_slots_dynamic) frame.
+///
+/// The frame starts with a fixed number of cells and grows by [`Self::push`]. Its cells
+/// never move, so a pushed slot stays valid while later pushes add more.
+pub(crate) struct Slots<'v, 'a>(&'a MonoVec<ValueCell<'v>>);
 
 impl<'v, 'a> Slots<'v, 'a> {
-    pub(crate) unsafe fn new(slice: &'a [ValueCell<'v>]) -> Self {
-        Self(slice)
+    /// # Safety
+    /// The frame roots `cells` for `'a`, and nothing else forms a slot into them.
+    pub(crate) unsafe fn new(cells: &'a MonoVec<ValueCell<'v>>) -> Self {
+        Self(cells)
     }
 
     pub(crate) fn len(&self) -> usize {
         self.0.len()
     }
 
-    pub(crate) fn at<'b>(&'b mut self, index: usize) -> Slot<'v, 'b> {
+    pub(crate) fn at(&mut self, index: usize) -> Slot<'v, '_> {
+        // SAFETY: `self` is borrowed exclusively for as long as the slot lives
         unsafe { self.0[index].slot() }
+    }
+
+    /// Adds a nil cell to the frame, returning a slot into it.
+    ///
+    /// Pushed slots borrow `self` shared, so several can be live at once; [`Self::at`]
+    /// and [`Self::iter_mut`] wait until none is. Pushing allocates no GC memory.
+    pub(crate) fn push(&self) -> Slot<'v, '_> {
+        // SAFETY: the cell is new and never moves, and this is the only slot into it
+        // until `self` can be borrowed exclusively again
+        unsafe { self.0.push_ref(ValueCell::default()).slot() }
     }
 
     /// The slots in order, each borrowed from `self`.
     pub(crate) fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = Slot<'v, '_>> {
+        let cells = self.0;
         // SAFETY: the cells are distinct, and `self` is borrowed for as long as any
         // of the slots lives
-        self.0.iter().map(|cell| unsafe { cell.slot() })
-    }
-
-    pub(crate) fn as_inner(&self) -> &'a [ValueCell<'v>] {
-        self.0
-    }
-
-    pub(crate) unsafe fn unchecked_at(&self, index: usize) -> Slot<'v, 'a> {
-        unsafe { self.0[index].slot() }
+        (0..cells.len()).map(move |index| unsafe { cells[index].slot() })
     }
 }
+
+impl<'v, 'a> IntoIterator for Slots<'v, 'a> {
+    type Item = Slot<'v, 'a>;
+    type IntoIter = SlotsIntoIter<'v, 'a>;
+
+    /// The slots in order, each for the rest of the frame.
+    fn into_iter(self) -> Self::IntoIter {
+        SlotsIntoIter {
+            cells: self.0,
+            range: 0..self.0.len(),
+        }
+    }
+}
+
+/// The iterator [`Slots::into_iter`] returns.
+pub(crate) struct SlotsIntoIter<'v, 'a> {
+    cells: &'a MonoVec<ValueCell<'v>>,
+    range: std::ops::Range<usize>,
+}
+
+impl<'v, 'a> Iterator for SlotsIntoIter<'v, 'a> {
+    type Item = Slot<'v, 'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let index = self.range.next()?;
+        // SAFETY: consuming the `Slots` ended every other way to reach the cells, and
+        // each is yielded once
+        Some(unsafe { self.cells[index].slot() })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.range.size_hint()
+    }
+}
+
+impl ExactSizeIterator for SlotsIntoIter<'_, '_> {}
 
 /// [`Input`] which becomes a well-known type object
 #[non_exhaustive]

@@ -65,8 +65,9 @@ chain, where `scan_stack` visits it, and that drop unlinks. `enter` also hands
 back a `Strand` handle on the same `StrandInner` whose frame pointer is the
 linked frame. `with_slots!` declares `SlotCells` in the enclosing future,
 outside the scope that roots them, so the body runs inline with `strand` rebound
-to that handle; `with_slots_dynamic!` does the same with runtime-sized
-`DynSlotCells`, and `call!`/`method!` with `ArgCells`. A scan frame holds a
+to that handle; `with_slots_dynamic!` does the same with `DynSlotCells`, a
+`MonoVec` of cells that `Slots::push` grows without moving them, and
+`call!`/`method!` with `ArgCells`. A scan frame holds a
 shared borrow of what it roots, so rooted data that changes needs interior
 mutability (`Cell`, `RefCell`, or `UnsafeCell`). Setup code outside any strand,
 such as `ModuleBuilder`, roots what it holds with `Arena::scan` instead: a guard
