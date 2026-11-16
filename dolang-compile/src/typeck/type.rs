@@ -1116,6 +1116,8 @@ pub(crate) struct Shared {
     types: Frozen<intern::Table<Type, TypeTag>>,
     /// Whether each of its types contains `Unknown`
     gradual: Frozen<MonoVec<bool>>,
+    /// How many enclosing groups each of its types refers into
+    open: Frozen<MonoVec<u32>>,
     symbols: Frozen<intern::Table<String, SymbolTag>>,
     /// Its types and symbols, its parent's included
     type_count: usize,
@@ -1206,6 +1208,13 @@ impl Shared {
         }
     }
 
+    fn open_groups(&self, id: TypeId) -> u32 {
+        match &self.parent {
+            Some(parent) if id.index() < parent.type_count => parent.open_groups(id),
+            _ => self.open[id.index() - self.type_offset()],
+        }
+    }
+
     fn type_id(&self, ty: &Type) -> Option<TypeId> {
         self.parent
             .as_ref()
@@ -1272,6 +1281,8 @@ pub(crate) struct Database {
     types: intern::Table<Type, TypeTag>,
     /// Whether each of its types contains `Unknown`, by its own index
     gradual: MonoVec<bool>,
+    /// How many enclosing groups each of its types refers into, by its own index
+    open: MonoVec<u32>,
     /// Every symbol, or in a fork, those its base lacks, as for types
     symbols: intern::Table<String, SymbolTag>,
     fixed: Fixed,
@@ -1292,8 +1303,10 @@ impl Default for Database {
     fn default() -> Self {
         let types = intern::Table::new();
         let gradual = MonoVec::new();
+        let open = MonoVec::new();
         let leaf = |ty: Type| {
             gradual.push(matches!(ty, Type::Unknown(_)));
+            open.push(0);
             types.id_owned(ty)
         };
         Self {
@@ -1312,6 +1325,7 @@ impl Default for Database {
             }),
             types,
             gradual,
+            open,
             symbols: intern::Table::new(),
             unsupported: Cell::new(0),
             settled: None,
@@ -1364,6 +1378,7 @@ impl Database {
             parent,
             types: Frozen::new(self.types),
             gradual: Frozen::new(self.gradual),
+            open: Frozen::new(self.open),
             symbols: Frozen::new(self.symbols),
             declared,
             fixed: self.fixed,
@@ -1380,6 +1395,7 @@ impl Database {
             phase: Phase::Fork(base.clone()),
             types: intern::Table::new(),
             gradual: MonoVec::new(),
+            open: MonoVec::new(),
             symbols: intern::Table::new(),
             fixed: base.fixed,
             unsupported: Cell::new(base.unsupported),
@@ -1616,6 +1632,15 @@ impl Database {
         match self.base() {
             Some(base) if id.index() < base.type_count => base.contains_unknown(id),
             base => self.gradual[id.index() - base.map_or(0, |base| base.type_count)],
+        }
+    }
+
+    /// How many enclosing groups a type refers into: none for a closed type,
+    /// which means the same in every environment
+    pub(crate) fn open_groups(&self, id: TypeId) -> u32 {
+        match self.base() {
+            Some(base) if id.index() < base.type_count => base.open_groups(id),
+            base => self.open[id.index() - base.map_or(0, |base| base.type_count)],
         }
     }
 
@@ -1939,13 +1964,22 @@ impl Database {
     }
 
     /// Intern into its own table, noting whether a new type contains `Unknown`
+    /// and how many enclosing groups it refers into
     fn insert(&self, ty: Type) -> TypeId {
         let id = self.types.id_owned(ty);
         if id.index() == self.gradual.len() {
             let ty = &self.types[id];
             let mut gradual = matches!(ty, Type::Unknown(_));
-            ty.visit_children(|child, _| gradual = gradual || self.contains_unknown(child));
+            let mut open = match *ty {
+                Type::Bound { reference, .. } => u32::from(reference.depth) + 1,
+                _ => 0,
+            };
+            ty.visit_children(|child, groups| {
+                gradual = gradual || self.contains_unknown(child);
+                open = open.max(self.open_groups(child).saturating_sub(groups));
+            });
             self.gradual.push(gradual);
+            self.open.push(open);
         }
         id
     }
@@ -2664,6 +2698,38 @@ impl Database {
         let result = self.intern(mapped);
         memo.insert((id, cutoff), result);
         Ok(result)
+    }
+
+    /// `root` with each occurrence of `from` replaced by `to`. All three are
+    /// closed (see [`Self::open_groups`]), so an occurrence means the same at
+    /// any depth.
+    pub(crate) fn replace_closed(&self, root: TypeId, from: TypeId, to: TypeId) -> TypeId {
+        debug_assert!([root, from, to].iter().all(|&ty| self.open_groups(ty) == 0));
+        self.replace_closed_inner(root, from, to, &mut FxHashMap::default())
+    }
+
+    fn replace_closed_inner(
+        &self,
+        id: TypeId,
+        from: TypeId,
+        to: TypeId,
+        memo: &mut FxHashMap<TypeId, TypeId>,
+    ) -> TypeId {
+        if id == from {
+            return to;
+        }
+        if let Some(&replaced) = memo.get(&id) {
+            return replaced;
+        }
+        let Ok(mapped) = self.ty(id).map_children(|child, _| {
+            Ok::<_, std::convert::Infallible>(self.replace_closed_inner(child, from, to, memo))
+        });
+        let replaced = match mapped == *self.ty(id) {
+            true => id,
+            false => self.intern(mapped),
+        };
+        memo.insert(id, replaced);
+        replaced
     }
 
     /// Replace the references to the group a closed type is interpreted in, as a

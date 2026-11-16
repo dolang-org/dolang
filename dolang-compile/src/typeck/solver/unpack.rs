@@ -20,10 +20,10 @@
 //! them again, and the rest's argument is instantiated with the solution; a
 //! binder `S` doesn't mention keeps its argument. A rest that this doesn't give,
 //! or that isn't within its binder's bound for the tail, is the binder's default
-//! for the tail, which by default only spreads. Without binders to solve again,
-//! as for a value of an `Unpack` type itself, a rest carries over only where `S`
-//! is its own tail. So a class whose rests depend on `S` has its `(unpack)`
-//! return its own type, not `Unpack`.
+//! for the tail, which by default destructures the same way. Without binders to
+//! solve again, as for a value of an `Unpack` type itself, the rest is its
+//! argument with the tail in place of each occurrence of `S`, so an `(unpack)`
+//! can return `Unpack[S, Rest: R[S]]` and leave rests that are `R[tail]`.
 
 use std::ops::ControlFlow;
 
@@ -409,8 +409,17 @@ impl Solver<'_> {
     ) -> Option<TypeId> {
         let slot = rest_slot(kind);
         let rest = match *source {
+            // The rest has the tail's schema in place of `S`
             Source::Applied { schema, rest, pos } => {
-                (schema == tail).then_some(if slot == POS_SLOT { pos } else { rest })?
+                let rest = if slot == POS_SLOT { pos } else { rest };
+                let closed = |ty| self.db.open_groups(ty) == 0;
+                match schema == tail {
+                    true => rest,
+                    false if closed(schema) && closed(tail) && closed(rest) => {
+                        self.db.replace_closed(rest, schema, tail)
+                    }
+                    false => return None,
+                }
             }
             Source::Edge {
                 ref owner,

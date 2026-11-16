@@ -170,6 +170,16 @@ pub def pairs p @ Pairs[Int, Str]
   let _ = rest
   #       ^~~~: flow std.Spread[{std.Str}]
 
+# A `Rest` may fix a binder to a closed schema, and unfolds the same way each
+# time its bound is checked
+pub @class Tagged[S @ {...}, M @ {...}]: Unpack[S, Rest: Tagged[S, {}]]
+  pub def tags self -> Unpack[M]
+
+pub def tagged t @ Tagged[{Int, Str}, {a: Int}]
+  let _ ...rest = t
+  let _ = rest
+  #       ^~~~: flow m.Tagged[{std.Str}, {}]
+
 pub def possible s @ Str
   let a _b = [4]
   let _ = a

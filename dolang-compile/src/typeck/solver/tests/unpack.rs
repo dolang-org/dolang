@@ -425,7 +425,7 @@ fn a_rest_outside_its_bound_falls_back() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
-fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
+fn an_unpack_types_rest_must_fit_its_tail() {
     let mut w = World::new();
     let (int, str) = (w.int, w.str);
     let ints = vec![positional(Multiplicity::Repeated, int)];
@@ -442,6 +442,24 @@ fn an_unpack_type_keeps_its_rest_only_for_its_own_tail() {
     let fixed = apply(&w.db, w.unpack, &[schema, rest, rest]);
     let walked = w.walk(fixed, &pattern(&[false], &[], true)).unwrap();
     let left = w.spread_of(vec![positional(Multiplicity::Required, str)]);
+    assert_eq!(walked.rests, vec![left]);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn an_unpack_types_rest_has_the_tail_in_place_of_its_schema() {
+    let mut w = World::new();
+    let (int, str) = (w.int, w.str);
+    let pair = vec![
+        positional(Multiplicity::Required, int),
+        positional(Multiplicity::Required, str),
+    ];
+    // `Unpack[{Int, Str}, Rest: Unpack[{Int, Str}]]`
+    let schema = items(&w.db, pair.clone());
+    let rest = w.unpack_of(pair);
+    let applied = apply(&w.db, w.unpack, &[schema, rest, rest]);
+    let walked = w.walk(applied, &pattern(&[false], &[], true)).unwrap();
+    let left = w.unpack_of(vec![positional(Multiplicity::Required, str)]);
     assert_eq!(walked.rests, vec![left]);
 }
 

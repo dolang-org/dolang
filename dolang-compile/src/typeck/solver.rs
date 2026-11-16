@@ -3265,8 +3265,13 @@ impl<'db> Solver<'db> {
                 let Argument::Positional(ty) = *arg else {
                     unreachable!()
                 };
-                // Resolving keeps environments from nesting through forwarded binders.
-                let term = self.resolve(view.child(ty))?;
+                // Resolving keeps environments from nesting through forwarded
+                // binders, and a closed argument means the same in any, so a
+                // recursive application unfolds to the same terms each time
+                let term = match self.resolve(view.child(ty))? {
+                    Term::View(view) if self.db.open_groups(view.ty) == 0 => self.closed(view.ty),
+                    term => term,
+                };
                 assert_eq!(self.kind(term), binder.kind, "argument kind mismatch");
                 Ok(term)
             })
