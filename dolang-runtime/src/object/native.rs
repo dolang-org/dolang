@@ -4703,7 +4703,7 @@ mod tests {
     fn fields_native_reads_registered_fields_and_captures_lazy_tail() {
         with_fixture_vm(async |strand, [mut owner, mut proxy, mut tail, mut tmp]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
-            crate::object::field_iter::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
+            crate::object::field_proxy::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(
                 0,
@@ -4772,7 +4772,7 @@ mod tests {
     fn fields_native_exhaustive_unpack_rejects_unmatched_fields() {
         with_fixture_vm(async |strand, [mut owner, mut proxy]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
-            crate::object::field_iter::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
+            crate::object::field_proxy::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
             let state = strand.vm().state::<FixtureStateTag>();
             let sig = sig::Unpack::new(
                 0,

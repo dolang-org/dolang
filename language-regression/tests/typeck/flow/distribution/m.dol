@@ -52,11 +52,11 @@ pub def destructured r @ Unpack[{key: Int, *key: Str}]
   let _ = key
   #       ^~~: flow std.Int
   let _ = rest
-  #       ^~~~: flow std.Spread[:key:, std.Str]
+  #       ^~~~: flow std.UnpackRest[:key:, std.Str]
 
 pub def domain_first r @ Unpack[{**Str, key: Int}]
   let :key ...rest = r
   let _ = key
   #       ^~~: flow std.Int | std.Str
   let _ = rest
-  #       ^~~~: flow std.Spread[{**std.Str, ?key: std.Int}]
+  #       ^~~~: flow std.UnpackRest[{**std.Str, ?key: std.Int}]

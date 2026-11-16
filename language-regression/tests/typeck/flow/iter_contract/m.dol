@@ -40,8 +40,17 @@ pub def unpackable it @ UnpackIter[Int]
 # LL |   let _ _ = mapped
 #    |             ^^^^^^
 
-# Unpack carries the spread contract too.
-pub def unpack_spreads source @ Unpack[Int]
+# Unpacking doesn't promise spreading
+pub def unpack_only source @ Unpack[Int]
+  let _xs = [...source]
+  # error: `std.Unpack[std.Int]` is not spreadable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _xs = [...source]
+  #    |                 ^^^^^^
+
+# A `BaseSeq` spreads as well as unpacking
+pub def seq_spreads source @ BaseSeq[Int]
   let xs = [...source]
   let _ = xs
   #       ^~: flow std.Array[std.Int]

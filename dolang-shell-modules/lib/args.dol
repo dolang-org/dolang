@@ -129,7 +129,7 @@ pub @let Handler[R, I, O] = ((Args[R, I, O], <I, >O) -> R)
 # ```
 # let :format :file = p
 # ```
-pub class Args[R, I, O]: @Unpack[Sym, Value]
+pub class Args[R, I, O]: @Spread[Sym, Value] @Unpack[Sym, Value, Rest: BaseMap[Sym, Value], Pos: BaseSeq[Sym, Value]]
   field values
 
   def (init) self values
