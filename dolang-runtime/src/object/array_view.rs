@@ -15,15 +15,14 @@ use crate::{
     object::{
         BoundMethod, index, iter,
         native::{Instance, Object, Type as NativeType, Unpack as NativeUnpack, UnpackItem},
-        protocol::{GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, members},
+        protocol::{GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, Unpack, members},
         range,
     },
-    sig::{Unpack, UnpackKeyKind},
     strand::Strand,
     sym,
     sym::Sym,
     unpack,
-    value::{Input, Output, Slot, Slots, TypeObject, Value, with_u8_slice},
+    value::{Input, Output, Slot, TypeObject, Value, with_u8_slice},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -757,24 +756,27 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let view = this.get();
-        let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, 0)?;
-        if let Some(i) = sig.pos_rest_slot() {
-            // SAFETY: `store_rest` calls this after allocating the rest, whose payload
-            // the copy of the pinned receiver becomes at once
-            store_rest(
-                strand,
-                || unsafe { this.to_strong() },
-                consumed,
-                false,
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        unpack_from(
+            strand,
+            unpack,
+            &view.owner,
+            &*view.glue,
+            0,
+            |strand, consumed, slot| {
+                // SAFETY: `store_rest` calls this after allocating the rest, whose
+                // payload the copy of the pinned receiver becomes at once
+                store_rest(
+                    strand,
+                    || unsafe { this.to_strong() },
+                    consumed,
+                    false,
+                    slot,
+                );
+            },
+        )
     }
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -829,33 +831,30 @@ impl<'v> Protocol<'v> for IterObj<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.get();
         let view = iter.parent.get();
-        let consumed = unpack_from(
+        let start = iter.index.get();
+        unpack_from(
             strand,
-            sig,
-            &mut out,
+            unpack,
             &view.owner,
             &*view.glue,
-            iter.index.get(),
-        )?;
-        if let Some(i) = sig.pos_rest_slot() {
-            let embryo = strand.builtin_types().array_view_iter.embryo(strand);
-            // SAFETY: the reference moves straight into the allocated iterator
-            embryo.finish_imm(
-                strand,
-                Iter {
-                    parent: unsafe { iter.parent.dup() },
-                    index: Cell::new(iter.index.get() + consumed),
-                },
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+            start,
+            |strand, consumed, slot| {
+                let embryo = strand.builtin_types().array_view_iter.embryo(strand);
+                // SAFETY: the reference moves straight into the allocated iterator
+                embryo.finish_imm(
+                    strand,
+                    Iter {
+                        parent: unsafe { iter.parent.dup() },
+                        index: Cell::new(start + consumed),
+                    },
+                    slot,
+                );
+            },
+        )
     }
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -927,24 +926,27 @@ impl<'v> Protocol<'v> for RestObj<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let rest = this.get();
         let view = rest.parent.get();
-        let consumed = unpack_from(strand, sig, &mut out, &view.owner, &*view.glue, rest.start)?;
-        if let Some(i) = sig.pos_rest_slot() {
-            // SAFETY: `store_rest` calls it after allocating
-            store_rest(
-                strand,
-                || unsafe { rest.parent.dup() },
-                rest.start + consumed,
-                false,
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        unpack_from(
+            strand,
+            unpack,
+            &view.owner,
+            &*view.glue,
+            rest.start,
+            |strand, consumed, slot| {
+                // SAFETY: `store_rest` calls it after allocating
+                store_rest(
+                    strand,
+                    || unsafe { rest.parent.dup() },
+                    rest.start + consumed,
+                    false,
+                    slot,
+                );
+            },
+        )
     }
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1068,42 +1070,26 @@ fn unpack_native<'v, 's>(
     Ok(())
 }
 
+/// Unpacks the view's items from `start`; `rest` stores the items left after the
+/// first `consumed` of those.
 fn unpack_from<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    sig: &Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
+    unpack: Unpack<'v, '_>,
     owner: &Value<'v>,
     glue: &(dyn ArrayViewGlue<'v> + '_),
     start: usize,
-) -> Result<'v, 's, usize> {
+    rest: impl FnOnce(&mut Strand<'v, 's>, usize, Slot<'v, '_>),
+) -> Result<'v, 's, ()> {
     let len = glue.len(owner, strand).saturating_sub(start);
-    let pos_count = sig.required + sig.optional.len();
-    if sig.required > len {
-        return Err(Error::missing_positional(strand, sig.required));
-    }
-    if pos_count < len && sig.pos_rest() == RestKind::None {
-        return Err(Error::unexpected_positional(strand, sig.required));
-    }
-    let min = pos_count.min(len);
-    for i in 0..min {
-        glue.get(owner, strand, start + i, out.at(i))?;
-    }
-    if len < pos_count {
-        for (i, default) in sig.optional[(len - sig.required)..].iter().enumerate() {
-            strand.store(out.at(min + i), default);
-        }
-    }
-    for (i, key) in sig.keys.iter().enumerate() {
-        if let Some(default) = &key.default {
-            strand.store(out.at(pos_count + i), default);
-        } else {
-            return Err(match &key.kind {
-                UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-            });
-        }
-    }
-    Ok(min)
+    unpack.sequence(
+        strand,
+        len,
+        |strand, i, slot| glue.get(owner, strand, start + i, slot),
+        |strand, consumed, slot| {
+            rest(strand, consumed, slot);
+            Ok(())
+        },
+    )
 }
 
 /// Type object shared by every array view.
@@ -1293,8 +1279,18 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(3, vec![], vec![], Variadic::NONE);
-            with_slots_dynamic!(strand, 3, |mut out| {
-                let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
+            with_slots_dynamic!(strand, 3, |out| {
+                let err = unpack_from(
+                    strand,
+                    // SAFETY: the cells are the frame's, rooted for the call, and `out`
+                    // is not used while the `Unpack` lives
+                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    owner,
+                    &glue,
+                    0,
+                    |_, _, _| {},
+                )
+                .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::MissingPos);
             });
         });
@@ -1310,8 +1306,18 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::NONE);
-            with_slots_dynamic!(strand, 1, |mut out| {
-                let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
+            with_slots_dynamic!(strand, 1, |out| {
+                let err = unpack_from(
+                    strand,
+                    // SAFETY: the cells are the frame's, rooted for the call, and `out`
+                    // is not used while the `Unpack` lives
+                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    owner,
+                    &glue,
+                    0,
+                    |_, _, _| {},
+                )
+                .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::UnexpectedPos);
             });
         });
@@ -1327,13 +1333,22 @@ mod tests {
                 ty: strand.vm().state::<FixtureStateTag>().ty,
             };
             let sig = sig::Unpack::new(1, vec![], vec![], Variadic::Capture);
-            with_slots_dynamic!(strand, 1, |mut out| {
-                // `unpack_from` itself only fills the required/optional/key
-                // slots; the variadic capture slot is filled by the caller
-                // (see `View::op_unpack`). Here we only assert it doesn't
-                // error and reports 1 item consumed.
-                let consumed = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap();
-                assert_eq!(consumed, 1);
+            with_slots_dynamic!(strand, 2, |out| {
+                // The caller's `rest` fills the capture; it learns how many items the
+                // positional parameters consumed
+                let mut consumed = None;
+                unpack_from(
+                    strand,
+                    // SAFETY: the cells are the frame's, rooted for the call, and `out`
+                    // is not used while the `Unpack` lives
+                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    owner,
+                    &glue,
+                    0,
+                    |_, count, _| consumed = Some(count),
+                )
+                .unwrap();
+                assert_eq!(consumed, Some(1));
             });
         });
     }
@@ -1357,8 +1372,18 @@ mod tests {
                 }],
                 Variadic::NONE,
             );
-            with_slots_dynamic!(strand, 1, |mut out| {
-                let err = unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap_err();
+            with_slots_dynamic!(strand, 1, |out| {
+                let err = unpack_from(
+                    strand,
+                    // SAFETY: the cells are the frame's, rooted for the call, and `out`
+                    // is not used while the `Unpack` lives
+                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    owner,
+                    &glue,
+                    0,
+                    |_, _, _| {},
+                )
+                .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::MissingKey);
             });
         });
@@ -1387,7 +1412,17 @@ mod tests {
                 Variadic::NONE,
             );
             with_slots_dynamic!(strand, 1, |mut out| {
-                unpack_from(strand, &sig, &mut out, owner, &glue, 0).unwrap();
+                unpack_from(
+                    strand,
+                    // SAFETY: the cells are the frame's, rooted for the call, and `out`
+                    // is not used while the `Unpack` lives
+                    unsafe { Unpack::new(&sig, out.as_inner()) },
+                    owner,
+                    &glue,
+                    0,
+                    |_, _, _| {},
+                )
+                .unwrap();
                 let filled = out.at(0).to_i64(strand).unwrap();
                 assert_eq!(filled, 42);
             });

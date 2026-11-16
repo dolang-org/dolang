@@ -9,12 +9,11 @@ use crate::{
     arg::Args,
     error::{Error, Result},
     gc::{self, Collect, arena::Visit, with_pin},
-    object::protocol::{GcObjPin, instance_get_fallback, members},
-    sig,
+    object::protocol::{GcObjPin, Unpack, instance_get_fallback, members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Nil, Slot, Slots, Value, view::PinBin, with_u8_slice},
+    value::{BinEmbryo, Nil, Slot, Value, view::PinBin, with_u8_slice},
     vm::{AllocExt, Vm},
     with_slots,
 };
@@ -734,57 +733,24 @@ impl<'v> Protocol<'v> for Split<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // Reject keys without defaults
-        for key in &sig.keys {
-            if key.default.is_none() {
-                return Err(match &key.kind {
-                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    sig::UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-                });
-            }
-        }
-
-        // Fill keys with defaults
-        let pos_count = sig.required + sig.optional.len();
-        for (i, key) in sig.keys.iter().enumerate() {
-            strand.store(out.at(pos_count + i), key.default.as_ref().unwrap());
-        }
-
-        let mut borrow = this.borrow(strand)?.clone();
-
-        // Fill required positional slots
-        for i in 0..sig.required {
-            let Some((start, end)) = borrow.next_segment() else {
-                return Err(Error::missing_positional(strand, sig.required));
-            };
-            strand.store(out.at(i), &borrow.str[start..end]);
-        }
-
-        // Fill optional positional slots
-        for i in 0..sig.optional.len() {
-            if let Some((start, end)) = borrow.next_segment() {
-                strand.store(out.at(sig.required + i), &borrow.str[start..end]);
-            } else {
-                strand.store(out.at(sig.required + i), &sig.optional[i]);
-            }
-        }
-
-        if sig.pos_rest() == crate::bytecode::Rest::None && borrow.next_segment().is_some() {
-            return Err(Error::unexpected_positional(strand, pos_count));
-        }
-
-        if let Some(i) = sig.pos_rest_slot() {
-            strand
-                .builtin_types()
-                .bin_split
-                .create(strand, borrow, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-
-        Ok(())
+        let borrow = this.borrow(strand)?.clone();
+        unpack.cursor(
+            strand,
+            borrow,
+            |strand, split, slot| match split.next_segment() {
+                Some((start, end)) => {
+                    strand.store(slot, &split.str[start..end]);
+                    true
+                }
+                None => false,
+            },
+            |strand, split, slot| {
+                strand.builtin_types().bin_split.create(strand, split, slot);
+                Ok(())
+            },
+        )
     }
 
     async fn op_next<'a, 's>(

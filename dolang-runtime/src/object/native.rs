@@ -21,11 +21,10 @@ use crate::{
         with_pin,
     },
     object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
-    sig,
     strand::{PinScope, Pinned, SlotCells, Strand, in_native_frame},
     sym::{self, Sym},
     unpack,
-    value::{Case, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, private::Sealed},
+    value::{Case, Input, Output, Slot, TypeObject, Value, ValueCell, private::Sealed},
     vm::{Alloc, AllocExt, Register, Vm},
     with_slots,
 };
@@ -33,18 +32,15 @@ use crate::{
 use super::{
     BoundMethod,
     interface::Request,
-    pack,
     protocol::{
         self, GcObj, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
         is_special_mcall, type_mcall_fallback,
     },
-    tuple,
 };
-use dolang_bytecode::Variadic;
 use dolang_util::alias;
 use rustc_hash::FxHashSet;
 
-pub use super::protocol::{Spread, SpreadContext};
+pub use super::protocol::{Spread, SpreadContext, Unpack, UnpackItem, UnpackIter};
 pub use dolang_bytecode::Rest;
 
 pub(crate) struct ObjectWrap<'v, T> {
@@ -89,298 +85,6 @@ impl<'v, T: Object<'v>> gc::TailAnnex<ValueCell<'v>> for ObjectAnnexPrefix<'v, T
         for slot in slots {
             // Safety: the collector clears only unreachable objects
             unsafe { slot.clear() }
-        }
-    }
-}
-
-/// Unpack operation specification and output slots.
-///
-/// This type is passed to [`Object::unpack`] implementations to describe what values
-/// should be extracted from the object and where they should be stored. It supports:
-///
-/// - **Positional parameters**: Required and optional positional values
-/// - **Keyed parameters**: Named values accessed by symbol or constant key
-/// - **Rest capture**: Capturing remaining values, of either kind or of one kind
-///
-/// # Usage Pattern
-///
-/// Implementations should iterate over the unpack specification using [`iter()`](Self::iter),
-/// which yields [`UnpackItem`] variants describing each parameter. For each item:
-///
-/// 1. Extract or compute the corresponding value from the object
-/// 2. Store it in the provided [`Slot`]
-/// 3. If the value is missing and required, return an error
-/// 4. If the value is missing and optional, use the provided default
-///
-/// # Read-only contract
-///
-/// Unpacking must not change the receiver, on success or failure. Captured rests
-/// must be separate values that can be unpacked and spread without consuming them.
-pub struct Unpack<'v, 'a> {
-    inner: &'a sig::Unpack<'v, 'a>,
-    slots: Slots<'v, 'a>,
-}
-
-impl<'v, 'a> Unpack<'v, 'a> {
-    /// Returns the number of required positional parameters.
-    ///
-    /// These must be provided or the unpack operation should fail.
-    #[inline]
-    pub fn required(&self) -> usize {
-        self.inner.required
-    }
-
-    /// Returns the number of optional positional parameters.
-    ///
-    /// These have default values provided in the unpack specification.
-    #[inline]
-    pub fn optional(&self) -> usize {
-        self.inner.optional.len()
-    }
-
-    /// Returns the number of required keyed parameters.
-    ///
-    /// These must be provided or the unpack operation should fail.
-    #[inline]
-    pub fn required_keys(&self) -> usize {
-        self.inner
-            .keys
-            .iter()
-            .map(|k| k.default.is_none() as usize)
-            .sum()
-    }
-
-    /// Returns the first required key parameter, if present.
-    #[inline]
-    pub fn first_required_key(&self) -> Option<impl Input<'v> + '_> {
-        self.inner.keys.iter().find_map(|k| {
-            if k.default.is_none() {
-                Some(&k.kind)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Returns the number of optional keyed parameters.
-    ///
-    /// These have default values provided in the unpack specification.
-    #[inline]
-    pub fn optional_keys(&self) -> usize {
-        self.inner
-            .keys
-            .iter()
-            .map(|k| k.default.is_some() as usize)
-            .sum()
-    }
-
-    /// Returns how positional items left over after the positional parameters are
-    /// handled.
-    ///
-    /// - [`Rest::None`]: the unpack operation should fail if any remain.
-    /// - [`Rest::Discard`]: they are ignored.
-    /// - [`Rest::Capture`]: iteration yields an [`UnpackItem::Rest`] or
-    ///   [`UnpackItem::PosRest`] to receive them.
-    ///
-    /// A `...name` rest takes leftovers of both kinds, so this and
-    /// [`key_rest`](Self::key_rest) agree for it; see [`mixed_rest`](Self::mixed_rest).
-    #[inline]
-    pub fn pos_rest(&self) -> Rest {
-        self.inner.variadic.positional()
-    }
-
-    /// Returns how keyed items not matched by a key parameter are handled.
-    ///
-    /// As for [`pos_rest`](Self::pos_rest), except that a capture is an
-    /// [`UnpackItem::Rest`] or [`UnpackItem::KeyRest`].
-    #[inline]
-    pub fn key_rest(&self) -> Rest {
-        self.inner.variadic.keyed()
-    }
-
-    /// Returns if leftovers of both kinds go to a single `...` rest, which keeps
-    /// their order.
-    #[inline]
-    pub fn mixed_rest(&self) -> bool {
-        matches!(self.inner.variadic, Variadic::Discard | Variadic::Capture)
-    }
-
-    /// Stores an empty tuple in `out`.
-    ///
-    /// A source without positional items uses this to fill an [`UnpackItem::PosRest`].
-    pub fn empty_pos_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-        tuple::create(strand, [], out);
-    }
-
-    /// Stores an empty [`Pack`](crate::object::pack::Pack) in `out`.
-    ///
-    /// A source without keyed items uses this to fill an [`UnpackItem::KeyRest`].
-    pub fn empty_key_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
-        let pack = strand.builtin_types().pack;
-        pack.create_imm(strand, pack::Pack::new(Vec::new()), out);
-    }
-
-    /// Returns an iterator over the unpack specification.
-    ///
-    /// The iterator yields [`UnpackItem`] variants in order:
-    /// 1. Required positional items
-    /// 2. Optional positional items
-    /// 3. Key items (both required and optional)
-    /// 4. Captured rests, if any: a [`Rest`](UnpackItem::Rest), or a
-    ///    [`PosRest`](UnpackItem::PosRest) and/or [`KeyRest`](UnpackItem::KeyRest)
-    pub fn iter(&mut self) -> UnpackIter<'v, 'a, '_> {
-        UnpackIter { unpack: self, i: 0 }
-    }
-}
-
-/// Iterator over unpack specification items.
-///
-/// Created by [`Unpack::iter()`]. Yields [`UnpackItem`] variants describing
-/// each parameter that should be extracted from the object.
-pub struct UnpackIter<'v, 'a, 'b> {
-    unpack: &'b mut Unpack<'v, 'a>,
-    i: usize,
-}
-
-/// A single parameter in an unpack operation.
-///
-/// Each variant describes what value to extract and where to store it:
-///
-/// - [`Pos`](Self::Pos): Positional parameter accessed by index
-/// - [`SymKey`](Self::SymKey): Keyed parameter accessed by symbol
-/// - [`ConstKey`](Self::ConstKey): Keyed parameter accessed by constant value
-/// - [`Rest`](Self::Rest): Variadic capture of remaining values
-/// - [`PosRest`](Self::PosRest): Capture of remaining positional values
-/// - [`KeyRest`](Self::KeyRest): Capture of remaining keyed values
-///
-/// All variants except the rests include an optional default value. If the value
-/// cannot be extracted and a default is provided, store the default. If no
-/// default is provided, the parameter is required and its absence should
-/// result in an error.
-pub enum UnpackItem<'v, 'a> {
-    /// Positional parameter accessed by sequential index.
-    ///
-    /// Extract the value at the current position (tracked by implementation)
-    /// and store it in `slot`. If the value is missing:
-    /// - If `default` is `Some`, store the default value
-    /// - If `default` is `None`, this is a required parameter and an error should be returned
-    Pos {
-        /// Output slot where the value should be stored.
-        slot: Slot<'v, 'a>,
-        /// Default value if the parameter is optional (None means required).
-        default: Option<&'a Value<'v>>,
-    },
-    /// Keyed parameter accessed by symbol.
-    ///
-    /// Look up the value associated with `key` and store it in `slot`.
-    /// The symbol should be compared by tag (identity), not by name.
-    /// If the key is not found:
-    /// - If `default` is `Some`, store the default value
-    /// - If `default` is `None`, this is a required parameter and an error should be returned
-    SymKey {
-        /// Symbol key to look up.
-        key: Sym<'v, 'a>,
-        /// Output slot where the value should be stored.
-        slot: Slot<'v, 'a>,
-        /// Default value if the parameter is optional (None means required).
-        default: Option<&'a Value<'v>>,
-    },
-    /// Keyed parameter accessed by constant value.
-    ///
-    /// Look up the value associated with `key` and store it in `slot`.
-    /// The key should be compared by hash and equality, similar to dict/`Pack` lookup.
-    /// If the key is not found:
-    /// - If `default` is `Some`, store the default value
-    /// - If `default` is `None`, this is a required parameter and an error should be returned
-    ConstKey {
-        /// Constant key to look up.
-        key: &'a Value<'v>,
-        /// Output slot where the value should be stored.
-        slot: Slot<'v, 'a>,
-        /// Default value if the parameter is optional (None means required).
-        default: Option<&'a Value<'v>>,
-    },
-    /// Variadic capture of remaining values, for a `...name` rest.
-    ///
-    /// Store an iterator (or other iterable value) in `slot` that will yield
-    /// any values not consumed by earlier parameters. This is always the last
-    /// item yielded by the iterator.
-    ///
-    /// For containers (dicts, packs), this typically captures key-value pairs
-    /// not matched by earlier keyed parameters. For sequential iterators, this
-    /// captures remaining unconsumed values.
-    Rest {
-        /// Output slot where the iterator should be stored.
-        slot: Slot<'v, 'a>,
-    },
-    /// Capture of remaining positional values, for a `*name` rest.
-    ///
-    /// Store a value in `slot` that yields or spreads only the positional
-    /// values not consumed by earlier parameters, such as an iterator over
-    /// them. A source without positional values stores an empty tuple with
-    /// [`Unpack::empty_pos_rest`]. It follows any key items.
-    PosRest {
-        /// Output slot where the value should be stored.
-        slot: Slot<'v, 'a>,
-    },
-    /// Capture of remaining keyed values, for a `**name` rest.
-    ///
-    /// Store a value in `slot` that spreads only the keyed values not matched
-    /// by earlier key parameters, such as a `Pack`. A source without keyed
-    /// values stores an empty `Pack` with [`Unpack::empty_key_rest`]. This is
-    /// always the last item yielded by the iterator.
-    KeyRest {
-        /// Output slot where the value should be stored.
-        slot: Slot<'v, 'a>,
-    },
-}
-
-impl<'v, 'a, 'b> Iterator for UnpackIter<'v, 'a, 'b> {
-    type Item = UnpackItem<'v, 'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let unpack = &mut *self.unpack;
-        let i = self.i;
-        if i < unpack.inner.required {
-            self.i += 1;
-            Some(UnpackItem::Pos {
-                slot: unsafe { unpack.slots.unchecked_at(i) },
-                default: None,
-            })
-        } else if i < unpack.inner.required + unpack.inner.optional.len() {
-            self.i += 1;
-            Some(UnpackItem::Pos {
-                slot: unsafe { unpack.slots.unchecked_at(i) },
-                default: Some(&unpack.inner.optional[i - unpack.inner.required]),
-            })
-        } else if i < unpack.inner.required + unpack.inner.optional.len() + unpack.inner.keys.len()
-        {
-            self.i += 1;
-            let key = &unpack.inner.keys[i - unpack.inner.required - unpack.inner.optional.len()];
-            match &key.kind {
-                sig::UnpackKeyKind::Sym(sym) => Some(UnpackItem::SymKey {
-                    key: *sym,
-                    slot: unsafe { unpack.slots.unchecked_at(i) },
-                    default: key.default.as_ref(),
-                }),
-                sig::UnpackKeyKind::Const(value) => Some(UnpackItem::ConstKey {
-                    key: value,
-                    slot: unsafe { unpack.slots.unchecked_at(i) },
-                    default: key.default.as_ref(),
-                }),
-            }
-        } else if i < unpack.inner.len() {
-            self.i += 1;
-            let slot = unsafe { unpack.slots.unchecked_at(i) };
-            Some(if unpack.inner.variadic == Variadic::Capture {
-                UnpackItem::Rest { slot }
-            } else if unpack.inner.pos_rest_slot() == Some(i) {
-                UnpackItem::PosRest { slot }
-            } else {
-                UnpackItem::KeyRest { slot }
-            })
-        } else {
-            None
         }
     }
 }
@@ -2573,25 +2277,14 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         in_native_frame!(
             strand,
             Cow::Borrowed(T::MODULE),
             Cow::Borrowed(T::NAME),
             Some(Cow::Borrowed("(unpack)")),
-            {
-                T::unpack(
-                    Instance::from_recv(&this),
-                    strand,
-                    Unpack {
-                        inner: sig,
-                        slots: out,
-                    },
-                )
-                .await
-            },
+            { T::unpack(Instance::from_recv(&this), strand, unpack).await },
         )
     }
 
@@ -4836,7 +4529,9 @@ mod tests {
                 Variadic::Capture,
             );
             with_slots_dynamic!(strand, 5, |slots| {
-                let mut unpack = Unpack { inner: &sig, slots };
+                // SAFETY: the cells are the frame's, rooted for the call, and `slots` is not used
+                // while the `Unpack` lives
+                let mut unpack = unsafe { Unpack::new(&sig, slots.as_inner()) };
                 assert_eq!(unpack.required(), 1);
                 assert_eq!(unpack.optional(), 1);
                 assert_eq!(unpack.required_keys(), 1);
@@ -4877,7 +4572,9 @@ mod tests {
         with_fixture_vm(async |strand, []| {
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             with_slots_dynamic!(strand, 0, |slots| {
-                let mut unpack = Unpack { inner: &sig, slots };
+                // SAFETY: the cells are the frame's, rooted for the call, and `slots` is not used
+                // while the `Unpack` lives
+                let mut unpack = unsafe { Unpack::new(&sig, slots.as_inner()) };
                 assert_eq!(unpack.pos_rest(), Rest::None);
                 assert_eq!(unpack.key_rest(), Rest::None);
                 assert!(!unpack.mixed_rest());
@@ -4951,9 +4648,14 @@ mod tests {
             let sig = sig::Unpack::new(0, vec![], vec![], Variadic::NONE);
             with_instance!(strand, state.fixture_ty.vtbl.cast(value).unwrap(), |recv| {
                 with_slots_dynamic!(strand, 0, |slots| {
-                    let error = ObjectWrap::<Fixture>::op_unpack(recv.clone(), strand, &sig, slots)
-                        .await
-                        .unwrap_err();
+                    let error = ObjectWrap::<Fixture>::op_unpack(
+                        recv.clone(),
+                        strand,
+                        // SAFETY: as above, the frame's cells
+                        unsafe { Unpack::new(&sig, slots.as_inner()) },
+                    )
+                    .await
+                    .unwrap_err();
                     assert_eq!(error.kind(), ErrorKind::Unsupported);
                 });
 
@@ -5016,7 +4718,7 @@ mod tests {
             );
             with_slots_dynamic!(strand, 2, |mut out| {
                 proxy
-                    .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&sig, out.as_inner()) })
                     .await
                     .unwrap();
                 assert_eq!(out.at(0).to_i64(strand).unwrap(), 4);
@@ -5039,7 +4741,7 @@ mod tests {
             );
             with_slots_dynamic!(strand, 2, |out| {
                 let error = tail
-                    .op_unpack(strand, &absent_sig, unsafe { Slots::new(out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&absent_sig, out.as_inner()) })
                     .await
                     .unwrap_err();
                 assert_eq!(error.kind(), ErrorKind::Field);
@@ -5058,20 +4760,18 @@ mod tests {
                 }],
                 Variadic::Capture,
             );
-            with_slots_dynamic!(strand, 2, |mut out| {
-                strand.store(out.at(0), 99);
+            with_slots_dynamic!(strand, 2, |out| {
                 let err = tail
-                    .op_unpack(strand, &bad_sig, unsafe { Slots::new(out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&bad_sig, out.as_inner()) })
                     .await
                     .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::Value);
-                assert_eq!(out.at(0).to_i64(strand).unwrap(), 99);
             });
         });
     }
 
     #[test]
-    fn fields_native_exhaustive_unpack_checks_metadata_atomically() {
+    fn fields_native_exhaustive_unpack_rejects_unmatched_fields() {
         with_fixture_vm(async |strand, [mut owner, mut proxy]| {
             make_slot_fixture(strand, 4, "unpack", Slot::reborrow(&mut owner));
             crate::object::field_iter::create(strand, &owner, Slot::reborrow(&mut proxy)).unwrap();
@@ -5091,16 +4791,12 @@ mod tests {
                 ],
                 Variadic::NONE,
             );
-            with_slots_dynamic!(strand, 2, |mut out| {
-                strand.store(out.at(0), 90);
-                strand.store(out.at(1), 91);
+            with_slots_dynamic!(strand, 2, |out| {
                 let err = proxy
-                    .op_unpack(strand, &sig, unsafe { Slots::new(out.as_inner()) })
+                    .op_unpack(strand, unsafe { Unpack::new(&sig, out.as_inner()) })
                     .await
                     .unwrap_err();
                 assert_eq!(err.kind(), ErrorKind::UnexpectedKey);
-                assert_eq!(out.at(0).to_i64(strand).unwrap(), 90);
-                assert_eq!(out.at(1).to_i64(strand).unwrap(), 91);
             });
 
             // Exhaustive matching did not call unmatched getters.

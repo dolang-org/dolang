@@ -11,17 +11,16 @@ use dolang_util::hashbrown::raw::{Bucket, RawTable};
 
 use crate::{
     arg::{Arg, Args},
-    bytecode::{Rest, Variadic},
+    bytecode::Rest,
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit, with_pin},
-    object::protocol::members,
-    sig::{self, UnpackKeyKind},
+    object::protocol::{Unpack as ProtoUnpack, UnpackItem, members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{
-        Input, Output, Slot, Slots, TypeObject, Value,
+        Input, Output, Slot, TypeObject, Value,
         fmt::{Format, Spec},
     },
     vm::{AllocExt, Vm},
@@ -634,8 +633,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_unpack<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        _sig: &'a sig::Unpack<'v, 'a>,
-        _out: Slots<'v, 'a>,
+        _unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "unpacking"))
     }
@@ -920,50 +918,46 @@ impl<'v> Protocol<'v> for Values<'v> {
     async fn op_unpack<'s>(
         this: Recv<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
-        sig: &sig::Unpack<'v, '_>,
-        mut out: Slots<'v, '_>,
+        unpack: ProtoUnpack<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let next_index = {
-            with_pin!(strand, borrow.container, |container| {
-                let dict = container
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                if dict.epoch != borrow.epoch {
-                    return Err(Error::concurrency_msg(
-                        strand,
-                        "collection was modified during iteration",
-                    ));
-                }
-                super::iter::unpack_cursor(
+        with_pin!(strand, borrow.container, |container| {
+            let dict = container
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != borrow.epoch {
+                return Err(Error::concurrency_msg(
                     strand,
-                    sig,
-                    &mut out,
-                    borrow.index.get(),
-                    |strand, i, mut out| {
-                        Dict::next_value_from_index(&dict, i).map(|(next, value)| {
-                            strand.store(&mut out, value);
-                            next
-                        })
-                    },
-                )
-            })?
-        };
-        if let Some(i) = sig.pos_rest_slot() {
-            let embryo = strand.builtin_types().dict_values.embryo(strand);
-            // SAFETY: the reference moves straight into the allocated iterator
-            embryo.finish(
+                    "collection was modified during iteration",
+                ));
+            }
+            unpack.cursor(
                 strand,
-                Values {
-                    index: Cell::new(next_index),
-                    epoch: borrow.epoch,
-                    container: unsafe { borrow.container.dup() },
+                borrow.index.get(),
+                |strand, i, slot| match Dict::next_value_from_index(&dict, *i) {
+                    Some((next, value)) => {
+                        strand.store(slot, value);
+                        *i = next;
+                        true
+                    }
+                    None => false,
                 },
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+                |strand, next_index, slot| {
+                    let embryo = strand.builtin_types().dict_values.embryo(strand);
+                    // SAFETY: the reference moves straight into the allocated iterator
+                    embryo.finish(
+                        strand,
+                        Values {
+                            index: Cell::new(next_index),
+                            epoch: borrow.epoch,
+                            container: unsafe { borrow.container.dup() },
+                        },
+                        slot,
+                    );
+                    Ok(())
+                },
+            )
+        })
     }
 
     async fn op_spread<'a, 's>(
@@ -1033,53 +1027,51 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let next_index = {
-            with_pin!(strand, borrow.container, |container| {
-                let dict = container
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                if dict.epoch != borrow.epoch {
-                    return Err(Error::concurrency_msg(
-                        strand,
-                        "collection was modified during iteration",
-                    ));
-                }
-                super::iter::unpack_cursor(
+        with_pin!(strand, borrow.container, |container| {
+            let dict = container
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != borrow.epoch {
+                return Err(Error::concurrency_msg(
                     strand,
-                    sig,
-                    &mut out,
-                    borrow.index.get(),
-                    |strand, i, mut out| {
-                        Dict::next_value_from_bucket(&dict, borrow.bucket.clone(), i).map(
-                            |(next, value)| {
-                                strand.store(&mut out, value);
-                                next
-                            },
-                        )
-                    },
-                )
-            })?
-        };
-        if let Some(i) = sig.pos_rest_slot() {
-            let embryo = strand.builtin_types().dict_key_values.embryo(strand);
-            // SAFETY: the reference moves straight into the allocated iterator
-            embryo.finish(
+                    "collection was modified during iteration",
+                ));
+            }
+            unpack.cursor(
                 strand,
-                KeyValues {
-                    index: Cell::new(next_index),
-                    epoch: borrow.epoch,
-                    container: unsafe { borrow.container.dup() },
-                    bucket: borrow.bucket.clone(),
+                borrow.index.get(),
+                |strand, i, slot| match Dict::next_value_from_bucket(
+                    &dict,
+                    borrow.bucket.clone(),
+                    *i,
+                ) {
+                    Some((next, value)) => {
+                        strand.store(slot, value);
+                        *i = next;
+                        true
+                    }
+                    None => false,
                 },
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+                |strand, next_index, slot| {
+                    let embryo = strand.builtin_types().dict_key_values.embryo(strand);
+                    // SAFETY: the reference moves straight into the allocated iterator
+                    embryo.finish(
+                        strand,
+                        KeyValues {
+                            index: Cell::new(next_index),
+                            epoch: borrow.epoch,
+                            container: unsafe { borrow.container.dup() },
+                            bucket: borrow.bucket.clone(),
+                        },
+                        slot,
+                    );
+                    Ok(())
+                },
+            )
+        })
     }
 
     async fn op_spread<'a, 's>(
@@ -1156,59 +1148,55 @@ impl<'v> Protocol<'v> for Keys<'v> {
     async fn op_unpack<'s>(
         this: Recv<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
-        sig: &sig::Unpack<'v, '_>,
-        mut out: Slots<'v, '_>,
+        unpack: ProtoUnpack<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let mut visited = borrow.visited.borrow().clone();
-        let next_index = {
-            with_pin!(strand, borrow.container, |container| {
-                let dict = container
-                    .borrow()
-                    .ok_or_else(|| Error::concurrency(strand))?;
-                if dict.epoch != borrow.epoch {
-                    return Err(Error::concurrency_msg(
-                        strand,
-                        "collection was modified during iteration",
-                    ));
-                }
-                let mut pending = Vec::new();
-                let next_index = super::iter::unpack_cursor(
+        let visited = borrow.visited.borrow().clone();
+        with_pin!(strand, borrow.container, |container| {
+            let dict = container
+                .borrow()
+                .ok_or_else(|| Error::concurrency(strand))?;
+            if dict.epoch != borrow.epoch {
+                return Err(Error::concurrency_msg(
                     strand,
-                    sig,
-                    &mut out,
-                    borrow.index.get(),
-                    |strand, i, mut out| {
-                        Dict::next_key_from_index(&dict, i, &visited, &mut pending).map(
-                            |(next, key)| {
-                                strand.store(&mut out, key);
-                                next
-                            },
-                        )
-                    },
-                )?;
-                for bucket_index in pending {
-                    visited.set(bucket_index, true);
-                }
-                Ok(next_index)
-            })?
-        };
-        if let Some(i) = sig.pos_rest_slot() {
-            let embryo = strand.builtin_types().dict_keys.embryo(strand);
-            // SAFETY: the reference moves straight into the allocated iterator
-            embryo.finish(
+                    "collection was modified during iteration",
+                ));
+            }
+            // The cursor: next index, buckets visited, and buckets to mark visited
+            let cursor = (borrow.index.get(), visited, Vec::new());
+            unpack.cursor(
                 strand,
-                Keys {
-                    index: Cell::new(next_index),
-                    epoch: borrow.epoch,
-                    container: unsafe { borrow.container.dup() },
-                    visited: RefCell::new(visited),
+                cursor,
+                |strand, (i, visited, pending), slot| match Dict::next_key_from_index(
+                    &dict, *i, visited, pending,
+                ) {
+                    Some((next, key)) => {
+                        strand.store(slot, key);
+                        *i = next;
+                        true
+                    }
+                    None => false,
                 },
-                out.at(i),
-            );
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+                |strand, (next_index, mut visited, pending), slot| {
+                    for bucket_index in pending {
+                        visited.set(bucket_index, true);
+                    }
+                    let embryo = strand.builtin_types().dict_keys.embryo(strand);
+                    // SAFETY: the reference moves straight into the allocated iterator
+                    embryo.finish(
+                        strand,
+                        Keys {
+                            index: Cell::new(next_index),
+                            epoch: borrow.epoch,
+                            container: unsafe { borrow.container.dup() },
+                            visited: RefCell::new(visited),
+                        },
+                        slot,
+                    );
+                    Ok(())
+                },
+            )
+        })
     }
 
     async fn op_spread<'a, 's>(
@@ -1398,22 +1386,21 @@ impl<'v> Protocol<'v> for Unpack<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         borrow.check_epoch(strand)?;
-        let skip = with_pin!(strand, borrow.dict, |pinned| {
+        let (rests, skip) = with_pin!(strand, borrow.dict, |pinned| {
             let dict = pinned.borrow().ok_or_else(|| Error::concurrency(strand))?;
             // Match against a copy, so a failure leaves the rest as it was
             let mut skip = borrow.state.skip.clone();
-            dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
-            Ok(skip)
+            let rests = dict.unpack_matched(strand, unpack, &mut skip)?;
+            Ok((rests, skip))
         })?;
         let (epoch, resume) = (borrow.epoch, borrow.state.index);
         // SAFETY: the handle moves straight into the allocated rest
         let container = || unsafe { borrow.dict.dup() };
-        dict_rests(strand, sig, &mut out, container, epoch, resume, skip);
+        rests.fill(strand, container, epoch, resume, skip);
         Ok(())
     }
 
@@ -1531,8 +1518,7 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
     async fn op_unpack<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        _sig: &'a sig::Unpack<'v, 'a>,
-        _out: Slots<'v, 'a>,
+        _unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "unpacking"))
     }
@@ -2028,54 +2014,47 @@ impl<'v> Protocol<'v> for Dict<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let dict = this.borrow(strand)?;
         let mut skip = Skip::new();
-        dict.unpack_matched(strand, sig, &mut out, &mut skip)?;
+        let rests = dict.unpack_matched(strand, unpack, &mut skip)?;
         let epoch = dict.epoch;
         drop(dict);
-        // SAFETY: `dict_rests` calls this after allocating each rest, whose payload the
-        // copy of the pinned receiver becomes at once
-        dict_rests(
-            strand,
-            sig,
-            &mut out,
-            || unsafe { this.to_strong() },
-            epoch,
-            0,
-            skip,
-        );
+        // SAFETY: `fill` calls this after allocating each rest, whose payload the copy
+        // of the pinned receiver becomes at once
+        rests.fill(strand, || unsafe { this.to_strong() }, epoch, 0, skip);
         Ok(())
     }
 }
 
-/// Stores the rests of an unpack of a dict, or of a rest of one, whose
-/// leftover pairs start at `index` past what `skip` counts. A dict has no
-/// positional items, so a `*name` rest is empty.  `dict` is called as for
-/// [`make_unpack`].
-fn dict_rests<'v>(
-    strand: &mut Strand<'v, '_>,
-    sig: &sig::Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
-    dict: impl FnOnce() -> GcObj<'v, Dict<'v>>,
-    epoch: u64,
-    index: usize,
-    skip: Skip,
-) {
-    let state = UnpackState { index, skip };
-    match sig.variadic {
-        Variadic::Capture => {
-            make_unpack(strand, dict, epoch, state, out.at(sig.len() - 1));
+/// The rests of an unpack of a dict, or of a rest of one, still to be filled.
+struct Rests<'v, 'a> {
+    /// A `...name` rest
+    rest: Option<Slot<'v, 'a>>,
+    /// A `*name` rest
+    pos_rest: Option<Slot<'v, 'a>>,
+    /// A `**name` rest
+    key_rest: Option<Slot<'v, 'a>>,
+}
+
+impl<'v> Rests<'v, '_> {
+    /// Stores the rests, whose leftover pairs start at `index` past what `skip`
+    /// counts. A dict has no positional items, so a `*name` rest is empty. `dict` is
+    /// called as for [`make_unpack`].
+    fn fill(
+        self,
+        strand: &mut Strand<'v, '_>,
+        dict: impl FnOnce() -> GcObj<'v, Dict<'v>>,
+        epoch: u64,
+        index: usize,
+        skip: Skip,
+    ) {
+        if let Some(slot) = self.pos_rest {
+            tuple::create(strand, [], slot);
         }
-        _ => {
-            if let Some(i) = sig.pos_rest_slot() {
-                tuple::create(strand, [], out.at(i));
-            }
-            if let Some(i) = sig.key_rest_slot() {
-                make_unpack(strand, dict, epoch, state, out.at(i));
-            }
+        if let Some(slot) = self.rest.or(self.key_rest) {
+            make_unpack(strand, dict, epoch, UnpackState { index, skip }, slot);
         }
     }
 }
@@ -2141,54 +2120,78 @@ impl<'v> Dict<'v> {
     /// A dict has no positional items, so a required one is missing and an
     /// optional one takes its default. `skip` counts the instances of each
     /// key consumed so far, and is advanced past those the key items take.
-    fn unpack_matched<'s>(
+    /// Unpacks the dict's pairs into the key parameters of `unpack`, adding the
+    /// pairs taken to `skip`, and returns the rests still to be filled.
+    fn unpack_matched<'a, 's>(
         &self,
         strand: &mut Strand<'v, 's>,
-        sig: &sig::Unpack<'v, '_>,
-        out: &mut Slots<'v, '_>,
+        unpack: ProtoUnpack<'v, 'a>,
         skip: &mut Skip,
-    ) -> Result<'v, 's, ()> {
-        if sig.required > 0 {
-            return Err(Error::missing_positional(strand, 0));
-        }
-        let pos_count = sig.optional.len();
-        for (i, default) in sig.optional.iter().enumerate() {
-            strand.store(out.at(i), default);
-        }
-
+    ) -> Result<'v, 's, Rests<'v, 'a>> {
+        let key_rest = unpack.key_rest();
+        let mut rests = Rests {
+            rest: None,
+            pos_rest: None,
+            key_rest: None,
+        };
+        let mut position = 0;
         with_slots!(strand, |mut key_value| {
-            for (i, key) in sig.keys.iter().enumerate() {
-                strand.store(Slot::reborrow(&mut key_value), &key.kind);
-
-                let mut hasher = strand.vm().hasher();
-
-                key_value.op_hash(strand, &mut hasher)?;
-
-                let hv = hasher.finish();
-                let found = self.find(strand, hv, &key_value)?.and_then(|bucket| {
-                    let instance = skip.add(&bucket);
-                    unsafe { bucket.as_ref() }.value.get(Some(instance))
-                });
-                if let Some(value) = found {
-                    strand.store(out.at(pos_count + i), value)
-                } else if let Some(default) = &key.default {
-                    strand.store(out.at(pos_count + i), default)
-                } else {
-                    return Err(match &key.kind {
-                        UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                        UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-                    });
+            for entry in unpack {
+                match entry {
+                    UnpackItem::Pos { slot, default } => {
+                        match default {
+                            Some(default) => strand.store(slot, default),
+                            None => return Err(Error::missing_positional(strand, position)),
+                        }
+                        position += 1;
+                    }
+                    UnpackItem::SymKey { key, slot, default } => {
+                        strand.store(Slot::reborrow(&mut key_value), key);
+                        match (self.take_key(strand, &key_value, skip)?, default) {
+                            (Some(value), _) => strand.store(slot, value),
+                            (None, Some(default)) => strand.store(slot, default),
+                            (None, None) => return Err(Error::missing_key(strand, key)),
+                        }
+                    }
+                    UnpackItem::ConstKey { key, slot, default } => {
+                        strand.store(Slot::reborrow(&mut key_value), key);
+                        match (self.take_key(strand, &key_value, skip)?, default) {
+                            (Some(value), _) => strand.store(slot, value),
+                            (None, Some(default)) => strand.store(slot, default),
+                            (None, None) => return Err(Error::missing_key(strand, key)),
+                        }
+                    }
+                    UnpackItem::Rest { slot } => rests.rest = Some(slot),
+                    UnpackItem::PosRest { slot } => rests.pos_rest = Some(slot),
+                    UnpackItem::KeyRest { slot } => rests.key_rest = Some(slot),
                 }
             }
             Ok::<_, Error<'v, 's>>(())
         })?;
 
-        if sig.key_rest() == Rest::None
+        if key_rest == Rest::None
             && let Some(key) = self.leftover_key(skip)
         {
             return Err(Error::unexpected_key(strand, key));
         }
-        Ok(())
+        Ok(rests)
+    }
+
+    /// Finds the value of the first pair under `key` that `skip` doesn't count yet,
+    /// and counts it.
+    fn take_key<'s>(
+        &self,
+        strand: &mut Strand<'v, 's>,
+        key: &Value<'v>,
+        skip: &mut Skip,
+    ) -> Result<'v, 's, Option<&Value<'v>>> {
+        let mut hasher = strand.vm().hasher();
+        key.op_hash(strand, &mut hasher)?;
+        let hv = hasher.finish();
+        Ok(self.find(strand, hv, key)?.and_then(|bucket| {
+            let instance = skip.add(&bucket);
+            unsafe { bucket.as_ref() }.value.get(Some(instance))
+        }))
     }
 
     fn iter_op_next<'a, 's>(

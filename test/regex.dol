@@ -93,7 +93,7 @@ def split_iter_unpack()
   let head *tail **keys = re.split "p q r"
   assert_eq $head "p"
   assert_eq ([...tail]) ["q", "r"]
-  assert_eq $keys $pack()
+  assert_eq {...keys} {}
 
 #[test]
 def split_unpack_atomic()

@@ -27,16 +27,15 @@ use crate::{
         sym::SymObj,
     },
     redirect,
-    sig::Unpack,
     strand::{Strand, with_scan, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{Input, Nil, Output, Singleton, Slot, Slots, TypeObject, Value, ValueCell},
+    value::{Input, Nil, Output, Singleton, Slot, TypeObject, Value, ValueCell},
     vm::{Alloc, AllocExt, Builder, StateTag, Vm},
     with_instance, with_slots, with_str,
 };
 
-use super::protocol::{GcObj, Protocol};
+use super::protocol::{GcObj, Protocol, Unpack};
 
 /// Run a getter or setter with no input and its output discarded: it runs
 /// wherever its field is accessed, so it can't use the accessing code's channels
@@ -2772,15 +2771,14 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let annex = this.annex();
         match annex.prefix.class.annex().entry_by_tag(sym::UNPACK_METHOD) {
             Some(ClassEntry::Method(v)) => {
                 with_slots!(strand, |mut proxy| {
                     call!(strand, v, &this, &mut proxy)?;
-                    proxy.op_unpack(strand, sig, out).await
+                    proxy.op_unpack(strand, unpack).await
                 })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
@@ -2790,7 +2788,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
                     Delegated::new(native, &delegator)
-                        .op_unpack(strand, sig, out)
+                        .op_unpack(strand, unpack)
                         .await
                 })
             }

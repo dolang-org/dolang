@@ -230,7 +230,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
     annex: &RowAnnex<'v>,
     stmt_annex: &StatementAnnex<'v>,
     raw: *mut sqlite3_stmt,
-    unpack: &mut Unpack<'v, 'a>,
+    unpack: Unpack<'v, 'a>,
     consumed: &mut [bool],
     keyed: bool,
 ) -> Result<'v, 's, Vec<(Slot<'v, 'a>, RestColumns)>> {
@@ -240,7 +240,7 @@ unsafe fn unpack_row<'v, 's, 'a>(
         let pos_rest = unpack.pos_rest();
         let exhaustive = unpack.key_rest() == Rest::None && (keyed || pos_rest == Rest::None);
 
-        'top: for item in unpack.iter() {
+        'top: for item in unpack {
             match item {
                 UnpackItem::Pos { slot, default } if keyed => {
                     let input = default.ok_or_else(|| Error::missing_positional(strand, 0))?;
@@ -397,24 +397,15 @@ fn unpack_columns<'v, 's>(
     row: Instance<'v, '_, Row>,
     consumed: Option<&[bool]>,
     keyed: bool,
-    mut unpack: Unpack<'v, '_>,
+    unpack: Unpack<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let (consumed, rests) = with_stmt(strand, row, |strand, annex, stmt_annex, raw| {
         let mut consumed = match consumed {
             Some(consumed) => consumed.to_vec(),
             None => vec![false; unsafe { sqlite3_column_count(raw) } as usize],
         };
-        let rests = unsafe {
-            unpack_row(
-                strand,
-                annex,
-                stmt_annex,
-                raw,
-                &mut unpack,
-                &mut consumed,
-                keyed,
-            )?
-        };
+        let rests =
+            unsafe { unpack_row(strand, annex, stmt_annex, raw, unpack, &mut consumed, keyed)? };
         Ok((consumed, rests))
     })?;
     let global = row.annex().global;

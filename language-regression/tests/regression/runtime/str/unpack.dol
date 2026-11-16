@@ -39,7 +39,7 @@ assert_eq (split_it.next()) "b"
 assert_eq (split_it.next(default: "done")) "done"
 
 # Too few elements for required
-assert_throws $std.RuntimeError str: "missing positional item: 3" do let _ _ _ = "a,b".split ","
+assert_throws $std.RuntimeError str: "missing positional item: 2" do let _ _ _ = "a,b".split ","
 
 # Single element: FIXME: syntax doesn't exist yet
 #let (a) = "hello".split ","

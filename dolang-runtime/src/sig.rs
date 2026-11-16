@@ -2,9 +2,8 @@ use std::ops::ControlFlow;
 
 use crate::{
     gc::arena::Visit,
-    strand::Strand,
     sym::Sym,
-    value::{Input, Slot, Slots, Value, private},
+    value::{Input, Slot, Value, private},
     vm::{Alloc, AllocExt},
 };
 use dolang_bytecode::{Rest, Variadic};
@@ -95,16 +94,6 @@ impl<'v, 'a> Unpack<'v, 'a> {
         self.required + self.optional.len() + self.keys.len() + self.variadic.captures()
     }
 
-    /// Returns how leftover positional items are handled.
-    pub(crate) fn pos_rest(&self) -> Rest {
-        self.variadic.positional()
-    }
-
-    /// Returns how leftover keyed items are handled.
-    pub(crate) fn key_rest(&self) -> Rest {
-        self.variadic.keyed()
-    }
-
     fn rest_base(&self) -> usize {
         self.required + self.optional.len() + self.keys.len()
     }
@@ -115,24 +104,6 @@ impl<'v, 'a> Unpack<'v, 'a> {
         match self.variadic {
             Variadic::Capture | Variadic::Split(Rest::Capture, _) => Some(self.rest_base()),
             _ => None,
-        }
-    }
-
-    /// Returns the slot of a `**name` rest.
-    pub(crate) fn key_rest_slot(&self) -> Option<usize> {
-        match self.variadic {
-            Variadic::Split(pos, Rest::Capture) => {
-                Some(self.rest_base() + usize::from(pos == Rest::Capture))
-            }
-            _ => None,
-        }
-    }
-
-    /// Stores `std.null`, the empty iterator, in a `**name` rest, for sources
-    /// without keyed items
-    pub(crate) fn fill_empty_key_rest(&self, strand: &mut Strand<'v, '_>, out: &mut Slots<'v, '_>) {
-        if let Some(slot) = self.key_rest_slot() {
-            strand.store(out.at(slot), &strand.singletons().null);
         }
     }
 
