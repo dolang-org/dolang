@@ -301,15 +301,19 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
             let embryo = strand.builtin_types().range_iter.embryo(strand);
             // SAFETY: the iterator is allocated; the bounds move from their rooted slots
             // straight into it
-            let iter = unsafe {
-                Iter {
-                    cur: start.take(strand),
-                    end: borrow.end.dup(),
-                    step: step.take(strand),
-                    direction,
-                }
+            let (iter, annex) = unsafe {
+                (
+                    Iter {
+                        cur: start.take(strand),
+                    },
+                    IterAnnex {
+                        end: borrow.end.dup(),
+                        step: step.take(strand),
+                        direction,
+                    },
+                )
             };
-            embryo.finish(strand, iter, out);
+            embryo.finish_with_annex(strand, iter, annex, out);
             Ok(())
         })
     }
@@ -455,27 +459,35 @@ enum Direction {
     Unbounded,
 }
 
+/// A range iterator's mutable state: only the next value to yield.
 pub(crate) struct Iter<'v> {
     cur: Value<'v>,
-    step: Value<'v>,
+}
+
+/// The parts of a range iterator fixed at construction.
+pub(crate) struct IterAnnex<'v> {
     end: Value<'v>,
+    step: Value<'v>,
     direction: Direction,
+}
+
+impl<'v> crate::gc::Annex for IterAnnex<'v> {
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.end.accept(visit)?;
+        self.step.accept(visit)
+    }
 }
 
 unsafe impl<'v> Collect for Iter<'v> {
     const CYCLIC: bool = true;
-    type Annex = ();
+    type Annex = IterAnnex<'v>;
 
     fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
-        self.cur.accept(visit)?;
-        self.end.accept(visit)?;
-        self.step.accept(visit)
+        self.cur.accept(visit)
     }
 
     fn clear(&mut self) {
         self.cur = Value::NIL;
-        self.end = Value::NIL;
-        self.step = Value::NIL;
     }
 }
 
@@ -518,11 +530,12 @@ impl<'v> Protocol<'v> for Iter<'v> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
+        let annex = this.annex();
         let mut borrow = this.borrow_mut(strand)?;
-        let res = match borrow.direction {
+        let res = match annex.direction {
             Direction::Empty => false,
-            Direction::Increasing => borrow.cur.lt(strand, &borrow.end)?,
-            Direction::Decreasing => borrow.cur.gt(strand, &borrow.end)?,
+            Direction::Increasing => borrow.cur.lt(strand, &annex.end)?,
+            Direction::Decreasing => borrow.cur.gt(strand, &annex.end)?,
             Direction::Unbounded => true,
         };
         if res {
@@ -530,7 +543,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
             with_slots!(strand, |mut next| {
                 borrow
                     .cur
-                    .op_add(strand, &borrow.step, Slot::reborrow(&mut next))?;
+                    .op_add(strand, &annex.step, Slot::reborrow(&mut next))?;
                 // SAFETY: the value moves straight into the borrowed iterator
                 borrow.cur = unsafe { next.take(strand) };
                 Ok(())
