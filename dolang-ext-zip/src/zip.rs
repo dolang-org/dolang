@@ -858,7 +858,7 @@ impl<'v> Object<'v> for File {
     // Native consumers are served through `read` and `write` by `Io`'s bridge,
     // whose strands root this file, and so the archive its entry borrows.
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
+        let mut builder = builder
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
                 let readable = matches!(this.borrow(strand)?.inner, Some(FileInner::Read { .. }));
@@ -869,8 +869,10 @@ impl<'v> Object<'v> for File {
                 let writable = matches!(this.borrow(strand)?.inner, Some(FileInner::Write(_)));
                 strand.store(out, writable);
                 Ok(())
-            })
-            .method("read", async move |this, strand, args, out| {
+            });
+        // A read stops short only at the end, so `read_some` is `read`.
+        for name in ["read", "read_some"] {
+            builder = builder.method(name, async move |this, strand, args, out| {
                 unpack!(strand, args => ?size);
                 let size: Option<usize> = size
                     .map(|size| {
@@ -916,8 +918,12 @@ impl<'v> Object<'v> for File {
                 drop(borrow);
                 data.finish(strand, out);
                 Ok(())
-            })
-            .method("write", async move |this, strand, args, out| {
+            });
+        }
+        let mut builder = builder;
+        // A write takes all of it, so `write_some` is `write`.
+        for name in ["write", "write_some"] {
+            builder = builder.method(name, async move |this, strand, args, out| {
                 let mut pieces = Vec::with_capacity(args.len());
                 for arg in args {
                     let piece = match arg {
@@ -956,34 +962,35 @@ impl<'v> Object<'v> for File {
                 drop(borrow);
                 strand.store(out, written);
                 Ok(())
-            })
-            .method("close", async move |this, strand, args, _out| {
-                let global = *this.annex();
-                unpack!(strand, args =>);
-                let Some(inner) = this.borrow_mut(strand)?.inner.take() else {
-                    return Ok(());
-                };
+            });
+        }
+        builder.method("close", async move |this, strand, args, _out| {
+            let global = *this.annex();
+            unpack!(strand, args =>);
+            let Some(inner) = this.borrow_mut(strand)?.inner.take() else {
+                return Ok(());
+            };
 
-                let borrow = this.borrow(strand)?;
-                with_instance!(
-                    strand,
-                    global
-                        .types
-                        .archive
-                        .cast(Ref::slot::<0>(&borrow))
-                        .ok_or_else(|| Error::state_error(strand, "invalid archive reference"))?,
-                    |archive| {
-                        let result = match inner {
-                            FileInner::Write(entry) => {
-                                EntrySeekableWriter::close(*entry).await.into_do_zip(strand)
-                            }
-                            FileInner::Read { .. } => Ok(()),
-                        };
-                        archive.annex().file_open.set(false);
-                        result
-                    }
-                )
-            })
+            let borrow = this.borrow(strand)?;
+            with_instance!(
+                strand,
+                global
+                    .types
+                    .archive
+                    .cast(Ref::slot::<0>(&borrow))
+                    .ok_or_else(|| Error::state_error(strand, "invalid archive reference"))?,
+                |archive| {
+                    let result = match inner {
+                        FileInner::Write(entry) => {
+                            EntrySeekableWriter::close(*entry).await.into_do_zip(strand)
+                        }
+                        FileInner::Read { .. } => Ok(()),
+                    };
+                    archive.annex().file_open.set(false);
+                    result
+                }
+            )
+        })
     }
 }
 

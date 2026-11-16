@@ -60,9 +60,8 @@ pub @let StyleOptions = $
 # A console is a write-only [`Io`](io.Io). Besides
 # [`write`](term.Console.write), it reports how output should look on its
 # device and makes buffered output visible with
-# [`flush`](term.Console.flush). [`(put)`](io.Io.(put)),
-# [`write_all`](io.Io.write_all) and the rest come from `Io`, so a function
-# that accepts an `Io` can write to a console.
+# [`flush`](term.Console.flush). [`(put)`](io.Io.(put)) and the rest come from
+# `Io`, so a function that accepts an `Io` can write to a console.
 #
 # `Console` is abstract. The implementations provided are the host console
 # ([`term.console`](term.console)) and [`IoConsole`](term.IoConsole). The host
@@ -70,8 +69,10 @@ pub @let StyleOptions = $
 #
 # ## Subclassing
 #
-# Do classes may subclass `Console` to implement one. Supply `write` and
-# `flush`; the capability members come from the base:
+# Do classes may subclass `Console` to implement one. Supply
+# [`write_some`](io.Io.write_some) and `flush`, and `write` too to keep a
+# line and its terminator together; the capability members come from the
+# base:
 #
 # | Console                         | `can_style`    | `is_tty`        | `geometry()`        |
 # | ------------------------------- | -------------- | --------------- | ------------------- |
@@ -93,6 +94,9 @@ pub @let StyleOptions = $
 #       line = "$line$piece"
 #     self.lines.push $line
 #     line.len
+#
+#   pub def write_some self data
+#     self.write $data
 #
 #   pub def flush _self
 #     nil
@@ -237,8 +241,8 @@ pub class Geometry
 # A [`Console`](term.Console) over another [`Io`](io.Io).
 #
 # Each [`write`](term.IoConsole.write) reaches the stream as one
-# [`write_all`](io.Io.write_all) of its pieces joined, so a line and its
-# terminator arrive in one `write` of the stream. Nothing is translated on the
+# [`write`](io.Io.write) of its pieces joined, so a line and its terminator
+# arrive together. Nothing is translated on the
 # way through. [`capture`](term.capture) wraps an `Io` that is not a console in
 # one of these.
 #
@@ -280,7 +284,8 @@ pub class IoConsole: Console
   #
   # ## Returns
   #
-  # The number of bytes written, which is all of them.
+  # The number of bytes written, which is all of them unless the stream is a
+  # bounded output, as [`Io.write`](io.Io.write) describes.
   pub def write
     self
     # Pieces to write, in order.

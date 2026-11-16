@@ -460,11 +460,16 @@ providers ignore the strand.
 A provider type also inherits `io.Io` at runtime: call
 `.supertype(TypeObject::Io)` in `build`, and define getters for the capabilities
 `caps` reports, as `false` once the provider is closed. A capability it
-does not define reads as `false` through `Io`. The type defines its own `read`,
-`write`, `seek` and `close`, and one it lacks raises a `FieldError` through
-`Io`. The helpers (`read_all`, `write_all`, `copy_to`, `chunks`, and
-`(sink)`/`(put)` when the type defines none) come from `Io` and call those
-methods, so the type needs no code for them. `Io` is a `Sink`, so the type
+does not define reads as `false` through `Io`. The type defines the primitives
+`read_some` and `write_some`, and `seek` and `close`; one it lacks raises an
+`UnsupportedError` through `Io`. `Io` provides `read` and `write` in terms of
+the primitives, and a type overrides them when it does better: a stream whose
+read stops short only at the end registers the same code as `read` and
+`read_some`, and one that writes vectored overrides `write`. A `write` returns
+a short count only at the end of a bounded output, and raises `WriteZero` once
+nothing fits. The helpers (`read_all`, `chunks`, and `(sink)`/`(put)` when the
+type defines none) come from `Io` and call those methods, so the type needs no
+code for them. `Io` is a `Sink`, so the type
 doesn't add `.supertype(TypeObject::Sink)` either. In the stub, the provider
 class names `Io` as a supertype (`import io: - Io`, then `class File: ... Io`),
 and a consumer that only accepts one imports it type-only (`- @Io`) for its

@@ -44,6 +44,24 @@ def receiver_io_never_leaves_a_fragment()
   assert_eq [...out] ["def\n"]
   s.join()
 
+# `read` waits for `size` bytes across values, and `read_some` returns what
+# has arrived.
+#[test]
+def receiver_io_reads_to_size()
+  let s = stream do
+    strand.input().io do |io|
+      strand.put (io.read_some 10)
+      strand.put (io.read 4)
+  let sink = s.sink()
+  let out = s.iter()
+  sink.put "ab"
+  assert_eq $out.next() b"ab"
+  sink.put "cd"
+  sink.put "ef"
+  assert_eq $out.next() b"cdef"
+  sink.close()
+  s.join()
+
 # The receiver is lent from `io()` on, before any byte moves.
 #[test]
 def receiver_lent_while_stream_open()

@@ -18,7 +18,14 @@ assert_eq $empty.writable false
 assert_eq $empty.seekable false
 
 # Stream methods it does not define are unsupported
-for call = [(do empty.read 1), (do empty.write "x"), (do empty.seek 0), (do empty.close())]
+let calls = $
+  - do empty.read_some 1
+  - do empty.write_some "x"
+  - do empty.read 1
+  - do empty.write "x"
+  - do empty.seek 0
+  - do empty.close()
+for call = calls
   let unsupported = try
     call()
     false
@@ -40,13 +47,17 @@ class Zeros: Io
   pub def readable _self
     true
 
-  pub def read _self _size
+  pub def read_some _self _size
     b"\0"
 
 let zeros = Zeros()
 assert_eq $zeros.readable true
 assert_eq $zeros.writable false
-assert_eq (zeros.read 1) b"\0"
+assert_eq (zeros.read_some 3) b"\0"
+
+# `read` calls `read_some` until it has `size` bytes
+assert_eq (zeros.read 3) b"\0\0\0"
+assert_eq (zeros.read 0) b""
 
 # A buffer is an `Io` reporting its source's capabilities
 let reader = Buffered (ByteBuf b"abc" 0 "")
@@ -68,13 +79,14 @@ assert_eq $seekable.seekable false
 
 # The helpers call the stream's own methods
 class MemIo: Io
-  pub field data pos out limit calls
+  pub field data pos out limit capacity calls
 
-  def (init) self data limit = nil
+  def (init) self data limit = nil :capacity = nil
     self.data = data
     self.pos = 0
     self.out = BinBuf()
     self.limit = limit
+    self.capacity = capacity
     self.calls = []
 
   #[getter]
@@ -85,7 +97,7 @@ class MemIo: Io
   pub def writable _self
     true
 
-  pub def read self size
+  pub def read_some self size
     let end = (self.pos + size)
     if (end > self.data.len)
       end = self.data.len
@@ -93,19 +105,20 @@ class MemIo: Io
     self.pos = end
     chunk
 
-  # Writes at most `limit` bytes per call, recording how many pieces each
-  # call got
-  pub def write self *data
+  # Writes at most `limit` bytes per call and `capacity` in all, recording
+  # the size of the data each call got
+  pub def write_some self data
     self.calls.push $data.len
-    let joined = BinBuf()
-    for piece = data
-      joined.extend (Bin piece)
-    let bytes = joined.freeze()
+    let bytes = (Bin data)
     if (self.limit != nil && bytes.len > self.limit)
       bytes = (bytes[..self.limit])
+    if (self.capacity != nil && bytes.len > self.capacity - self.out.len)
+      bytes = (bytes[..(self.capacity - self.out.len)])
     self.out.append $bytes
     bytes.len
 
+assert_eq (MemIo(b"hello").read 5) b"hello"
+assert_eq (MemIo(b"abc").read 5) b"abc"
 assert_eq (MemIo(b"hello").read_all()) b"hello"
 assert_eq (MemIo(b"").read_all()) b""
 assert_eq (MemIo(Bin("héllo")).read_all_str()) "héllo"
@@ -127,27 +140,29 @@ catch error.TypeError: _
   true
 assert $bad_size
 
-# Short writes are repeated
-let short = MemIo b"" 2
-short.write_all "hello"
-assert_eq (short.out.freeze()) b"hello"
-
-# The first write gets every piece, and what a short write leaves goes on as
-# one, even when it stops partway through a piece
+# `write` calls `write_some` for each piece, and again for what a short call
+# leaves of it
 let pieces = MemIo b"" 3
-pieces.write_all "hello" "\n" b"xy"
+assert_eq (pieces.write "hello" "\n" b"xy") 8
 assert_eq (pieces.out.freeze()) b"hello\nxy"
-assert_eq $pieces.calls [3, 1, 1]
+assert_eq $pieces.calls [5, 2, 1, 2]
 
 # Writing no pieces calls nothing
 let nothing = MemIo b""
-nothing.write_all()
+assert_eq (nothing.write()) 0
 assert_eq $nothing.calls []
 
 # A piece that is not a `Str` or `Bin` raises before anything is written
 let bad_piece = MemIo b""
-assert_throws $error.TypeError do bad_piece.write_all "a" 1
+assert_throws $error.TypeError do bad_piece.write "a" 1
 assert_eq $bad_piece.calls []
+
+# A bounded output writes what fits and reports it, then raises once full
+let bounded = MemIo b"" capacity: 4
+assert_eq (bounded.write "abc" "def") 4
+assert_eq (bounded.write_some "e") 0
+assert_throws $error.RuntimeError do bounded.write "e"
+assert_eq (bounded.out.freeze()) b"abcd"
 
 # A buffer writes its pieces through to a Do stream in one call
 let source = MemIo b""
@@ -155,28 +170,20 @@ let buffered = Buffered $source
 assert_eq (buffered.write "a" b"b" "c") 3
 buffered.flush()
 assert_eq (source.out.freeze()) b"abc"
-assert_eq $source.calls [1]
+assert_eq $source.calls [3]
 
-# A write that makes no progress raises
+# A `write_some` that writes nothing, or more than it was given, raises
 class Stuck: Io
-  pub def write _self *_data
+  pub def write_some _self _data
     0
 
-let stuck = try
-  Stuck().write_all "x"
-  false
-catch error.RuntimeError: _
-  true
-assert $stuck
+assert_throws $error.RuntimeError do Stuck().write "x"
 
-# Copying puts chunks into the destination's sink
-let dest = MemIo b"" 4
-assert_eq (MemIo(b"abcdef").copy_to dest) 6
-assert_eq (dest.out.freeze()) b"abcdef"
+class Overcount: Io
+  pub def write_some _self data
+    (data.len + 1)
 
-let chunks = []
-assert_eq (MemIo(b"abc").copy_to chunks) 3
-assert_eq $chunks [b"abc"]
+assert_throws $error.RuntimeError do Overcount().write "x"
 
 # A stream is its own sink, writing values as text
 let sink = MemIo b""

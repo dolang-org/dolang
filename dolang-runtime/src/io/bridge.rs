@@ -163,7 +163,9 @@ impl Handle {
         Poll::Ready(Ok(()))
     }
 
-    /// Writes out the write buffer, repeating short writes.
+    /// Writes out the write buffer, repeating short writes. A `write_some` that writes
+    /// nothing, as a full bounded output does, fails with [`io::ErrorKind::WriteZero`], since
+    /// the buffered bytes were already reported as written.
     fn poll_drain(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         while !self.write_buf.is_empty() {
             if self.write.is_none() {
@@ -171,6 +173,9 @@ impl Handle {
                 self.write = Some(send(self.writes.as_ref(), |tx| Request::Write(data, tx))?);
             }
             let written = ready!(poll_reply(&mut self.write, cx))?;
+            if written == 0 {
+                return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
+            }
             self.write_buf.drain(..written);
         }
         Poll::Ready(Ok(()))

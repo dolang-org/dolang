@@ -1405,11 +1405,33 @@ impl<'v> Object<'v> for PipeStream {
                     return Err(missing_end(this, strand, "`read`"));
                 };
                 let mut reader = reader.lock().await.into_sys(strand)?;
-                read_raw(&mut *reader, Some(size), strand, out).await
+                read_raw(&mut *reader, Some(size), false, strand, out).await
+            })
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size
+                    .to_i64(strand)
+                    .ok()
+                    .and_then(|size| usize::try_from(size).ok())
+                    .ok_or_else(|| {
+                        Error::type_error(strand, "size must be a non-negative integer")
+                    })?;
+                let Some(mut reader) = this.borrow(strand)?.reader() else {
+                    return Err(missing_end(this, strand, "`read_some`"));
+                };
+                let mut reader = reader.lock().await.into_sys(strand)?;
+                read_raw(&mut *reader, Some(size), true, strand, out).await
             })
             .method("write", async move |this, strand, args, out| {
                 let Some(writer) = this.borrow(strand)?.writer() else {
                     return Err(missing_end(this, strand, "`write`"));
+                };
+                write_pieces(&writer, args, strand, out).await
+            })
+            // A write takes all of it, so `write_some` is `write`.
+            .method("write_some", async move |this, strand, args, out| {
+                let Some(writer) = this.borrow(strand)?.writer() else {
+                    return Err(missing_end(this, strand, "`write_some`"));
                 };
                 write_pieces(&writer, args, strand, out).await
             })

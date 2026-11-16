@@ -8,6 +8,14 @@
 # One it does not define raises [`UnsupportedError`](std.UnsupportedError), and
 # its capabilities are `false` unless it overrides them.
 #
+# A stream that reads defines [`read_some`](io.Io.read_some), and one that
+# writes defines [`write_some`](io.Io.write_some). These may read or write
+# less than asked. `Io` provides [`read`](io.Io.read) and
+# [`write`](io.Io.write) in terms of them, and those are what a script
+# normally calls: they read or write all of it, so the caller needs no loop. A
+# subclass overrides them only to do better, such as writing several pieces in
+# one operation.
+#
 # The helpers, such as [`read_all`](io.Io.read_all), are written in terms of
 # those methods. Reading text by size or by line needs read-ahead, so it is left
 # to [`Buffered`](io.Buffered). An `Io` is a [`Sink`](std.Sink) of its bytes,
@@ -25,8 +33,8 @@
 # ## Native functions and Do subclasses
 #
 # A native function that accepts an `Io` also accepts an instance of a Do
-# subclass, which must report its capabilities. Strands call its `read`,
-# `write` and `seek` as the function needs bytes, and its `fork` if it is
+# subclass, which must report its capabilities. Strands call its `read_some`,
+# `write_some` and `seek` as the function needs bytes, and its `fork` if it is
 # forkable, never its `close`. Don't use the stream yourself until the function
 # is done with it.
 #
@@ -51,7 +59,7 @@
 #   pub def readable _self
 #     true
 #
-#   pub def read self size
+#   pub def read_some self size
 #     let end = (self.pos + size)
 #     if (end > self.data.len)
 #       end = self.data.len
@@ -94,11 +102,47 @@ pub class Io: Sink[Value]
   pub def forkable self -> Bool
     ...
 
-  # Reads bytes.
+  # Reads some bytes, returning as soon as any are available.
+  #
+  # A stream that reads defines this, and [`read`](io.Io.read) calls it.
   #
   # ## Returns
   #
-  # At most `size` bytes. An empty result means the end of the stream.
+  # At least one byte and at most `size`. An empty result means the end of the
+  # stream.
+  pub def read_some
+    self
+    # Most bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Writes some of `data`.
+  #
+  # A stream that writes defines this, and [`write`](io.Io.write) calls it.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, at least one unless `data` is empty. Zero
+  # means a bounded output, such as a [`Window`](io.Window), has no room left.
+  pub def write_some
+    self
+    # Data to write.
+    data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Reads bytes, calling [`read_some`](io.Io.read_some) until it has `size` of
+  # them.
+  #
+  # A `read` interrupted before it completes, such as by a timeout, discards
+  # the bytes it had read. A [`Buffered`](io.Buffered) keeps them for the next
+  # read.
+  #
+  # ## Returns
+  #
+  # `size` bytes, fewer only at the end of the stream. An empty result means
+  # the end.
   pub def read
     self
     # Number of bytes to read.
@@ -106,16 +150,25 @@ pub class Io: Sink[Value]
   do -> Bin
     ...
 
-  # Writes data, given in pieces.
+  # Writes data, given in pieces, calling [`write_some`](io.Io.write_some)
+  # until it is written.
   #
-  # One call is one write, so a stream that writes in one operation keeps the
-  # pieces together. Pass a line and its terminator to one call rather than
+  # Each piece goes to its own `write_some`, so a stream that writes several
+  # pieces in one operation overrides `write` to keep them together, as the
+  # native streams do. Pass a line and its terminator to one call rather than
   # joining them first. Pieces stay together only as far as the stream does.
   #
   # ## Returns
   #
-  # The number of bytes written, counting through the pieces in order. It can
-  # be short, even partway through a piece.
+  # The number of bytes written, which is all of them. At the end of a bounded
+  # output, such as a [`Window`](io.Window), it writes what fits and returns
+  # that count.
+  #
+  # ## Errors
+  #
+  # | Exception | Condition |
+  # | --- | --- |
+  # | [`RuntimeError`](std.RuntimeError) | A bounded output has no room left, or `write_some` reports more bytes than it was given |
   pub def write
     self
     # Data to write.
@@ -175,46 +228,8 @@ pub class Io: Sink[Value]
   pub def read_all_str self -> Str
     ...
 
-  # Writes all of `data`, repeating [`write`](io.Io.write) until it is written.
-  #
-  # The first `write` gets every piece, and later ones get what the earlier
-  # ones left. The pieces stay together only when the first `write` takes them
-  # all.
-  #
-  # ## Errors
-  #
-  # | Exception | Condition |
-  # | --- | --- |
-  # | [`RuntimeError`](std.RuntimeError) | A `write` reports no bytes written, or more than it was given |
-  pub def write_all
-    self
-    # Data to write.
-    *data @ (Str | Bin)
-  do
-    ...
-
-  # Puts the rest of the stream into a sink, in chunks.
-  #
-  # ## Returns
-  #
-  # The number of bytes copied.
-  #
-  # ## Example
-  #
-  # ```
-  # let dest = fs.open copy.bin w
-  # source.copy_to $dest
-  # dest.close()
-  # ```
-  pub def copy_to
-    self
-    # Destination, such as another `Io`.
-    dest @ BaseSinkable[Bin]
-  do -> Int
-    ...
-
   # Returns an iterator over the rest of the stream, one [`read`](io.Io.read)
-  # per item.
+  # per item. Every item but the last has `size` bytes.
   pub def chunks
     self
     # Number of bytes to read per item. 65536 by default.
@@ -226,7 +241,7 @@ pub class Io: Sink[Value]
   pub def (sink) self -> Io
     ...
 
-  # Writes a value with [`write_all`](io.Io.write_all).
+  # Writes a value with one [`write`](io.Io.write).
   #
   # A [`Str`](std.Str) or [`Bin`](std.Bin) contributes its own bytes, and
   # anything else is converted to a string first. No line ending is appended.
@@ -281,11 +296,26 @@ pub class Buffered: Iter[Str] Io
   # Reads bytes.
   #
   # A result shorter than `size` means the end of the stream was reached, and
-  # an empty one means it already had been.
+  # an empty one means it already had been. An interrupted read keeps the bytes
+  # it had read for the next read.
   pub def read
     self
     # Number of bytes to read. Without it, reads to the end of the stream.
     size @ Int = ...
+  do -> Bin
+    ...
+
+  # Reads some bytes: the read-ahead, or one read of the source when it is
+  # empty.
+  #
+  # ## Returns
+  #
+  # At least one byte and at most `size`. An empty result means the end of the
+  # stream.
+  pub def read_some
+    self
+    # Most bytes to read.
+    size @ Int
   do -> Bin
     ...
 
@@ -333,6 +363,14 @@ pub class Buffered: Iter[Str] Io
     self
     # Data to write.
     *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Writes `data`, as [`write`](io.Buffered.write) does.
+  pub def write_some
+    self
+    # Data to write.
+    data @ (Str | Bin)
   do -> Int
     ...
 
@@ -414,7 +452,8 @@ pub class Buffered: Iter[Str] Io
 #
 # ```
 # compress.compress lines.gz :GZIP: do |stream|
-#   (Concat $lines end: "\n").copy_to $stream
+#   for chunk = (Concat $lines end: "\n").chunks()
+#     stream.write $chunk
 # ```
 pub class Concat: Io
   # Reads `items` in order.
@@ -436,11 +475,24 @@ pub class Concat: Io
   #
   # ## Returns
   #
-  # At most `size` bytes, fewer only at the end of the items. An empty result
-  # means the end of the stream.
+  # `size` bytes, fewer only at the end of the items. An empty result means
+  # the end of the stream.
   pub def read
     self
     # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Reads bytes, taking items only until it has any.
+  #
+  # ## Returns
+  #
+  # At least one byte and at most `size`. An empty result means the end of the
+  # stream.
+  pub def read_some
+    self
+    # Most bytes to read.
     size @ Int
   do -> Bin
     ...
@@ -497,7 +549,8 @@ pub class Concat: Io
 # let text = StrBuf()
 # let out = Cursor $text
 # compress.decompress (Cursor $data) do |stream|
-#   stream.copy_to $out
+#   for chunk = stream.chunks()
+#     out.write $chunk
 # out.close()
 # ```
 pub class Cursor: Io
@@ -531,11 +584,19 @@ pub class Cursor: Io
   #
   # ## Returns
   #
-  # At most `size` bytes, fewer only at the end of the window or the target.
-  # An empty result means the end.
+  # `size` bytes, fewer only at the end of the window or the target. An empty
+  # result means the end.
   pub def read
     self
     # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Reads bytes, as [`read`](io.Cursor.read) does.
+  pub def read_some
+    self
+    # Most bytes to read.
     size @ Int
   do -> Bin
     ...
@@ -546,10 +607,27 @@ pub class Cursor: Io
   #
   # The number of bytes written, fewer only at the end of a bounded window.
   # Bytes a `StrBuf` cursor holds back count as written.
+  #
+  # ## Errors
+  #
+  # A [`RuntimeError`](std.RuntimeError) when a bounded window has no room
+  # left.
   pub def write
     self
     # Data to write.
     *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Writes `data`, cut short at the end of a bounded window.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, zero when a bounded window has no room left.
+  pub def write_some
+    self
+    # Data to write.
+    data @ (Str | Bin)
   do -> Int
     ...
 
@@ -652,11 +730,24 @@ pub class Window: Io
   #
   # ## Returns
   #
-  # At most `size` bytes. An empty result means the end of the window or the
-  # target.
+  # `size` bytes, fewer only at the end of the window or the target. An empty
+  # result means the end.
   pub def read
     self
     # Number of bytes to read.
+    size @ Int
+  do -> Bin
+    ...
+
+  # Reads some bytes, with one read of the target.
+  #
+  # ## Returns
+  #
+  # At least one byte and at most `size`. An empty result means the end of the
+  # window or the target.
+  pub def read_some
+    self
+    # Most bytes to read.
     size @ Int
   do -> Bin
     ...
@@ -666,10 +757,27 @@ pub class Window: Io
   # ## Returns
   #
   # The number of bytes written, cut short at the end of a bounded window.
+  #
+  # ## Errors
+  #
+  # A [`RuntimeError`](std.RuntimeError) when a bounded window has no room
+  # left.
   pub def write
     self
     # Data to write.
     *data @ (Str | Bin)
+  do -> Int
+    ...
+
+  # Writes some of `data`, with one write of the target.
+  #
+  # ## Returns
+  #
+  # The number of bytes written, zero when a bounded window has no room left.
+  pub def write_some
+    self
+    # Data to write.
+    data @ (Str | Bin)
   do -> Int
     ...
 

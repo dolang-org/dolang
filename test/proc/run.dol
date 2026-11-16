@@ -397,7 +397,7 @@ class Memory: io.Io
   pub def writable _self
     true
 
-  pub def read self size = nil
+  pub def read_some self size = nil
     if self.fail
       throw ValueError $self.fail
     let end = self.data.len
@@ -407,14 +407,11 @@ class Memory: io.Io
     self.pos = end
     chunk
 
-  pub def write self *data
+  pub def write_some self data
     if self.fail
       throw ValueError $self.fail
-    let total = 0
-    for piece = data
-      self.written.push $piece
-      total = (total + piece.len)
-    total
+    self.written.push $data
+    data.len
 
   pub def bytes self
     (b"".join self.written)
@@ -425,7 +422,7 @@ class Endless: io.Io
   pub def readable _self
     true
 
-  pub def read _self _size = nil
+  pub def read_some _self _size = nil
     b"endless\n"
 
 def stream_child()

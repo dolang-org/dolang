@@ -340,7 +340,7 @@ impl<'v> Object<'v> for Decompressor {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let builder = builder.supertype(TypeObject::Io);
-        builder
+        let mut builder = builder
             .get("readable", |this, strand, out| {
                 let open = this.borrow(strand)?.reader.is_some();
                 strand.store(out, open);
@@ -350,8 +350,10 @@ impl<'v> Object<'v> for Decompressor {
                 let annex = this.annex();
                 strand.store(out, annex.format.sym(annex.global));
                 Ok(())
-            })
-            .method("read", async move |this, strand, args, out| {
+            });
+        // A read stops short only at the end, so `read_some` is `read`.
+        for name in ["read", "read_some"] {
+            builder = builder.method(name, async move |this, strand, args, out| {
                 unpack!(strand, args => ?size);
                 let size: Option<usize> = size
                     .map(|size| {
@@ -388,16 +390,17 @@ impl<'v> Object<'v> for Decompressor {
                 drop(borrow);
                 data.finish(strand, out);
                 Ok(())
-            })
-            .method("close", async move |this, strand, args, _out| {
-                unpack!(strand, args =>);
-                let reader = this.borrow_mut(strand)?.reader.take();
-                if let Some(mut reader) = reader {
-                    // Closes it for the handles lent out too.
-                    drop(reader.close().await);
-                }
-                Ok(())
-            })
+            });
+        }
+        builder.method("close", async move |this, strand, args, _out| {
+            unpack!(strand, args =>);
+            let reader = this.borrow_mut(strand)?.reader.take();
+            if let Some(mut reader) = reader {
+                // Closes it for the handles lent out too.
+                drop(reader.close().await);
+            }
+            Ok(())
+        })
     }
 }
 
@@ -443,7 +446,7 @@ impl<'v> Object<'v> for Compressor {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         let builder = builder.supertype(TypeObject::Io);
-        builder
+        let mut builder = builder
             .get("writable", |this, strand, out| {
                 let open = this.borrow(strand)?.writer.is_some();
                 strand.store(out, open);
@@ -453,8 +456,10 @@ impl<'v> Object<'v> for Compressor {
                 let annex = this.annex();
                 strand.store(out, annex.format.sym(annex.global));
                 Ok(())
-            })
-            .method("write", async move |this, strand, args, out| {
+            });
+        // A write takes all of it, so `write_some` is `write`.
+        for name in ["write", "write_some"] {
+            builder = builder.method(name, async move |this, strand, args, out| {
                 // The encoder copies what it is given, so joining the pieces costs no more.
                 let mut data = Vec::new();
                 for arg in args {
@@ -478,19 +483,20 @@ impl<'v> Object<'v> for Compressor {
                 drop(borrow);
                 strand.store(out, data.len());
                 Ok(())
-            })
-            .method("close", async move |this, strand, args, _out| {
-                unpack!(strand, args =>);
-                let writer = this.borrow_mut(strand)?.writer.take();
-                let Some(mut writer) = writer else {
-                    return Ok(());
-                };
-                let Some(mut writer) = writer.close().await else {
-                    return Ok(());
-                };
-                // Finishes the stream, then closes the inner handle.
-                writer.close().await.into_do_io(strand)
-            })
+            });
+        }
+        builder.method("close", async move |this, strand, args, _out| {
+            unpack!(strand, args =>);
+            let writer = this.borrow_mut(strand)?.writer.take();
+            let Some(mut writer) = writer else {
+                return Ok(());
+            };
+            let Some(mut writer) = writer.close().await else {
+                return Ok(());
+            };
+            // Finishes the stream, then closes the inner handle.
+            writer.close().await.into_do_io(strand)
+        })
     }
 }
 

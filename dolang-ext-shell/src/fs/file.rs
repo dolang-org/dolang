@@ -536,12 +536,12 @@ pub(crate) trait FileKind<'v>: Sized + 'v {
 
     /// Reads `size` bytes from the cursor into the empty `out`, or the rest of
     /// the file, stopping short only at the end of the file.
-    async fn read_into(
+    async fn read_into<'s>(
         &mut self,
-        strand: &mut Strand<'v, '_>,
+        strand: &mut Strand<'v, 's>,
         out: &mut BinEmbryo<'v>,
         size: Option<usize>,
-    ) -> io::Result<()>;
+    ) -> Result<'v, 's, ()>;
 
     /// Writes out and drops any buffer, once the file has been taken to be
     /// closed.
@@ -657,14 +657,19 @@ impl<'v> FileKind<'v> for File {
         self.buffer().await?.tell().await
     }
 
-    async fn read_into(
+    /// An interrupted read fails rather than being dropped, so what it read is
+    /// pushed back for the next read.
+    async fn read_into<'s>(
         &mut self,
-        strand: &mut Strand<'v, '_>,
+        strand: &mut Strand<'v, 's>,
         out: &mut BinEmbryo<'v>,
         size: Option<usize>,
-    ) -> io::Result<()> {
-        let mut held = self.buffer().await?;
-        let res = held.read_into(strand, out, size).await;
+    ) -> Result<'v, 's, ()> {
+        let mut held = self.buffer().await.into_sys(strand)?;
+        let res = guard_read(strand, async |strand| {
+            held.read_into(strand, out, size).await
+        })
+        .await;
         if res.is_err() {
             held.push_back(out.as_slice());
         }
@@ -792,13 +797,15 @@ impl<'v> FileKind<'v> for RawFile {
         self.vfs().stream_position().await
     }
 
-    async fn read_into(
+    async fn read_into<'s>(
         &mut self,
-        strand: &mut Strand<'v, '_>,
+        strand: &mut Strand<'v, 's>,
         out: &mut BinEmbryo<'v>,
         size: Option<usize>,
-    ) -> io::Result<()> {
-        read_raw(self.vfs(), strand, out, size).await
+    ) -> Result<'v, 's, ()> {
+        read_raw(self.vfs(), strand, out, size)
+            .await
+            .into_sys(strand)
     }
 
     async fn close_buf(&mut self) -> io::Result<()> {
@@ -1033,6 +1040,18 @@ fn size_arg<'v, 's>(
     .transpose()
 }
 
+/// Runs a buffered read under an interrupt guard, so an interrupted read fails
+/// instead of being dropped with its caller, and the caller can push back what
+/// it had read.
+async fn guard_read<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    read: impl AsyncFnOnce(&mut Strand<'v, 's>) -> io::Result<()>,
+) -> Result<'v, 's, ()> {
+    strand
+        .interrupt_guard(async |strand| read(strand).await.into_sys(strand))
+        .await
+}
+
 /// Appends `n` bytes read straight from `file` to `out`, or the rest of the
 /// file when `n` is `None`, stopping short only at the end of the file.
 async fn read_raw<'v>(
@@ -1068,9 +1087,13 @@ impl File {
         self.check_open(strand)?;
         let mut held = self.buffer().await.into_sys(strand)?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = held.read_line_into(strand, &mut buf).await {
+        if let Err(err) = guard_read(strand, async |strand| {
+            held.read_line_into(strand, &mut buf).await
+        })
+        .await
+        {
             held.push_back(buf.as_slice());
-            return Err(err).into_sys(strand);
+            return Err(err);
         }
         if std::str::from_utf8(buf.as_slice()).is_err() {
             held.push_back(buf.as_slice());
@@ -1094,9 +1117,13 @@ impl File {
         self.check_open(strand)?;
         let mut held = self.buffer().await.into_sys(strand)?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = held.read_into(strand, &mut buf, size).await {
+        if let Err(err) = guard_read(strand, async |strand| {
+            held.read_into(strand, &mut buf, size).await
+        })
+        .await
+        {
             held.push_back(buf.as_slice());
-            return Err(err).into_sys(strand);
+            return Err(err);
         }
         loop {
             let eof = size.is_none_or(|size| buf.len() < size);
@@ -1115,9 +1142,13 @@ impl File {
             }
             // The first character is incomplete, so read on until it is whole.
             let before = buf.len();
-            if let Err(err) = held.read_into(strand, &mut buf, Some(1)).await {
+            if let Err(err) = guard_read(strand, async |strand| {
+                held.read_into(strand, &mut buf, Some(1)).await
+            })
+            .await
+            {
                 held.push_back(buf.as_slice());
-                return Err(err).into_sys(strand);
+                return Err(err);
             }
             if buf.len() == before {
                 held.push_back(buf.as_slice());
@@ -1295,9 +1326,7 @@ impl<'v, T: FileKind<'v>> FileObject<T> {
     ) -> Result<'v, 's, ()> {
         self.check_open(strand)?;
         let mut buf = BinEmbryo::new();
-        self.read_into(strand, &mut buf, size)
-            .await
-            .into_sys(strand)?;
+        self.read_into(strand, &mut buf, size).await?;
         buf.finish(strand, out);
         Ok(())
     }
@@ -1517,6 +1546,19 @@ impl<'v, T: FileKind<'v>> Object<'v> for FileObject<T> {
                     return borrow.read_at(strand, offset, size, out).await;
                 }
                 this.borrow_mut(strand)?.read(strand, size, out).await
+            })
+            // A file read stops short only at the end, so `read_some` is `read`.
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size_arg(strand, Some(size))?;
+                this.borrow_mut(strand)?.read(strand, size, out).await
+            })
+            // A file write takes all of it, so `write_some` is `write`.
+            .method("write_some", async move |this, strand, args, out| {
+                unpack!(strand, args => data);
+                let pieces = [Pinned::new(strand, &data)?];
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.write(&pieces, strand, out).await
             })
             .method("write", async move |this, strand, args, out| {
                 let (pieces, offset) = write_args(strand, args, offset_sym)?;

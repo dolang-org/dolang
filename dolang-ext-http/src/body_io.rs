@@ -108,7 +108,10 @@ pub(crate) use browser::BodyIo;
 mod browser {
     use bytes::{Buf as _, Bytes};
     use dolang::runtime::{
-        AllocExt as _, Error, Object, object::TypeBuilder, unpack, value::TypeObject,
+        AllocExt as _, Error, Object,
+        object::TypeBuilder,
+        unpack,
+        value::{BinEmbryo, TypeObject},
     };
     use futures::stream::StreamExt as _;
 
@@ -140,14 +143,17 @@ mod browser {
         type TypeAnnex = ();
 
         fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-            builder
-                .supertype(TypeObject::Io)
-                .get("readable", |this, strand, out| {
-                    let readable = this.borrow(strand)?.stream.is_some();
-                    strand.store(out, readable);
-                    Ok(())
-                })
-                .method("read", async move |this, strand, args, out| {
+            let mut builder =
+                builder
+                    .supertype(TypeObject::Io)
+                    .get("readable", |this, strand, out| {
+                        let readable = this.borrow(strand)?.stream.is_some();
+                        strand.store(out, readable);
+                        Ok(())
+                    });
+            // `read` reads to `size` across chunks, and `read_some` until it has any.
+            for (name, some) in [("read", false), ("read_some", true)] {
+                builder = builder.method(name, async move |this, strand, args, out| {
                     unpack!(strand, args => size);
                     let size = size
                         .to_i64(strand)
@@ -161,24 +167,33 @@ mod browser {
                     let stream = stream
                         .as_mut()
                         .ok_or_else(|| Error::state_error(strand, "closed"))?;
-                    while size > 0 && chunk.is_empty() {
-                        match stream.next().await.transpose().into_http(strand)? {
-                            Some(next) => *chunk = next,
-                            None => break,
+                    let mut data = BinEmbryo::new();
+                    while data.len() < size {
+                        if chunk.is_empty() {
+                            match stream.next().await.transpose().into_http(strand)? {
+                                Some(next) => *chunk = next,
+                                None => break,
+                            }
+                            continue;
+                        }
+                        let len = (size - data.len()).min(chunk.len());
+                        data.extend(strand, &chunk[..len]);
+                        chunk.advance(len);
+                        if some {
+                            break;
                         }
                     }
-                    let len = size.min(chunk.len());
-                    strand.store(out, &chunk[..len]);
-                    chunk.advance(len);
+                    data.finish(strand, out);
                     Ok(())
-                })
-                .method("close", async move |this, strand, args, _out| {
-                    unpack!(strand, args =>);
-                    let mut borrow = this.borrow_mut(strand)?;
-                    borrow.stream = None;
-                    borrow.chunk = Bytes::new();
-                    Ok(())
-                })
+                });
+            }
+            builder.method("close", async move |this, strand, args, _out| {
+                unpack!(strand, args =>);
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.stream = None;
+                borrow.chunk = Bytes::new();
+                Ok(())
+            })
         }
     }
 }

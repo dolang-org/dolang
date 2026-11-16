@@ -96,7 +96,7 @@ def failing_item item
   item
 
 class FailingIo: MemIo
-  pub def read _self _size
+  pub def read_some _self _size
     throw ValueError "read failed"
 
 #[test]

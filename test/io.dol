@@ -65,7 +65,7 @@ def lending_keeps_write_order()
 def write_pieces()
   let buf = Buffered $fs.open("data", "w", buffer: false)
   assert_eq (buf.write "one" b"\n" "two") 7
-  buf.write_all "\n" "three"
+  buf.write "\n" "three"
   buf.close()
   assert_eq (fs.Path("data").read_str()) "one\ntwo\nthree"
 
@@ -254,15 +254,16 @@ def copy_between_native_streams()
   fs.Path("in.txt").write "data"
   let source = fs.open in.txt buffer: false
   let dest = fs.open out.txt w buffer: false
-  assert_eq (source.copy_to dest) 4
-  dest.write_all "!"
+  for chunk = source.chunks()
+    dest.write $chunk
+  dest.write "!"
   source.close()
   dest.close()
   assert_eq (fs.Path("out.txt").read_str()) "data!"
   # A compressor inherits `Io`'s sink
   compress.compress data.gz :GZIP: do |stream|
     let source = fs.open in.txt
-    assert_eq (source.copy_to stream) 4
+    assert_eq (stream.write(source.read_all())) 4
     source.close()
     stream.(put) 42
     assert (type stream Sink)
@@ -297,7 +298,7 @@ def unreadable_do_stream_is_refused()
     compress.decompress (MemIo read: false) do |_| nil
 
 class FailingRead: MemIo
-  pub def read _self _size @ Int -> Bin
+  pub def read_some _self _size @ Int -> Bin
     throw StateError("read failed")
 
 # A core exception outside the table reaches each consumer as a `RuntimeError`
@@ -310,7 +311,7 @@ def do_stream_exception_fails_consumer()
   assert_throws $RuntimeError str: "state error: read failed" do buf.read_line()
 
 class MissingRead: MemIo
-  pub def read _self _size @ Int -> Bin
+  pub def read_some _self _size @ Int -> Bin
     throw sys.NotFoundError gone code: $sys.linux.Errno.ENOENT
 
 # A system error keeps its class, code and message through each consumer
@@ -325,7 +326,7 @@ def do_stream_system_error_keeps_identity()
     assert_eq $err.code.value $sys.linux.Errno.ENOENT.value
 
 class InvalidRead: MemIo
-  pub def read _self _size @ Int -> Bin
+  pub def read_some _self _size @ Int -> Bin
     throw ValueError bad
 
 # A `ValueError` keeps its class and message, even with system errors loaded
@@ -346,7 +347,7 @@ class Waiting: MemIo
     self.#go = go
     self.#ends = ends
 
-  pub def read self _size @ Int -> Bin
+  pub def read_some self _size @ Int -> Bin
     self.#started.put true
     try
       self.#go.next()
@@ -366,6 +367,34 @@ def cancelling_consumer_cancels_do_stream()
   # The server's read is interrupted, and the stream stays open.
   assert_eq (ends.next()) true
   assert_eq $stream.closed false
+
+# A stream whose reads report that they started, then take a chunk from a
+# channel.
+class Fed: MemIo
+  field started chunks
+
+  def (init) self started chunks
+    MemIo.(init) $self write: false seek: false
+    self.#started = started
+    self.#chunks = chunks
+
+  pub def read_some self _size @ Int -> Bin
+    self.#started.put true
+    self.#chunks.next()
+
+#[test]
+def interrupted_buffered_read_keeps_bytes()
+  let started_send started = channel()
+  let feed chunks = channel()
+  let buf = Buffered (Fed started_send chunks)
+  let reader = spawn do buf.read 6
+  started.next()
+  feed.put b"abc"
+  # The second `read_some` starts only once the first chunk is taken.
+  started.next()
+  reader.cancel()
+  reader.wait()
+  assert_eq (buf.read 3) b"abc"
 
 #[test]
 def concat_converts_items()
@@ -474,7 +503,8 @@ def window_over_do_stream()
   let source = MemIo b"0123456789"
   let window = Window $source (2..5)
   assert_eq (window.read_all()) b"234"
-  assert_eq (window.write("xy")) 0
+  assert_eq (window.write_some("xy")) 0
+  assert_throws $RuntimeError do window.write "xy"
   window.seek start: 0
   assert_eq (window.write("xy")) 2
   window.flush()

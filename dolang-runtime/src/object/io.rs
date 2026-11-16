@@ -4,16 +4,21 @@
 //!
 //! Native providers inherit it as a supertype and define its members themselves. Members a
 //! type does not define fall through to `Io`: the capabilities report `false`, and the
-//! stream methods raise as a missing field would.
+//! stream methods raise as unsupported.
 //!
-//! The helpers (`read_all`, `write_all`, `chunks`, `(put)`, ...) call the stream's own
-//! methods through the delegator, so they keep no state and need no buffer.
+//! A stream implements the primitives, `read_some` and `write_some`, which are best-effort.
+//! `Io` provides the complete operations in terms of them: `read` calls `read_some` until it
+//! has the size asked for or reaches the end, and `write` calls `write_some` until every
+//! piece is written. A stream overrides them where it can do better. The helpers
+//! (`read_all`, `chunks`, `(put)`, ...) call the stream's own methods through the delegator,
+//! so they keep no state and need no buffer.
 //!
 //! A Do subclass's instance provides [`ByteIo`] by lending [`DoIo`]. Getting its handle
 //! starts an owner strand that runs a server strand for each of the handle's
-//! [lanes](crate::io::bridge::Lanes). A server calls the stream's `read`, `write` and
-//! `seek` for the handle's requests. Once every lane is closed, the owner reports to the
-//! handle that the servers stopped. The stream stays open.
+//! [lanes](crate::io::bridge::Lanes). A server calls the stream's `read_some`, `write_some`
+//! and `seek` for the handle's requests, which map one-to-one onto `AsyncRead::poll_read`
+//! and `AsyncWrite::poll_write`. Once every lane is closed, the owner reports to the handle
+//! that the servers stopped. The stream stays open.
 //!
 //! The owner holds the [`Root`] of its own strand handle, which keeps it alive until the
 //! handle's end of the lanes shuts down. The handle's holder is the consumer, whatever
@@ -25,7 +30,13 @@
 //! A forkable stream's `fork` is served like the other methods. The handle of the stream
 //! it returns has its own owner, so it outlives this stream's handle.
 
-use std::{cell::Cell, io::SeekFrom, ops::ControlFlow, pin::pin, rc::Rc};
+use std::{
+    cell::Cell,
+    io::{self as std_io, SeekFrom},
+    ops::ControlFlow,
+    pin::pin,
+    rc::Rc,
+};
 
 use futures::{
     StreamExt as _,
@@ -38,7 +49,7 @@ use crate::{
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     io::{
-        ByteHandle, ByteIo, IntoByteIo, IoCaps,
+        ByteHandle, ByteIo, IntoByteIo, IoCaps, IoErrorExt as _,
         bridge::{self, Lanes, Reply},
         from_do,
     },
@@ -52,7 +63,7 @@ use crate::{
             is_special_mcall, members, recv_special_mcall,
         },
     },
-    strand::{InterruptMask, Strand, with_slots_dynamic},
+    strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
     value::{BinEmbryo, Input, Root, Slot, TypeObject, Value, fmt::Format, with_u8_slice},
@@ -60,7 +71,7 @@ use crate::{
     with_slots,
 };
 
-/// Bytes `read_all` and `copy_to` request per call, and the default `chunks` size.
+/// Bytes `read_all` requests per call, and the default `chunks` size.
 const CHUNK: usize = 65536;
 
 pub(crate) struct Io;
@@ -124,6 +135,8 @@ impl<'v> Protocol<'v> for Io {
                 Getter(sym::WRITABLE),
                 Getter(sym::SEEKABLE),
                 Getter(sym::FORKABLE),
+                Method(sym::READ_SOME),
+                Method(sym::WRITE_SOME),
                 Method(sym::READ),
                 Method(sym::WRITE),
                 Method(sym::SEEK),
@@ -131,8 +144,6 @@ impl<'v> Protocol<'v> for Io {
                 Method(sym::CLOSE),
                 Method(sym::READ_ALL),
                 Method(sym::READ_ALL_STR),
-                Method(sym::WRITE_ALL),
-                Method(sym::COPY_TO),
                 Method(sym::CHUNKS),
                 Method(sym::SINK_METHOD),
                 Method(sym::PUT_METHOD),
@@ -274,17 +285,27 @@ async fn helper_mcall<'v, 'a, 's>(
             unsafe { buf.finish_str_unchecked(strand, out) };
             Ok(())
         }
-        sym::WRITE_ALL => {
+        sym::READ => {
+            unpack!(strand, args => stream, size);
+            let size = size
+                .to_i64(strand)
+                .ok()
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| Error::type_error(strand, "size must be a non-negative integer"))?;
+            let mut buf = BinEmbryo::new();
+            read_exact(strand, &stream, size, &mut buf).await?;
+            buf.finish(strand, out);
+            Ok(())
+        }
+        sym::WRITE => {
             let stream = match args.next() {
                 Some(Arg::Pos(stream)) => stream,
                 Some(Arg::Key(key, _)) => return Err(Error::unexpected_key(strand, key)),
                 None => return Err(Error::missing_positional(strand, 0)),
             };
-            write_all(strand, &stream, args).await
-        }
-        sym::COPY_TO => {
-            unpack!(strand, args => stream, dest);
-            copy_to(strand, &stream, &dest, out).await
+            let total = write_pieces(strand, &stream, args).await?;
+            strand.store(out, total);
+            Ok(())
         }
         sym::CHUNKS => {
             unpack!(strand, args => stream, ?size);
@@ -321,7 +342,7 @@ async fn helper_mcall<'v, 'a, 's>(
             put(strand, &stream, &value).await
         }
         // The stream methods are the subclass's to define.
-        sym::READ | sym::WRITE | sym::SEEK | sym::FORK | sym::CLOSE => {
+        sym::READ_SOME | sym::WRITE_SOME | sym::SEEK | sym::FORK | sym::CLOSE => {
             Err(Error::unsupported(strand, "abstract stream method"))
         }
         _ => Err(Error::field(strand, method)),
@@ -352,7 +373,7 @@ pub(crate) fn recv_get<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     match field.tag() {
-        sym::READ_ALL | sym::READ_ALL_STR | sym::WRITE_ALL | sym::COPY_TO | sym::CHUNKS => {
+        sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS => {
             BoundMethod::create(strand, rcvr, field, out);
             Ok(())
         }
@@ -361,7 +382,7 @@ pub(crate) fn recv_get<'v, 'a, 's>(
 }
 
 /// Provides [`ByteIo`] for a native receiver with `caps` through the bridge, whose strands
-/// call its own `read`, `write` and `seek`, as for a Do subclass.
+/// call its own `read_some`, `write_some` and `seek`, as for a Do subclass.
 pub(crate) fn provide_bridge<'v, 's>(
     request: &mut Request<'v, 's, '_>,
     stream: &Value<'v>,
@@ -373,14 +394,15 @@ pub(crate) fn provide_bridge<'v, 's>(
     })
 }
 
-/// Appends the rest of `stream` to `buf`, calling its `read` until it returns `b""`.
+/// Appends the rest of `stream` to `buf`, calling its `read_some` until it returns `b""`.
 async fn read_to_end<'v, 's>(
     strand: &mut Strand<'v, 's>,
     stream: &Value<'v>,
     buf: &mut BinEmbryo<'v>,
 ) -> Result<'v, 's, ()> {
+    let read_some = Sym::well_known(sym::READ_SOME);
     with_slots!(strand, |mut chunk| {
-        while read_chunk(strand, stream, CHUNK, Slot::reborrow(&mut chunk)).await? {
+        while read_chunk(strand, stream, read_some, CHUNK, Slot::reborrow(&mut chunk)).await? {
             let bytes = chunk
                 .as_bin(strand.vm())
                 .expect("read_chunk checks for `Bin`");
@@ -391,77 +413,104 @@ async fn read_to_end<'v, 's>(
     })
 }
 
-/// Calls `stream.read size` into `out`, returning whether it read anything.
-async fn read_chunk<'v, 's>(
+/// Appends `size` bytes of `stream` to `buf`, calling its `read_some` until it has them or
+/// reaches the end.
+async fn read_exact<'v, 's>(
     strand: &mut Strand<'v, 's>,
     stream: &Value<'v>,
     size: usize,
+    buf: &mut BinEmbryo<'v>,
+) -> Result<'v, 's, ()> {
+    let read_some = Sym::well_known(sym::READ_SOME);
+    with_slots!(strand, |mut chunk| {
+        let mut left = size;
+        while left > 0 {
+            let want = left.min(CHUNK);
+            if !read_chunk(strand, stream, read_some, want, Slot::reborrow(&mut chunk)).await? {
+                break;
+            }
+            let bytes = chunk
+                .as_bin(strand.vm())
+                .expect("read_chunk checks for `Bin`");
+            let bytes = bytes.pin();
+            if bytes.len() > want {
+                return Err(Error::runtime(strand, "read_some: read more than `size`"));
+            }
+            left -= bytes.len();
+            buf.extend(strand, &bytes);
+        }
+        Ok(())
+    })
+}
+
+/// Calls `stream.<method> size`, a `read` or `read_some`, into `out`, returning whether it
+/// read anything.
+async fn read_chunk<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    stream: &Value<'v>,
+    method: Sym<'v, '_>,
+    size: usize,
     mut out: Slot<'v, '_>,
 ) -> Result<'v, 's, bool> {
-    method!(
-        strand,
-        stream,
-        Sym::well_known(sym::READ),
-        size as i64,
-        &mut out
-    )?;
+    method!(strand, stream, method, size as i64, &mut out)?;
     match out.as_bin(strand.vm()) {
         Some(bytes) => Ok(!bytes.is_empty()),
-        None => Err(Error::type_error(strand, "read: expected `Bin`")),
+        None => {
+            let message = format!("{}: expected `Bin`", method.as_str(strand.vm()));
+            Err(Error::type_error(strand, message))
+        }
     }
 }
 
-/// Writes all of the pieces in `args` with `stream`'s `write`.
+/// Writes the pieces in `args` with `stream`'s `write_some`, one piece or the rest of one
+/// at a time, and returns the total written.
 ///
-/// The first `write` gets every piece, so a stream that writes them at once keeps them
-/// together. It gets copies of the arguments, since a call takes its arguments, and `args`
-/// still holds them afterward for what a short write leaves, which is joined into one `Bin`.
-async fn write_all<'v, 's>(
+/// A `write_some` that writes nothing ends the write: after some progress, the total so far
+/// is returned, since a bounded output is full; before any, it raises as
+/// [`std::io::ErrorKind::WriteZero`].
+async fn write_pieces<'v, 's>(
     strand: &mut Strand<'v, 's>,
     stream: &Value<'v>,
     mut args: Args<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let count_args = args.len();
-    with_slots!(strand, |mut count, mut rest| {
-        let mut len = 0;
-        // The copies sit in rooted slots after one of headroom for the receiver
-        with_slots_dynamic!(strand, count_args + 1, |mut pieces| {
-            for (index, arg) in args.reborrow().enumerate() {
-                let piece = match arg {
-                    Arg::Pos(piece) => piece,
-                    Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-                };
-                len += piece_len(strand, &piece)?;
-                strand.store(pieces.at(index + 1), &piece);
+) -> Result<'v, 's, usize> {
+    for arg in args.reborrow() {
+        match arg {
+            Arg::Pos(piece) => {
+                piece_len(strand, &piece)?;
             }
-            if len == 0 {
-                return Ok(());
-            }
-            let sig = vec![None; count_args];
-            // Safety: the cells are only read by the frame's scan, never mutably borrowed,
-            // and there is one per signature entry after the headroom
-            let pieces = unsafe { Args::new(pieces.as_inner(), &sig, 1) };
-            let write = Sym::well_known(sym::WRITE);
-            stream.method(strand, write, pieces, &mut count).await
-        })?;
-        let mut skip = written(strand, &count, len)?;
-        if skip == len {
-            return Ok(());
+            Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
         }
-        let mut left = BinEmbryo::new_with_capacity(strand, len - skip);
+    }
+    let write_some = Sym::well_known(sym::WRITE_SOME);
+    with_slots!(strand, |mut rest, mut count| {
+        let mut total = 0;
         for arg in args {
             let Arg::Pos(piece) = arg else { continue };
-            with_u8_slice!(strand, piece, |bytes| {
-                if skip >= bytes.len() {
-                    skip -= bytes.len();
+            let len = piece_len(strand, &piece)?;
+            let mut offset = 0;
+            while offset < len {
+                if offset == 0 {
+                    method!(strand, stream, write_some, &piece, &mut count)?;
                 } else {
-                    left.extend(strand, &bytes[skip..]);
-                    skip = 0;
+                    with_u8_slice!(strand, piece, |bytes| {
+                        strand.store(&mut rest, &bytes[offset..])
+                    });
+                    method!(strand, stream, write_some, &rest, &mut count)?;
                 }
-            });
+                let n = written(strand, &count, len - offset)?;
+                if n == 0 {
+                    if total == 0 {
+                        return Err(
+                            std_io::Error::from(std_io::ErrorKind::WriteZero).into_do_io(strand)
+                        );
+                    }
+                    return Ok(total);
+                }
+                offset += n;
+                total += n;
+            }
         }
-        left.finish(strand, &mut rest);
-        write_all_value(strand, stream, &rest).await
+        Ok(total)
     })
 }
 
@@ -471,34 +520,8 @@ fn piece_len<'v, 's>(strand: &mut Strand<'v, 's>, piece: &Value<'v>) -> Result<'
         .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))
 }
 
-/// Writes all of `data` with `stream`'s `write`, passing what a short write leaves as a
-/// `Bin`.
-async fn write_all_value<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    stream: &Value<'v>,
-    data: &Value<'v>,
-) -> Result<'v, 's, ()> {
-    let len = piece_len(strand, data)?;
-    with_slots!(strand, |mut rest, mut written_count| {
-        let write = Sym::well_known(sym::WRITE);
-        let mut offset = 0;
-        while offset < len {
-            if offset == 0 {
-                method!(strand, stream, write, data, &mut written_count)?;
-            } else {
-                with_u8_slice!(strand, data, |bytes| {
-                    strand.store(&mut rest, &bytes[offset..])
-                })
-                .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
-                method!(strand, stream, write, &rest, &mut written_count)?;
-            }
-            offset += written(strand, &written_count, len - offset)?;
-        }
-        Ok(())
-    })
-}
-
-/// Checks the count a `write` of `len` bytes returned: at least one, and no more than `len`.
+/// Checks the count a `write_some` of `len` bytes returned: no more than `len`. Zero means
+/// a bounded output is full.
 fn written<'v, 's>(
     strand: &mut Strand<'v, 's>,
     count: &Value<'v>,
@@ -508,47 +531,33 @@ fn written<'v, 's>(
         .to_i64(strand)
         .ok()
         .and_then(|n| usize::try_from(n).ok())
-        .filter(|&n| n > 0 && n <= len)
-        .ok_or_else(|| Error::runtime(strand, "write: expected a count of bytes written"))
+        .filter(|&n| n <= len)
+        .ok_or_else(|| Error::runtime(strand, "write_some: expected a count of bytes written"))
 }
 
-/// Writes `value` as `io.Buffered.(put)` does: a `Str` or `Bin` as its bytes, anything
-/// else as its string form.
+/// Writes `value` with one call of the stream's `write`, as `io.Buffered.(put)` does: a
+/// `Str` or `Bin` as its bytes, anything else as its string form. A short count there is
+/// the end of a bounded output, so it is not retried.
 async fn put<'v, 's>(
     strand: &mut Strand<'v, 's>,
     stream: &Value<'v>,
     value: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    if value.as_bin(strand.vm()).is_some() || value.as_str(strand.vm()).is_some() {
-        return write_all_value(strand, stream, value).await;
-    }
-    let text = value.to_string(strand)?;
-    with_slots!(strand, |mut data| {
-        strand.store(&mut data, text.as_str());
-        write_all_value(strand, stream, &data).await
-    })
-}
-
-/// Puts the rest of `stream` into `dest`'s sink, returning the number of bytes copied.
-async fn copy_to<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    stream: &Value<'v>,
-    dest: &Value<'v>,
-    out: Slot<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let copied = with_slots!(strand, |mut sink, mut chunk| {
-        dest.sink(strand, &mut sink).await?;
-        let mut copied = 0;
-        while read_chunk(strand, stream, CHUNK, Slot::reborrow(&mut chunk)).await? {
-            if let Some(bytes) = chunk.as_bin(strand.vm()) {
-                copied += bytes.len();
+    let write = Sym::well_known(sym::WRITE);
+    with_slots!(strand, |mut data, mut count| {
+        if let Some(len) = with_u8_slice!(strand, value, |bytes| bytes.len()) {
+            if len > 0 {
+                method!(strand, stream, write, value, &mut count)?;
             }
-            sink.put(strand, Slot::reborrow(&mut chunk)).await?;
+            return Ok(());
         }
-        Ok(copied)
-    })?;
-    strand.store(out, copied);
-    Ok(())
+        let text = value.to_string(strand)?;
+        if !text.is_empty() {
+            strand.store(&mut data, text.as_str());
+            method!(strand, stream, write, &data, &mut count)?;
+        }
+        Ok(())
+    })
 }
 
 unsafe impl<'v> crate::gc::ImmState for Chunks<'v> {
@@ -598,7 +607,8 @@ impl<'v> Protocol<'v> for ChunksObj<'v> {
         if chunks.done.get() {
             return Ok(false);
         }
-        let more = read_chunk(strand, &chunks.stream, chunks.size, out).await?;
+        let read = Sym::well_known(sym::READ);
+        let more = read_chunk(strand, &chunks.stream, read, chunks.size, out).await?;
         chunks.done.set(!more);
         Ok(more)
     }
@@ -758,11 +768,16 @@ async fn serve_read<'v, 's>(
     size: usize,
 ) -> Result<'v, 's, Vec<u8>> {
     with_slots!(strand, |mut chunk| {
-        read_chunk(strand, stream, size, Slot::reborrow(&mut chunk)).await?;
+        let read_some = Sym::well_known(sym::READ_SOME);
+        read_chunk(strand, stream, read_some, size, Slot::reborrow(&mut chunk)).await?;
         let bytes = chunk
             .as_bin(strand.vm())
             .expect("read_chunk checks for `Bin`");
-        Ok(bytes.pin().to_vec())
+        let bytes = bytes.pin();
+        if bytes.len() > size {
+            return Err(Error::runtime(strand, "read_some: read more than `size`"));
+        }
+        Ok(bytes.to_vec())
     })
 }
 
@@ -808,7 +823,7 @@ async fn serve_write<'v, 's>(
         method!(
             strand,
             stream,
-            Sym::well_known(sym::WRITE),
+            Sym::well_known(sym::WRITE_SOME),
             &bin,
             &mut count
         )?;

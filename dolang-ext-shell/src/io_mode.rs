@@ -162,16 +162,18 @@ pub(crate) fn encode_value<'v, 's>(
     })
 }
 
-/// Reads up to `size` bytes, or to end of stream when `None`, as a `Bin`.
+/// Reads `size` bytes, or to end of stream when `None`, as a `Bin`.
 ///
 /// The unframed counterpart to [`read_value`]. Handle methods such as
 /// `shell.stdin.read` sit on a byte edge rather than a value edge, so no
 /// [`IoMode`] applies: nothing is quantized into lines and nothing is required
-/// to be valid UTF-8. A bounded read is a single read and may yield fewer bytes
-/// than requested, as `fs.File.read` does; empty means end of stream.
+/// to be valid UTF-8. A bounded read reads until it has `size` bytes, or with
+/// `some`, only until it has any; it stops short only at the end of the stream,
+/// and empty means the end.
 pub(crate) async fn read_raw<'v, 'a, 's, R>(
     reader: &mut R,
     size: Option<usize>,
+    some: bool,
     strand: &mut Strand<'v, 's>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()>
@@ -181,11 +183,17 @@ where
     let mut buf = BinEmbryo::new();
     match size {
         Some(size) => {
-            buf.reserve(strand, size);
-            let read = read_into_spare(reader, buf.spare_capacity_mut())
-                .await
-                .into_sys(strand)?;
-            unsafe { buf.advance(read) };
+            while buf.len() < size {
+                let want = (size - buf.len()).min(BYTE_STREAM_CHUNK_SIZE);
+                buf.reserve(strand, want);
+                let read = read_into_spare(reader, &mut buf.spare_capacity_mut()[..want])
+                    .await
+                    .into_sys(strand)?;
+                unsafe { buf.advance(read) };
+                if read == 0 || some {
+                    break;
+                }
+            }
         }
         None => read_all(strand, reader, &mut buf).await?,
     }

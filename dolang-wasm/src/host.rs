@@ -143,6 +143,13 @@ impl<'v> Object<'v> for PlaygroundConsole {
                 strand.store(out, bytes.len());
                 Ok(())
             })
+            // A write takes all of it, so `write_some` is `write`.
+            .method("write_some", async move |_this, strand, args, out| {
+                let bytes = dolang_ext_term::write_data(strand, args)?;
+                write_host(strand, &bytes).await?;
+                strand.store(out, bytes.len());
+                Ok(())
+            })
             .method("flush", async move |_this, strand, args, _out| {
                 unpack!(strand, args =>);
                 Ok(())

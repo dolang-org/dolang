@@ -30,7 +30,6 @@ pub(crate) struct Syms<'v> {
     /// `Fmt.len`, the number of segments in a sequence
     pub(crate) len: Sym<'v, 'v>,
     pub(crate) write: Sym<'v, 'v>,
-    pub(crate) write_all: Sym<'v, 'v>,
     pub(crate) flush: Sym<'v, 'v>,
     pub(crate) line_ending: Sym<'v, 'v>,
     pub(crate) can_style: Sym<'v, 'v>,
@@ -107,7 +106,6 @@ impl<'v> Global<'v> {
                 value: builder.sym("value"),
                 len: builder.sym("len"),
                 write: builder.sym("write"),
-                write_all: builder.sym("write_all"),
                 flush: builder.sym("flush"),
                 line_ending: builder.sym("line_ending"),
                 can_style: builder.sym("can_style"),

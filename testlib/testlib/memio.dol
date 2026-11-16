@@ -39,7 +39,7 @@ pub class MemIo: Io
   pub def seekable self -> Bool
     self.#seek
 
-  pub def read self size @ Int -> Bin
+  pub def read_some self size @ Int -> Bin
     let end = (self.pos + size)
     if (end > self.data.len)
       end = self.data.len
@@ -47,11 +47,8 @@ pub class MemIo: Io
     self.pos = end
     chunk
 
-  pub def write self *data @ (Str | Bin) -> Int
-    let joined = BinBuf()
-    for piece = data
-      joined.extend (Bin piece)
-    let bytes = joined.freeze()
+  pub def write_some self data @ (Str | Bin) -> Int
+    let bytes = (Bin data)
     let out = BinBuf()
     out.extend (self.data[..self.pos])
     out.extend $bytes

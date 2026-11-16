@@ -25,7 +25,8 @@ use crate::util::{data_bytes, write_data};
 /// reports the terminator and `write` writes exactly the bytes it is given.
 /// `write` takes any number of pieces, so a caller that wants a line passes the
 /// line and its terminator to one `write`, which is also what keeps concurrent
-/// writers from interleaving. `put`, `write_all` and the rest come from `Io`.
+/// writers from interleaving. A console implements `write_some`, and overrides
+/// `write` to keep the pieces together; `put` and the rest come from `Io`.
 ///
 /// Native extension types cannot be abstract, so the methods here throw rather
 /// than being absent. The concrete implementations are the host console
@@ -56,8 +57,8 @@ impl<'v> Object<'v> for Console {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .supertype(TypeObject::Io)
-            .method("write", async move |_this, strand, _args, _out| {
-                Err(Error::unsupported(strand, "`write` on the console"))
+            .method("write_some", async move |_this, strand, _args, _out| {
+                Err(Error::unsupported(strand, "`write_some` on the console"))
             })
             .method("flush", async move |_this, strand, args, _out| {
                 unpack!(strand, args =>);
@@ -100,7 +101,7 @@ impl<'v> Object<'v> for Console {
 /// would, without every caller having to re-resolve it.
 ///
 /// It lends no byte handle of its own: a native consumer goes through `Io`'s
-/// bridge, which calls `write`, so each write still resolves afresh.
+/// bridge, which calls `write_some`, so each write still resolves afresh.
 ///
 /// Contrast `term.console`, which pins to the host and is never intercepted.
 pub(crate) struct DefaultOutput;
@@ -122,6 +123,12 @@ impl<'v> Object<'v> for DefaultOutput {
         builder
             .supertype(TypeObject::Io)
             .method("write", async move |_this, strand, args, out| {
+                let bytes = write_data(strand, args)?;
+                write(strand, &bytes).await?;
+                strand.store(out, bytes.len());
+                Ok(())
+            })
+            .method("write_some", async move |_this, strand, args, out| {
                 let bytes = write_data(strand, args)?;
                 write(strand, &bytes).await?;
                 strand.store(out, bytes.len());
@@ -180,9 +187,9 @@ pub(crate) const LINE_ENDING: &str = "\n";
 
 /// A console over any `io.Io`, supplying the rest of the console interface.
 ///
-/// Each `write` reaches the inner stream as one `write_all` of the joined
-/// pieces, so a line and its terminator arrive together and a short write is
-/// finished rather than lost. Nothing is translated on the way through.
+/// Each `write` reaches the inner stream as one `write` of the joined pieces,
+/// so a line and its terminator arrive together. Nothing is translated on the
+/// way through.
 pub(crate) struct IoConsole {
     /// Off unless the caller asked for styling, since the point of capturing
     /// into a stream is usually to assert on plain text.
@@ -245,13 +252,20 @@ impl<'v> Object<'v> for IoConsole {
             })
             .method_with_slots(
                 "write",
-                async move |this, strand, args, out, [mut stream, mut tmp]| {
+                async move |this, strand, args, out, [mut stream]| {
                     let bytes = write_data(strand, args)?;
                     inner(this, strand, &mut stream)?;
                     let global = strand.state::<Tag>();
-                    method!(strand, &stream, global.syms.write_all, &bytes[..], &mut tmp)?;
-                    strand.store(out, bytes.len());
-                    Ok(())
+                    method!(strand, &stream, global.syms.write, &bytes[..], out)
+                },
+            )
+            .method_with_slots(
+                "write_some",
+                async move |this, strand, args, out, [mut stream]| {
+                    let bytes = write_data(strand, args)?;
+                    inner(this, strand, &mut stream)?;
+                    let global = strand.state::<Tag>();
+                    method!(strand, &stream, global.syms.write, &bytes[..], out)
                 },
             )
             .method_with_slots(
@@ -386,6 +400,12 @@ impl<'v> Object<'v> for SubConsole {
         builder
             .supertype(TypeObject::Io)
             .method("write", async move |this, strand, args, out| {
+                let bytes = write_data(strand, args)?;
+                this.borrow_mut(strand)?.append(strand, &bytes)?;
+                strand.store(out, bytes.len());
+                Ok(())
+            })
+            .method("write_some", async move |this, strand, args, out| {
                 let bytes = write_data(strand, args)?;
                 this.borrow_mut(strand)?.append(strand, &bytes)?;
                 strand.store(out, bytes.len());

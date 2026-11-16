@@ -58,6 +58,28 @@ async fn read_into_embryo(
     Ok(read)
 }
 
+/// Reads into `embryo`, which has room for `size` more bytes, until it holds them or the
+/// entry ends; with `some`, only until it holds any.
+async fn read_size_into_embryo(
+    reader: &mut (impl AsyncRead + Unpin),
+    embryo: &mut BinEmbryo<'_>,
+    size: usize,
+    some: bool,
+) -> io::Result<()> {
+    let end = embryo.len() + size;
+    while embryo.len() < end {
+        let want = end - embryo.len();
+        let mut buf = ReadBuf::uninit(&mut embryo.spare_capacity_mut()[..want]);
+        poll_fn(|cx| Pin::new(&mut *reader).poll_read(cx, &mut buf)).await?;
+        let read = buf.filled().len();
+        unsafe { embryo.advance(read) };
+        if read == 0 || some {
+            break;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Compression {
     None,
@@ -506,10 +528,10 @@ impl<'v> Object<'v> for TarEntry {
     type Type = ();
     type TypeAnnex = ();
 
-    // Native consumers are served through `read` by `Io`'s bridge, so a read
-    // after the reader advances fails as `read` does.
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
+    // Native consumers are served through `read_some` by `Io`'s bridge, so a
+    // read after the reader advances fails as `read` does.
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder = builder
             .supertype(TypeObject::Iter)
             .supertype(TypeObject::Io)
             .get("readable", |this, strand, out| {
@@ -697,8 +719,10 @@ impl<'v> Object<'v> for TarEntry {
                     }
                     Ok(())
                 })
-            })
-            .method("read", async move |this, strand, args, out| {
+            });
+        // `read` reads to `size`, and `read_some` until it has any.
+        for (name, some) in [("read", false), ("read_some", true)] {
+            builder = builder.method(name, async move |this, strand, args, out| {
                 unpack!(strand, args => size);
                 let size = usize::try_from(nonnegative_u64(strand, size, "size")?)
                     .map_err(|_| Error::overflow(strand))?;
@@ -720,14 +744,17 @@ impl<'v> Object<'v> for TarEntry {
                             ));
                         }
                         let mut data = BinEmbryo::new_with_capacity(strand, size);
-                        read_into_embryo(borrow.current.as_mut().unwrap(), &mut data)
+                        let current = borrow.current.as_mut().unwrap();
+                        read_size_into_embryo(current, &mut data, size, some)
                             .await
                             .into_do_decode(strand)?;
                         data.finish(strand, out);
                         Ok(())
                     }
                 )
-            })
+            });
+        }
+        builder
     }
 
     async fn iter<'a, 's>(
@@ -795,16 +822,18 @@ impl<'v> Object<'v> for TarEntryWriter {
         Ok(())
     }
 
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder
+    fn build<'a>(mut builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
+        builder = builder
             .supertype(TypeObject::Io)
             // The stream is taken when the entry's scope ends.
             .get("writable", |this, strand, out| {
                 let writable = this.borrow(strand)?.stream.is_some();
                 strand.store(out, writable);
                 Ok(())
-            })
-            .method("write", async move |this, strand, args, out| {
+            });
+        // A write takes all of it, so `write_some` is `write`.
+        for name in ["write", "write_some"] {
+            builder = builder.method(name, async move |this, strand, args, out| {
                 let mut pieces = Vec::with_capacity(args.len());
                 for arg in args {
                     let piece = match arg {
@@ -846,7 +875,9 @@ impl<'v> Object<'v> for TarEntryWriter {
                 }
                 strand.store(out, written);
                 Ok(())
-            })
+            });
+        }
+        builder
     }
 }
 
