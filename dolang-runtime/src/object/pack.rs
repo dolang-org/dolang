@@ -8,16 +8,15 @@ use crate::value::fmt::Format;
 
 use crate::{
     arg::{self, Arg},
-    bytecode::{Rest as RestKind, Variadic},
+    bytecode::Rest as RestKind,
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit, with_pin},
-    object::protocol::members,
-    sig,
+    object::protocol::{Unpack, UnpackItem, members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, TypeObject, Value},
+    value::{Output, Slot, TypeObject, Value},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -295,20 +294,6 @@ fn set_key<'v>(
 
 // ── Unpacking ───────────────────────────────────────────────────────
 
-struct Action {
-    source_index: usize,
-    dest_slot: usize,
-}
-
-struct UnpackPlan {
-    actions: Vec<Action>,
-    pos_matched: usize,
-    /// Leftover positional items, for a `*name` rest
-    pos_rest: Vec<usize>,
-    /// Leftover keyed items, for a `**name` rest
-    key_rest: Vec<usize>,
-}
-
 fn first_visible_index<'v>(
     items: &[ArgItem<'v>],
     skip: &HashSet<usize>,
@@ -323,198 +308,165 @@ fn visible_len<'v>(items: &[ArgItem<'v>], skip: &HashSet<usize>, start: usize) -
         .count()
 }
 
-fn unpack_plan<'v, 'a, 's>(
+/// What an unpack of a pack's items matched, and the rests it still has to fill.
+struct Matched<'v, 'a> {
+    /// Items the parameters took
+    taken: HashSet<usize>,
+    /// Positional parameters filled from items
+    pos_matched: usize,
+    /// Leftover positional items
+    pos_left: Vec<usize>,
+    /// Leftover keyed items
+    key_left: Vec<usize>,
+    /// A `...name` rest
+    rest: Option<Slot<'v, 'a>>,
+    /// A `*name` rest
+    pos_rest: Option<Slot<'v, 'a>>,
+    /// A `**name` rest
+    key_rest: Option<Slot<'v, 'a>>,
+}
+
+/// Unpacks the visible items of `items` from `start` into the parameters of
+/// `unpack`, leaving its rests to the caller.
+fn match_items<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
+    unpack: Unpack<'v, 'a>,
     items: &[ArgItem<'v>],
     skip: &HashSet<usize>,
     start: usize,
-    sig: &sig::Unpack<'v, 'a>,
-) -> Result<'v, 's, UnpackPlan> {
-    let mut actions = Vec::new();
-    let mut pos = 0;
-    let pos_count = sig.required + sig.optional.len();
-    let mut keys_left = sig.keys.len();
-    let mut seen_keys = vec![false; keys_left];
-    let split = !matches!(sig.variadic, Variadic::Discard | Variadic::Capture);
-    let collect_pos = split && sig.pos_rest() == RestKind::Capture;
-    let collect_keys = split && sig.key_rest() == RestKind::Capture;
-    let mut pos_rest = Vec::new();
-    let mut key_rest = Vec::new();
-    // Reported after any missing item
-    let mut unexpected_key = None;
-    let mut unexpected_pos = false;
-
-    'top: for (idx, (key, _)) in items.iter().enumerate().skip(start) {
-        if skip.contains(&idx) {
-            continue;
-        }
-        if pos == pos_count
-            && keys_left == 0
-            && sig.pos_rest() != RestKind::None
-            && sig.key_rest() != RestKind::None
-            && !collect_pos
-            && !collect_keys
-        {
-            break;
-        }
-        if let Some(sym) = key {
-            for (i, (wanted, seen)) in sig.keys.iter().zip(seen_keys.iter_mut()).enumerate() {
-                if *seen {
-                    continue;
+) -> Result<'v, 's, Matched<'v, 'a>> {
+    let (pos_rest, key_rest) = (unpack.pos_rest(), unpack.key_rest());
+    let visible = (start..items.len()).filter(|index| !skip.contains(index));
+    let mut positional = visible.clone().filter(|&index| items[index].0.is_none());
+    let mut matched = Matched {
+        taken: HashSet::new(),
+        pos_matched: 0,
+        pos_left: Vec::new(),
+        key_left: Vec::new(),
+        rest: None,
+        pos_rest: None,
+        key_rest: None,
+    };
+    let mut position = 0;
+    for entry in unpack {
+        let (slot, found, default) = match entry {
+            UnpackItem::Pos { slot, default } => {
+                let found = positional.next();
+                if found.is_some() {
+                    matched.pos_matched += 1;
+                } else if default.is_none() {
+                    return Err(Error::missing_positional(strand, position));
                 }
-                if let sig::UnpackKeyKind::Sym(wanted_sym) = &wanted.kind
-                    && wanted_sym.tag() == sym.tag()
-                {
-                    *seen = true;
-                    keys_left -= 1;
-                    actions.push(Action {
-                        source_index: idx,
-                        dest_slot: pos_count + i,
-                    });
-                    continue 'top;
-                }
+                position += 1;
+                (slot, found, default)
             }
-            if sig.key_rest() == RestKind::None {
-                unexpected_key.get_or_insert(sym.tag());
+            UnpackItem::SymKey { key, slot, default } => {
+                let found = visible.clone().find(|index| {
+                    !matched.taken.contains(index)
+                        && items[*index]
+                            .0
+                            .as_ref()
+                            .is_some_and(|k| k.tag() == key.tag())
+                });
+                if found.is_none() && default.is_none() {
+                    return Err(Error::missing_key(strand, key));
+                }
+                (slot, found, default)
+            }
+            // A pack's keys are all symbols
+            UnpackItem::ConstKey { key, slot, default } => match default {
+                Some(_) => (slot, None, default),
+                None => return Err(Error::missing_key(strand, key)),
+            },
+            UnpackItem::Rest { slot } => {
+                matched.rest = Some(slot);
                 continue;
             }
-            if collect_keys {
-                key_rest.push(idx);
+            UnpackItem::PosRest { slot } => {
+                matched.pos_rest = Some(slot);
+                continue;
             }
-        } else if pos < pos_count {
-            actions.push(Action {
-                source_index: idx,
-                dest_slot: pos,
-            });
-            pos += 1;
-        } else if sig.pos_rest() == RestKind::None {
-            unexpected_pos = true;
-        } else if collect_pos {
-            pos_rest.push(idx);
+            UnpackItem::KeyRest { slot } => {
+                matched.key_rest = Some(slot);
+                continue;
+            }
+        };
+        match (found, default) {
+            (Some(index), _) => {
+                matched.taken.insert(index);
+                strand.store(slot, &items[index].1);
+            }
+            (None, Some(default)) => strand.store(slot, default),
+            (None, None) => unreachable!("missing items are reported above"),
         }
     }
-
-    if pos < sig.required {
-        return Err(Error::missing_positional(strand, pos));
+    matched.pos_left = positional.collect();
+    matched.key_left = visible
+        .filter(|index| items[*index].0.is_some() && !matched.taken.contains(index))
+        .collect();
+    if pos_rest == RestKind::None && !matched.pos_left.is_empty() {
+        return Err(Error::unexpected_positional(strand, position));
     }
-
-    for (wanted, seen) in sig.keys.iter().zip(seen_keys.iter()) {
-        if !*seen && wanted.default.is_none() {
-            return Err(match &wanted.kind {
-                sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                sig::UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-            });
-        }
-    }
-
-    if unexpected_pos {
-        return Err(Error::unexpected_positional(strand, pos_count));
-    }
-    if let Some(tag) = unexpected_key {
-        return Err(Error::unexpected_key(strand, unsafe { Sym::from_tag(tag) }));
-    }
-
-    Ok(UnpackPlan {
-        actions,
-        pos_matched: pos,
-        pos_rest,
-        key_rest,
-    })
-}
-
-/// Stores the tuple of a `*name` rest and the `Pack` of a `**name` rest.
-fn store_split_rests<'v, 'a>(
-    strand: &mut Strand<'v, '_>,
-    sig: &sig::Unpack<'v, 'a>,
-    out: &mut Slots<'v, 'a>,
-    items: &[ArgItem<'v>],
-    plan: &UnpackPlan,
-) {
-    if sig.variadic == Variadic::Capture {
-        return;
-    }
-    if let Some(i) = sig.pos_rest_slot() {
-        let embryo = tuple::embryo(strand, plan.pos_rest.len());
-        // SAFETY: the tuple is allocated; the copies move straight into it
-        let values = plan
-            .pos_rest
-            .iter()
-            .map(|&index| unsafe { items[index].1.dup() });
-        embryo.finish(strand, values, out.at(i));
-    }
-    if let Some(i) = sig.key_rest_slot() {
-        let embryo = strand.builtin_types().pack.embryo(strand);
-        // SAFETY: the entries move straight into the allocated pack
-        let entries = plan.key_rest.iter().map(|&index| {
-            let (key, value) = &items[index];
-            unsafe { (key.as_ref().unwrap_unchecked().dup(), value.dup()) }
-        });
-        embryo.finish_imm(strand, Pack::from_sym_entries(entries), out.at(i));
-    }
-}
-
-fn fill_unpack_defaults<'v, 'a>(
-    strand: &mut Strand<'v, '_>,
-    sig: &sig::Unpack<'v, 'a>,
-    out: &mut Slots<'v, 'a>,
-    positional_matched: usize,
-    actions: &[Action],
-) {
-    for (pos, default) in
-        (positional_matched..).zip(sig.optional[(positional_matched - sig.required)..].iter())
+    if key_rest == RestKind::None
+        && let Some(&index) = matched.key_left.first()
     {
-        strand.store(out.at(pos), default);
+        // SAFETY: only keyed items are leftover keys
+        let key = unsafe { items[index].0.as_ref().unwrap_unchecked() };
+        return Err(Error::unexpected_key(strand, unsafe {
+            Sym::from_tag(key.tag())
+        }));
     }
+    Ok(matched)
+}
 
-    let pos_count = sig.required + sig.optional.len();
-    for (i, wanted) in sig.keys.iter().enumerate() {
-        let dest = pos_count + i;
-        if actions.iter().all(|action| action.dest_slot != dest)
-            && let Some(default) = &wanted.default
-        {
-            strand.store(out.at(dest), default);
+impl<'v, 'a> Matched<'v, 'a> {
+    /// Stores the tuple of a `*name` rest and the `Pack` of a `**name` rest.
+    fn store_split_rests(&mut self, strand: &mut Strand<'v, '_>, items: &[ArgItem<'v>]) {
+        if let Some(slot) = self.pos_rest.take() {
+            let embryo = tuple::embryo(strand, self.pos_left.len());
+            // SAFETY: the tuple is allocated; the copies move straight into it
+            let values = self
+                .pos_left
+                .iter()
+                .map(|&index| unsafe { items[index].1.dup() });
+            embryo.finish(strand, values, slot);
+        }
+        if let Some(slot) = self.key_rest.take() {
+            let embryo = strand.builtin_types().pack.embryo(strand);
+            // SAFETY: the entries move straight into the allocated pack
+            let entries = self.key_left.iter().map(|&index| {
+                let (key, value) = &items[index];
+                unsafe { (key.as_ref().unwrap_unchecked().dup(), value.dup()) }
+            });
+            embryo.finish_imm(strand, Pack::from_sym_entries(entries), slot);
         }
     }
 }
 
-/// Unpacks `args` against `sig`. A `...name` rest captures a view of
+/// Unpacks `args` against `unpack`. A `...name` rest captures a view of
 /// the items left over.
-pub(crate) fn unpack<'v, 'a, 's>(
+pub(crate) fn unpack<'v, 's>(
     strand: &mut Strand<'v, 's>,
     args: &GcObj<'v, PackObj<'v>>,
-    sig: &sig::Unpack<'v, 'a>,
-    mut out: Slots<'v, 'a>,
+    unpack: Unpack<'v, '_>,
 ) -> Result<'v, 's, ()> {
     let items = args.items();
-    let plan = unpack_plan(strand, items, &HashSet::new(), 0, sig)?;
-
-    for action in &plan.actions {
-        strand.store(out.at(action.dest_slot), &items[action.source_index].1);
-    }
-
-    fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
-    store_split_rests(strand, sig, &mut out, items, &plan);
-
-    if sig.variadic == Variadic::Capture {
-        let skip = plan
-            .actions
-            .iter()
-            .map(|action| action.source_index)
-            .collect();
-        let pos = first_visible_index(items, &skip, 0).unwrap_or(items.len());
+    let mut matched = match_items(strand, unpack, items, &HashSet::new(), 0)?;
+    matched.store_split_rests(strand, items);
+    if let Some(slot) = matched.rest {
+        let pos = first_visible_index(items, &matched.taken, 0).unwrap_or(items.len());
         let positional_matched =
-            i64::try_from(plan.pos_matched).map_err(|_| Error::overflow(strand))?;
+            i64::try_from(matched.pos_matched).map_err(|_| Error::overflow(strand))?;
         let embryo = strand.builtin_types().pack_rest.embryo(strand);
         // SAFETY: the rest is allocated; the copy of the rooted `args` moves straight
         // into it
         let args = unsafe { args.dup() };
         embryo.finish(
             strand,
-            Rest::new(args, skip, pos, positional_matched),
-            out.at(sig.len() - 1),
+            Rest::new(args, matched.taken, pos, positional_matched),
+            slot,
         );
     }
-
     Ok(())
 }
 
@@ -631,25 +583,24 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
         // SAFETY: TODO(#1707): the cursor's reference is loose across the unpack
         let args = unsafe { iter.args.dup() };
-        let mut cursor = Iter::new(args, iter.skip.clone(), iter.pos, iter.int);
-        super::iter::unpack_cursor(strand, sig, &mut out, iter.pos, |strand, pos, out| {
-            cursor.pos = pos;
-            cursor.next_pair(strand, out).then_some(cursor.pos)
-        })?;
-        if let Some(i) = sig.pos_rest_slot() {
-            strand
-                .builtin_types()
-                .pack_iter
-                .create(strand, cursor, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        let cursor = Iter::new(args, iter.skip.clone(), iter.pos, iter.int);
+        unpack.cursor(
+            strand,
+            cursor,
+            |strand, cursor, slot| cursor.next_pair(strand, slot),
+            |strand, cursor, slot| {
+                strand
+                    .builtin_types()
+                    .pack_iter
+                    .create(strand, cursor, slot);
+                Ok(())
+            },
+        )
     }
 
     async fn op_next<'a, 's>(
@@ -781,42 +732,33 @@ impl<'v> Protocol<'v> for Rest<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
         // SAFETY: TODO(#1707): the child's reference is loose across the unpack
         let args = unsafe { borrow.args.dup() };
         let mut iter = Rest::new(args, borrow.skip.clone(), borrow.pos, borrow.int);
         let items = iter.args.items();
-        let plan = unpack_plan(strand, items, &iter.skip, iter.pos, sig)?;
-
-        for action in &plan.actions {
-            iter.skip.insert(action.source_index);
-            strand.store(out.at(action.dest_slot), &items[action.source_index].1);
+        let mut matched = match_items(strand, unpack, items, &iter.skip, iter.pos)?;
+        iter.skip.extend(matched.taken.iter().copied());
+        let mut consumed = matched.pos_matched;
+        // The split rests take their items
+        if matched.pos_rest.is_some() {
+            iter.skip.extend(matched.pos_left.iter().copied());
+            consumed += matched.pos_left.len();
         }
-        fill_unpack_defaults(strand, sig, &mut out, plan.pos_matched, &plan.actions);
-        // The rests take their items
-        store_split_rests(strand, sig, &mut out, items, &plan);
-        iter.skip.extend(plan.pos_rest.iter().chain(&plan.key_rest));
-
+        if matched.key_rest.is_some() {
+            iter.skip.extend(matched.key_left.iter().copied());
+        }
+        matched.store_split_rests(strand, items);
         iter.pos = first_visible_index(items, &iter.skip, iter.pos).unwrap_or(items.len());
         iter.int = iter
             .int
-            .checked_add(
-                i64::try_from(plan.pos_matched + plan.pos_rest.len())
-                    .map_err(|_| Error::overflow(strand))?,
-            )
+            .checked_add(i64::try_from(consumed).map_err(|_| Error::overflow(strand))?)
             .ok_or_else(|| Error::overflow(strand))?;
-        let child = iter;
-
-        if sig.variadic == Variadic::Capture {
-            strand
-                .builtin_types()
-                .pack_rest
-                .create(strand, child, out.at(sig.len() - 1));
+        if let Some(slot) = matched.rest {
+            strand.builtin_types().pack_rest.create(strand, iter, slot);
         }
-
         Ok(())
     }
 
@@ -1128,15 +1070,14 @@ impl<'v> Protocol<'v> for PackObj<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut args| {
             strand.store(&mut args, &this);
             let args = args
                 .downcast_ref(strand.builtin_types().pack)
                 .expect("pack");
-            unpack(strand, args, sig, out)
+            self::unpack(strand, args, unpack)
         })
     }
 }

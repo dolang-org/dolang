@@ -11,7 +11,7 @@ use crate::{
     object::{
         BoundMethod,
         protocol::{
-            Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext,
+            Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext, Unpack,
             abstract_call, abstract_init, instance_get_fallback, instance_mcall_fallback,
             is_special_mcall, members, recv_special_mcall,
         },
@@ -185,50 +185,6 @@ pub(crate) async fn spread_iter<'v, 's>(
         }
         Ok(())
     })
-}
-
-/// Unpacks `sig` positionally from a cursor, returning the cursor after the
-/// items bound.
-///
-/// `next` yields the item at a cursor and the cursor following it. Keys take
-/// their defaults, since a sequence has no keyed items, and the caller stores
-/// any rest.
-pub(crate) fn unpack_cursor<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    sig: &sig::Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
-    mut index: usize,
-    mut next: impl FnMut(&mut Strand<'v, 's>, usize, Slot<'v, '_>) -> Option<usize>,
-) -> Result<'v, 's, usize> {
-    let pos_count = sig.required + sig.optional.len();
-    for i in 0..(pos_count + sig.keys.len()) {
-        if i < pos_count {
-            if let Some(next_index) = next(strand, index, out.at(i)) {
-                index = next_index;
-            } else if i >= sig.required {
-                strand.store(out.at(i), &sig.optional[i - sig.required]);
-            } else {
-                return Err(Error::missing_positional(strand, i));
-            }
-        } else {
-            let key = &sig.keys[i - pos_count];
-            if let Some(default) = &key.default {
-                strand.store(out.at(i), default);
-            } else {
-                return Err(match &key.kind {
-                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                });
-            }
-        }
-    }
-    if sig.pos_rest() == crate::bytecode::Rest::None {
-        let extra = with_slots!(strand, |extra| next(strand, index, extra).is_some());
-        if extra {
-            return Err(Error::unexpected_positional(strand, pos_count));
-        }
-    }
-    Ok(index)
 }
 
 pub(crate) fn iter_get<'v, 'a, 's>(
@@ -1431,7 +1387,7 @@ impl<'v> Protocol<'v> for Kv<'v> {
                 with_slots_dynamic!(strand, 2, |mut pair| {
                     // SAFETY: the cells are the frame's, rooted for the call, and `pair` is
                     // not used while the copy lives
-                    item.op_unpack(strand, &unpack, unsafe { Slots::new(pair.as_inner()) })
+                    item.op_unpack(strand, unsafe { Unpack::new(&unpack, pair.as_inner()) })
                         .await?;
                     strand.store(&mut key, pair.at(0));
                     strand.store(&mut value, pair.at(1));
@@ -3188,30 +3144,17 @@ impl<'v> Protocol<'v> for Null {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if sig.required > 0 {
-            return Err(Error::missing_positional(strand, sig.required));
-        }
-        for (i, default) in sig.optional.iter().enumerate() {
-            strand.store(out.at(i), default);
-        }
-        let keyed = sig.optional.len();
-        for (i, key) in sig.keys.iter().enumerate() {
-            let Some(default) = &key.default else {
-                return Err(match &key.kind {
-                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                });
-            };
-            strand.store(out.at(keyed + i), default);
-        }
-        if let Some(i) = sig.pos_rest_slot() {
-            strand.store(out.at(i), &this);
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        unpack.sequence(
+            strand,
+            0,
+            |_, _, _| Ok(()),
+            |strand, _, slot| {
+                strand.store(slot, &this);
+                Ok(())
+            },
+        )
     }
 
     // Sink protocol: discards everything

@@ -11,15 +11,13 @@ use unicode_segmentation::{Graphemes, UnicodeSegmentation};
 
 use crate::{
     arg::Args,
-    bytecode::Rest,
     error::{Error, Result},
     gc::{self, Collect, arena::Visit, with_pin},
-    object::protocol::{GcObjPin, instance_get_fallback, members},
-    sig,
+    object::protocol::{GcObjPin, Unpack, instance_get_fallback, members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Nil, Slot, Slots, StrEmbryo, Value, view::PinStr},
+    value::{Nil, Slot, StrEmbryo, Value, view::PinStr},
     vm::{AllocExt, Vm},
     with_slice, with_slots, with_str,
 };
@@ -651,39 +649,6 @@ unsafe impl<'v> Collect for UnicodeIter<'v> {
     }
 }
 
-fn fill_unpack<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    sig: &sig::Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
-    mut next: impl FnMut(&mut Strand<'v, 's>, Slot<'v, '_>) -> bool,
-) -> Result<'v, 's, ()> {
-    for i in 0..sig.required {
-        if !next(strand, out.at(i)) {
-            return Err(Error::missing_positional(strand, sig.required));
-        }
-    }
-    for (i, default) in sig.optional.iter().enumerate() {
-        if !next(strand, out.at(sig.required + i)) {
-            strand.store(out.at(sig.required + i), default);
-        }
-    }
-    let pos_count = sig.required + sig.optional.len();
-    for (i, key) in sig.keys.iter().enumerate() {
-        if let Some(default) = &key.default {
-            strand.store(out.at(pos_count + i), default);
-        } else {
-            return Err(match &key.kind {
-                sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                sig::UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-            });
-        }
-    }
-    if sig.pos_rest() == Rest::None && with_slots!(strand, |extra| next(strand, extra)) {
-        return Err(Error::unexpected_positional(strand, pos_count));
-    }
-    Ok(())
-}
-
 impl<'v> Protocol<'v> for UnicodeIter<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -750,21 +715,21 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut iter = this.borrow(strand)?.snapshot();
-        fill_unpack(strand, sig, &mut out, |strand, out| {
-            iter.next_value(strand, out)
-        })?;
-        if let Some(i) = sig.pos_rest_slot() {
-            strand
-                .builtin_types()
-                .str_unicode_iter
-                .create(strand, iter, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+        let iter = this.borrow(strand)?.snapshot();
+        unpack.cursor(
+            strand,
+            iter,
+            |strand, iter, slot| iter.next_value(strand, slot),
+            |strand, iter, slot| {
+                strand
+                    .builtin_types()
+                    .str_unicode_iter
+                    .create(strand, iter, slot);
+                Ok(())
+            },
+        )
     }
 }
 
@@ -923,57 +888,24 @@ impl<'v> Protocol<'v> for Split<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // Reject keys without defaults
-        for key in &sig.keys {
-            if key.default.is_none() {
-                return Err(match &key.kind {
-                    sig::UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                    sig::UnpackKeyKind::Const(val) => Error::missing_key(strand, val),
-                });
-            }
-        }
-
-        // Fill keys with defaults
-        let pos_count = sig.required + sig.optional.len();
-        for (i, key) in sig.keys.iter().enumerate() {
-            strand.store(out.at(pos_count + i), key.default.as_ref().unwrap());
-        }
-
-        let mut borrow = this.borrow(strand)?.clone();
-
-        // Fill required positional slots
-        for i in 0..sig.required {
-            let Some((start, end)) = borrow.next_segment() else {
-                return Err(Error::missing_positional(strand, sig.required));
-            };
-            strand.store(out.at(i), &borrow.str[start..end]);
-        }
-
-        // Fill optional positional slots
-        for i in 0..sig.optional.len() {
-            if let Some((start, end)) = borrow.next_segment() {
-                strand.store(out.at(sig.required + i), &borrow.str[start..end]);
-            } else {
-                strand.store(out.at(sig.required + i), &sig.optional[i]);
-            }
-        }
-
-        if sig.pos_rest() == crate::bytecode::Rest::None && borrow.next_segment().is_some() {
-            return Err(Error::unexpected_positional(strand, pos_count));
-        }
-
-        if let Some(i) = sig.pos_rest_slot() {
-            strand
-                .builtin_types()
-                .str_split
-                .create(strand, borrow, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-
-        Ok(())
+        let borrow = this.borrow(strand)?.clone();
+        unpack.cursor(
+            strand,
+            borrow,
+            |strand, split, slot| match split.next_segment() {
+                Some((start, end)) => {
+                    strand.store(slot, &split.str[start..end]);
+                    true
+                }
+                None => false,
+            },
+            |strand, split, slot| {
+                strand.builtin_types().str_split.create(strand, split, slot);
+                Ok(())
+            },
+        )
     }
 
     async fn op_next<'a, 's>(

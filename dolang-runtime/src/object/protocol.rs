@@ -5,6 +5,7 @@ use std::{
 };
 
 use crate::value::fmt::{Format, Spec};
+use dolang_bytecode::{Rest, Variadic};
 
 use crate::{
     arg::Args,
@@ -13,12 +14,12 @@ use crate::{
         self, Boxable, Boxed, Collect,
         arena::{self, Arena, Upcast},
     },
-    object::{BoundMethod, class::get_native_slot, interface::Request},
-    sig::Unpack,
+    object::{BoundMethod, class::get_native_slot, interface::Request, tuple},
+    sig,
     strand::{PinScope, Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, Slots, StrEmbryo, TypeObject, Value, private::Sealed},
+    value::{Input, Output, Slot, StrEmbryo, TypeObject, Value, ValueCell, private::Sealed},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -611,10 +612,440 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         Err(Error::unsupported(strand, "unpacking"))
+    }
+}
+
+/// Unpack operation specification and output slots.
+///
+/// This type is passed to [`Object::unpack`](crate::object::native::Object::unpack)
+/// implementations to describe what values should be extracted from the object and
+/// where they should be stored. It supports:
+///
+/// - **Positional parameters**: Required and optional positional values
+/// - **Keyed parameters**: Named values accessed by symbol or constant key
+/// - **Rest capture**: Capturing remaining values, of either kind or of one kind
+///
+/// # Usage Pattern
+///
+/// Implementations should iterate over the unpack specification using [`iter()`](Self::iter),
+/// which yields [`UnpackItem`] variants describing each parameter. For each item:
+///
+/// 1. Extract or compute the corresponding value from the object
+/// 2. Store it in the provided [`Slot`]
+/// 3. If the value is missing and required, return an error
+/// 4. If the value is missing and optional, use the provided default
+///
+/// # Read-only contract
+///
+/// Unpacking must not change the receiver, on success or failure. Captured rests
+/// must be separate values that can be unpacked and spread without consuming them.
+pub struct Unpack<'v, 'a> {
+    inner: &'a sig::Unpack<'v, 'a>,
+    cells: &'a [ValueCell<'v>],
+}
+
+impl<'v, 'a> Unpack<'v, 'a> {
+    /// Pairs a signature with the cells its items are stored in, in layout order.
+    ///
+    /// # Safety
+    ///
+    /// `cells` must be rooted for `'a`, and nothing else may access them while the
+    /// result lives.
+    pub(crate) unsafe fn new(inner: &'a sig::Unpack<'v, 'a>, cells: &'a [ValueCell<'v>]) -> Self {
+        debug_assert_eq!(cells.len(), inner.len());
+        Self { inner, cells }
+    }
+
+    /// Returns the number of required positional parameters.
+    ///
+    /// These must be provided or the unpack operation should fail.
+    #[inline]
+    pub fn required(&self) -> usize {
+        self.inner.required
+    }
+
+    /// Returns the number of optional positional parameters.
+    ///
+    /// These have default values provided in the unpack specification.
+    #[inline]
+    pub fn optional(&self) -> usize {
+        self.inner.optional.len()
+    }
+
+    /// Returns the number of required keyed parameters.
+    ///
+    /// These must be provided or the unpack operation should fail.
+    #[inline]
+    pub fn required_keys(&self) -> usize {
+        self.inner
+            .keys
+            .iter()
+            .map(|k| k.default.is_none() as usize)
+            .sum()
+    }
+
+    /// Returns the first required key parameter, if present.
+    #[inline]
+    pub fn first_required_key(&self) -> Option<impl Input<'v> + '_> {
+        self.inner.keys.iter().find_map(|k| {
+            if k.default.is_none() {
+                Some(&k.kind)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns the number of optional keyed parameters.
+    ///
+    /// These have default values provided in the unpack specification.
+    #[inline]
+    pub fn optional_keys(&self) -> usize {
+        self.inner
+            .keys
+            .iter()
+            .map(|k| k.default.is_some() as usize)
+            .sum()
+    }
+
+    /// Returns how positional items left over after the positional parameters are
+    /// handled.
+    ///
+    /// - [`Rest::None`]: the unpack operation should fail if any remain.
+    /// - [`Rest::Discard`]: they are ignored.
+    /// - [`Rest::Capture`]: iteration yields an [`UnpackItem::Rest`] or
+    ///   [`UnpackItem::PosRest`] to receive them.
+    ///
+    /// A `...name` rest takes leftovers of both kinds, so this and
+    /// [`key_rest`](Self::key_rest) agree for it; see [`mixed_rest`](Self::mixed_rest).
+    #[inline]
+    pub fn pos_rest(&self) -> Rest {
+        self.inner.variadic.positional()
+    }
+
+    /// Returns how keyed items not matched by a key parameter are handled.
+    ///
+    /// As for [`pos_rest`](Self::pos_rest), except that a capture is an
+    /// [`UnpackItem::Rest`] or [`UnpackItem::KeyRest`].
+    #[inline]
+    pub fn key_rest(&self) -> Rest {
+        self.inner.variadic.keyed()
+    }
+
+    /// Returns if leftovers of both kinds go to a single `...` rest, which keeps
+    /// their order.
+    #[inline]
+    pub fn mixed_rest(&self) -> bool {
+        matches!(self.inner.variadic, Variadic::Discard | Variadic::Capture)
+    }
+
+    /// Stores an empty tuple in `out`.
+    ///
+    /// A source without positional items uses this to fill an [`UnpackItem::PosRest`].
+    pub fn empty_pos_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+        tuple::create(strand, [], out);
+    }
+
+    /// Stores `std.null`, the empty iterator, in `out`.
+    ///
+    /// A source without keyed items uses this to fill an [`UnpackItem::KeyRest`].
+    pub fn empty_key_rest<'s>(strand: &mut Strand<'v, 's>, out: impl Output<'v>) {
+        strand.store(out, &strand.singletons().null);
+    }
+
+    /// Returns an iterator over the unpack specification.
+    ///
+    /// The iterator yields [`UnpackItem`] variants in order:
+    /// 1. Required positional items
+    /// 2. Optional positional items
+    /// 3. Key items (both required and optional)
+    /// 4. Captured rests, if any: a [`Rest`](UnpackItem::Rest), or a
+    ///    [`PosRest`](UnpackItem::PosRest) and/or [`KeyRest`](UnpackItem::KeyRest)
+    ///
+    /// The items borrow `self`, so their slots can't outlive it or alias another
+    /// iteration's.
+    pub fn iter(&mut self) -> UnpackIter<'v, '_> {
+        UnpackIter {
+            inner: self.inner,
+            cells: self.cells,
+            i: 0,
+        }
+    }
+}
+
+impl<'v> Unpack<'v, '_> {
+    /// Unpacks a source of `len` positional items and no keyed ones.
+    ///
+    /// `item` stores item `i` in its slot. `rest` stores the items left after the first
+    /// `consumed` in a `...name` or `*name` rest. A `**name` rest is empty, as for
+    /// [`empty_key_rest`](Self::empty_key_rest).
+    pub(crate) fn sequence<'s>(
+        mut self,
+        strand: &mut Strand<'v, 's>,
+        len: usize,
+        mut item: impl FnMut(&mut Strand<'v, 's>, usize, Slot<'v, '_>) -> Result<'v, 's, ()>,
+        rest: impl FnOnce(&mut Strand<'v, 's>, usize, Slot<'v, '_>) -> Result<'v, 's, ()>,
+    ) -> Result<'v, 's, ()> {
+        let pos_rest = self.pos_rest();
+        let mut position = 0;
+        let mut rest = Some(rest);
+        for entry in self.iter() {
+            match entry {
+                UnpackItem::Pos { slot, default } => {
+                    if position < len {
+                        item(strand, position, slot)?;
+                    } else if let Some(default) = default {
+                        strand.store(slot, default);
+                    } else {
+                        return Err(Error::missing_positional(strand, position));
+                    }
+                    position += 1;
+                }
+                UnpackItem::SymKey { key, slot, default } => match default {
+                    Some(default) => strand.store(slot, default),
+                    None => return Err(Error::missing_key(strand, key)),
+                },
+                UnpackItem::ConstKey { key, slot, default } => match default {
+                    Some(default) => strand.store(slot, default),
+                    None => return Err(Error::missing_key(strand, key)),
+                },
+                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
+                    if let Some(rest) = rest.take() {
+                        rest(strand, position.min(len), slot)?;
+                    }
+                }
+                UnpackItem::KeyRest { slot } => Self::empty_key_rest(strand, slot),
+            }
+        }
+        if position < len && pos_rest == Rest::None {
+            return Err(Error::unexpected_positional(strand, position));
+        }
+        Ok(())
+    }
+}
+
+impl<'v> Unpack<'v, '_> {
+    /// Unpacks positional items read from a cursor, for a source without keyed
+    /// items.
+    ///
+    /// `next` stores the item at `cursor` and advances it, or returns `false` at the
+    /// end. `rest` stores the items from `cursor` on in a `...name` or `*name` rest. A
+    /// `**name` rest is empty, as for [`empty_key_rest`](Self::empty_key_rest).
+    pub(crate) fn cursor<'s, C>(
+        mut self,
+        strand: &mut Strand<'v, 's>,
+        cursor: C,
+        mut next: impl FnMut(&mut Strand<'v, 's>, &mut C, Slot<'v, '_>) -> bool,
+        rest: impl FnOnce(&mut Strand<'v, 's>, C, Slot<'v, '_>) -> Result<'v, 's, ()>,
+    ) -> Result<'v, 's, ()> {
+        let pos_rest = self.pos_rest();
+        let mut position = 0;
+        let mut cursor = Some(cursor);
+        let mut rest = Some(rest);
+        for entry in self.iter() {
+            match entry {
+                UnpackItem::Pos { mut slot, default } => {
+                    let found = match &mut cursor {
+                        Some(c) => next(strand, c, Slot::reborrow(&mut slot)),
+                        None => false,
+                    };
+                    if !found {
+                        match default {
+                            Some(default) => strand.store(slot, default),
+                            None => return Err(Error::missing_positional(strand, position)),
+                        }
+                    }
+                    position += 1;
+                }
+                UnpackItem::SymKey { key, slot, default } => match default {
+                    Some(default) => strand.store(slot, default),
+                    None => return Err(Error::missing_key(strand, key)),
+                },
+                UnpackItem::ConstKey { key, slot, default } => match default {
+                    Some(default) => strand.store(slot, default),
+                    None => return Err(Error::missing_key(strand, key)),
+                },
+                UnpackItem::Rest { slot } | UnpackItem::PosRest { slot } => {
+                    if let (Some(rest), Some(cursor)) = (rest.take(), cursor.take()) {
+                        rest(strand, cursor, slot)?;
+                    }
+                }
+                UnpackItem::KeyRest { slot } => Self::empty_key_rest(strand, slot),
+            }
+        }
+        if pos_rest == Rest::None
+            && let Some(mut cursor) = cursor
+            && with_slots!(strand, |extra| next(strand, &mut cursor, extra))
+        {
+            return Err(Error::unexpected_positional(strand, position));
+        }
+        Ok(())
+    }
+}
+
+/// Iterator over unpack specification items.
+///
+/// Created by [`Unpack::iter()`]. Yields [`UnpackItem`] variants describing
+/// each parameter that should be extracted from the object.
+pub struct UnpackIter<'v, 'a> {
+    inner: &'a sig::Unpack<'v, 'a>,
+    cells: &'a [ValueCell<'v>],
+    i: usize,
+}
+
+/// A single parameter in an unpack operation.
+///
+/// Each variant describes what value to extract and where to store it:
+///
+/// - [`Pos`](Self::Pos): Positional parameter accessed by index
+/// - [`SymKey`](Self::SymKey): Keyed parameter accessed by symbol
+/// - [`ConstKey`](Self::ConstKey): Keyed parameter accessed by constant value
+/// - [`Rest`](Self::Rest): Variadic capture of remaining values
+/// - [`PosRest`](Self::PosRest): Capture of remaining positional values
+/// - [`KeyRest`](Self::KeyRest): Capture of remaining keyed values
+///
+/// All variants except the rests include an optional default value. If the value
+/// cannot be extracted and a default is provided, store the default. If no
+/// default is provided, the parameter is required and its absence should
+/// result in an error.
+pub enum UnpackItem<'v, 'a> {
+    /// Positional parameter accessed by sequential index.
+    ///
+    /// Extract the value at the current position (tracked by implementation)
+    /// and store it in `slot`. If the value is missing:
+    /// - If `default` is `Some`, store the default value
+    /// - If `default` is `None`, this is a required parameter and an error should be returned
+    Pos {
+        /// Output slot where the value should be stored.
+        slot: Slot<'v, 'a>,
+        /// Default value if the parameter is optional (None means required).
+        default: Option<&'a Value<'v>>,
+    },
+    /// Keyed parameter accessed by symbol.
+    ///
+    /// Look up the value associated with `key` and store it in `slot`.
+    /// The symbol should be compared by tag (identity), not by name.
+    /// If the key is not found:
+    /// - If `default` is `Some`, store the default value
+    /// - If `default` is `None`, this is a required parameter and an error should be returned
+    SymKey {
+        /// Symbol key to look up.
+        key: Sym<'v, 'a>,
+        /// Output slot where the value should be stored.
+        slot: Slot<'v, 'a>,
+        /// Default value if the parameter is optional (None means required).
+        default: Option<&'a Value<'v>>,
+    },
+    /// Keyed parameter accessed by constant value.
+    ///
+    /// Look up the value associated with `key` and store it in `slot`.
+    /// The key should be compared by hash and equality, similar to dict/`Pack` lookup.
+    /// If the key is not found:
+    /// - If `default` is `Some`, store the default value
+    /// - If `default` is `None`, this is a required parameter and an error should be returned
+    ConstKey {
+        /// Constant key to look up.
+        key: &'a Value<'v>,
+        /// Output slot where the value should be stored.
+        slot: Slot<'v, 'a>,
+        /// Default value if the parameter is optional (None means required).
+        default: Option<&'a Value<'v>>,
+    },
+    /// Variadic capture of remaining values, for a `...name` rest.
+    ///
+    /// Store an iterator (or other iterable value) in `slot` that will yield
+    /// any values not consumed by earlier parameters. This is always the last
+    /// item yielded by the iterator.
+    ///
+    /// For containers (dicts, packs), this typically captures key-value pairs
+    /// not matched by earlier keyed parameters. For sequential iterators, this
+    /// captures remaining unconsumed values.
+    Rest {
+        /// Output slot where the iterator should be stored.
+        slot: Slot<'v, 'a>,
+    },
+    /// Capture of remaining positional values, for a `*name` rest.
+    ///
+    /// Store a value in `slot` that yields or spreads only the positional
+    /// values not consumed by earlier parameters, such as an iterator over
+    /// them. A source without positional values stores an empty tuple with
+    /// [`Unpack::empty_pos_rest`]. It follows any key items.
+    PosRest {
+        /// Output slot where the value should be stored.
+        slot: Slot<'v, 'a>,
+    },
+    /// Capture of remaining keyed values, for a `**name` rest.
+    ///
+    /// Store a value in `slot` that spreads only the keyed values not matched
+    /// by earlier key parameters, such as a `Pack`. A source without keyed
+    /// values stores `std.null` with [`Unpack::empty_key_rest`]. This is
+    /// always the last item yielded by the iterator.
+    KeyRest {
+        /// Output slot where the value should be stored.
+        slot: Slot<'v, 'a>,
+    },
+}
+
+impl<'v, 'a> IntoIterator for Unpack<'v, 'a> {
+    type Item = UnpackItem<'v, 'a>;
+    type IntoIter = UnpackIter<'v, 'a>;
+
+    /// Iterates as [`iter`](Unpack::iter), but the items' slots last as long as the
+    /// cells, since the `Unpack` is used up.
+    fn into_iter(self) -> Self::IntoIter {
+        UnpackIter {
+            inner: self.inner,
+            cells: self.cells,
+            i: 0,
+        }
+    }
+}
+
+impl<'v, 'a> Iterator for UnpackIter<'v, 'a> {
+    type Item = UnpackItem<'v, 'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let inner = self.inner;
+        let i = self.i;
+        let cell = self.cells.get(i)?;
+        self.i += 1;
+        // SAFETY: the cells are rooted and exclusive to the `Unpack` this borrows, and
+        // each is yielded once
+        let slot = unsafe { cell.slot() };
+        let positional = inner.required + inner.optional.len();
+        Some(if i < inner.required {
+            UnpackItem::Pos {
+                slot,
+                default: None,
+            }
+        } else if i < positional {
+            UnpackItem::Pos {
+                slot,
+                default: Some(&inner.optional[i - inner.required]),
+            }
+        } else if let Some(key) = inner.keys.get(i - positional) {
+            match &key.kind {
+                sig::UnpackKeyKind::Sym(sym) => UnpackItem::SymKey {
+                    key: *sym,
+                    slot,
+                    default: key.default.as_ref(),
+                },
+                sig::UnpackKeyKind::Const(value) => UnpackItem::ConstKey {
+                    key: value,
+                    slot,
+                    default: key.default.as_ref(),
+                },
+            }
+        } else if inner.variadic == Variadic::Capture {
+            UnpackItem::Rest { slot }
+        } else if inner.pos_rest_slot() == Some(i) {
+            UnpackItem::PosRest { slot }
+        } else {
+            UnpackItem::KeyRest { slot }
+        })
     }
 }
 
@@ -889,8 +1320,7 @@ pub(crate) struct Vtbl<'v> {
     op_unpack: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
         _: &'a &'v (),
     ) -> Pinned<'v, 's, 'a, ()>,
 }
@@ -1631,13 +2061,12 @@ fn op_spread_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 fn op_unpack_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     this: ErasedRecv<'v, 'a>,
     strand: &'a mut Strand<'v, 's>,
-    sig: &'a Unpack<'v, 'a>,
-    out: Slots<'v, 'a>,
+    unpack: Unpack<'v, 'a>,
     _: &'a &'v (),
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_unpack(Recv::from_erased(this), strand, sig, out).await
+            T::op_unpack(Recv::from_erased(this), strand, unpack).await
         })
     }
 }
@@ -2136,8 +2565,7 @@ pub(crate) trait Dispatch<'v, 'a> {
     async fn op_unpack<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()>;
 }
 
@@ -2583,10 +3011,9 @@ impl<'v, 'a, T: AsRecv<'v, 'a>> Dispatch<'v, 'a> for T {
     async fn op_unpack<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        unsafe { invoke!(self, op_unpack, strand, sig, out) }.await
+        unsafe { invoke!(self, op_unpack, strand, unpack) }.await
     }
 }
 

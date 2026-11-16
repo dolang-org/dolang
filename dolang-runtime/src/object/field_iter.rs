@@ -2,22 +2,23 @@ use std::{collections::VecDeque, ops::ControlFlow};
 
 use crate::value::fmt::Format;
 
-use bitvec::{bitbox, boxed::BitBox};
+use bitvec::bitbox;
 
 use crate::{
     error::{Error, Result},
     gc::{Collect, arena::Visit},
     object::{sym::SymObj, tuple},
-    sig::{self, UnpackKeyKind},
-    strand::{Strand, with_slots_dynamic},
+    strand::Strand,
     sym::Sym,
-    value::{Slot, Slots, TypeObject, Value},
+    value::{Slot, TypeObject, Value},
     vm::AllocExt,
     with_slots,
 };
-use dolang_bytecode::{Rest, Variadic};
+use dolang_bytecode::Rest;
 
-use super::protocol::{GcObj, MemberKind, Protocol, Recv, Spread, SpreadContext};
+use super::protocol::{
+    GcObj, MemberKind, Protocol, Recv, Spread, SpreadContext, Unpack, UnpackItem,
+};
 
 /// A live field proxy, or a read-only rest over its unmatched readable fields.
 pub(crate) struct FieldIter<'v> {
@@ -161,84 +162,79 @@ impl<'v> Protocol<'v> for FieldIter<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        mut unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let pos_count = sig.required + sig.optional.len();
-        if sig.required != 0 {
-            return Err(Error::missing_positional(strand, 0));
-        }
-
-        with_slots_dynamic!(strand, sig.len(), |mut staged| {
-            for (index, default) in sig.optional.iter().enumerate() {
-                strand.store(staged.at(index), default);
-            }
-
-            let iter = this.borrow(strand)?;
-            let receiver = &iter.receiver;
-            let symbols = &iter.symbols;
-            let track = sig.key_rest() != Rest::Discard || !sig.keys.is_empty();
-            let mut consumed: Option<BitBox> = track.then(|| bitbox![0; symbols.len()]);
-
-            for (key_index, key) in sig.keys.iter().enumerate() {
-                let dest = pos_count + key_index;
-                let found = match &key.kind {
-                    UnpackKeyKind::Sym(wanted) => find_symbol(symbols, *wanted),
-                    UnpackKeyKind::Const(_) => None,
-                };
-                if let Some(index) = found {
-                    resolve(strand, receiver, &symbols[index], staged.at(dest))?;
-                } else if let Some(default) = &key.default {
-                    strand.store(staged.at(dest), default);
-                } else {
-                    return Err(match &key.kind {
-                        UnpackKeyKind::Sym(sym) => Error::missing_key(strand, *sym),
-                        UnpackKeyKind::Const(value) => Error::missing_key(strand, value),
-                    });
+        let key_rest = unpack.key_rest();
+        let iter = this.borrow(strand)?;
+        let receiver = &iter.receiver;
+        let symbols = &iter.symbols;
+        let mut consumed = bitbox![0; symbols.len()];
+        let mut position = 0;
+        let mut child = None;
+        for entry in unpack.iter() {
+            let (found, slot, default) = match entry {
+                UnpackItem::Pos { slot, default } => {
+                    match default {
+                        Some(default) => strand.store(slot, default),
+                        None => return Err(Error::missing_positional(strand, position)),
+                    }
+                    position += 1;
+                    continue;
                 }
-                if let (Some(index), Some(consumed)) = (found, &mut consumed) {
-                    consumed.set(index, true);
-                }
-            }
-
-            if sig.key_rest() == Rest::None {
-                let consumed = consumed.as_mut().unwrap();
-                for (index, symbol) in symbols.iter().enumerate() {
-                    if consumed[index] {
+                UnpackItem::SymKey { key, slot, default } => match find_symbol(symbols, key) {
+                    Some(index) => (Some(index), slot, default),
+                    None if default.is_some() => (None, slot, default),
+                    None => return Err(Error::missing_key(strand, key)),
+                },
+                // Fields are named by symbols
+                UnpackItem::ConstKey { key, slot, default } => match default {
+                    Some(default) => {
+                        strand.store(slot, default);
                         continue;
                     }
-                    return Err(Error::unexpected_key(strand, unsafe {
-                        Sym::from_obj(symbol)
-                    }));
+                    None => return Err(Error::missing_key(strand, key)),
+                },
+                UnpackItem::PosRest { slot } => {
+                    tuple::create(strand, [], slot);
+                    continue;
                 }
-            }
-
-            let child = if sig.variadic == Variadic::Capture {
-                Some(sig.len() - 1)
-            } else {
-                if let Some(i) = sig.pos_rest_slot() {
-                    tuple::create(strand, [], staged.at(i));
+                UnpackItem::Rest { slot } | UnpackItem::KeyRest { slot } => {
+                    child = Some(slot);
+                    continue;
                 }
-                sig.key_rest_slot()
             };
-            if let Some(i) = child {
-                let embryo = strand.builtin_types().field_iter.embryo(strand);
-                // SAFETY: the symbols move straight into the allocated proxy
-                let symbols = symbols
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| !consumed.as_ref().is_some_and(|bits| bits[*index]))
-                    .map(|(_, symbol)| unsafe { symbol.dup() })
-                    .collect();
-                // SAFETY: as for the symbols
-                let receiver = unsafe { receiver.dup() };
-                embryo.finish(strand, FieldIter::new(receiver, symbols), staged.at(i));
+            match (found, default) {
+                (Some(index), _) => {
+                    resolve(strand, receiver, &symbols[index], slot)?;
+                    consumed.set(index, true);
+                }
+                (None, Some(default)) => strand.store(slot, default),
+                (None, None) => unreachable!("missing keys are reported above"),
             }
-            for index in 0..sig.len() {
-                strand.store(out.at(index), staged.at(index));
-            }
-            Ok(())
-        })
+        }
+
+        if key_rest == Rest::None
+            && let Some(index) = consumed.first_zero()
+        {
+            return Err(Error::unexpected_key(strand, unsafe {
+                Sym::from_obj(&symbols[index])
+            }));
+        }
+
+        if let Some(slot) = child {
+            let embryo = strand.builtin_types().field_iter.embryo(strand);
+            // SAFETY: the symbols move straight into the allocated proxy
+            let symbols = symbols
+                .iter()
+                .zip(consumed.iter().by_vals())
+                .filter(|(_, consumed)| !*consumed)
+                .map(|(symbol, _)| unsafe { symbol.dup() })
+                .collect();
+            // SAFETY: as for the symbols
+            let receiver = unsafe { receiver.dup() };
+            embryo.finish(strand, FieldIter::new(receiver, symbols), slot);
+        }
+        Ok(())
     }
 
     async fn op_spread<'a, 's>(

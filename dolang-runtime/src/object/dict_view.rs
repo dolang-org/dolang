@@ -5,7 +5,7 @@ use std::{cell::RefCell, convert::Infallible, marker::PhantomData, ops::ControlF
 use crate::value::fmt::Format;
 
 use bitvec::{bitbox, boxed::BitBox};
-use dolang_bytecode::{Rest as RestKind, Variadic};
+use dolang_bytecode::Rest as RestKind;
 
 use crate::{
     arg::{Arg, Args},
@@ -17,12 +17,11 @@ use crate::{
         native::{Instance, Object, Spread, SpreadContext, Type as NativeType, Unpack, UnpackItem},
         protocol::{GcObj, Inspect, Protocol, Recv, members},
     },
-    sig,
     strand::{Strand, with_scan},
     sym,
     sym::Sym,
     unpack,
-    value::{Input, Output, Slot, Slots, TypeObject, Value},
+    value::{Input, Output, Slot, TypeObject, Value},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -719,16 +718,6 @@ fn settle_leftovers<'v, 's>(
     Ok(())
 }
 
-fn settle_pairs<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    sig: &sig::Unpack<'v, '_>,
-    pairs: &[(Value<'v>, Value<'v>)],
-    consumed: &BitBox,
-) -> Result<'v, 's, ()> {
-    let mixed = matches!(sig.variadic, Variadic::Discard | Variadic::Capture);
-    settle_leftovers(strand, pairs, consumed, sig.key_rest(), mixed)
-}
-
 /// Stores a [`Rest`] of the pairs not `consumed` into `out`.
 fn store_unconsumed<'v>(
     strand: &mut Strand<'v, '_>,
@@ -747,42 +736,6 @@ fn store_unconsumed<'v>(
     embryo.finish_imm(strand, Rest { pairs }, out);
 }
 
-/// Stores a `*name` rest's tuple, which is empty, and a `**name` rest's
-/// view.
-fn store_split_rests<'v>(
-    strand: &mut Strand<'v, '_>,
-    sig: &sig::Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
-    pairs: &[(Value<'v>, Value<'v>)],
-    consumed: &BitBox,
-) {
-    if sig.variadic == Variadic::Capture {
-        return;
-    }
-    if let Some(i) = sig.pos_rest_slot() {
-        super::tuple::create(strand, [], out.at(i));
-    }
-    if let Some(i) = sig.key_rest_slot() {
-        store_unconsumed(strand, pairs, consumed, out.at(i));
-    }
-}
-
-/// Matches `pairs` against `sig` into `out`, as an unpack of a view or its rest does.
-fn unpack_rest_pairs<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    pairs: &[(Value<'v>, Value<'v>)],
-    sig: &sig::Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
-) -> Result<'v, 's, ()> {
-    let consumed = unpack_sig_pairs(strand, pairs, sig, out)?;
-    settle_pairs(strand, sig, pairs, &consumed)?;
-    store_split_rests(strand, sig, out, pairs, &consumed);
-    if sig.variadic == Variadic::Capture {
-        store_unconsumed(strand, pairs, &consumed, out.at(sig.len() - 1));
-    }
-    Ok(())
-}
-
 fn find_pair<'a, 'v, 's>(
     strand: &mut Strand<'v, 's>,
     pairs: &'a [(Value<'v>, Value<'v>)],
@@ -795,44 +748,6 @@ fn find_pair<'a, 'v, 's>(
         }
     }
     Ok(None)
-}
-
-/// Matches `pairs` against `sig`, filling in the positional and key slots of
-/// `out`.
-///
-/// Returns the mask of pairs that were consumed; the caller settles the
-/// leftovers with [`settle_leftovers`] and owns producing the
-/// [`Variadic::Capture`] tail, since how the leftovers are best represented
-/// depends on where the pairs came from.
-fn unpack_sig_pairs<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    pairs: &[(Value<'v>, Value<'v>)],
-    sig: &sig::Unpack<'v, '_>,
-    out: &mut Slots<'v, '_>,
-) -> Result<'v, 's, BitBox> {
-    let mut consumed = bitbox![0; pairs.len()];
-    if sig.required > 0 {
-        return Err(Error::missing_positional(strand, 0));
-    }
-    let pos_count = sig.optional.len();
-    for (index, default) in sig.optional.iter().enumerate() {
-        strand.store(out.at(index), default);
-    }
-    for (offset, spec) in sig.keys.iter().enumerate() {
-        let found = with_slots!(strand, |mut key| {
-            strand.store(Slot::reborrow(&mut key), &spec.kind);
-            find_pair(strand, pairs, &consumed, &key)?
-        });
-        if let Some((found, (_, value))) = found {
-            consumed.set(found, true);
-            strand.store(out.at(pos_count + offset), value);
-        } else if let Some(default) = &spec.default {
-            strand.store(out.at(pos_count + offset), default);
-        } else {
-            return Err(Error::missing_key(strand, &spec.kind));
-        }
-    }
-    Ok(consumed)
 }
 
 fn debug<'v, 's>(
@@ -1057,13 +972,12 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut rest| {
             flatten_glue(this.get(), strand, &mut rest)?;
             with_rest_pairs(strand, &rest, |strand, pairs| {
-                unpack_rest_pairs(strand, pairs, sig, &mut out)
+                unpack_pairs(strand, pairs, unpack)
             })
         })
     }
@@ -1116,26 +1030,31 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let iter = this.borrow(strand)?;
-        let next = with_pin!(strand, iter.rest, |rest| {
+        with_pin!(strand, iter.rest, |rest| {
             let pairs = &rest.get().pairs;
-            super::iter::unpack_cursor(strand, sig, &mut out, iter.index, |strand, i, out| {
-                let (key, value) = pairs.get(i)?;
-                super::tuple::create_pair(strand, key, value, out);
-                Some(i + 1)
-            })
-        })?;
-        if let Some(i) = sig.pos_rest_slot() {
-            let embryo = strand.builtin_types().dict_view_iter.embryo(strand);
-            // SAFETY: the handle moves straight into the allocated iterator
-            let rest = unsafe { iter.rest.dup() };
-            embryo.finish(strand, Iter { rest, index: next }, out.at(i));
-        }
-        sig.fill_empty_key_rest(strand, &mut out);
-        Ok(())
+            unpack.cursor(
+                strand,
+                iter.index,
+                |strand, i, slot| {
+                    let Some((key, value)) = pairs.get(*i) else {
+                        return false;
+                    };
+                    super::tuple::create_pair(strand, key, value, slot);
+                    *i += 1;
+                    true
+                },
+                |strand, index, slot| {
+                    let embryo = strand.builtin_types().dict_view_iter.embryo(strand);
+                    // SAFETY: the handle moves straight into the allocated iterator
+                    let rest = unsafe { iter.rest.dup() };
+                    embryo.finish(strand, Iter { rest, index }, slot);
+                    Ok(())
+                },
+            )
+        })
     }
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1255,10 +1174,9 @@ impl<'v> Protocol<'v> for RestObj<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        mut out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        unpack_rest_pairs(strand, &this.get().pairs, sig, &mut out)
+        unpack_pairs(strand, &this.get().pairs, unpack)
     }
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,

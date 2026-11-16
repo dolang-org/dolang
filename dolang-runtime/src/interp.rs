@@ -15,7 +15,7 @@ use crate::{
         function::Function,
         module::{Module, Namespace},
         pack,
-        protocol::{Spread, SpreadContext},
+        protocol::{Spread, SpreadContext, Unpack as ProtoUnpack},
         range,
         record::Record,
         tuple,
@@ -25,7 +25,7 @@ use crate::{
     strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Nil, Output, Singleton, Slot, Slots, StrEmbryo, Value, ValueCell, with_u8_slice},
+    value::{Nil, Output, Singleton, Slot, StrEmbryo, Value, ValueCell, with_u8_slice},
     vm::{Alloc, AllocExt, ImportCacheEntry, ImportGuard, Vm, force_lazy_unit},
     with_interrupt_mask, with_slots, with_str,
 };
@@ -1130,7 +1130,9 @@ impl<'v> Vm<'v> {
                         let depth = frame.sp.get();
                         let slice = frame.slots.get_unchecked(depth..depth + sig.len());
                         frame.sp.update(|s| s + sig.len());
-                        value.op_unpack(strand, sig, Slots::new(slice)).await?;
+                        value
+                            .op_unpack(strand, ProtoUnpack::new(sig, slice))
+                            .await?;
                     }
                     // Conditional unpack: on success the unpacked values are left on the
                     // operand stack exactly as `Unpack` leaves them; on a shape mismatch
@@ -1151,11 +1153,12 @@ impl<'v> Vm<'v> {
                         if offset < 0 {
                             self.check_trap_gc(strand)?
                         }
-                        let matched = match value.op_unpack(strand, sig, Slots::new(slice)).await {
-                            Ok(()) => true,
-                            Err(e) if e.is_unpack_mismatch() => false,
-                            Err(e) => return Err(e),
-                        };
+                        let matched =
+                            match value.op_unpack(strand, ProtoUnpack::new(sig, slice)).await {
+                                Ok(()) => true,
+                                Err(e) if e.is_unpack_mismatch() => false,
+                                Err(e) => return Err(e),
+                            };
                         if !matched {
                             // Release the slots reserved above, clearing them so the
                             // collector does not see partially written values

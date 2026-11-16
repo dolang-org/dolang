@@ -27,11 +27,10 @@ use crate::{
         interface::{self, InterfaceTag, Request},
         protocol::{
             Delegated, Dispatch, GcObj, Header, Inspect, Protocol, Spread, SpreadContext,
-            TypeHandle,
+            TypeHandle, Unpack,
         },
         str::StrObj,
     },
-    sig::Unpack,
     stdlib::fmt as fmt_obj,
     strand::{PinScope, Strand},
     sym::{self, Sym},
@@ -1423,11 +1422,10 @@ impl<'v> Value<'v> {
     pub(crate) async fn op_unpack<'a, 's>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self.case() {
-            Case::Object(o) => o.op_unpack(strand, sig, out).await,
+            Case::Object(o) => o.op_unpack(strand, unpack).await,
             Case::Prim(_) => Err(Error::type_error(
                 strand,
                 "argument expansion not supported",
@@ -2705,16 +2703,15 @@ impl<'v, 'a> Dispatch<'v, 'a> for Delegated<'v, 'a, &'a Value<'v>> {
     async fn op_unpack<'s>(
         &self,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match self.receiver.case() {
             Case::Object(receiver) => {
                 Delegated::new(receiver, self.delegator)
-                    .op_unpack(strand, sig, out)
+                    .op_unpack(strand, unpack)
                     .await
             }
-            Case::Prim(_) => self.receiver.op_unpack(strand, sig, out).await,
+            Case::Prim(_) => self.receiver.op_unpack(strand, unpack).await,
         }
     }
 }

@@ -11,12 +11,11 @@ use crate::{
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit, with_pin},
-    object::protocol::members,
-    sig,
+    object::protocol::{Unpack, members},
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Output, Slot, Slots, Value},
+    value::{Output, Slot, Value},
     vm::{AllocExt, Vm},
     with_slots,
 };
@@ -346,15 +345,14 @@ impl<'v> Protocol<'v> for Struct<'v> {
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        sig: &'a sig::Unpack<'v, 'a>,
-        out: Slots<'v, 'a>,
+        unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         with_slots!(strand, |mut items| {
             snapshot(strand, &this, &mut items)?;
             let items = items
                 .downcast_ref(strand.builtin_types().pack)
                 .expect("pack");
-            pack::unpack(strand, items, sig, out)
+            pack::unpack(strand, items, unpack)
         })
     }
 }
