@@ -3,12 +3,13 @@ use dolang::runtime::{
     vm::{Register, StateTag},
 };
 
-use crate::regex::{Captures, Find, Match, PatternError, Regex, RegexSplit};
+use crate::regex::{Captures, CapturesRest, Find, Match, PatternError, Regex, RegexSplit};
 
 pub(crate) struct Types<'v> {
     pub(crate) regex: Type<'v, Regex>,
     pub(crate) pattern_error: Type<'v, PatternError>,
     pub(crate) captures: Type<'v, Captures<'v>>,
+    pub(crate) captures_rest: Type<'v, CapturesRest>,
     pub(crate) find: Type<'v, Find<'v>>,
     pub(crate) match_: Type<'v, Match<'v>>,
     pub(crate) split: Type<'v, RegexSplit<'v>>,
@@ -30,6 +31,7 @@ impl<'v> Global<'v> {
             regex: builder.register_type(),
             pattern_error: builder.register_type(),
             captures: builder.register_type(),
+            captures_rest: builder.register_type(),
             find: builder.register_type(),
             match_: builder.register_type(),
             split: builder.register_type(),

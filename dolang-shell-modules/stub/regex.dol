@@ -150,9 +150,11 @@ pub class Regex
     haystack @ Str
     # Literal text, replacement template, or callback.
     #
-    # A [`Fmt`](std.Fmt) template fills holes from each match:
+    # A [`Fmt`](std.Fmt) template fills holes from each match, numbering
+    # groups as [`Captures`](regex.Captures) does:
     #
-    # - `$#1`, `$#2`, … — numbered capture groups
+    # - `$#0` — the overall match
+    # - `$#1`, `$#2`, … — unnamed capture groups
     # - `$#name` — named capture groups
     #
     # Use the braced form, such as `${#1:>8}`, for formatting specifications.
@@ -255,7 +257,42 @@ pub class Regex
 # `Captures` values are returned by [`Regex.match`](regex.Regex.match) and
 # yielded by [`Regex.find`](regex.Regex.find). Coercing one with `str` produces
 # the text of the overall match.
-pub class Captures: @Index[Int | Str, Match | nil]
+#
+# Its positional items are the overall match at index `0`, then each unnamed
+# group from left to right. Each named group, written `(?<name>...)`, is a keyed
+# item and takes no number. A group that didn't participate in the match, such
+# as an optional one, is a missing item.
+#
+# Unpacking binds positional items by index and named groups by key. A missing
+# group takes its pattern's default, and leaves the indices of later items
+# unchanged. A rest unpacks the items left over the same way, but can't be
+# spread or iterated.
+#
+# ## Example
+#
+# ```
+# let date = Regex r"(?<y>\d{4})-(\d{2})-(\d{2})"
+# let caps = date.match "2024-03-15"
+# assert_eq (str caps[1]) "03"
+# assert_eq (str caps["y"]) "2024"
+# let _ month day :y = caps
+#
+# let optional = Regex r"(a)?(b)(?<c>c)?"
+# bind optional.match("b")
+#   - _
+#   - a = "none"
+#   - b = nil
+#   :c = "none"
+# assert_eq $a "none"
+# assert_eq (str b) "b"
+#
+# let whole ...rest = optional.match "abc"
+# let a b :c = rest
+# ```
+pub class Captures:
+  - @Index[{Match, *Match, *(Str): Match, **Match}]
+  - @Unpack[{Match, *Match, **Match}]
+do
   # The byte offset of the end of the overall match within the haystack.
   #[getter]
   pub def end self -> Int
@@ -266,15 +303,36 @@ pub class Captures: @Index[Int | Str, Match | nil]
   pub def start self -> Int
     ...
 
-  # Reads a capture group by integer index or by name.
-  #
-  # Index `0` is the overall match, `1` the first capture group, and so on.
-  # Named groups, written `(?<name>...)`, are read by their name. A group that
-  # did not participate in the match, such as an optional one, reads as `nil`.
+  # Reads a capture group by index or name, or returns `nil` if the group
+  # didn't participate in the match.
   #
   # ## Errors
   #
   # [`IndexError`](std.IndexError) if the pattern has no such group.
+  #
+  # ## Example
+  #
+  # ```
+  # let optional = Regex r"(a)?b"
+  # let caps = optional.match "b"
+  # assert_eq $caps.get(1) nil
+  # ```
+  pub def get
+    self
+    # Positional index, or name of a named group.
+    key @ (Int | Str | Sym)
+  do -> (Match | nil)
+    ...
+
+  # Reads a capture group by positional index or by name.
+  #
+  # ## Errors
+  #
+  # | Exception                                 | Condition                                          |
+  # | ----------------------------------------- | -------------------------------------------------- |
+  # | [`IndexError`](std.IndexError)           | The pattern has no such group                      |
+  # | [`MissingPosError`](std.MissingPosError) | The positional group didn't participate in the match |
+  # | [`MissingKeyError`](std.MissingKeyError) | The named group didn't participate in the match    |
   #
   # ## Example
   #
@@ -295,14 +353,18 @@ pub class Captures: @Index[Int | Str, Match | nil]
   # let Captures(caps) = named.match "2024-03-15"
   #
   # echo $caps["year"]   # => 2024
-  # echo $caps["month"]  # => 03
+  # echo $caps[:month:]  # => 03
   # echo $caps["day"]    # => 15
   # ```
   pub def (index)
     self
-    # Group index or name.
-    key @ (Int | Str)
-  do -> (Match | nil)
+    # Positional index, or name of a named group.
+    key @ (Int | Str | Sym)
+  do -> Match
+    ...
+
+  # Unpacks the positional items by index and the named groups by key.
+  pub def (unpack) self -> Unpack[{Match, *Match, **Match}]
     ...
 
 # A single matched span within a string.

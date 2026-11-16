@@ -20,27 +20,31 @@ def compile_match_and_find()
   assert_type $Iter (date_pattern.find "2024-03-15")
 
   assert_eq (str caps[0]) "2024-03-15"
-  assert_eq (str caps[1]) "2024"
   assert_eq (str caps["year"]) "2024"
-  assert_eq (str caps[2]) "03"
   assert_eq (str caps["month"]) "03"
-  assert_eq (str caps[3]) "15"
   assert_eq (str caps["day"]) "15"
+  assert_throws $std.IndexError do caps[1]
 
   let no_match = date_pattern.match "not a date"
   assert_eq $no_match nil
 
   let optional = Regex r"(a)?(?<rest>b)(?<tail>c)?"
   let caps = optional.match "b"
-  assert_eq $caps[1] nil
-  assert_eq $caps["tail"] nil
+  assert_throws $std.MissingPosError do caps[1]
+  assert_throws $std.MissingKeyError do caps["tail"]
+  assert_eq $caps.get(1) nil
+  assert_eq $caps.get(:tail:) nil
   assert_eq (str caps["rest"]) "b"
-  assert_throws $std.IndexError do caps[4]
+  assert_eq (str caps[:rest:]) "b"
+  let rest = caps.get "rest"
+  assert_eq (str rest) "b"
+  assert_throws $std.IndexError do caps[2]
   assert_throws $std.IndexError do caps["missing"]
+  assert_throws $std.IndexError do caps.get(2)
   let found = [...optional.find "b"]
-  assert_eq $found[0][1] nil
-  assert_eq $found[0]["tail"] nil
-  assert_eq (optional.replace "b" (do |c| str(c["tail"] == nil))) "true"
+  assert_eq $found[0].get(1) nil
+  assert_eq $found[0].get("tail") nil
+  assert_eq (optional.replace "b" (do |c| str(c.get("tail") == nil))) "true"
 
   let text = "Dates: 2024-01-01, 2024-02-02, 2024-03-03"
   let matches = [...date_pattern.find text]
@@ -48,6 +52,119 @@ def compile_match_and_find()
   assert_eq (str matches[0]) "2024-01-01"
   assert_eq (str matches[1]) "2024-02-02"
   assert_eq (str matches[2]) "2024-03-03"
+
+#[test]
+def named_groups_take_no_number()
+  let date = Regex r"(?<y>\d{4})-(\d{2})-(\d{2})"
+  let caps = date.match "2024-03-15"
+  assert_eq (str caps[0]) "2024-03-15"
+  assert_eq (str caps[1]) "03"
+  assert_eq (str caps[2]) "15"
+  assert_eq (str caps["y"]) "2024"
+  assert_throws $std.IndexError do caps[3]
+  assert_eq (date.replace "2024-03-15" t"$#1/$#2/$#y") "03/15/2024"
+
+#[test]
+def unpack_captures()
+  let date = Regex r"(?<y>\d{4})-(\d{2})-(\d{2})"
+  let caps = date.match "2024-03-15"
+  let whole m d :y = caps
+  assert_type $regex.Match $whole
+  assert_eq (str whole) "2024-03-15"
+  assert_eq (str m) "03"
+  assert_eq (str d) "15"
+  assert_eq (str y) "2024"
+
+  # Unpacking leaves the captures unchanged
+  let again ..._ = caps
+  assert_eq (str again) "2024-03-15"
+
+  assert_throws $std.UnexpectedPosError do
+    let _ _ y: _ = caps
+  assert_throws $std.UnexpectedKeyError do
+    let _ _ _ = caps
+  assert_throws $std.MissingPosError do
+    let _ _ _ _ y: _ = caps
+  assert_throws $std.MissingKeyError do
+    let _ _ _ y: _ z: _ = caps
+
+#[test]
+def unpack_captures_holes()
+  let optional = Regex r"(a)?(b)(?<c>c)?(d)?"
+
+  # A missing group takes its default without shifting later items
+  bind optional.match("b")
+    - _
+    - a = "none"
+    - b = nil
+    :c = "none"
+  assert_eq $a "none"
+  assert_eq (str b) "b"
+  assert_eq $c "none"
+
+  # A trailing hole is not a leftover item
+  let _ a b = optional.match "ab"
+  assert_eq (str a) "a"
+  assert_eq (str b) "b"
+
+  assert_throws $std.MissingPosError do
+    let _ _a _b = optional.match "b"
+  assert_throws $std.MissingKeyError do
+    let _ _ _ c: _ = optional.match "ab"
+
+#[test]
+def unpack_captures_rests()
+  let pattern = Regex r"(a)?(b)(?<c>c)?(?<e>e)(d)"
+  let caps = pattern.match "bed"
+
+  # A mixed rest keeps holes and fixed indices
+  let whole ...rest = caps
+  assert_eq (str whole) "bed"
+  bind rest
+    - a = "none"
+    - b = nil
+    - d = nil
+    :c = "none"
+    :e
+  assert_eq $a "none"
+  assert_eq (str b) "b"
+  assert_eq (str d) "d"
+  assert_eq $c "none"
+  assert_eq (str e) "e"
+
+  # A rest of a rest
+  let _ ...outer = pattern.match "abed"
+  let _ ...inner = outer
+  let b2 d2 :e = inner
+  assert_eq (str b2) "b"
+  assert_eq (str d2) "d"
+  assert_eq (str e) "e"
+
+  # Unpacking a rest again gives the same items
+  let _ b3 ..._ = outer
+  assert_eq (str b3) "b"
+
+  # A positional rest has no keys; a keyed rest has no positional items
+  let full = pattern.match "abed"
+  let _ *pos **keys = full
+  let _ b4 d4 = pos
+  assert_eq (str b4) "b"
+  assert_eq (str d4) "d"
+  assert_throws $std.MissingKeyError do
+    let _ _ _ e: _ = pos
+  let :e = keys
+  assert_eq (str e) "e"
+  assert_throws $std.MissingPosError do
+    let _x ..._ = keys
+
+  # Taken keys are left out of the rest
+  let _ _ _ _ e: _ ...others = full
+  assert_throws $std.MissingKeyError do
+    let e: _ = others
+
+  # A rest only unpacks
+  assert_throws $std.UnsupportedError do
+    pack ...rest
 
 #[test]
 def split_variants()

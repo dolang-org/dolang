@@ -13,6 +13,19 @@ pub def replaces re @ regex.Regex >Sink[Str] -> Str
 pub def replaces_text re @ regex.Regex -> Str
   re.replace "a b" "x"
 
+# `Captures` index and unpack as `Match`, and a rest unpacks the same way
+pub def captures caps @ regex.Captures -> regex.Match
+  let first = caps[1]
+  #   ^~~~~: flow regex.Match
+  let whole ...rest = caps
+  #   ^~~~~: flow regex.Match
+  let m :y = rest
+  #   ^: flow regex.Match
+  else return whole
+  let _ = first
+  let _ = m
+  y
+
 # A platform's error number narrows its originating system
 pub def os e @ sys.linux.Errno -> :LINUX:
   let os = e.os
