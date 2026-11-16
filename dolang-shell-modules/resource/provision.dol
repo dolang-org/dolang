@@ -194,14 +194,18 @@ class Tee: term.Console
     self.#log = log
     term.Console.(init) $self
 
-  # Every target gets all of `data`, even one that writes short.
+  # Every target gets all of `data` in one `write`, so a line and its
+  # terminator stay together.
   pub def write self *data @ (Str | Bin) -> Int
-    self.#console.write_all ...data
-    self.#log.write_all ...data
+    self.#console.write ...data
+    self.#log.write ...data
     let written = 0
     for piece = data
       written = (written + piece.len)
     written
+
+  pub def write_some self data @ (Str | Bin) -> Int
+    self.write $data
 
   pub def flush self
     self.#console.flush()

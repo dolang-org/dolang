@@ -481,7 +481,8 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.freeze_str(strand, out)
             }
-            sym::WRITE => {
+            // Appending always takes all of it, so `write_some` is `write`.
+            sym::WRITE | sym::WRITE_SOME => {
                 unpack!(strand, args => *pieces);
                 let pieces: Vec<_> = pieces.collect();
                 let mut total = 0;
@@ -590,6 +591,7 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
             | sym::DRAIN
             | sym::FREEZE_STR
             | sym::WRITE
+            | sym::WRITE_SOME
             | sym::FLUSH => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
@@ -731,12 +733,11 @@ impl<'v> Protocol<'v> for Class {
                 Getter(sym::WRITABLE),
                 Getter(sym::SEEKABLE),
                 Getter(sym::FORKABLE),
+                Method(sym::WRITE_SOME),
                 Method(sym::WRITE),
                 Method(sym::FLUSH),
                 Method(sym::READ_ALL),
                 Method(sym::READ_ALL_STR),
-                Method(sym::WRITE_ALL),
-                Method(sym::COPY_TO),
                 Method(sym::CHUNKS),
             ],
         })
@@ -797,6 +798,7 @@ impl<'v> Protocol<'v> for Class {
             | sym::DRAIN
             | sym::FREEZE_STR
             | sym::WRITE
+            | sym::WRITE_SOME
             | sym::FLUSH => {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())

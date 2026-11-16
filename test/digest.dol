@@ -38,7 +38,7 @@ class Pieces: io.Io
   pub def readable _self
     true
 
-  pub def read self size
+  pub def read_some self size
     if self.on_read
       self.on_read()
     let end = (self.pos + size.min(1000))
@@ -54,7 +54,7 @@ class Drain: io.Io
   pub def writable _self
     true
 
-  pub def write _self *_data
+  pub def write_some _self _data
     0
 
 # Lines that together span more than two hash chunks.

@@ -1328,7 +1328,7 @@ pub trait Object<'v>: Sized + 'v {
     ///
     /// A request this leaves unanswered falls through to the abstract supertypes. An
     /// [`Io`](TypeObject::Io) subtype that answers no [`ByteIo`](crate::io::ByteIo) is
-    /// served through its own `read`, `write` and `seek`, as a Do subclass is.
+    /// served through its own `read_some`, `write_some` and `seek`, as a Do subclass is.
     ///
     /// # Default
     /// Provides nothing.

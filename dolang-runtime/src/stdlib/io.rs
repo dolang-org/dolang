@@ -206,6 +206,60 @@ async fn read_spare<'v>(
     Ok(read)
 }
 
+/// Runs a read under an interrupt guard, so an interrupted read fails instead of being
+/// dropped with its caller, and the caller can push back what it had read.
+async fn guard_read<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    read: impl AsyncFnOnce(&mut Strand<'v, 's>) -> io::Result<()>,
+) -> Result<'v, 's, ()> {
+    strand
+        .interrupt_guard(async |strand| read(strand).await.into_do_io(strand))
+        .await
+}
+
+/// Reads from `reader` until `n` bytes are appended to `out` or the stream ends.
+async fn read_full<'v>(
+    reader: &mut (impl AsyncRead + Unpin),
+    alloc: &mut dyn Alloc<'v>,
+    out: &mut BinEmbryo<'v>,
+    n: usize,
+) -> io::Result<()> {
+    let mut left = n;
+    while left > 0 {
+        let read = read_spare(reader, alloc, out, left.min(BYTE_STREAM_CHUNK_SIZE)).await?;
+        if read == 0 {
+            break;
+        }
+        left -= read;
+    }
+    Ok(())
+}
+
+/// Writes all of `slices` with `writer`, and returns the total.
+///
+/// A write that takes nothing ends it: after some progress, the short total is returned,
+/// since a bounded output is full; before any, it fails as [`io::ErrorKind::WriteZero`].
+async fn write_bounded(
+    writer: &mut (impl AsyncWrite + Unpin),
+    mut slices: &mut [IoSlice<'_>],
+) -> io::Result<usize> {
+    let mut total = 0;
+    IoSlice::advance_slices(&mut slices, 0);
+    while !slices.is_empty() {
+        let n = writer.write_vectored(slices).await?;
+        if n == 0 {
+            return if total == 0 {
+                Err(io::ErrorKind::WriteZero.into())
+            } else {
+                Ok(total)
+            };
+        }
+        total += n;
+        IoSlice::advance_slices(&mut slices, n);
+    }
+    Ok(total)
+}
+
 impl AsyncRead for BufIo {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -472,27 +526,41 @@ impl Deref for Piece<'_> {
     }
 }
 
+/// Pins a `Str` or `Bin` to write.
+fn piece<'v, 's>(strand: &mut Strand<'v, 's>, value: &Value<'v>) -> Result<'v, 's, Piece<'v>> {
+    if let Some(b) = value.as_bin(strand.vm()) {
+        Ok(Piece::Bin(b.pin()))
+    } else if let Some(s) = value.as_str(strand.vm()) {
+        Ok(Piece::Str(s.pin()))
+    } else {
+        Err(Error::type_error(strand, "expected `Str` or `Bin`"))
+    }
+}
+
 /// Pins the arguments of a `write`: any number of `Str` or `Bin` pieces.
-fn pieces<'v, 's, 'a>(
+fn pieces<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    args: Args<'v, 'a>,
+    args: Args<'v, '_>,
 ) -> Result<'v, 's, Vec<Piece<'v>>> {
     let mut pieces = Vec::with_capacity(args.len());
     for arg in args {
-        let value: &'a Value<'v> = match arg {
-            Arg::Pos(value) => value.into_ref(),
+        match arg {
+            Arg::Pos(value) => pieces.push(piece(strand, &value)?),
             Arg::Key(key, _) => return Err(Error::unexpected_key(strand, key)),
-        };
-        let piece = if let Some(b) = value.as_bin(strand.vm()) {
-            Piece::Bin(b.pin())
-        } else if let Some(s) = value.as_str(strand.vm()) {
-            Piece::Str(s.pin())
-        } else {
-            return Err(Error::type_error(strand, "expected `Str` or `Bin`"));
-        };
-        pieces.push(piece);
+        }
     }
     Ok(pieces)
+}
+
+/// Pins the argument of a `write_some`: one `Str` or `Bin`.
+fn one_piece<'v, 's>(strand: &mut Strand<'v, 's>, args: Args<'v, '_>) -> Result<'v, 's, Piece<'v>> {
+    unpack!(strand, args => data);
+    piece(strand, &data)
+}
+
+/// The error of a write that took nothing.
+fn write_zero<'v, 's>(strand: &mut Strand<'v, 's>) -> Error<'v, 's> {
+    io::Error::from(io::ErrorKind::WriteZero).into_do_io(strand)
 }
 
 /// Slices over pinned pieces, and their total length.
@@ -551,9 +619,13 @@ impl Buffered {
         self.check(strand, IoCaps::READ)?;
         let mut io = self.lock(strand).await?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = io.read_line_into(strand, &mut buf).await {
+        if let Err(err) = guard_read(strand, async |strand| {
+            io.read_line_into(strand, &mut buf).await
+        })
+        .await
+        {
             io.push_back(buf.as_slice());
-            return Err(err.into_do_io(strand));
+            return Err(err);
         }
         if str::from_utf8(buf.as_slice()).is_err() {
             io.push_back(buf.as_slice());
@@ -577,9 +649,13 @@ impl Buffered {
         self.check(strand, IoCaps::READ)?;
         let mut io = self.lock(strand).await?;
         let mut buf = BinEmbryo::new();
-        if let Err(err) = io.read_into(strand, &mut buf, size).await {
+        if let Err(err) = guard_read(strand, async |strand| {
+            io.read_into(strand, &mut buf, size).await
+        })
+        .await
+        {
             io.push_back(buf.as_slice());
-            return Err(err.into_do_io(strand));
+            return Err(err);
         }
         loop {
             let eof = size.is_none_or(|size| buf.len() < size);
@@ -598,9 +674,13 @@ impl Buffered {
             }
             // The first character is incomplete, so read on until it is whole.
             let before = buf.len();
-            if let Err(err) = io.read_into(strand, &mut buf, Some(1)).await {
+            if let Err(err) = guard_read(strand, async |strand| {
+                io.read_into(strand, &mut buf, Some(1)).await
+            })
+            .await
+            {
                 io.push_back(buf.as_slice());
-                return Err(err.into_do_io(strand));
+                return Err(err);
             }
             if buf.len() == before {
                 io.push_back(buf.as_slice());
@@ -760,10 +840,28 @@ impl<'v> Object<'v> for Buffered {
                 borrow.check(strand, IoCaps::READ)?;
                 let mut io = borrow.lock(strand).await?;
                 let mut buf = BinEmbryo::new();
-                if let Err(err) = io.read_into(strand, &mut buf, size).await {
+                if let Err(err) = guard_read(strand, async |strand| {
+                    io.read_into(strand, &mut buf, size).await
+                })
+                .await
+                {
                     io.push_back(buf.as_slice());
-                    return Err(err.into_do_io(strand));
+                    return Err(err);
                 }
+                buf.finish(strand, out);
+                Ok(())
+            })
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                let mut io = borrow.lock(strand).await?;
+                let mut buf = BinEmbryo::new();
+                let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
+                read_spare(&mut *io, strand, &mut buf, chunk)
+                    .await
+                    .into_do_io(strand)?;
                 buf.finish(strand, out);
                 Ok(())
             })
@@ -792,6 +890,16 @@ impl<'v> Object<'v> for Buffered {
                 let res = io.write_all_vectored(&mut slices).await;
                 res.into_do_io(strand)?;
                 strand.store(out, len);
+                Ok(())
+            })
+            // The buffer takes all of it, writing out what it can't hold.
+            .method("write_some", async move |this, strand, args, out| {
+                let piece = one_piece(strand, args)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let mut io = borrow.lock(strand).await?;
+                io.write_all(&piece).await.into_do_io(strand)?;
+                strand.store(out, piece.len());
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
@@ -946,6 +1054,19 @@ impl<'v> Object<'v> for Stream {
                 borrow.check(strand, IoCaps::READ)?;
                 let mut io = borrow.lock(strand).await?;
                 let mut buf = BinEmbryo::new();
+                read_full(&mut *io, strand, &mut buf, size)
+                    .await
+                    .into_do_io(strand)?;
+                buf.finish(strand, out);
+                Ok(())
+            })
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                let mut io = borrow.lock(strand).await?;
+                let mut buf = BinEmbryo::new();
                 let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
                 read_spare(&mut *io, strand, &mut buf, chunk)
                     .await
@@ -955,12 +1076,21 @@ impl<'v> Object<'v> for Stream {
             })
             .method("write", async move |this, strand, args, out| {
                 let pieces = pieces(strand, args)?;
-                let (slices, _) = slices(&pieces);
+                let (mut slices, _) = slices(&pieces);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::WRITE)?;
                 let mut io = borrow.lock(strand).await?;
-                let res = io.write_vectored(&slices).await;
+                let res = write_bounded(&mut *io, &mut slices).await;
                 let written = res.into_do_io(strand)?;
+                strand.store(out, written);
+                Ok(())
+            })
+            .method("write_some", async move |this, strand, args, out| {
+                let piece = one_piece(strand, args)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let mut io = borrow.lock(strand).await?;
+                let written = io.write(&piece).await.into_do_io(strand)?;
                 strand.store(out, written);
                 Ok(())
             })
@@ -987,7 +1117,7 @@ impl<'v> Object<'v> for Stream {
 ///
 /// Slot 0 holds the iterable until the first read, then its iterator until it ends. Items
 /// are pulled only as reads need them. `Concat` answers no [`ByteIo`] itself: `Io` serves
-/// it through its own `read`, on the strands of the handle's owner.
+/// it through its own `read_some`, on the strands of the handle's owner.
 pub(crate) struct Concat {
     end: Vec<u8>,
     /// Bytes converted but not yet read.
@@ -1111,6 +1241,19 @@ impl<'v> Object<'v> for Concat {
                 let open = borrow.state != ConcatState::Closed;
                 check_caps(strand, "stream", open, IoCaps::READ, IoCaps::READ)?;
                 Concat::fill(&mut borrow, strand, size).await?;
+                let n = size.min(borrow.pending.len());
+                strand.store(out, &borrow.pending[..n]);
+                borrow.pending.drain(..n);
+                Ok(())
+            })
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                let open = borrow.state != ConcatState::Closed;
+                check_caps(strand, "stream", open, IoCaps::READ, IoCaps::READ)?;
+                // One item is enough for some bytes, unless it converts to nothing.
+                Concat::fill(&mut borrow, strand, size.min(1)).await?;
                 let n = size.min(borrow.pending.len());
                 strand.store(out, &borrow.pending[..n]);
                 borrow.pending.drain(..n);
@@ -1475,6 +1618,17 @@ impl<'v> Object<'v> for Cursor {
                     borrow.read(strand, &target, size, out)
                 })
             })
+            // Memory has no partial reads, so `read_some` is `read`.
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                with_slots!(strand, |mut target| {
+                    strand.store(&mut target, Mut::slot::<0>(&borrow));
+                    borrow.read(strand, &target, size, out)
+                })
+            })
             .method("write", async move |this, strand, args, out| {
                 let pieces = pieces(strand, args)?;
                 let mut borrow = this.borrow_mut(strand)?;
@@ -1487,6 +1641,20 @@ impl<'v> Object<'v> for Cursor {
                 let n = with_slots!(strand, |mut target| {
                     strand.store(&mut target, Mut::slot::<0>(&borrow));
                     borrow.write(strand, &target, &data)
+                })?;
+                if n == 0 && !data.is_empty() {
+                    return Err(write_zero(strand));
+                }
+                strand.store(out, n);
+                Ok(())
+            })
+            .method("write_some", async move |this, strand, args, out| {
+                let piece = one_piece(strand, args)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let n = with_slots!(strand, |mut target| {
+                    strand.store(&mut target, Mut::slot::<0>(&borrow));
+                    borrow.write(strand, &target, &piece)
                 })?;
                 strand.store(out, n);
                 Ok(())
@@ -1811,6 +1979,19 @@ impl<'v> Object<'v> for Window {
                 borrow.check(strand, IoCaps::READ)?;
                 let mut io = borrow.lock(strand).await?;
                 let mut buf = BinEmbryo::new();
+                read_full(&mut *io, strand, &mut buf, size)
+                    .await
+                    .into_do_io(strand)?;
+                buf.finish(strand, out);
+                Ok(())
+            })
+            .method("read_some", async move |this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size_value(strand, size)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::READ)?;
+                let mut io = borrow.lock(strand).await?;
+                let mut buf = BinEmbryo::new();
                 let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
                 read_spare(&mut *io, strand, &mut buf, chunk)
                     .await
@@ -1820,12 +2001,22 @@ impl<'v> Object<'v> for Window {
             })
             .method("write", async move |this, strand, args, out| {
                 let pieces = pieces(strand, args)?;
+                let (mut slices, _) = slices(&pieces);
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.check(strand, IoCaps::WRITE)?;
                 let mut io = borrow.lock(strand).await?;
-                let (slices, _) = slices(&pieces);
-                let n = io.write_vectored(&slices).await.into_do_io(strand)?;
-                strand.store(out, n);
+                let res = write_bounded(&mut *io, &mut slices).await;
+                let written = res.into_do_io(strand)?;
+                strand.store(out, written);
+                Ok(())
+            })
+            .method("write_some", async move |this, strand, args, out| {
+                let piece = one_piece(strand, args)?;
+                let mut borrow = this.borrow_mut(strand)?;
+                borrow.check(strand, IoCaps::WRITE)?;
+                let mut io = borrow.lock(strand).await?;
+                let written = io.write(&piece).await.into_do_io(strand)?;
+                strand.store(out, written);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
@@ -1862,7 +2053,7 @@ mod tests {
         io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _, Cursor},
     };
 
-    use super::Span;
+    use super::{Span, read_full, write_bounded};
     use crate::{
         io::{self, ByteHandle},
         method,
@@ -1870,7 +2061,7 @@ mod tests {
         strand::Strand,
         sym::{self, Sym},
         test_support::with_vm,
-        value::{Slot, Value},
+        value::{BinEmbryo, Slot, Value},
         vm::AllocExt,
     };
 
@@ -2005,7 +2196,7 @@ mod tests {
                 Slot::reborrow(&mut out)
             )
             .unwrap();
-            assert_eq!(bin(strand, &out), b"b");
+            assert_eq!(bin(strand, &out), b"bcd");
         });
     }
 
@@ -2097,6 +2288,49 @@ mod tests {
             assert_eq!(span.write(b"e").await.unwrap(), 0);
             assert!(span.seek(SeekFrom::Current(-5)).await.is_err());
             assert_eq!(io.get_ref(), b"012abc6789");
+        });
+    }
+
+    /// A reader that returns one byte per read.
+    struct Trickle(Cursor<Vec<u8>>);
+
+    impl futures::io::AsyncRead for Trickle {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+            buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            let n = buf.len().min(1);
+            std::pin::Pin::new(&mut self.0).poll_read(cx, &mut buf[..n])
+        }
+    }
+
+    #[test]
+    fn read_full_fills_from_short_reads() {
+        with_vm(async |strand, [mut out]| {
+            let mut reader = Trickle(Cursor::new(b"abcdef".to_vec()));
+            let mut buf = BinEmbryo::new();
+            read_full(&mut reader, strand, &mut buf, 4).await.unwrap();
+            assert_eq!(buf.as_slice(), b"abcd");
+            read_full(&mut reader, strand, &mut buf, 4).await.unwrap();
+            assert_eq!(buf.as_slice(), b"abcdef");
+            buf.finish(strand, Slot::reborrow(&mut out));
+        });
+    }
+
+    #[test]
+    fn write_bounded_drains_then_stops_at_window_end() {
+        block_on(async {
+            let mut io = Cursor::new(b"0123456789".to_vec());
+            let mut span = Span::new(&mut io, 2, Some(6), 0);
+            let mut bufs = [IoSlice::new(b""), IoSlice::new(b"ab"), IoSlice::new(b"c")];
+            assert_eq!(write_bounded(&mut span, &mut bufs).await.unwrap(), 3);
+            let mut bufs = [IoSlice::new(b"de"), IoSlice::new(b"f")];
+            assert_eq!(write_bounded(&mut span, &mut bufs).await.unwrap(), 1);
+            let mut bufs = [IoSlice::new(b"g")];
+            let err = write_bounded(&mut span, &mut bufs).await.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::WriteZero);
+            assert_eq!(io.get_ref(), b"01abcd6789");
         });
     }
 

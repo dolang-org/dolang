@@ -124,7 +124,8 @@ pub class Entry: Iter[Bin] Io
   pub def uid self -> Int
     ...
 
-  # Reads up to `size` bytes from the current content position.
+  # Reads `size` bytes from the current content position, fewer only at the end
+  # of the content.
   #
   # ## Example
   #
@@ -133,7 +134,7 @@ pub class Entry: Iter[Bin] Io
   # ```
   pub def read
     self
-    # Maximum bytes to read.
+    # Number of bytes to read.
     size @ Int
   do -> Bin
     ...

@@ -57,9 +57,9 @@ pub class Stdin[T]: std.Iter[T] Io
 
   # Reads raw bytes.
   #
-  # With a `size` this is a single read, which may return fewer bytes than
-  # asked for, as [`fs.BaseFile.read`](fs.BaseFile.read) does. Without one it
-  # reads to end of stream.
+  # With a `size` it waits until it has that many bytes, returning fewer only
+  # at the end of the stream; [`read_some`](io.Io.read_some) returns whatever
+  # is available instead. Without one it reads to end of stream.
   #
   # ## Returns
   #

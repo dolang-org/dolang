@@ -34,6 +34,10 @@ class Recorder: term.Console
       written = (written + piece.len)
     written
 
+  # Native consumers write through this.
+  pub def write_some self data
+    self.write $data
+
   pub def flush _self
     nil
 
@@ -73,6 +77,10 @@ class WriteLog: Io
       line = "$line$(Str piece)"
     self.writes.push $line
     line.len
+
+  # Native consumers write through this.
+  pub def write_some self data
+    self.write $data
 
   pub def close self
     self.closed = true

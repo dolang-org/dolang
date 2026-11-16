@@ -99,12 +99,18 @@ buf.clear()
 c.seek start: 0
 assert_eq $c.read(10) b""
 
-# A bounded window cuts writes short
+# A bounded window cuts a write short, then a write with no room raises
 let buf = BinBuf(b"0123456789")
 let c = Cursor $buf (2..5)
 assert_eq $c.write("abcd") 3
-assert_eq $c.write("e") 0
+assert_eq $c.write_some("e") 0
+assert_throws $std.RuntimeError do c.write "e"
 assert_eq $buf.freeze() b"01abc56789"
+let c = Cursor $buf (2..5)
+assert_eq $c.write_some("xyzw") 3
+assert_eq $c.read_some(10) b""
+c.seek start: 0
+assert_eq $c.read_some(10) b"xyz"
 
 let buf = BinBuf(b"0123456789")
 let c = Cursor $buf (8..)
@@ -187,7 +193,9 @@ assert_eq $b.read(3) b"buf"
 
 let text = StrBuf()
 let c = Cursor $text
-(Concat ["café", "olé"] end: "\n").copy_to $c
+# Text written in pieces that split characters reaches a `StrBuf` whole
+for chunk = (Concat ["café", "olé"] end: "\n").chunks(3)
+  c.write $chunk
 c.close()
 assert_eq $text.freeze() "café\nolé\n"
 
@@ -222,11 +230,16 @@ let buf = BinBuf(b"0123456789")
 let c = Window (Cursor buf) (4..7)
 assert $c.writable
 assert_eq $c.write("ab", "cdef") 3
-assert_eq $c.write("g") 0
+assert_eq $c.write_some("g") 0
+assert_throws $std.RuntimeError do c.write "g"
 c.seek start: 0
-assert_eq $c.read(10) b"abc"
+assert_eq $c.read_some(10) b"abc"
+c.seek start: 0
+assert_eq $c.write_some("xyzw") 3
+c.seek start: 0
+assert_eq $c.read(10) b"xyz"
 c.flush()
-assert_eq $buf.freeze() b"0123abc789"
+assert_eq $buf.freeze() b"0123xyz789"
 
 # A native consumer shares the window's position
 let buf = BinBuf(b"xxxxxxxx")

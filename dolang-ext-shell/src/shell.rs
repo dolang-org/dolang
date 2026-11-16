@@ -217,7 +217,21 @@ impl<'v> Object<'v> for Stdin {
                 let global = strand.state::<Tag>();
                 let mut stdin = global.stdio.stdin.clone();
                 let mut reader = stdin.lock().await.into_sys(strand)?;
-                read_raw(&mut *reader, size, strand, out).await
+                read_raw(&mut *reader, size, false, strand, out).await
+            })
+            .method("read_some", async move |_this, strand, args, out| {
+                unpack!(strand, args => size);
+                let size = size
+                    .to_i64(strand)
+                    .ok()
+                    .and_then(|size| usize::try_from(size).ok())
+                    .ok_or_else(|| {
+                        Error::type_error(strand, "size must be a non-negative integer")
+                    })?;
+                let global = strand.state::<Tag>();
+                let mut stdin = global.stdio.stdin.clone();
+                let mut reader = stdin.lock().await.into_sys(strand)?;
+                read_raw(&mut *reader, Some(size), true, strand, out).await
             })
             .method("lines", async move |_this, strand, args, out| {
                 unpack!(strand, args =>);
@@ -352,6 +366,11 @@ impl<'v> Object<'v> for Stdout {
                 let global = strand.state::<Tag>();
                 write_pieces(&global.stdio.stdout, args, strand, out).await
             })
+            // A write takes all of it, so `write_some` is `write`.
+            .method("write_some", async move |_this, strand, args, out| {
+                let global = strand.state::<Tag>();
+                write_pieces(&global.stdio.stdout, args, strand, out).await
+            })
             .method("flush", async move |_this, strand, args, _out| {
                 unpack!(strand, args =>);
                 let global = strand.state::<Tag>();
@@ -443,6 +462,11 @@ impl<'v> Object<'v> for Stderr {
                 Ok(())
             })
             .method("write", async move |_this, strand, args, out| {
+                let global = strand.state::<Tag>();
+                write_pieces(&global.stdio.stderr, args, strand, out).await
+            })
+            // A write takes all of it, so `write_some` is `write`.
+            .method("write_some", async move |_this, strand, args, out| {
                 let global = strand.state::<Tag>();
                 write_pieces(&global.stdio.stderr, args, strand, out).await
             })

@@ -184,11 +184,14 @@ let w2 = BinBuf(b"x")
 assert_throws $std.TypeError do w2.write "a" 1
 assert_eq $w2.freeze() b"x"
 
-# the inherited helpers write through `write`
+# `write_some` appends all of its data, and the inherited helpers write
+# through `write`
 let w3 = BinBuf()
-w3.write_all "a" b"b"
+assert_eq (w3.write_some "a") 1
+w3.write b"b"
 w3.put 1
-(Concat ["c", "d"]).copy_to $w3
+let rest = Concat ["c", "d"]
+w3.write $rest.read_all()
 assert_eq $w3.freeze() b"ab1cd"
 
 # reading and seeking are not supported
