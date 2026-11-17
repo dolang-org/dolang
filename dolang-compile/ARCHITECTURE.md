@@ -903,10 +903,10 @@ leave for enclosing functions, variables are owned or captured, closures are
 instantiated by their parent, and rules are unique. Stack depths are checked by
 flow analysis.
 
-`typeck::lower` builds a unit's graph from its elaborated syntax tree, following
-the bytecode lowerer's shape: a focused block is extended and switched as
-control flow requires, and function bodies and statement blocks are queued, each
-with its context. Lexical frames mirror the resolver's scopes, so a variable's
+`typeck::lower` builds a unit's graph from its elaborated syntax tree. As in the
+bytecode lowerer, a focused block is extended and switched as control flow
+requires. Unlike it, function bodies and statement blocks are queued, each with
+its context. Lexical frames mirror the resolver's scopes, so a variable's
 `(index, depth)` resolution decodes directly, and each allocates its variables
 in the enclosing function. A `try`'s parts and an `NlGuard`, closures only at
 runtime, are lowered inline, so a jump out of one is local. Only lambdas, defs,

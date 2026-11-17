@@ -171,11 +171,11 @@ impl<T> ExprBody<T> {
 }
 
 /// A body of either form, with the variables its scope declares
-pub(crate) trait Body {
+pub(crate) trait Body: Node {
     fn vars(&self) -> &[Var];
 }
 
-impl<T> Body for ExprBody<T> {
+impl<T: Node> Body for ExprBody<T> {
     fn vars(&self) -> &[Var] {
         &self.vars
     }
