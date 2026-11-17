@@ -1,7 +1,5 @@
 use std::{cell::OnceCell, mem};
 
-use dolang_util::mono::MonoVec;
-
 use dolang_bytecode::builtin;
 
 use crate::{
@@ -46,19 +44,10 @@ enum Var {
     Upvar(usize, usize),
 }
 
-/// What carries the non-constant defaults a prologue evaluates once its values
-/// are bound
-#[derive(Clone, Copy)]
-enum Defaults<'a> {
-    /// A function's parameters
-    Items(&'a [PatItem]),
-    Pattern(&'a Pattern),
-}
-
-/// The prologue bindings a branch body needs: how to bind the values the
-/// terminator left on the operand stack, and the pattern carrying any
-/// non-constant defaults.
-type Binds<'a> = (Option<Prologue<'a>>, Option<Defaults<'a>>);
+/// The bindings a branch body's prologue makes: how to bind the values its test
+/// left on the operand stack, and the pattern carrying any non-constant
+/// defaults.
+type Binds<'a> = Option<(BindPlan, Option<&'a Pattern>)>;
 
 /// How to bind the values an unpack leaves on the operand stack.
 ///
@@ -125,48 +114,54 @@ enum Slot<'a> {
     Optional(&'a Pattern),
 }
 
-/// How a body's prologue binds the values its entry left on the operand stack
-enum Prologue<'a> {
-    /// As planned where the values were tested
-    Plan(BindPlan),
-    /// By matching a pattern in the body, as a loop binds each iteration
-    Pattern(&'a Pattern),
-}
-
-struct Params<'a> {
-    bind: Option<Prologue<'a>>,
-    bind_params: Option<Defaults<'a>>,
-    mode: Mode<'a>,
-    is_top_level: bool,
-    next_id: Option<cfg::BlockId>,
-    break_id: Option<cfg::BlockId>,
+/// Where `break` and `continue` in a loop body go
+#[derive(Clone, Copy)]
+struct LoopTargets {
+    break_id: cfg::BlockId,
+    continue_id: cfg::BlockId,
+    /// Whether `break` leaves a result for the loop
     break_result: bool,
-    continue_id: Option<cfg::BlockId>,
+}
+
+/// Where control leaves the body being lowered
+#[derive(Clone, Copy)]
+struct Targets {
+    /// The continuation of a body nested in its function, or `None` for a
+    /// function's own body
+    next_id: Option<cfg::BlockId>,
+    loop_targets: Option<LoopTargets>,
     exit_id: cfg::BlockId,
-    /// A `match` arm's guard, tested in the body's prologue after its bindings,
-    /// with the block it fails to
-    guard: Option<(&'a Guard, cfg::BlockId)>,
 }
 
-enum WorkAst<'a> {
-    Function(&'a Function, sig::UnpackId),
-    Block(&'a Block, bool),
-    Stmt(&'a Stmt),
-    Args(&'a [Arg]),
-    ArrayElems(&'a [ArrayElem]),
-    DictElems(&'a [DictElem]),
-    RecordElems(&'a [DictElem]),
+impl Targets {
+    /// The targets of a function body exiting to `exit`
+    fn function(exit: cfg::BlockId) -> Self {
+        Self {
+            next_id: None,
+            loop_targets: None,
+            exit_id: exit,
+        }
+    }
+
+    /// The targets of a branch body continuing at `next`
+    fn branch(self, next: cfg::BlockId) -> Self {
+        Self {
+            next_id: Some(next),
+            ..self
+        }
+    }
+
+    /// The targets of a loop body continuing at `next`
+    fn looping(self, next: cfg::BlockId, loop_targets: Option<LoopTargets>) -> Self {
+        Self {
+            next_id: Some(next),
+            loop_targets,
+            ..self
+        }
+    }
 }
 
-struct Work<'a> {
-    ast: WorkAst<'a>,
-    bb: cfg::BlockId,
-    params: Params<'a>,
-}
-
-type Queue<'a> = MonoVec<Work<'a>>;
-
-struct Scope<'a, 'c, 'q> {
+struct Scope<'a, 'c> {
     file: &'c File<'c>,
     symtab: &'c sym::Table,
     bintab: &'c intern::BinTable,
@@ -177,14 +172,32 @@ struct Scope<'a, 'c, 'q> {
     sentinel_const: &'c OnceCell<constant::Id>,
     graph: &'a cfg::Graph,
     bb: cfg::BlockId,
-    params: Params<'a>,
+    mode: &'c Mode<'c>,
+    targets: Targets,
     block: BlockRefMut<'a>,
-    queue: &'q Queue<'a>,
 }
 
-impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
-    fn queue(&self, work: Work<'a>) {
-        self.queue.push(work)
+impl<'a, 'c> Scope<'a, 'c> {
+    /// Lower `f` focused on `bb` with `targets`, then restore the focus and
+    /// targets
+    fn lower_in(
+        &mut self,
+        bb: cfg::BlockId,
+        targets: Targets,
+        f: impl FnOnce(&mut Self) -> Result<()>,
+    ) -> Result<()> {
+        let saved_bb = self.bb;
+        let saved_targets = mem::replace(&mut self.targets, targets);
+        self.switch(bb);
+        f(self)?;
+        self.switch(saved_bb);
+        self.targets = saved_targets;
+        Ok(())
+    }
+
+    /// The targets of the innermost loop
+    fn loop_targets(&self) -> LoopTargets {
+        self.targets.loop_targets.expect("no loop target")
     }
 
     fn switch(&mut self, id: cfg::BlockId) {
@@ -1030,11 +1043,21 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 )
             }
             DictElem::If(node) => {
-                self.lower_elem_if(node, WorkAst::DictElems)?;
+                self.lower_elem_if(node, |this, elem, sig| {
+                    let (arg1, arg2) = this.lower_dict_elem(elem)?;
+                    sig.push(arg1);
+                    sig.extend(arg2);
+                    Ok(())
+                })?;
                 (sig::Arg::Pack, None)
             }
             DictElem::For(node) => {
-                self.lower_elem_for(node, WorkAst::DictElems)?;
+                self.lower_elem_for(node, |this, elem, sig| {
+                    let (arg1, arg2) = this.lower_dict_elem(elem)?;
+                    sig.push(arg1);
+                    sig.extend(arg2);
+                    Ok(())
+                })?;
                 (sig::Arg::Pack, None)
             }
         })
@@ -1065,11 +1088,17 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 sig::Arg::Pack
             }
             DictElem::For(node) => {
-                self.lower_elem_for(node, WorkAst::RecordElems)?;
+                self.lower_elem_for(node, |this, elem, sig| {
+                    sig.push(this.lower_record_elem(elem)?);
+                    Ok(())
+                })?;
                 sig::Arg::Pack
             }
             DictElem::If(node) => {
-                self.lower_elem_if(node, WorkAst::RecordElems)?;
+                self.lower_elem_if(node, |this, elem, sig| {
+                    sig.push(this.lower_record_elem(elem)?);
+                    Ok(())
+                })?;
                 sig::Arg::Pack
             }
         })
@@ -1087,11 +1116,17 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 sig::Arg::Key(*iter_sym.get_or_init(|| self.symtab.id(&self.bintab.id_str("iter"))))
             }
             ArrayElem::If(node) => {
-                self.lower_elem_if(node, WorkAst::ArrayElems)?;
+                self.lower_elem_if(node, |this, elem, sig| {
+                    sig.push(this.lower_array_elem(elem)?);
+                    Ok(())
+                })?;
                 sig::Arg::Pack
             }
             ArrayElem::For(node) => {
-                self.lower_elem_for(node, WorkAst::ArrayElems)?;
+                self.lower_elem_for(node, |this, elem, sig| {
+                    sig.push(this.lower_array_elem(elem)?);
+                    Ok(())
+                })?;
                 sig::Arg::Pack
             }
         })
@@ -1115,11 +1150,17 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 sig::Arg::Pack
             }
             Arg::For(node) => {
-                self.lower_elem_for(node, WorkAst::Args)?;
+                self.lower_elem_for(node, |this, elem, sig| {
+                    sig.push(this.lower_arg(elem)?);
+                    Ok(())
+                })?;
                 sig::Arg::Pack
             }
             Arg::If(node) => {
-                self.lower_elem_if(node, WorkAst::Args)?;
+                self.lower_elem_if(node, |this, elem, sig| {
+                    sig.push(this.lower_arg(elem)?);
+                    Ok(())
+                })?;
                 sig::Arg::Pack
             }
             Arg::DynamicKey { .. } => unreachable!(),
@@ -1168,11 +1209,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let failed = self.graph.alloc_block(func, failed_scope);
         let fallthrough = self.graph.alloc_block(func, scope);
         self.graph.block_mut(fallthrough).term = Term(TermInfo::ElseFallthrough(kind), span);
-        self.queue(Work {
-            bb: failed,
-            ast: WorkAst::Block(body, false),
-            params: self.branch_params(None, None, fallthrough),
-        });
+        self.lower_in(failed, self.targets.branch(fallthrough), |this| {
+            this.lower_body(
+                body,
+                |_, _| Ok(()),
+                |this, body| this.lower_stmts(body, false),
+            )
+        })?;
         let plan = if let Pattern::Ident(PatIdent { ident, .. }) = pattern {
             let cleanup = self.graph.alloc_block(func, scope);
             self.block.insts.push(Inst(InstInfo::Dup, span));
@@ -1189,13 +1232,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 vars: vec![Some(self.resolve_var(res.index, res.depth))],
             }
         } else {
-            match self
-                .lower_cond_test(pattern, scope, success, failed, span)?
-                .0
-            {
-                Some(Prologue::Plan(plan)) => plan,
-                _ => unreachable!("a tested pattern leaves a plan"),
-            }
+            let (plan, _) = self.lower_cond_test(pattern, scope, success, failed, span)?;
+            plan
         };
         self.switch(success);
         self.lower_bind_plan(plan, span);
@@ -1272,9 +1310,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     /// Lower the test of a conditional branch and set the current block's terminator.
     ///
     /// `bscope` is the scope allocated for the branch body, `tid` the block the body
-    /// starts in, and `fid` the block reached when the test fails.  Returns the `bind`
-    /// and `bind_params` the body's prologue needs. Tests and unpacks each end a
-    /// block, with failure edges discarding the values left by earlier steps.
+    /// starts in, and `fid` the block reached when the test fails.  Returns the
+    /// bindings the body's prologue makes. Tests and unpacks each end a block,
+    /// with failure edges discarding the values left by earlier steps.
     fn lower_cond(
         &mut self,
         cond: &'a Expr,
@@ -1286,7 +1324,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     ) -> Result<Binds<'a>> {
         let Some(bind) = bind else {
             self.lower_short_circuit(cond, tid, fid, false)?;
-            return Ok((None, None));
+            return Ok(None);
         };
         if let Pattern::Ident(PatIdent { ident, .. }) = &bind.pattern {
             // A bare identifier binds the value itself and branches on its
@@ -1302,20 +1340,20 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.link(fid);
             let res = ident.res.as_ref().expect("unresolved pattern binding");
             let var = self.resolve_var_in_scope(self.graph.scope(bscope), res.index, res.depth);
-            return Ok((
-                Some(Prologue::Plan(BindPlan {
-                    steps: Vec::new(),
-                    vars: vec![Some(var)],
-                })),
-                None,
-            ));
+            let plan = BindPlan {
+                steps: Vec::new(),
+                vars: vec![Some(var)],
+            };
+            return Ok(Some((plan, None)));
         }
         self.lower_expr(cond)?;
-        self.lower_cond_test(&bind.pattern, bscope, tid, fid, span)
+        let (plan, pattern) = self.lower_cond_test(&bind.pattern, bscope, tid, fid, span)?;
+        Ok(Some((plan, Some(pattern))))
     }
 
     /// Lower the test of a pattern against the value on top of the stack, as
-    /// [`Self::lower_cond`] does.  A bare name always matches.
+    /// [`Self::lower_cond`] does, returning the plan binding what the test leaves
+    /// and the pattern.  A bare name always matches.
     fn lower_cond_test(
         &mut self,
         pattern: &'a Pattern,
@@ -1323,7 +1361,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         tid: cfg::BlockId,
         fid: cfg::BlockId,
         span: Span,
-    ) -> Result<Binds<'a>> {
+    ) -> Result<(BindPlan, &'a Pattern)> {
         // The test runs here, and the body binds what it leaves in `bscope`
         let BindPlan { steps, vars } =
             self.plan_slots(self.graph.scope(bscope), vec![Slot::Pattern(pattern)])?;
@@ -1336,43 +1374,56 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.block.term = Term(TermInfo::Branch(tid), span);
         self.link(tid);
         self.switch(test);
-        Ok((
-            Some(Prologue::Plan(BindPlan {
-                steps: Vec::new(),
-                vars,
-            })),
-            Some(Defaults::Pattern(pattern)),
-        ))
+        let plan = BindPlan {
+            steps: Vec::new(),
+            vars,
+        };
+        Ok((plan, pattern))
     }
 
-    /// Lower an `if` in vertical-element layout, where each branch body is a list
-    /// of arguments, array elements, or dict elements rather than a block.
-    ///
-    /// Mirrors [`Self::lower_if`], differing only in what the branches contribute
-    /// to: an empty `ARG_ACC` builtin opens the accumulator each body pushes into, and
-    /// `work_ast` wraps the body for the queue.  There is no result value, so no
-    /// `want_result` distinction.
-    /// Lowers a comprehension among a collection's items to an argument pack the
-    /// body fills, queued as `work_ast` of its items
-    fn lower_elem_for<T>(
+    /// Make a branch body's prologue bindings
+    fn lower_binds(&mut self, binds: Binds<'a>, span: Span) -> Result<()> {
+        if let Some((plan, pattern)) = binds {
+            self.lower_bind_plan(plan, span);
+            if let Some(pattern) = pattern {
+                self.lower_pattern_defaults(pattern, span)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Lower a comprehension among a collection's items to an argument pack the
+    /// body fills, its items lowered as `elem` lowers each
+    fn lower_elem_for<T: Node>(
         &mut self,
         node: &'a For<ExprBody<T>>,
-        work_ast: fn(&'a [T]) -> WorkAst<'a>,
+        elem: impl Fn(&mut Self, &'a T, &mut Vec<sig::Arg>) -> Result<()>,
     ) -> Result<()> {
         let span = node.for_span;
         self.lower_arg_acc(span);
-        self.lower_for_loop(node, span, work_ast(&node.body.elems), false)?;
+        self.lower_for_loop(node, span, false, |this, body| {
+            this.lower_elems(&body.elems, &elem)?;
+            Ok(false)
+        })?;
         self.block.insts.push(Inst(InstInfo::Pop, span));
         Ok(())
     }
 
-    fn lower_elem_if<T>(
+    /// Lower an `if` in vertical-element layout, where each branch body is a list
+    /// of arguments, array elements, or dict elements rather than a block, its
+    /// items lowered as `elem` lowers each.  An empty `ARG_ACC` builtin opens the
+    /// accumulator each body pushes into.  There is no result value, so no
+    /// `want_result` distinction.
+    fn lower_elem_if<T: Node>(
         &mut self,
         node: &'a If<ExprBody<T>>,
-        work_ast: fn(&'a [T]) -> WorkAst<'a>,
+        elem: impl Fn(&mut Self, &'a T, &mut Vec<sig::Arg>) -> Result<()>,
     ) -> Result<()> {
         self.lower_arg_acc(node.tbranch.span);
-        self.lower_if_chain(node, None, |body| work_ast(&body.elems))
+        self.lower_if_chain(node, None, |this, body| {
+            this.lower_elems(&body.elems, &elem)?;
+            Ok(false)
+        })
     }
 
     /// Push the accumulator a vertical-element `for` or `if` pushes its
@@ -1412,11 +1463,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 &else_block.vars,
             );
             fallback = self.graph.alloc_block(self.block.func, fscope);
-            self.queue(Work {
-                bb: fallback,
-                ast: WorkAst::Block(else_block, want_result),
-                params: self.branch_params(None, None, next),
-            });
+            self.lower_in(fallback, self.targets.branch(next), |this| {
+                this.lower_body(
+                    else_block,
+                    |_, _| Ok(()),
+                    |this, body| this.lower_stmts(body, want_result),
+                )
+            })?;
         } else if want_result {
             fallback = self.graph.alloc_block(self.block.func, self.block.scope);
             self.switch(fallback);
@@ -1440,17 +1493,22 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.switch(fallback);
             let span = arm.pattern.span();
             self.lower_load(&scrutinee, span);
-            let (bind, bind_params) =
+            let (plan, pattern) =
                 self.lower_cond_test(&arm.pattern, tscope, tid, current_fallback, span)?;
-            let params = Params {
-                guard: arm.guard.as_ref().map(|guard| (guard, current_fallback)),
-                ..self.branch_params(bind, bind_params, next)
-            };
-            self.queue(Work {
-                bb: tid,
-                ast: WorkAst::Block(&arm.body, want_result),
-                params,
-            });
+            let binds = Some((plan, Some(pattern)));
+            self.lower_in(tid, self.targets.branch(next), |this| {
+                this.lower_body(
+                    &arm.body,
+                    |this, span| {
+                        this.lower_binds(binds, span)?;
+                        match &arm.guard {
+                            Some(guard) => this.lower_guard(guard, current_fallback, span),
+                            None => Ok(()),
+                        }
+                    },
+                    |this, body| this.lower_stmts(body, want_result),
+                )
+            })?;
         }
 
         self.switch(start);
@@ -1460,52 +1518,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
-    /// The parameters of a branch body queued from the current block, which
-    /// continues at `next`
-    fn branch_params(
-        &self,
-        bind: Option<Prologue<'a>>,
-        bind_params: Option<Defaults<'a>>,
-        next: cfg::BlockId,
-    ) -> Params<'a> {
-        Params {
-            bind,
-            bind_params,
-            mode: self.params.mode.clone(),
-            is_top_level: false,
-            next_id: Some(next),
-            break_id: self.params.break_id,
-            break_result: self.params.break_result,
-            continue_id: self.params.continue_id,
-            exit_id: self.params.exit_id,
-            guard: None,
-        }
-    }
-
-    /// The parameters of a function body queued from the current block, which
-    /// exits to `exit`
-    fn func_params(&self, exit: cfg::BlockId) -> Params<'a> {
-        Params {
-            bind: None,
-            bind_params: None,
-            mode: self.params.mode.clone(),
-            is_top_level: false,
-            next_id: None,
-            break_id: None,
-            break_result: false,
-            continue_id: None,
-            exit_id: exit,
-            guard: None,
-        }
-    }
-
     /// Lower a `match` arm's guard in its body's prologue, after the arm's
     /// bindings.  On failure, leave the arm's scope for `fail`; on success, bind
     /// the guard's own pattern, if it has one.
     fn lower_guard(&mut self, guard: &'a Guard, fail: cfg::BlockId, span: Span) -> Result<()> {
         let leave = self.graph.alloc_block(self.block.func, self.block.scope);
         let pass = self.graph.alloc_block(self.block.func, self.block.scope);
-        let (bind, bind_params) = self.lower_cond(
+        let binds = self.lower_cond(
             &guard.expr,
             guard.bind.as_ref(),
             self.block.scope,
@@ -1522,23 +1541,24 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.link(fail);
 
         self.switch(pass);
-        self.params.bind = bind;
-        self.params.bind_params = bind_params;
-        self.lower_prologue_bind(span)
+        self.lower_binds(binds, span)
     }
 
     fn lower_if(&mut self, node: &'a If<Block>, want_result: bool) -> Result<()> {
         let nil_fallback = (want_result && node.else_branch.is_none()).then(|| node.span());
-        self.lower_if_chain(node, nil_fallback, |body| WorkAst::Block(body, want_result))
+        self.lower_if_chain(node, nil_fallback, |this, body| {
+            this.lower_stmts(body, want_result)
+        })
     }
 
-    /// Lower an `if` of either form, queuing each branch's body as `ast` gives
-    /// it.  With no `else`, a `nil_fallback` span loads `nil` when no branch runs.
+    /// Lower an `if` of either form, each branch's body after its prologue as
+    /// `contents` lowers it.  With no `else`, a `nil_fallback` span loads `nil`
+    /// when no branch runs.
     fn lower_if_chain<B: Body>(
         &mut self,
         node: &'a If<B>,
         nil_fallback: Option<Span>,
-        ast: impl Fn(&'a B) -> WorkAst<'a>,
+        contents: impl Fn(&mut Self, &'a B) -> Result<bool>,
     ) -> Result<()> {
         let next = self.graph.alloc_block(self.block.func, self.block.scope);
 
@@ -1557,11 +1577,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 else_body.vars(),
             );
             fallback = self.graph.alloc_block(self.block.func, fscope);
-            self.queue(Work {
-                bb: fallback,
-                ast: ast(else_body),
-                params: self.branch_params(None, None, next),
-            });
+            self.lower_in(fallback, self.targets.branch(next), |this| {
+                this.lower_body(else_body, |_, _| Ok(()), &contents)
+            })?;
         } else if let Some(span) = nil_fallback {
             fallback = self.graph.alloc_block(self.block.func, self.block.scope);
             self.switch(fallback);
@@ -1585,7 +1603,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let tid = self.graph.alloc_block(self.block.func, tscope);
 
             self.switch(fallback);
-            let (bind, bind_params) = self.lower_cond(
+            let binds = self.lower_cond(
                 &elif_branch.expr,
                 elif_branch.bind.as_ref(),
                 tscope,
@@ -1593,11 +1611,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 current_fallback,
                 elif_branch.span,
             )?;
-            self.queue(Work {
-                bb: tid,
-                ast: ast(&elif_branch.body),
-                params: self.branch_params(bind, bind_params, next),
-            });
+            self.lower_in(tid, self.targets.branch(next), |this| {
+                this.lower_body(
+                    &elif_branch.body,
+                    |this, span| this.lower_binds(binds, span),
+                    &contents,
+                )
+            })?;
         }
 
         // Finally, process the initial if branch
@@ -1611,7 +1631,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             node.tbranch.body.vars(),
         );
         let tid = self.graph.alloc_block(self.block.func, tscope);
-        let (bind, bind_params) = self.lower_cond(
+        let binds = self.lower_cond(
             &node.tbranch.expr,
             node.tbranch.bind.as_ref(),
             tscope,
@@ -1619,11 +1639,13 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             current_fallback,
             node.tbranch.span,
         )?;
-        self.queue(Work {
-            bb: tid,
-            ast: ast(&node.tbranch.body),
-            params: self.branch_params(bind, bind_params, next),
-        });
+        self.lower_in(tid, self.targets.branch(next), |this| {
+            this.lower_body(
+                &node.tbranch.body,
+                |this, span| this.lower_binds(binds, span),
+                &contents,
+            )
+        })?;
 
         self.switch(next);
 
@@ -1640,11 +1662,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let f = self.graph.func(fid);
             (f.enter, f.exit)
         };
-        self.queue(Work {
-            bb: enter,
-            ast: WorkAst::Function(func, sig),
-            params: self.func_params(exit),
-        });
+        self.lower_in(enter, Targets::function(exit), |this| {
+            this.lower_function(func, sig)
+        })?;
         self.block.insts.push(Inst(InstInfo::Close(fid), span));
         Ok(())
     }
@@ -1712,24 +1732,23 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.block.term = Term(TermInfo::Branch(test), span);
         self.link(test);
         self.switch(test);
-        let (bind, bind_params) =
-            self.lower_cond(&node.expr, node.bind.as_ref(), bscope, bodyid, next, span)?;
-        self.queue(Work {
-            bb: bodyid,
-            ast: WorkAst::Block(&node.body, false),
-            params: Params {
-                bind,
-                bind_params,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: Some(test),
-                break_id: Some(next),
-                break_result: false,
-                continue_id: Some(test),
-                exit_id: self.params.exit_id,
-                guard: None,
+        let binds = self.lower_cond(&node.expr, node.bind.as_ref(), bscope, bodyid, next, span)?;
+        let loop_targets = LoopTargets {
+            break_id: next,
+            continue_id: test,
+            break_result: false,
+        };
+        self.lower_in(
+            bodyid,
+            self.targets.looping(test, Some(loop_targets)),
+            |this| {
+                this.lower_body(
+                    &node.body,
+                    |this, span| this.lower_binds(binds, span),
+                    |this, body| this.lower_stmts(body, false),
+                )
             },
-        });
+        )?;
         self.switch(next);
         if want_result {
             self.lower_load_nil(span)
@@ -1739,22 +1758,22 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_for(&mut self, node: &'a For<Block>, want_result: bool) -> Result<()> {
         let span = node.span();
-        self.lower_for_loop(node, span, WorkAst::Block(&node.body, false), true)?;
+        self.lower_for_loop(node, span, true, |this, body| this.lower_stmts(body, false))?;
         if !want_result {
             self.block.insts.push(Inst(InstInfo::Pop, span));
         }
         Ok(())
     }
 
-    /// Lower a `for` of either form, queuing its body as `ast`, and finish in the
-    /// block after the loop.  Only a statement `for` is a loop that `break` and
-    /// `continue` target.
+    /// Lower a `for` of either form, its body after its prologue as `contents`
+    /// lowers it, and finish in the block after the loop.  Only a statement `for`
+    /// is a loop that `break` and `continue` target.
     fn lower_for_loop<B: Body>(
         &mut self,
         node: &'a For<B>,
         span: Span,
-        ast: WorkAst<'a>,
         is_loop: bool,
+        contents: impl FnOnce(&mut Self, &'a B) -> Result<bool>,
     ) -> Result<()> {
         let sig = if let Some(expr) = &node.expr {
             self.lower_expr(expr)?;
@@ -1783,24 +1802,27 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             node.body.vars(),
         );
         let bodyid = self.graph.alloc_block(self.block.func, bscope);
-        let bind_params = Some(Defaults::Pattern(&node.bind));
-        // FIXME: include span of keyword, not of block
-        self.queue(Work {
-            bb: bodyid,
-            ast,
-            params: Params {
-                bind: Some(Prologue::Pattern(&node.bind)),
-                bind_params,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: Some(advance),
-                break_id: is_loop.then_some(next),
-                break_result: is_loop,
-                continue_id: is_loop.then_some(advance),
-                exit_id: self.params.exit_id,
-                guard: None,
-            },
+        let loop_targets = is_loop.then_some(LoopTargets {
+            break_id: next,
+            continue_id: advance,
+            break_result: true,
         });
+        // FIXME: include span of keyword, not of block
+        self.lower_in(
+            bodyid,
+            self.targets.looping(advance, loop_targets),
+            |this| {
+                this.lower_body(
+                    &node.body,
+                    |this, span| {
+                        let plan = this.pattern_plan(&node.bind)?;
+                        this.lower_bind_plan(plan, span);
+                        this.lower_pattern_defaults(&node.bind, span)
+                    },
+                    contents,
+                )
+            },
+        )?;
         self.block.term = Term(TermInfo::Branch(advance), span);
         self.link(advance);
         self.switch(advance);
@@ -2006,11 +2028,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let func = self.graph.func(fid);
             (func.enter, func.exit)
         };
-        self.queue(Work {
-            bb: enter,
-            ast: WorkAst::Function(&node.func, sig),
-            params: self.func_params(exit),
-        });
+        self.lower_in(enter, Targets::function(exit), |this| {
+            this.lower_function(&node.func, sig)
+        })?;
         self.block
             .insts
             .push(Inst(InstInfo::Close(fid), node.def_span));
@@ -2074,11 +2094,9 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             let func = self.graph.func(fid);
             (func.enter, func.exit)
         };
-        self.queue(Work {
-            bb: enter,
-            ast: WorkAst::Function(&node.func, sig),
-            params: self.func_params(exit),
-        });
+        self.lower_in(enter, Targets::function(exit), |this| {
+            this.lower_function(&node.func, sig)
+        })?;
         self.block
             .insts
             .push(Inst(InstInfo::Close(fid), node.def_span));
@@ -2155,7 +2173,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             .insts
             .push(Inst(InstInfo::LoadConst(class_name), span));
 
-        let module_name = match &self.params.mode {
+        let module_name = match self.mode {
             Mode::Module { name } => name,
             _ => "",
         };
@@ -2398,11 +2416,11 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_scope_leave(&mut self, target: cfg::BlockId, span: Span) -> Result<()> {
         let cur = self.graph.scope(self.block.scope);
-        if target == self.params.exit_id {
+        if target == self.targets.exit_id {
             for _ in 0..cur.func_upvar_depth {
                 self.block.insts.push(Inst(InstInfo::PopUpvars, span));
             }
-            if self.params.next_id.is_none() {
+            if self.targets.next_id.is_none() {
                 self.block.term = Term(TermInfo::Branch(target), span);
                 self.link(target);
             }
@@ -2418,89 +2436,144 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         Ok(())
     }
 
-    fn lower_block(
-        &mut self,
-        block: &'a Block,
-        mut want_result: bool,
-        stub_span: Option<Span>,
-    ) -> Result<()> {
+    /// Enter the focused block's scope, as a body's prologue starts
+    fn lower_scope_enter(&mut self, span: Span) {
         let scope = self.graph.scope(self.block.scope);
-        // An empty stub block has no span of its own, so use its marker for the
-        // parameter-binding prologue as well as the builtin call.
-        let span = stub_span.unwrap_or_else(|| block.span());
-
-        // Prologue
-
-        // Push upvars if we have captures in this scope
         if scope.has_upvars() {
             self.block
                 .insts
                 .push(Inst(InstInfo::PushUpvars(scope.caps), span));
         }
+    }
 
-        if self.params.is_top_level {
-            if matches!(self.params.mode, Mode::Module { .. }) && scope.has_upvars() {
-                want_result = false
+    /// Leave the focused block's scope for the body's continuation, or its
+    /// function's exit, as a body's epilogue ends
+    fn lower_scope_end(&mut self, span: Span) {
+        if self.graph.scope(self.block.scope).has_upvars() {
+            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
+        }
+        let target = self.targets.next_id.unwrap_or(self.targets.exit_id);
+        self.block.term = Term(TermInfo::Branch(target), span);
+        self.link(target);
+    }
+
+    /// Lower a block's statements, the last for its result with `want_result`.
+    /// Returns whether a statement ended the block.
+    fn lower_stmts(&mut self, block: &'a Block, want_result: bool) -> Result<bool> {
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            if self.lower_stmt(stmt, want_result && i + 1 == block.stmts.len())? {
+                return Ok(true);
             }
+        }
+        if want_result && block.stmts.is_empty() {
+            self.lower_load_nil(block.span());
+        }
+        Ok(false)
+    }
 
-            for import in self.prelude.iter() {
-                let module = match import {
-                    PreludeImport::Items {
-                        module,
-                        items: fields,
-                    } => {
-                        if fields.iter().all(|f| f.type_only || f.unused) {
-                            // Unused, skip entirely
-                            continue;
-                        }
-                        module
-                    }
-                    PreludeImport::ModuleAsIs { module, unused, .. }
-                    | PreludeImport::ModuleRenamed { module, unused, .. } => {
-                        if *unused {
-                            // Unused, skip
-                            continue;
-                        }
-                        module
-                    }
-                };
-                match import {
-                    PreludeImport::ModuleAsIs { res, insert, .. } => {
-                        if *insert {
-                            let cid = self.consttab.str(self.bintab.id_str(module));
-                            self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
-                            self.lower_load(res.as_ref().unwrap(), span);
-                            let insert = self.symtab.id(&self.bintab.id_str("insert"));
-                            let call = sig::Pack::new(
-                                [sig::Arg::Key(insert), sig::Arg::Value].into_iter(),
-                            );
-                            let sig = self.packtab.id(&call);
-                            self.block
-                                .insts
-                                .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
-                            self.block.insts.push(Inst(InstInfo::Pop, span));
-                        } else {
-                            let cid = self.consttab.str(self.bintab.id_str(module));
-                            self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
-                            let module = self.symtab.id(&self.bintab.id_str("module"));
-                            let call = sig::Pack::new([sig::Arg::Key(module)].into_iter());
-                            let sig = self.packtab.id(&call);
-                            self.block
-                                .insts
-                                .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
+    /// Lower a body nested in its function in the focused block: enter its
+    /// scope, make its bindings with `bind`, lower it with `contents`, and leave
+    /// unless it ended the block.
+    fn lower_body<B: Body>(
+        &mut self,
+        body: &'a B,
+        bind: impl FnOnce(&mut Self, Span) -> Result<()>,
+        contents: impl FnOnce(&mut Self, &'a B) -> Result<bool>,
+    ) -> Result<()> {
+        let span = Node::span(body);
+        self.lower_scope_enter(span);
+        bind(self, span)?;
+        if !contents(self, body)? {
+            self.lower_scope_end(span);
+        }
+        Ok(())
+    }
 
-                            self.lower_store_res(
-                                res.as_ref().expect("unresolved prelude module"),
-                                span,
-                                false,
-                            );
-                        }
+    /// Bind a function's arguments, as its prologue does after entering its
+    /// scope
+    fn lower_function_bind(
+        &mut self,
+        plan: BindPlan,
+        params: &'a [PatItem],
+        span: Span,
+    ) -> Result<()> {
+        self.lower_bind_plan(plan, span);
+        self.lower_non_const_defaults(params, span)
+    }
+
+    fn lower_function(&mut self, function: &'a Function, sig: sig::UnpackId) -> Result<()> {
+        // Compute order in which to move arguments into locals or upvars
+        let plan = self.bind_plan(&function.params, sig)?;
+        let body = &function.body;
+        // An empty stub block has no span of its own, so use its marker for the
+        // parameter-binding prologue as well as the builtin call.
+        let span = function.stub_span.unwrap_or_else(|| body.span());
+        self.lower_scope_enter(span);
+        self.lower_function_bind(plan, &function.params, span)?;
+        if let Some(span) = function.stub_span {
+            let sig = self.packtab.id(&sig::Pack::new(std::iter::empty()));
+            self.block
+                .insts
+                .push(Inst(InstInfo::Builtin(builtin::STUB, sig), span));
+            self.block.term = Term(TermInfo::Branch(self.targets.exit_id), span);
+            self.link(self.targets.exit_id);
+        } else if !self.lower_stmts(body, true)? {
+            self.lower_scope_end(span);
+        }
+        Ok(())
+    }
+
+    /// Lower the root function: import the prelude, and end with the script's
+    /// result or the module's bindings
+    fn lower_root(&mut self, function: &'a Function, sig: sig::UnpackId) -> Result<()> {
+        let plan = self.bind_plan(&function.params, sig)?;
+        let block = &function.body;
+        let span = block.span();
+        let scope = self.graph.scope(self.block.scope);
+        // A module with bindings results in those, not its last statement
+        let want_result = !(matches!(self.mode, Mode::Module { .. }) && scope.has_upvars());
+
+        self.lower_scope_enter(span);
+        for import in self.prelude.iter() {
+            let module = match import {
+                PreludeImport::Items {
+                    module,
+                    items: fields,
+                } => {
+                    if fields.iter().all(|f| f.type_only || f.unused) {
+                        // Unused, skip entirely
+                        continue;
                     }
-                    PreludeImport::ModuleRenamed { res, .. } => {
+                    module
+                }
+                PreludeImport::ModuleAsIs { module, unused, .. }
+                | PreludeImport::ModuleRenamed { module, unused, .. } => {
+                    if *unused {
+                        // Unused, skip
+                        continue;
+                    }
+                    module
+                }
+            };
+            match import {
+                PreludeImport::ModuleAsIs { res, insert, .. } => {
+                    if *insert {
                         let cid = self.consttab.str(self.bintab.id_str(module));
                         self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
-                        let get = self.symtab.id(&self.bintab.id_str("get"));
-                        let call = sig::Pack::new([sig::Arg::Key(get)].into_iter());
+                        self.lower_load(res.as_ref().unwrap(), span);
+                        let insert = self.symtab.id(&self.bintab.id_str("insert"));
+                        let call =
+                            sig::Pack::new([sig::Arg::Key(insert), sig::Arg::Value].into_iter());
+                        let sig = self.packtab.id(&call);
+                        self.block
+                            .insts
+                            .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
+                        self.block.insts.push(Inst(InstInfo::Pop, span));
+                    } else {
+                        let cid = self.consttab.str(self.bintab.id_str(module));
+                        self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
+                        let module = self.symtab.id(&self.bintab.id_str("module"));
+                        let call = sig::Pack::new([sig::Arg::Key(module)].into_iter());
                         let sig = self.packtab.id(&call);
                         self.block
                             .insts
@@ -2512,68 +2585,63 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                             false,
                         );
                     }
-                    PreludeImport::Items { items: fields, .. } => {
-                        let cid = self.consttab.str(self.bintab.id_str(module));
-                        self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
-                        let get = self.symtab.id(&self.bintab.id_str("get"));
-                        let call = sig::Pack::new([sig::Arg::Key(get)].into_iter());
-                        let sig = self.packtab.id(&call);
-                        self.block
-                            .insts
-                            .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
-                        let used: Vec<_> = fields
-                            .iter()
-                            .filter(|f| !f.type_only && !f.unused)
-                            .collect();
-                        for (i, field) in used.iter().enumerate() {
-                            if i + 1 != used.len() {
-                                self.block.insts.push(Inst(InstInfo::Dup, span));
-                            }
-                            let sym = self.symtab.id(&self.bintab.id_str(&field.item));
-                            self.block.insts.push(Inst(InstInfo::Get(sym), span));
-                            self.lower_store_res(
-                                field.res.as_ref().expect("unresolved prelude field"),
-                                span,
-                                false,
-                            );
+                }
+                PreludeImport::ModuleRenamed { res, .. } => {
+                    let cid = self.consttab.str(self.bintab.id_str(module));
+                    self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
+                    let get = self.symtab.id(&self.bintab.id_str("get"));
+                    let call = sig::Pack::new([sig::Arg::Key(get)].into_iter());
+                    let sig = self.packtab.id(&call);
+                    self.block
+                        .insts
+                        .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
+
+                    self.lower_store_res(
+                        res.as_ref().expect("unresolved prelude module"),
+                        span,
+                        false,
+                    );
+                }
+                PreludeImport::Items { items: fields, .. } => {
+                    let cid = self.consttab.str(self.bintab.id_str(module));
+                    self.block.insts.push(Inst(InstInfo::LoadConst(cid), span));
+                    let get = self.symtab.id(&self.bintab.id_str("get"));
+                    let call = sig::Pack::new([sig::Arg::Key(get)].into_iter());
+                    let sig = self.packtab.id(&call);
+                    self.block
+                        .insts
+                        .push(Inst(InstInfo::Builtin(builtin::IMPORT, sig), span));
+                    let used: Vec<_> = fields
+                        .iter()
+                        .filter(|f| !f.type_only && !f.unused)
+                        .collect();
+                    for (i, field) in used.iter().enumerate() {
+                        if i + 1 != used.len() {
+                            self.block.insts.push(Inst(InstInfo::Dup, span));
                         }
+                        let sym = self.symtab.id(&self.bintab.id_str(&field.item));
+                        self.block.insts.push(Inst(InstInfo::Get(sym), span));
+                        self.lower_store_res(
+                            field.res.as_ref().expect("unresolved prelude field"),
+                            span,
+                            false,
+                        );
                     }
                 }
             }
         }
 
-        self.lower_prologue_bind(span)?;
-
-        // End prologue
-        if let Some(span) = stub_span {
-            let sig = self.packtab.id(&sig::Pack::new(std::iter::empty()));
-            self.block
-                .insts
-                .push(Inst(InstInfo::Builtin(builtin::STUB, sig), span));
-            self.block.term = Term(TermInfo::Branch(self.params.exit_id), span);
-            self.link(self.params.exit_id);
+        self.lower_function_bind(plan, &function.params, span)?;
+        if self.lower_stmts(block, want_result)? {
             return Ok(());
         }
-        for (i, stmt) in block.stmts.iter().enumerate() {
-            if self.lower_stmt(stmt, want_result && i + 1 == block.stmts.len())? {
-                return Ok(());
-            }
-        }
 
-        if want_result && block.stmts.is_empty() {
-            self.lower_load_nil(span);
-        }
-
-        // Epilogue
-        if self.params.is_top_level && matches!(self.params.mode, Mode::Repl) {
+        if matches!(self.mode, Mode::Repl) {
             assert!(want_result);
             self.lower_store_res(block.repl.as_ref().unwrap(), span, false);
         }
 
-        if self.params.is_top_level
-            && matches!(self.params.mode, Mode::Module { .. } | Mode::Repl)
-            && scope.has_upvars()
-        {
+        if matches!(self.mode, Mode::Module { .. } | Mode::Repl) && scope.has_upvars() {
             let captured = block
                 .vars
                 .iter()
@@ -2590,41 +2658,19 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         } else if scope.has_upvars() {
             self.block.insts.push(Inst(InstInfo::PopUpvars, span));
         }
-
-        // End epilogue
-
-        if let Some(next) = self.params.next_id {
-            self.block.term = Term(TermInfo::Branch(next), span);
-            self.link(next);
-        } else {
-            self.block.term = Term(TermInfo::Branch(self.params.exit_id), span);
-            self.link(self.params.exit_id);
-        }
-
+        self.block.term = Term(TermInfo::Branch(self.targets.exit_id), span);
+        self.link(self.targets.exit_id);
         Ok(())
     }
 
     fn lower_nl_guard_body(&mut self, stmt: &'a Stmt) -> Result<()> {
-        let scope = self.graph.scope(self.block.scope);
         let span = stmt.span();
-
-        // Prologue: push upvars (NL guard scopes always have an upvar record)
-        if scope.has_upvars() {
-            self.block
-                .insts
-                .push(Inst(InstInfo::PushUpvars(scope.caps), span));
-        }
-
-        // Lower the body statement (always want result; need something to return from closure)
+        // NL guard scopes always have an upvar record
+        self.lower_scope_enter(span);
+        // Always want the result, which the closure returns
         if !self.lower_stmt(stmt, true)? {
-            if scope.has_upvars() {
-                self.block.insts.push(Inst(InstInfo::PopUpvars, span));
-            }
-            // Branch to exit
-            self.block.term = Term(TermInfo::Branch(self.params.exit_id), span);
-            self.link(self.params.exit_id);
+            self.lower_scope_end(span);
         }
-
         Ok(())
     }
 
@@ -2640,14 +2686,12 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             (func.enter, func.exit)
         };
 
-        // Queue the body statement for lowering inside the synthetic closure.
+        // Lower the body statement inside the synthetic closure.
         // Break/continue/return targets are NOT passed through — non-local jumps
         // use NlBranch which terminates via Ret.
-        self.queue(Work {
-            bb: enter,
-            ast: WorkAst::Stmt(&guard.body),
-            params: self.func_params(exit),
-        });
+        self.lower_in(enter, Targets::function(exit), |this| {
+            this.lower_nl_guard_body(&guard.body)
+        })?;
 
         // Emit NlGuard (creates closure internally, invokes it, pushes result + indicator)
         self.block.insts.push(Inst(InstInfo::NlGuard(fid), span));
@@ -2694,15 +2738,15 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             // Single indicator: stack = [result]. Indicator consumed by If.
             self.block.insts.push(Inst(InstInfo::Pop, span));
             if guard.has_break {
-                if self.params.break_result {
+                if self.loop_targets().break_result {
                     self.lower_load_nil(span);
                 }
-                self.lower_scope_leave(self.params.break_id.expect("no break target"), span)?;
+                self.lower_scope_leave(self.loop_targets().break_id, span)?;
             } else if guard.has_continue {
-                self.lower_scope_leave(self.params.continue_id.expect("no continue target"), span)?;
+                self.lower_scope_leave(self.loop_targets().continue_id, span)?;
             } else {
                 self.lower_load(guard.has_return.as_ref().unwrap(), span);
-                self.lower_scope_leave(self.params.exit_id, span)?;
+                self.lower_scope_leave(self.targets.exit_id, span)?;
             }
         } else {
             // Multi indicator: stack = [result, indicator].
@@ -2768,21 +2812,21 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             1 => {
                 // break: pop NIL result, push break value if needed
                 self.block.insts.push(Inst(InstInfo::Pop, span));
-                if self.params.break_result {
+                if self.loop_targets().break_result {
                     self.lower_load_nil(span);
                 }
-                self.lower_scope_leave(self.params.break_id.expect("no break target"), span)?;
+                self.lower_scope_leave(self.loop_targets().break_id, span)?;
             }
             2 => {
                 // continue: pop NIL result
                 self.block.insts.push(Inst(InstInfo::Pop, span));
-                self.lower_scope_leave(self.params.continue_id.expect("no continue target"), span)?;
+                self.lower_scope_leave(self.loop_targets().continue_id, span)?;
             }
             3 => {
                 // return: pop NIL result, load return value from upvar
                 self.block.insts.push(Inst(InstInfo::Pop, span));
                 self.lower_load(guard.has_return.as_ref().unwrap(), span);
-                self.lower_scope_leave(self.params.exit_id, span)?;
+                self.lower_scope_leave(self.targets.exit_id, span)?;
             }
             _ => unreachable!("invalid NL dispatch action"),
         }
@@ -2824,10 +2868,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 Ok(false)
             }
             Stmt::Break(span, None) => {
-                if self.params.break_result {
+                if self.loop_targets().break_result {
                     self.lower_load_nil(*span);
                 }
-                self.lower_scope_leave(self.params.break_id.expect("no break target"), *span)?;
+                self.lower_scope_leave(self.loop_targets().break_id, *span)?;
                 Ok(true)
             }
             Stmt::Class(class) if class.is_protocol() => {
@@ -2846,10 +2890,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 Ok(true)
             }
             Stmt::Continue(span, None) => {
-                self.lower_scope_leave(
-                    self.params.continue_id.expect("no continue target"),
-                    *span,
-                )?;
+                self.lower_scope_leave(self.loop_targets().continue_id, *span)?;
                 Ok(true)
             }
             Stmt::Continue(span, Some(nl)) => {
@@ -2891,7 +2932,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 } else {
                     self.lower_load_nil(*span);
                 }
-                self.lower_scope_leave(self.params.exit_id, *span)?;
+                self.lower_scope_leave(self.targets.exit_id, *span)?;
                 Ok(true)
             }
             Stmt::Return(Return {
@@ -2918,7 +2959,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                     InstInfo::Builtin(builtin::THROW, self.packtab.id(&sig)),
                     node.span | node.expr.span(),
                 ));
-                self.lower_scope_leave(self.params.exit_id, node.span)?;
+                self.lower_scope_leave(self.targets.exit_id, node.span)?;
                 Ok(true)
             }
             Stmt::While(node) => {
@@ -2932,14 +2973,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 Ok(false)
             }
         }
-    }
-
-    fn lower_function(&mut self, function: &'a Function, sig: sig::UnpackId) -> Result<()> {
-        // Compute order in which to move arguments into locals or upvars
-        self.params.bind = Some(Prologue::Plan(self.bind_plan(&function.params, sig)?));
-        self.params.bind_params = Some(Defaults::Items(&function.params));
-        self.lower_block(&function.body, true, function.stub_span)?;
-        Ok(())
     }
 
     /// The values an unpack with `sig` leaves on the operand stack for `items`,
@@ -3601,56 +3634,17 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         count.checked_sub(1).map_or(target, |index| blocks[index])
     }
 
-    /// Bind the values the body's caller left on the operand stack, as the body's
-    /// prologue.
-    fn lower_prologue_bind(&mut self, span: Span) -> Result<()> {
-        match self.params.bind.take() {
-            Some(Prologue::Plan(plan)) => self.lower_bind_plan(plan, span),
-            Some(Prologue::Pattern(pattern)) => {
-                let plan = self.pattern_plan(pattern)?;
-                self.lower_bind_plan(plan, span);
-            }
-            None => {}
-        }
-        match self.params.bind_params {
-            Some(Defaults::Items(params)) => self.lower_non_const_defaults(params, span)?,
-            Some(Defaults::Pattern(pattern)) => self.lower_pattern_defaults(pattern, span)?,
-            None => {}
-        }
-        if let Some((guard, fail)) = self.params.guard.take() {
-            self.lower_guard(guard, fail, span)?;
-        }
-        Ok(())
-    }
-
-    /// Lower a vertical-element body, pushing its elements' arguments, as
-    /// `elem` lowers each, to the accumulator under it
-    fn lower_elem_body<T>(
+    /// Lower a vertical-element body's items, pushing their arguments, as `elem`
+    /// lowers each, to the accumulator under them
+    fn lower_elems<T: Node>(
         &mut self,
         body: &'a [T],
         mut elem: impl FnMut(&mut Self, &'a T, &mut Vec<sig::Arg>) -> Result<()>,
-    ) -> Result<()>
-    where
-        T: Node,
-    {
-        let scope = self.graph.scope(self.block.scope);
+    ) -> Result<()> {
         // FIXME: choose better span for this
         let span = Node::span(&body);
-
-        // Prologue
-
-        // Push upvars if we have captures in this scope
-        if scope.has_upvars() {
-            self.block
-                .insts
-                .push(Inst(InstInfo::PushUpvars(scope.caps), span));
-        }
-
-        self.lower_prologue_bind(span)?;
-
         let mut sig = Vec::new();
         self.block.insts.push(Inst(InstInfo::Dup, span));
-        // End prologue
         for item in body.iter() {
             elem(self, item, &mut sig)?;
         }
@@ -3662,20 +3656,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             span,
         ));
         self.block.insts.push(Inst(InstInfo::Pop, span));
-
-        // Epilogue
-        if scope.has_upvars() {
-            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
-        }
-        // End epilogue
-
-        if let Some(next) = self.params.next_id {
-            self.block.term = Term(TermInfo::Branch(next), span);
-            self.link(next);
-        } else {
-            unreachable!();
-        }
-
         Ok(())
     }
 }
@@ -3712,66 +3692,23 @@ impl<'c> Lowerer<'c> {
             let func = graph.func(fid);
             (func.enter, func.exit)
         };
-        let mut queue = Queue::new();
-        queue.push(Work {
-            ast: WorkAst::Function(&root.0, sig),
+        let mut scope = Scope {
+            file: self.file,
+            symtab: self.symtab,
+            bintab: self.bintab,
+            consttab: self.consttab,
+            packtab: self.packtab,
+            unpacktab: self.unpacktab,
+            prelude: self.prelude,
+            sentinel_const: &self.sentinel_const,
+            graph: &graph,
             bb: enter,
-            params: Params {
-                bind: None,
-                bind_params: None,
-                mode: self.mode.clone(),
-                is_top_level: true,
-                next_id: None,
-                continue_id: None,
-                break_id: None,
-                break_result: false,
-                exit_id: exit,
-                guard: None,
-            },
-        });
-        while let Some(work) = queue.pop() {
-            let mut scope = Scope {
-                file: self.file,
-                symtab: self.symtab,
-                bintab: self.bintab,
-                consttab: self.consttab,
-                packtab: self.packtab,
-                unpacktab: self.unpacktab,
-                prelude: self.prelude,
-                sentinel_const: &self.sentinel_const,
-                graph: &graph,
-                bb: work.bb,
-                block: graph.block_mut(work.bb),
-                params: work.params,
-                queue: &mut queue,
-            };
-            match work.ast {
-                WorkAst::Function(function, sig) => scope.lower_function(function, sig)?,
-                WorkAst::Block(block, want_result) => {
-                    scope.lower_block(block, want_result, None)?
-                }
-                WorkAst::Stmt(stmt) => scope.lower_nl_guard_body(stmt)?,
-                WorkAst::Args(body) => scope.lower_elem_body(body, |this, arg, sig| {
-                    sig.push(this.lower_arg(arg)?);
-                    Ok(())
-                })?,
-                WorkAst::ArrayElems(body) => scope.lower_elem_body(body, |this, elem, sig| {
-                    sig.push(this.lower_array_elem(elem)?);
-                    Ok(())
-                })?,
-                WorkAst::DictElems(body) => scope.lower_elem_body(body, |this, elem, sig| {
-                    let (arg1, arg2) = this.lower_dict_elem(elem)?;
-                    sig.push(arg1);
-                    sig.extend(arg2);
-                    Ok(())
-                })?,
-                WorkAst::RecordElems(body) => scope.lower_elem_body(body, |this, elem, sig| {
-                    sig.push(this.lower_record_elem(elem)?);
-                    Ok(())
-                })?,
-            }
-        }
-        mem::drop(queue);
+            mode: &self.mode,
+            targets: Targets::function(exit),
+            block: graph.block_mut(enter),
+        };
+        scope.lower_root(&root.0, sig)?;
+        mem::drop(scope);
         self.denormalize(&mut graph);
         Ok(graph)
     }
