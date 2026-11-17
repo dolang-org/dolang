@@ -4,17 +4,17 @@ let positions = []
 let keys = []
 for i = 0..200
   match (i % 5)
-    0 do
+    0
       r.push $i
       positions.push $i
-    1 do
+    1
       r.insert :k: $i
       keys.push $i
-    2 do
+    2
       if (positions.len > 0)
         r.insert 0 $i
         positions.insert 0 $i
-    3 do
+    3
       if (positions.len > 1)
         assert_eq (r.pop 1) (positions.pop 1)
   else

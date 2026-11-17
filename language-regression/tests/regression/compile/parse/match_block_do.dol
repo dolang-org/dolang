@@ -1,0 +1,15 @@
+match [1]
+  x do
+    # error: an arm's block follows its pattern directly, without `do`
+    #   --> match_block_do.dol:LL:LL
+    #    |
+    # LL |   x do
+    #    |     ^^
+    x
+  _ do
+    # error: an arm's block follows its pattern directly, without `do`
+    #   --> match_block_do.dol:LL:LL
+    #    |
+    # LL |   _ do
+    #    |     ^^
+    1

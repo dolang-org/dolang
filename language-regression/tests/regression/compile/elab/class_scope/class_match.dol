@@ -1,5 +1,5 @@
 match nil
-  _ do
+  _
     class _Inner
 # error: `class` and `@class` declarations are only allowed at module top level
 #   --> class_match.dol:LL:LL

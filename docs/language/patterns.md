@@ -589,20 +589,20 @@ let port_of = do |?settings: (:port = 80)| port
 ## `match`
 
 `match` tries a value against a list of arms in order and runs the body of the
-first arm that matches. An arm is a pattern followed by `do` and a body, either
-on the same line or as an indented block:
+first arm that matches. An arm is a pattern followed by its body: an indented
+block, or `=>` and a statement on the same line:
 
 ```playground
 #> import test:
 #>   - assert_eq
 def describe value
   match value
-    Int(n) do "int $n"
-    "GET" | "HEAD" do "read"
-    Array(first _) do
+    Int(n) => "int $n"
+    "GET" | "HEAD" => "read"
+    Array(first _)
       let inner = describe $first
       "array of $inner"
-    _ do "other"
+    _ => "other"
 
 assert_eq (describe 3) "int 3"
 assert_eq (describe "HEAD") "read"
@@ -614,8 +614,9 @@ An arm's pattern reads as a `let` pattern does, including `|` between whole
 item lists, and may have defaults. Its names are in scope only in that arm.
 
 An arm starting with `|` lays out its alternatives vertically, as in a
-vertical [alternatives](./patterns.md#alternatives) block, with `do` on a line
-of its own:
+vertical [alternatives](./patterns.md#alternatives) block. A `do` on a line of
+its own ends them and starts the body's block, or a `=>` there takes a body on
+the same line:
 
 ```playground
 #> import test:
@@ -627,13 +628,19 @@ def summary response
     | status body
     do
       "$status $body"
+    | Int(code)
+    | Str(code)
+    => "code $code"
 
 assert_eq (summary {status: 200}) "200 "
 assert_eq (summary ([404, "missing"])) "404 missing"
+assert_eq (summary 500) "code 500"
 ```
 
 A bare name matches any value, even `false` or `nil`, and binds it; the
-truthiness test of `if let` does not apply. `_ do` is a catch-all arm.
+truthiness test of `if let` does not apply. `_` is a catch-all arm.
+
+An arm whose body is a lambda writes it after `=>`, as in `_ => do |x| x + 1`.
 
 A mismatch moves on to the next arm, but other errors propagate, as described
 in [What Counts as a Match](./patterns.md#what-counts-as-a-match). Trying to
@@ -645,9 +652,9 @@ value may not be a sequence or keyed value:
 #>   - assert_eq
 def size value
   match value
-    Array(_ _) do 2
-    Array((_)) do 1
-    _ do 0
+    Array(_ _) => 2
+    Array((_)) => 1
+    _ => 0
 
 assert_eq (size ([1, 2])) 2
 assert_eq (size 5) 0
@@ -655,9 +662,10 @@ assert_eq (size 5) 0
 
 ### Guards
 
-`if` in place of `do` adds a guard, a condition checked once the pattern
+`if` after the pattern adds a guard, a condition checked once the pattern
 matches. The guard can use the arm's names, and the body follows as an indented
-block. When the guard fails, matching continues with the next arm:
+block or after `=>`, which ends the condition. When the guard fails, matching
+continues with the next arm:
 
 ```playground
 #> import test:
@@ -666,17 +674,20 @@ def sign n
   match n
     m if (m < 0)
       :negative:
-    0 do :zero:
-    _ do :positive:
+    0 => :zero:
+    m if (m > 100) => :large:
+    _ => :positive:
 
 assert_eq (sign (-3)) :negative:
 assert_eq (sign 0) :zero:
 assert_eq (sign 4) :positive:
+assert_eq (sign 500) :large:
 ```
 
 A guard may be `if let` or `if bind`, which matches a pattern of its own, as in
 [Conditional Matching](./patterns.md#conditional-matching). Its names are in
-scope in the body along with the arm's.
+scope in the body along with the arm's. After an `if bind` guard's vertical
+pattern, `=>` may take the place of `do`, as after a `|` group.
 
 ### `else` and the Result
 
@@ -707,8 +718,8 @@ that does not match, so a later arm sees only what remains:
 ```
 def run step @ ((:cmd:, Str) | (:wait:, Int))
   match step
-    (:cmd: line) do echo "run $line"
-    _ do
+    (:cmd: line) => echo "run $line"
+    _
       # step is (:wait:, Int)
       let _ secs = step
       echo "wait $secs"

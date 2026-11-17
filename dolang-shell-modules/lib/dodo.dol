@@ -61,8 +61,8 @@ do -> Value
   while (type rule Str)
     rule = lookup $rules $rule
   let spec = match rule
-    Func(handler) do {handler}
-    BaseRecord(rule) | BaseDict(rule) | BaseArray(rule) do rule
+    Func(handler) => {handler}
+    BaseRecord(rule) | BaseDict(rule) | BaseArray(rule) => rule
   let common = rules.get :common: default: (Record(()) @ Common)
 
   args.with args: $argv ...common ...spec
@@ -96,7 +96,7 @@ def list_rules rules @ Rules
       nil
     else
       match v
-        Dict(help: Str(help) ...) | Record(help: Str(help) ...) do help
+        Dict(help: Str(help) ...) | Record(help: Str(help) ...) => help
     if help
       echo "  - $k: $help"
     else
@@ -264,28 +264,28 @@ def frame state@digest.State tag@Str bytes@(Str | Bin)
 
 def encode_data state@digest.State value@Digestible
   match value
-    nil do frame $state N ""
-    Bool(b) do frame $state Z (str b)
-    Int(i) do frame $state I (str i)
-    Float(f) do frame $state F (str f)
-    Str(s) do frame $state S $s
-    Bin(b) do frame $state B $b
-    Sym(y) do frame $state Y (str y)
-    fs.Path(p) do frame $state P (str p)
-    Array(items) do
+    nil => frame $state N ""
+    Bool(b) => frame $state Z (str b)
+    Int(i) => frame $state I (str i)
+    Float(f) => frame $state F (str f)
+    Str(s) => frame $state S $s
+    Bin(b) => frame $state B $b
+    Sym(y) => frame $state Y (str y)
+    fs.Path(p) => frame $state P (str p)
+    Array(items)
       frame $state A (str items.len)
       for item = items
         encode_data $state $item
-    Tuple(items) do
+    Tuple(items)
       frame $state T (str items.len)
       for item = items
         encode_data $state $item
-    Dict(entries) do
+    Dict(entries)
       frame $state M (str entries.len)
       for k v = entries
         encode_data $state $k
         encode_data $state $v
-    Pack(fields) do
+    Pack(fields)
       frame $state R (str fields.len)
       for k v = fields
         encode_data $state $k
@@ -363,7 +363,7 @@ def read_cache path @ fs.Path -> (Dict[Str, CacheEntry], Int | nil)
     else return (entries, nil)
     for key value = files
       match value
-        Dict("size": Int(size) "mtime": Int(mtime) "hash": Str(hash)) do
+        Dict("size": Int(size) "mtime": Int(mtime) "hash": Str(hash))
           entries[key] = struct :size :mtime :hash
     (entries, meta.modified.unix_nanos)
   catch _
@@ -455,11 +455,11 @@ do -> (R | nil)
   let data = digest.Blake3()
   for input = inputs
     match input
-      Str(path) | fs.Path(path) do
+      Str(path) | fs.Path(path)
         let key normal = resolve $root $path
         files[key] = normal
-      Dict(:glob) do globs.push $glob
-      Dict(data: value) do encode_data $data $value
+      Dict(:glob) => globs.push $glob
+      Dict(data: value) => encode_data $data $value
 
   let rule_state = digest.Blake3()
   for key = out_keys

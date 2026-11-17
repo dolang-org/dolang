@@ -222,7 +222,7 @@ assert_eq (g(3, [4])) 12
 # `match` arms and loops
 def describe value
   match value
-    ?k: Int(n = 0) do n
+    ?k: Int(n = 0) => n
   else
     :other:
 assert_eq (describe ({})) 0

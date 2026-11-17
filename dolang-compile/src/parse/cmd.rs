@@ -7,6 +7,46 @@ use crate::{
     lex::{Keyword, Op, Token, TokenInfo},
 };
 
+/// Where a command sits, which decides what its arguments may be and what ends
+/// them
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CmdContext {
+    /// A statement, whose arguments may be keys and may end in an indented
+    /// block, here string, `$` data or `do` block
+    Stmt,
+    /// A header ending where its construct's indented block begins, such as a
+    /// condition or a scrutinee
+    Head,
+    /// A `match` arm's guard: a header that also ends at `=>`
+    Guard,
+    /// A bin-packed line of vertical arguments, where a key argument must head
+    /// its own line
+    VertLine,
+}
+
+impl CmdContext {
+    fn allows_keys(self) -> bool {
+        !matches!(self, Self::VertLine)
+    }
+
+    pub(super) fn allows_trailing(self) -> bool {
+        matches!(self, Self::Stmt)
+    }
+
+    fn ends_at_arrow(self) -> bool {
+        matches!(self, Self::Guard)
+    }
+
+    /// The context of a command nested in an argument, after `$` or `do`. It
+    /// ends where this one does, but it heads its own line of arguments.
+    fn nested(self) -> Self {
+        match self {
+            Self::VertLine => Self::Head,
+            other => other,
+        }
+    }
+}
+
 pub(super) enum UnquotedMode {
     Shell,
     Data,
@@ -86,11 +126,7 @@ impl Parser<'_> {
         Ok(res)
     }
 
-    fn parse_cmd_arg_expr(
-        &mut self,
-        scope: &mut Scope,
-        allow_trailing: bool,
-    ) -> Result<(Expr, bool)> {
+    fn parse_cmd_arg_expr(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<(Expr, bool)> {
         use self::{Keyword, Op};
         use TokenInfo::*;
 
@@ -100,14 +136,14 @@ impl Parser<'_> {
                 match self.peek()? {
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        let expr = self.parse_cmd_or_expr(scope, allow_trailing)?;
+                        let expr = self.parse_cmd_or_expr(scope, ctx.nested())?;
                         return Ok((
                             Self::dollar_group(expr, span),
                             // This consumed the rest of the statement
                             true,
                         ));
                     }
-                    Some(token!(Indent)) if allow_trailing => {
+                    Some(token!(Indent)) if ctx.allows_trailing() => {
                         self.advance();
                         let expr = self.parse_data(scope, vec![], true)?;
                         return Ok((
@@ -123,7 +159,7 @@ impl Parser<'_> {
                 Ok((Self::dollar_group(expr, span), false))
             }
             Some(token!(Keyword(Keyword::Do))) => {
-                Ok((self.parse_do_block(scope, allow_trailing)?, true))
+                Ok((self.parse_do_block(scope, ctx.nested())?, true))
             }
             Some(token!(Op(Op::Bar) | RBar | TBar)) => {
                 let kind = self.heredoc_kind()?;
@@ -170,8 +206,7 @@ impl Parser<'_> {
     fn parse_cmd_arg(
         &mut self,
         scope: &mut Scope,
-        allow_keys: bool,
-        allow_trailing: bool,
+        ctx: CmdContext,
         args: &mut Vec<Arg>,
     ) -> Result<bool> {
         use self::Key;
@@ -179,19 +214,20 @@ impl Parser<'_> {
 
         match self.peek()? {
             None | Some(token!(StmtSep | Dedent)) => Ok(true),
+            Some(token!(FatArrow)) if ctx.ends_at_arrow() => Ok(true),
             Some(token!(ArgSep)) => {
                 self.advance();
                 Ok(false)
             }
             Some(token!(Indent)) => {
-                if allow_trailing {
+                if ctx.allows_trailing() {
                     self.advance();
                     self.parse_cmd_vert_args(scope, args, true)?;
                 }
                 Ok(true)
             }
             Some(token!(Key, span)) => {
-                if !allow_keys {
+                if !ctx.allows_keys() {
                     let token = self.consume();
                     return Err(self.syntax_error(
                         scope,
@@ -201,13 +237,13 @@ impl Parser<'_> {
                 }
                 self.advance();
                 let (expr, consumed) = match self.peek()? {
-                    Some(token!(Indent)) if allow_trailing => {
+                    Some(token!(Indent)) if ctx.allows_trailing() => {
                         self.advance();
                         (self.parse_data(scope, vec![], false)?, true)
                     }
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        self.parse_cmd_arg_expr(scope, allow_trailing)?
+                        self.parse_cmd_arg_expr(scope, ctx)?
                     }
                     _ => {
                         args.push(Arg::Pos(Single {
@@ -245,7 +281,7 @@ impl Parser<'_> {
                 Ok(false)
             }
             _ => {
-                let (expr, consumed) = self.parse_cmd_arg_expr(scope, allow_trailing)?;
+                let (expr, consumed) = self.parse_cmd_arg_expr(scope, ctx)?;
                 args.push(Self::positional_arg(expr));
                 Ok(consumed)
             }
@@ -255,38 +291,29 @@ impl Parser<'_> {
     pub(super) fn parse_cmd_args(
         &mut self,
         scope: &mut Scope,
-        allow_keys: bool,
-        allow_trailing: bool,
+        ctx: CmdContext,
         args: &mut Vec<Arg>,
     ) -> Result<()> {
-        while !self.parse_cmd_arg(scope, allow_keys, allow_trailing, args)? {}
+        while !self.parse_cmd_arg(scope, ctx, args)? {}
 
         Ok(())
     }
 
-    pub(super) fn parse_cmd(
-        &mut self,
-        scope: &mut Scope,
-        allow_trailing: bool,
-    ) -> Result<PrimStmt> {
+    pub(super) fn parse_cmd(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<PrimStmt> {
         let arg0 = self.parse_cmd_arg0(scope)?;
         let mut args = vec![];
-        self.parse_cmd_args(scope, true, allow_trailing, &mut args)?;
+        self.parse_cmd_args(scope, ctx, &mut args)?;
         Ok(PrimStmt::Expr(Self::finish_call(arg0, args)))
     }
 
-    pub(super) fn parse_cmd_or_expr(
-        &mut self,
-        scope: &mut Scope,
-        allow_trailing: bool,
-    ) -> Result<Expr> {
+    pub(super) fn parse_cmd_or_expr(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<Expr> {
         use self::Op;
         match self.peek()? {
             Some(token!(TokenInfo::Keyword(Keyword::Do))) => {
-                return self.parse_do_block(scope, allow_trailing);
+                return self.parse_do_block(scope, ctx);
             }
             Some(token!(TokenInfo::Op(Op::Bar) | TokenInfo::RBar | TokenInfo::TBar))
-                if allow_trailing =>
+                if ctx.allows_trailing() =>
             {
                 let kind = self.heredoc_kind()?;
                 let open_span = self.advance();
@@ -294,7 +321,7 @@ impl Parser<'_> {
                 self.expect(scope, &[ExpectKind::Indent])?;
                 return self.parse_heredoc(scope, intro_span, strip, kind);
             }
-            Some(token!(TokenInfo::Dollar)) if allow_trailing => {
+            Some(token!(TokenInfo::Dollar)) if ctx.allows_trailing() => {
                 let dollar_span = self.advance();
                 self.expect(scope, &[ExpectKind::Indent])?;
                 let expr = self.parse_data(scope, vec![], true)?;
@@ -305,7 +332,7 @@ impl Parser<'_> {
 
         let arg0 = self.parse_cmd_arg0(scope)?;
         let mut args = vec![];
-        self.parse_cmd_args(scope, true, allow_trailing, &mut args)?;
+        self.parse_cmd_args(scope, ctx, &mut args)?;
 
         Ok(Self::finish_call(arg0, args))
     }

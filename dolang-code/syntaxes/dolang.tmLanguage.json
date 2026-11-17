@@ -600,9 +600,12 @@
         },
         "arm_header": { "patterns": [{ "include": "#pattern_guard" }, { "include": "#pattern" }] },
         "pattern_guard": {
-            "begin": "(?<![\\w.#])(do|if)\\b(?!:)",
+            "begin": "(?<![\\w.#])(?:(do|if)\\b(?!:)|(=>)(?=\\s|$))",
             "end": "(?=$)",
-            "beginCaptures": { "1": { "name": "keyword.control.dol" } },
+            "beginCaptures": {
+                "1": { "name": "keyword.control.dol" },
+                "2": { "name": "keyword.operator.dol" }
+            },
             "patterns": [{ "include": "#expr" }]
         }
     }

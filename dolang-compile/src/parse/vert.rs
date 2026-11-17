@@ -1,5 +1,6 @@
 use super::{
-    ExprMode, Parser, Result, Scope, cmd::UnquotedMode, stmt::BodyMode, stream::ExpectKind,
+    ExprMode, Parser, Result, Scope, cmd::CmdContext, cmd::UnquotedMode, stmt::BodyMode,
+    stream::ExpectKind,
 };
 use crate::{
     ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, Key, Pair, Single},
@@ -54,13 +55,13 @@ impl Parser<'_> {
                     }
                 }
             }
-            Some(token!(Keyword(Keyword::Do))) => self.parse_cmd_or_expr(scope, true),
+            Some(token!(Keyword(Keyword::Do))) => self.parse_cmd_or_expr(scope, CmdContext::Stmt),
             Some(token!(Dollar)) => {
                 let span = self.advance();
                 match self.peek()? {
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        let expr = self.parse_cmd_or_expr(scope, true)?;
+                        let expr = self.parse_cmd_or_expr(scope, CmdContext::Stmt)?;
                         Ok(Self::dollar_group(expr, span))
                     }
                     Some(token!(Indent)) => {
@@ -166,7 +167,7 @@ impl Parser<'_> {
         } else {
             let expr = self.parse_implicit_concat(scope, Some(key), UnquotedMode::Shell)?;
             args.push(Self::positional_arg(expr));
-            self.parse_cmd_args(scope, false, false, args)?;
+            self.parse_cmd_args(scope, CmdContext::VertLine, args)?;
         }
         Ok(())
     }
@@ -194,7 +195,7 @@ impl Parser<'_> {
                         )?,
                         delim_span: None,
                     }));
-                    self.parse_cmd_args(scope, false, false, args)?;
+                    self.parse_cmd_args(scope, CmdContext::VertLine, args)?;
                 }
                 Ok(())
             }
@@ -213,7 +214,7 @@ impl Parser<'_> {
                     Some(token!(ArgSep)) => {
                         self.advance();
                         let expr = if let Some(token!(Keyword(Keyword::Do))) = self.peek()? {
-                            self.parse_do_block(scope, true)?
+                            self.parse_do_block(scope, CmdContext::Stmt)?
                         } else {
                             self.parse_cmd_vert_line_expr(scope, false)?
                         };
@@ -242,7 +243,7 @@ impl Parser<'_> {
                             )?,
                             delim_span: None,
                         }));
-                        self.parse_cmd_args(scope, false, false, args)?;
+                        self.parse_cmd_args(scope, CmdContext::VertLine, args)?;
                     }
                 }
                 Ok(())
@@ -277,7 +278,7 @@ impl Parser<'_> {
                 match self.peek()? {
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        let expr = self.parse_cmd_or_expr(scope, true)?;
+                        let expr = self.parse_cmd_or_expr(scope, CmdContext::Stmt)?;
                         args.push(Self::positional_arg(Self::dollar_group(expr, span)));
                         return Ok(());
                     }
@@ -294,13 +295,13 @@ impl Parser<'_> {
                 self.parse_cmd_vert_dynamic_or_pos(scope, args, key)
             }
             Some(token!(Keyword(Keyword::Do))) => {
-                let expr = self.parse_do_block(scope, true)?;
+                let expr = self.parse_do_block(scope, CmdContext::Stmt)?;
                 args.push(Self::positional_arg(expr));
                 Ok(())
             }
             other => {
                 if bin_pack {
-                    self.parse_cmd_args(scope, false, false, args)
+                    self.parse_cmd_args(scope, CmdContext::VertLine, args)
                 } else {
                     Err(self.syntax_error(
                         scope,

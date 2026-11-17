@@ -130,21 +130,21 @@ def ansi_style value @ (Str | nil) -> (term.Style | nil)
           style bg: $color
     else
       style = match code
-        1 do style bold: true
-        2 do style dim: true
-        3 do style italic: true
-        4 do style underline: true
-        5 | 6 do style blink: true
-        7 do style reverse: true
-        8 do style hidden: true
-        9 do style strikethrough: true
-        22 do style bold: :INHERIT: dim: :INHERIT:
-        23 do style italic: :INHERIT:
-        24 do style underline: :INHERIT:
-        25 do style blink: :INHERIT:
-        27 do style reverse: :INHERIT:
-        28 do style hidden: :INHERIT:
-        29 do style strikethrough: :INHERIT:
+        1 => style bold: true
+        2 => style dim: true
+        3 => style italic: true
+        4 => style underline: true
+        5 | 6 => style blink: true
+        7 => style reverse: true
+        8 => style hidden: true
+        9 => style strikethrough: true
+        22 => style bold: :INHERIT: dim: :INHERIT:
+        23 => style italic: :INHERIT:
+        24 => style underline: :INHERIT:
+        25 => style blink: :INHERIT:
+        27 => style reverse: :INHERIT:
+        28 => style hidden: :INHERIT:
+        29 => style strikethrough: :INHERIT:
       else
         return nil
   style

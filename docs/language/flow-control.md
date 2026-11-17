@@ -126,8 +126,8 @@ after an arm's pattern adds a guard, and `else` runs when no arm matches:
 let label = match response
   Int(code) if (code >= 400)
     "error $code"
-  Int(_) do "ok"
-  Dict(:status :body) do "$status: $body"
+  Int(_) => "ok"
+  Dict(:status :body) => "$status: $body"
 else
   "unknown"
 ```

@@ -1,5 +1,6 @@
 use super::{
     ExprMode, Parser, Result, Scope,
+    cmd::CmdContext,
     diag::{SpecialMethodOutsideClass, SyntaxDiag},
     pattern::PatMode,
     stream::ExpectKind,
@@ -104,15 +105,11 @@ impl Parser<'_> {
         Ok((params, ret))
     }
 
-    pub(super) fn parse_do_block(
-        &mut self,
-        scope: &mut Scope,
-        allow_trailing: bool,
-    ) -> Result<Expr> {
+    pub(super) fn parse_do_block(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<Expr> {
         let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
         let (params, ret) = self.parse_do_params(scope)?;
         match self.peek()? {
-            Some(token!(TokenInfo::Indent)) if allow_trailing => {
+            Some(token!(TokenInfo::Indent)) if ctx.allows_trailing() => {
                 self.advance();
                 let function = Function {
                     params: params.items,
@@ -137,10 +134,10 @@ impl Parser<'_> {
                     bars: params.bars,
                     stub_span: None,
                     body: Block {
-                        stmts: vec![if allow_trailing {
+                        stmts: vec![if ctx.allows_trailing() {
                             self.parse_stmt(scope)?
                         } else {
-                            Stmt::Prim(self.parse_cmd(scope, allow_trailing)?)
+                            Stmt::Prim(self.parse_cmd(scope, ctx)?)
                         }],
                         vars: Default::default(),
                         repl: None,

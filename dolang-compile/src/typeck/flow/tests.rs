@@ -398,7 +398,7 @@ if let ?key: (A(n = 1) | B(n)) = ()
 else
   f()
 let result = match (())
-  ?key: (p = false q = (p || 1)) do (p, q)
+  ?key: (p = false q = (p || 1)) => (p, q)
 for ?key: (p = 1) = [(), ()]
   f key: (p,)
 "#,
@@ -570,8 +570,8 @@ def f r @ Array[Int | Str]
   for e = r
     let k = do e
     match e
-      Int(n) do total = (total + n)
-      s do k()
+      Int(n) => total = (total + n)
+      s => k()
   total
 ",
         "f",

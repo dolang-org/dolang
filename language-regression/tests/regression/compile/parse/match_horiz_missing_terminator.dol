@@ -1,6 +1,6 @@
 match [1]
   x
-# error: expected `do` or `if` after an arm's pattern
+# error: expected `=>`, `if` or an indented block after an arm's pattern
 #   --> match_horiz_missing_terminator.dol:LL:LL
 #    |
 # LL |   x

@@ -27,6 +27,21 @@ dbg name=name
 dbg 1+1
 #   ^~~: literal
 
+# `=>` is a literal in arguments, as other punctuation is; only a `match` arm
+# gives it a meaning.
+#~~: variable, context=call, node=prelude_item
+dbg a=>b
+#   ^~~~: literal
+
+#~~: variable, context=call, node=prelude_item
+dbg =>
+#   ^~: literal
+
+match 1
+  _ => 2
+# ^: variable
+#   ^~: operator
+
 # A parenthesized argument switches to expression level, where the same
 # characters are operators and numbers.
 #~~: variable, context=call, node=prelude_item

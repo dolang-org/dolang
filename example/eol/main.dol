@@ -99,10 +99,10 @@ def check client format pins warn
     else
       let state = status.classify $release :today :warn
       match state
-        :EOL: do
+        :EOL:
           failed = true
           echo "$name $version: end-of-life since $(release.eol || "an unknown date")"
-        :ENDING: do
+        :ENDING:
           let days = status.days_left $release :today
           echo "$name $version: end-of-life in $days days, on $(release.eol)"
       str(state).lower()

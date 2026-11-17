@@ -63,7 +63,7 @@ pub def matched c @ Bool
       #    |
       # LL |     match fail "no"
       #    |           ^^^^^^^^^
-      _ do
+      _
         y = "s"
   y
 # ^: flow std.Int

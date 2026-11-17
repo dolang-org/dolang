@@ -178,8 +178,8 @@ pub class Client
 
 def date_of value @ json.DecodeValue -> (Date | nil)
   match value
-    nil do nil
-    Str(text) do Date.parse_rfc(text)
+    nil => nil
+    Str(text) => Date.parse_rfc(text)
   else
     throw ResponseError "expected a date or null"
 

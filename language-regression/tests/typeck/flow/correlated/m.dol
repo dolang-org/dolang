@@ -5,7 +5,7 @@
 pub def keyed d @ Dict[{a: Int, b: Str}]
   for k v = d
     match k
-      :a: do
+      :a:
         let _ = v
         #       ^: flow std.Int
     else
@@ -36,8 +36,8 @@ pub def constant p @ ((:a:, Int) | (:b:, Str))
 pub def gradual p @ ((Int | Str, :x:) | (Int | Bool, :y:))
   let v w = p
   match v
-    Int(_) do nil
-    Bool(_) do nil
+    Int(_) => nil
+    Bool(_) => nil
   else
     let _ = w
     #       ^: flow :x:
@@ -97,11 +97,11 @@ pub def defaulted p @ ((:a:, Int) | (:b:,))
 # it without the alternatives an earlier arm's failed item tests dropped
 pub def scrutinee e @ ((Int, Str) | (:run:, Bool) | (:add:, Int))
   match e
-    (Int(_) _) do nil
-    (:run: _) do
+    (Int(_) _) => nil
+    (:run: _)
       let _ = e
       #       ^: flow (:run:, std.Bool)
-    (:add: n) do
+    (:add: n)
       let _ = n
       #       ^: flow std.Int
 
@@ -109,17 +109,17 @@ pub def scrutinee e @ ((Int, Str) | (:run:, Bool) | (:add:, Int))
 pub def key **opts @ {*add: Str, *run: (() -> nil), *Bool}
   for k v = opts
     match k
-      Int(_) do nil
-      :add: do
+      Int(_) => nil
+      :add:
         let _ = v
         #       ^: flow std.Str
-      :run: do v()
+      :run: => v()
 
 # An unpack of an item correlates it with its own items instead
 pub def recent p @ (((:x:, Int), Str) | ((:y:, Str), Int))
   let k v = p
   match k
-    (:x: n) do
+    (:x: n)
       let _ = n
       #       ^: flow std.Int
       let _ = v
@@ -131,8 +131,8 @@ pub @let Steps = {*run: (() -> nil), *Str}
 pub def aliased d @ Record[...Steps]
   for entry = d
     match entry
-      (Int(_) _) do nil
-      (:run: v) do
+      (Int(_) _) => nil
+      (:run: v)
         let _ = v
         #       ^: flow (<Value, >Value) -> nil
 
@@ -144,9 +144,9 @@ def noop()
 pub def widened r @ Pack[...{a: Int, b: Int, c: Int, d: Int}]
   for e = r
     match e
-      (:a: _) do nil
-      (:b: _) do nil
-      (:c: _) do
+      (:a: _) => nil
+      (:b: _) => nil
+      (:c: _)
         noop()
         let _ = e
         #       ^: flow (:c:, std.Int)

@@ -1277,8 +1277,8 @@ do -> nil
   else
     from
   let to = match parse_location(destination)
-    Url(_) do throw std.ValueError "unpack destination must be a path"
-    path do path
+    Url(_) => throw std.ValueError "unpack destination must be a path"
+    path => path
   if to.exists()
     throw std.ValueError "unpack destination already exists: $to"
 

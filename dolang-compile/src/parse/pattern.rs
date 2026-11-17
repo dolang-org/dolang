@@ -83,7 +83,8 @@ pub(super) enum PatMode {
     HorizBind,
     // Vertical binding form, like `bind`
     VertBind,
-    /// The horizontal pattern of a `match` arm, which ends at `do` or `if`
+    /// The horizontal pattern of a `match` arm, which ends at `if`, `=>` or an
+    /// indented block
     Arm,
     /// The items of a horizontal sub-pattern, within `()`
     Nested,
@@ -373,7 +374,7 @@ impl Parser<'_> {
     }
 
     /// Parse the pattern of a `match` arm: lines of `|` alternatives, or a
-    /// horizontal pattern ending at the arm's `do` or `if`.
+    /// horizontal pattern ending at the arm's `if`, `=>` or indented block.
     pub(super) fn parse_arm_pattern(&mut self, scope: &mut Scope) -> Result<Pattern> {
         if matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar)))) {
             return self.parse_vert_alts(scope);
@@ -679,11 +680,12 @@ impl Parser<'_> {
                     };
                     return Err(self.syntax_error(scope, token, msg));
                 }
-                // An arm's pattern ends where its guard or body begins, which
-                // must be on the same line
+                // An arm's pattern ends where its guard or same-line body begins.
+                // An indented block after it is handled with the other modes below.
                 Some(
                     token!(
                         TokenInfo::Keyword(Keyword::Do | Keyword::If)
+                            | TokenInfo::FatArrow
                             | TokenInfo::StmtSep
                             | TokenInfo::Dedent
                     ),

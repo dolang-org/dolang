@@ -116,14 +116,14 @@ for line = lines
     variant_items = nil
     type_items = nil
     let kind path = match async_name.match $name
-      Captures(_ :fn = nil :closure = nil :block = nil ...) do
+      Captures(_ :fn = nil :closure = nil :block = nil ...)
         if fn
           ("fn", str(fn))
         else if closure
           ("closure", str(closure))
         else
           ("block", str(block))
-      nil do ("other", nil)
+      nil => ("other", nil)
     if (path != nil || all_types)
       let items @ Array[Entry] = []
       types.push $

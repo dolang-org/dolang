@@ -90,9 +90,11 @@ syn region dolPatternScrutinee start="\%(\<bind\>\)\@<=[ \t]\+" end="$" contains
 
 " A match arm owns its indented code body, keeping type tests out of calls.
 syn region dolMatchBlock keepend start="\%(^[ \t]*\|=[ \t]*\)\@<=match\>\%(:\)\@!.*\ze\n\%([ \t]*\n\)*\z([ \t]\+\)\S" end="^\%(\z1\)\@![ \t]*\ze\S" contains=dolConditional,dolMatchArm
-syn region dolMatchArm keepend start="^\z([ \t]\+\)\ze\S" end="^\ze\z1\S\|^\ze\%(\z1\)\@![ \t]*\S" contains=@dolPatterns,dolArmBody,dolArmCode contained
-syn region dolArmCode start="$" end="\%$" contains=@dolCode contained
+syn region dolMatchArm keepend start="^\z([ \t]\+\)\ze\S" end="^\ze\z1\S\|^\ze\%(\z1\)\@![ \t]*\S" contains=dolArmHeader contained
+syn region dolArmHeader start="\S" end="$" contains=@dolPatterns,dolArmBody,dolArmArrow contained nextgroup=dolArmCode skipnl skipwhite
+syn region dolArmCode start="\S\@=" end="\%$" contains=@dolCode contained
 syn region dolArmBody matchgroup=dolKeyword start="\<\%(do\|if\)\>\%(:\)\@!" end="\%$" contains=@dolCode contained
+syn region dolArmArrow matchgroup=dolOperator start="\%(^\|\s\)\zs=>\ze\%(\s\|$\)" end="\%$" contains=@dolCode contained
 syn cluster dolCode contains=dolKeyword,dolConditional,dolRepeat,dolInclude,dolConstant,dolOperator,dolDelimiter,dolColon,dolCompactExpr,dolFullExpr,dolDecorator,dolComment,@dolStrings,dolNumber,dolKey,dolDittoKey,dolSymbol,dolListItem,dolAnnotation,dolReturnType,dolDeclaration,dolTypeAlias,dolTypeOnly,dolImport,dolImportType,dolBinding,dolLambda,dolVerticalPattern,dolMatchBlock
 
 hi def link dolKeyword Keyword
