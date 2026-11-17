@@ -476,29 +476,6 @@ impl<'v> Vm<'v> {
         Ok(())
     }
 
-    /// Runs a builtin whose implementation awaits.
-    ///
-    /// `step` pins this out of line in the strand, so these builtins' futures
-    /// don't size every interpreter frame's.
-    #[inline(never)]
-    async unsafe fn builtin_async<'a, 's>(
-        &self,
-        strand: &'a mut Strand<'v, 's>,
-        index: usize,
-        args: Args<'v, 'a>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        match index {
-            builtin::ARRAY => self.array(strand, args, out).await,
-            builtin::DICT => self.dict(strand, args, out).await,
-            builtin::TUPLE => self.tuple(strand, args, out).await,
-            builtin::CLASS_CREATE => class::create(strand, args, out).await,
-            builtin::GUARD => self.guard(strand, args, out).await,
-            // SAFETY: `step` only passes the indices above
-            _ => unsafe { unreachable_unchecked() },
-        }
-    }
-
     #[inline(never)]
     async fn guard<'a, 's>(
         &self,
@@ -928,21 +905,40 @@ impl<'v> Vm<'v> {
                                     })
                                     .await
                             }
-                            builtin::ARRAY
-                            | builtin::DICT
-                            | builtin::TUPLE
-                            | builtin::CLASS_CREATE
-                            | builtin::GUARD => {
-                                // Pinned out of line in the strand, as for `IMPORT`
+                            // Each pinned out of line in the strand, as for `IMPORT`, and
+                            // separately, so each allocation is sized to its own future
+                            builtin::ARRAY => {
                                 strand
                                     .pin_future_call(async |strand| {
-                                        self.builtin_async(
-                                            strand,
-                                            index,
-                                            args,
-                                            Slot::reborrow(&mut res),
-                                        )
-                                        .await
+                                        self.array(strand, args, Slot::reborrow(&mut res)).await
+                                    })
+                                    .await
+                            }
+                            builtin::DICT => {
+                                strand
+                                    .pin_future_call(async |strand| {
+                                        self.dict(strand, args, Slot::reborrow(&mut res)).await
+                                    })
+                                    .await
+                            }
+                            builtin::TUPLE => {
+                                strand
+                                    .pin_future_call(async |strand| {
+                                        self.tuple(strand, args, Slot::reborrow(&mut res)).await
+                                    })
+                                    .await
+                            }
+                            builtin::CLASS_CREATE => {
+                                strand
+                                    .pin_future_call(async |strand| {
+                                        class::create(strand, args, Slot::reborrow(&mut res)).await
+                                    })
+                                    .await
+                            }
+                            builtin::GUARD => {
+                                strand
+                                    .pin_future_call(async |strand| {
+                                        self.guard(strand, args, Slot::reborrow(&mut res)).await
                                     })
                                     .await
                             }
