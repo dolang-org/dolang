@@ -1954,33 +1954,8 @@ impl<'a> Elaborater<'a> {
                 self.visit_expr(scope, expr, is_arg)
             }
             ArrayElem::If(node) => self.visit_elem_if(scope, node, is_arg, Self::visit_array_elem),
-            ArrayElem::For(For {
-                bind,
-                expr,
-                body,
-                iter,
-                ..
-            }) => {
-                if let Some(expr) = expr {
-                    self.visit_expr(scope, expr, false)?;
-                }
-                // Generate synthetic, unnameable variable to hold iterator
-                let index = scope.insert_synthetic(self.epoch);
-                *iter = Some(Res {
-                    index,
-                    depth: 0,
-                    node: None,
-                });
-                {
-                    let mut scope = scope.nested_element();
-                    // Inject loop binds into inner scope
-                    self.bind_pattern(&mut scope, bind)?;
-                    for arg in body.elems.iter_mut() {
-                        self.visit_array_elem(&mut scope, arg, is_arg)?;
-                    }
-                    scope.finish(self, &mut body.vars);
-                }
-                Ok(())
+            ArrayElem::For(node) => {
+                self.visit_elem_for(scope, node, is_arg, Self::visit_array_elem)
             }
         }
     }
@@ -2000,34 +1975,7 @@ impl<'a> Elaborater<'a> {
             }
             DictElem::Expand(Expand { expr, .. }) => self.visit_expr(scope, expr, is_arg),
             DictElem::If(node) => self.visit_elem_if(scope, node, is_arg, Self::visit_dict_elem),
-            DictElem::For(For {
-                bind,
-                expr,
-                body,
-                iter,
-                ..
-            }) => {
-                if let Some(expr) = expr {
-                    self.visit_expr(scope, expr, false)?;
-                }
-                // Generate synthetic, unnameable variable to hold iterator
-                let index = scope.insert_synthetic(self.epoch);
-                *iter = Some(Res {
-                    index,
-                    depth: 0,
-                    node: None,
-                });
-                {
-                    let mut scope = scope.nested_element();
-                    // Inject loop binds into inner scope
-                    self.bind_pattern(&mut scope, bind)?;
-                    for elem in body.elems.iter_mut() {
-                        self.visit_dict_elem(&mut scope, elem, is_arg)?;
-                    }
-                    scope.finish(self, &mut body.vars);
-                }
-                Ok(())
-            }
+            DictElem::For(node) => self.visit_elem_for(scope, node, is_arg, Self::visit_dict_elem),
         }
     }
 
@@ -2440,34 +2388,9 @@ impl<'a> Elaborater<'a> {
             Arg::If(node) => self.visit_elem_if(scope, node, false, |this, scope, elem, _| {
                 this.visit_cmd_arg(scope, elem)
             }),
-            Arg::For(For {
-                bind,
-                expr,
-                body,
-                iter,
-                ..
-            }) => {
-                if let Some(expr) = expr {
-                    self.visit_expr(scope, expr, false)?;
-                }
-                // Generate synthetic, unnameable variable to hold iterator
-                let index = scope.insert_synthetic(self.epoch);
-                *iter = Some(Res {
-                    index,
-                    depth: 0,
-                    node: None,
-                });
-                {
-                    let mut scope = scope.nested_element();
-                    // Inject loop binds into inner scope
-                    self.bind_pattern(&mut scope, bind)?;
-                    for arg in body.elems.iter_mut() {
-                        self.visit_cmd_arg(&mut scope, arg)?;
-                    }
-                    scope.finish(self, &mut body.vars);
-                }
-                Ok(())
-            }
+            Arg::For(node) => self.visit_elem_for(scope, node, false, |this, scope, elem, _| {
+                this.visit_cmd_arg(scope, elem)
+            }),
         }
     }
 
@@ -2806,32 +2729,83 @@ impl<'a> Elaborater<'a> {
         is_arg: bool,
         visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
     ) -> Result<()> {
-        self.visit_expr(scope, &mut node.tbranch.expr, false)?;
+        self.visit_if_with(scope, node, |this, scope, bind, body| {
+            this.visit_elem_branch_body(scope, bind, body, is_arg, visit_elem)
+        })
+    }
 
-        self.visit_elem_branch_body(
+    /// Elaborate an `if` of either form: each condition, then each branch body
+    /// with its conditional pattern, if any, through `visit_body`
+    fn visit_if_with<B>(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut If<B>,
+        mut visit_body: impl FnMut(
+            &mut Self,
+            &mut Scope<'_>,
+            Option<&mut CondPattern>,
+            &mut B,
+        ) -> Result<()>,
+    ) -> Result<()> {
+        self.visit_expr(scope, &mut node.tbranch.expr, false)?;
+        visit_body(
+            self,
             scope,
             node.tbranch.bind.as_mut(),
             &mut node.tbranch.body,
-            is_arg,
-            visit_elem,
         )?;
-
         for (elif_branch, _) in &mut node.elif_branches {
             self.visit_expr(scope, &mut elif_branch.expr, false)?;
-
-            self.visit_elem_branch_body(
+            visit_body(
+                self,
                 scope,
                 elif_branch.bind.as_mut(),
                 &mut elif_branch.body,
-                is_arg,
-                visit_elem,
             )?;
         }
-
         if let Some((else_body, _)) = &mut node.else_branch {
-            self.visit_elem_branch_body(scope, None, else_body, is_arg, visit_elem)?;
+            visit_body(self, scope, None, else_body)?;
         }
+        Ok(())
+    }
 
+    /// Elaborate a `for` in vertical-element layout, whose body is a list of
+    /// arguments, array elements, or dict elements rather than a block
+    fn visit_elem_for<T>(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut For<ExprBody<T>>,
+        is_arg: bool,
+        visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
+    ) -> Result<()> {
+        self.visit_for_head(scope, &mut node.expr, &mut node.iter)?;
+        let mut scope = scope.nested_element();
+        // Inject loop binds into inner scope
+        self.bind_pattern(&mut scope, &mut node.bind)?;
+        for elem in node.body.elems.iter_mut() {
+            visit_elem(self, &mut scope, elem, is_arg)?;
+        }
+        scope.finish(self, &mut node.body.vars);
+        Ok(())
+    }
+
+    /// Elaborate a `for`'s iteratee, and generate the synthetic, unnameable
+    /// variable that holds its iterator
+    fn visit_for_head(
+        &mut self,
+        scope: &mut Scope<'_>,
+        expr: &mut Option<Expr>,
+        iter: &mut Option<Res>,
+    ) -> Result<()> {
+        if let Some(expr) = expr {
+            self.visit_expr(scope, expr, false)?;
+        }
+        let index = scope.insert_synthetic(self.epoch);
+        *iter = Some(Res {
+            index,
+            depth: 0,
+            node: None,
+        });
         Ok(())
     }
 
@@ -2861,32 +2835,9 @@ impl<'a> Elaborater<'a> {
     }
 
     fn visit_if(&mut self, scope: &mut Scope<'_>, node: &mut If<Block>) -> Result<()> {
-        // Visit first if branch
-        self.visit_expr(scope, &mut node.tbranch.expr, false)?;
-        self.visit_branch_body(
-            scope,
-            node.tbranch.bind.as_mut(),
-            &mut node.tbranch.body,
-            false,
-        )?;
-
-        // Visit elif branches
-        for (elif_branch, _) in &mut node.elif_branches {
-            self.visit_expr(scope, &mut elif_branch.expr, false)?;
-            self.visit_branch_body(
-                scope,
-                elif_branch.bind.as_mut(),
-                &mut elif_branch.body,
-                false,
-            )?;
-        }
-
-        // Visit final else branch if present
-        if let Some((else_block, _)) = &mut node.else_branch {
-            self.visit_block(scope, else_block)?;
-        }
-
-        Ok(())
+        self.visit_if_with(scope, node, |this, scope, bind, body| {
+            this.visit_branch_body(scope, bind, body, false)
+        })
     }
 
     /// Elaborate a `match`, whose scrutinee is held in a synthetic variable so
@@ -3033,16 +2984,7 @@ impl<'a> Elaborater<'a> {
     }
 
     fn visit_for(&mut self, scope: &mut Scope<'_>, node: &mut For<Block>) -> Result<()> {
-        if let Some(expr) = &mut node.expr {
-            self.visit_expr(scope, expr, false)?;
-        }
-        // Generate synthetic, unnameable variable to hold iterator
-        let index = scope.insert_synthetic(self.epoch);
-        node.iter = Some(Res {
-            index,
-            depth: 0,
-            node: None,
-        });
+        self.visit_for_head(scope, &mut node.expr, &mut node.iter)?;
         {
             let mut scope = scope.nested_loop();
             // Inject loop binds into inner scope

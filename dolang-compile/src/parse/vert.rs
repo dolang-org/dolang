@@ -1,9 +1,24 @@
-use super::{ExprMode, Parser, Result, Scope, cmd::UnquotedMode, stream::ExpectKind};
+use super::{
+    ExprMode, Parser, Result, Scope, cmd::UnquotedMode, stmt::BodyMode, stream::ExpectKind,
+};
 use crate::{
-    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, If, IfBranch, Key, Pair, Single},
+    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, Key, Pair, Single},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
+
+/// Bodies are runs of vertical arguments, bin-packed or not
+struct VertBody {
+    bin_pack: bool,
+}
+
+impl BodyMode for VertBody {
+    type Body = ExprBody<Arg>;
+
+    fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<ExprBody<Arg>> {
+        parser.parse_cmd_vert_body(scope, self.bin_pack)
+    }
+}
 
 impl Parser<'_> {
     fn parse_cmd_vert_line_expr(&mut self, scope: &mut Scope, allow_object: bool) -> Result<Expr> {
@@ -127,64 +142,6 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_cmd_vert_if(
-        &mut self,
-        scope: &mut Scope,
-        bin_pack: bool,
-    ) -> Result<If<ExprBody<Arg>>> {
-        use self::If;
-        use self::IfBranch;
-        use self::Keyword;
-        use TokenInfo::*;
-
-        let if_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::If)])?;
-        self.expect(scope, &[ExpectKind::ArgSep])?;
-        let (cond, bind) = self.parse_cond(scope)?;
-        let tbranch = self.parse_cmd_vert_body(scope, bin_pack)?;
-
-        let mut elif_branches = Vec::new();
-        let mut else_branch = None;
-
-        while let Some(token!(Keyword(Keyword::Else))) = self.peek()? {
-            let else_span = self.advance();
-
-            if let Some(token!(ArgSep)) = self.peek()? {
-                // This is "else if"
-                self.advance();
-                let elif_if_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::If)])?;
-                self.expect(scope, &[ExpectKind::ArgSep])?;
-                let (elif_cond, elif_bind) = self.parse_cond(scope)?;
-                let elif_body = self.parse_cmd_vert_body(scope, bin_pack)?;
-
-                elif_branches.push((
-                    IfBranch {
-                        span: elif_if_span,
-                        expr: elif_cond,
-                        bind: elif_bind,
-                        body: elif_body,
-                    },
-                    else_span,
-                ));
-            } else {
-                // This is final "else"
-                self.expect(scope, &[ExpectKind::Indent])?;
-                else_branch = Some((self.parse_cmd_vert_body(scope, bin_pack)?, else_span));
-                break;
-            }
-        }
-
-        Ok(If {
-            tbranch: IfBranch {
-                span: if_span,
-                expr: cond,
-                bind,
-                body: tbranch,
-            },
-            elif_branches,
-            else_branch,
-        })
-    }
-
     fn parse_cmd_vert_dynamic_or_pos(
         &mut self,
         scope: &mut Scope,
@@ -302,36 +259,13 @@ impl Parser<'_> {
                 Ok(())
             }
             Some(token!(Keyword(Keyword::If))) => {
-                args.push(Arg::If(self.parse_cmd_vert_if(scope, bin_pack)?));
+                args.push(Arg::If(self.parse_if_with(scope, &VertBody { bin_pack })?));
                 Ok(())
             }
             Some(token!(Keyword(Keyword::For))) => {
-                let for_span = self.advance();
-                self.expect(scope, &[ExpectKind::ArgSep])?;
-                // Parse bind pattern
-                let bind = self.parse_pattern(scope, false)?;
-                // Parse optional "= expr"
-                let (expr, equal_span) = if let Some(token!(Equal)) = self.peek()? {
-                    let equal_span = self.advance();
-                    self.expect(scope, &[ExpectKind::ArgSep])?;
-                    (
-                        Some(self.parse_cmd_or_expr(scope, false)?),
-                        Some(equal_span),
-                    )
-                } else {
-                    (None, None)
-                };
-                // Expect indentation for body
-                self.expect(scope, &[ExpectKind::Indent])?;
-                let body = self.parse_cmd_vert_body(scope, bin_pack)?;
-                args.push(Arg::For(For {
-                    bind,
-                    expr,
-                    body,
-                    iter: None, // Will be filled by resolver
-                    for_span,
-                    equal_span,
-                }));
+                args.push(Arg::For(
+                    self.parse_for_with(scope, &VertBody { bin_pack })?,
+                ));
                 Ok(())
             }
             Some(token!(expr_start!())) => {
