@@ -1,0 +1,183 @@
+#!/usr/bin/env dolang
+# dolang: strict
+# Summarizes the async future layouts that `pts.dol` recorded.
+#
+# Reads every `*.json` report in a `PTS_OUT` directory and prints the largest
+# futures. For the largest few, it also prints the suspend point that sets the
+# future's size and the biggest things held across it.
+
+import args
+import fs
+import json
+
+# An upvar, local, or field held in a variant.
+#[final]
+class Slot
+  pub field kind @ Str
+  pub field name @ (Str | nil)
+  pub field size @ Int
+  pub field type @ (Str | nil)
+
+  def (init) self d@json.DecodeValue
+    bind d
+      Dict $
+        "kind": Str(kind)
+        "name": (Str(name) | std.Nil(name))
+        "size": Int(size)
+        "type": (Str(type) | std.Nil(type))
+        ...
+    else throw std.DataError "malformed slot: $(dbg d)"
+    self.kind = kind
+    self.name = name
+    self.size = size
+    self.type = type
+
+# A variant of a future's state: unresumed, a suspend point, returned, or
+# panicked.
+#[final]
+class Variant
+  pub field name @ Str
+  pub field size @ Int
+  pub field slots @ Array[Slot]
+
+  def (init) self name@Str size@Int slots@Array[json.DecodeValue]
+    self.name = name
+    self.size = size
+    self.slots = $
+      for s = slots
+        - (Slot s)
+
+# An async future type recorded from one crate.
+#[final]
+class Future
+  pub field crate @ Str
+  pub field name @ Str
+  pub field kind @ Str
+  pub field path @ (Str | nil)
+  pub field size @ Int
+  pub field align @ Int
+  pub field variants @ Array[Variant]
+
+  def (init) self crate@Str d@json.DecodeValue
+    bind d
+      Dict $
+        "name": Str(name)
+        "kind": Str(kind)
+        "path": (Str(path) | std.Nil(path))
+        "size": Int(size)
+        "align": Int(align)
+        "items": Array(items)
+        ...
+    else throw std.DataError "malformed type: $(dbg d)"
+    self.crate = crate
+    self.name = name
+    self.kind = kind
+    self.path = path
+    self.size = size
+    self.align = align
+    # Variants are the items that have items of their own; the rest (the
+    # discriminant and padding) don't contribute to a suspend point.
+    let variants @ Array[Variant] = []
+    for item = items
+      match item
+        Dict("kind": "variant" "name": Str(vname) "size": Int(vsize) "items": Array(slots) ...) do
+          variants.push (Variant vname vsize slots)
+        Dict("kind": Str(_) ...) do nil
+        other do throw std.DataError "malformed item: $(dbg other)"
+    self.variants = variants
+
+  # A readable name: the function path, or the source location of a block.
+  pub def label self -> Str
+    let path = self.path
+    if (path == nil)
+      self.name
+    else if (self.kind == "fn")
+      "$(self.crate)::$path"
+    else
+      # Block spans read `file:line:col: line:col`; keep the start.
+      let start _end = path.split(": ")
+      else return "$(self.crate) $(self.kind)@$path"
+      "$(self.crate) $(self.kind)@$start"
+
+  # The largest suspend point, or `nil` if the future never suspends.
+  pub def largest_suspend self -> (Variant | nil)
+    let best @ (Variant | nil) = nil
+    for v = self.variants
+      if (v.name.starts_with("Suspend") && (best == nil || v.size > best.size))
+        best = v
+    best
+
+# Loads every report in `dir`.
+#
+# A crate's targets (lib, bin, tests) report many of the same types, so
+# duplicates are dropped. Instantiations of a generic `async` block share a
+# name, so size and alignment are part of the key.
+def load dir@Str -> Array[Future]
+  let seen @ Dict[Str, Future] = {}
+  for path = fs.glob("$dir/*.json")
+    bind json.decode(fs.read_str(path))
+      Dict $
+        "crate": Str(crate)
+        "types": Array(types)
+        ...
+    else throw std.DataError "$path: not a pts.dol report"
+    for t = types
+      let f = Future $crate $t
+      let key = "$crate $(f.size) $(f.align) $(f.name)"
+      if !seen.contains(key)
+        seen[key] = f
+  let futures = [...seen.values()]
+  futures.sort key: (do |f| f.size) reverse: true
+  futures
+
+def report dir@Str top@Int detail@Int
+  let futures = load $dir
+  if !futures
+    echo "no futures recorded in $dir"
+    return
+  let crates = $
+    for f = futures
+      - $f.crate
+  let crate_count = std.Set(crates).len
+  let noun = (crate_count == 1 && "crate" || "crates")
+  echo "$(futures.len) async futures in $crate_count $noun"
+  echo ""
+  echo "Largest futures:"
+  echo "${"bytes":>8}  ${"align":>5}  future"
+  for f = futures.take(top)
+    echo "${f.size:>8}  ${f.align:>5}  $(f.label())"
+
+  for f = futures.take(detail)
+    echo ""
+    echo "$(f.label()): $(f.size) bytes"
+    let v = f.largest_suspend()
+    else
+      echo "  (never suspends)"
+      continue
+    echo "  largest suspend point: $(v.name), $(v.size) bytes"
+    let slots = v.slots.copy()
+    slots.sort key: (do |s| s.size) reverse: true
+    for s = slots.take(5)
+      let what = if (s.name == ".__awaitee")
+        "awaiting $(s.type || "?")"
+      else if s.name
+        "$(s.kind) $(s.name)"
+      else
+        s.kind
+      echo "  ${s.size:>8}  $what"
+
+args.with
+  help: Summarize async future sizes recorded by pts.dol
+  - opt: top
+    short: n
+    parse: $int
+    default: 20
+    help: Number of futures to list
+  - opt: detail
+    short: d
+    parse: $int
+    default: 5
+    help: Number of futures to break down
+  - arg: dir
+    help: Directory of pts.dol JSON reports (PTS_OUT)
+  do |a| report $a.dir $a.top $a.detail

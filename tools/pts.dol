@@ -1,0 +1,174 @@
+#!/usr/bin/env dolang
+# dolang: strict
+# A `RUSTC_WRAPPER` that records async future layouts.
+#
+# Cargo runs it as `pts.dol RUSTC ARGS...`. For each compile of a primary
+# (workspace) package, it adds `-Zprint-type-sizes`, scrapes the layout report
+# from rustc's stdout, and writes the async future types it finds to
+# `$PTS_OUT/<crate>-<metadata>.json`. Other stdout lines pass through.
+#
+# Environment:
+#
+# - `PTS_OUT`: output directory (required).
+# - `PTS_ALL_CRATES`: if set, also record dependencies.
+# - `PTS_ALL_TYPES`: if set, record every type, not just async futures.
+#
+# Use a fresh `CARGO_TARGET_DIR`: cached crates are never recompiled, so they
+# produce no report.
+
+import fs proc json regex:
+  - Captures
+  - Regex
+  - @Match
+
+let rustc ...rest = shell.args
+else
+  echo "usage: pts.dol RUSTC [ARGS...]"
+  exit 2
+let argv = [...rest]
+
+# Returns the value of an option given as `NAME VALUE` or `NAMEVALUE`.
+def option argv@Array[Str] name@Str -> (Str | nil)
+  for i = 0..argv.len
+    let a = argv[i]
+    if (a == name && i + 1 < argv.len)
+      return argv[i + 1]
+    if (a != name && a.starts_with(name))
+      return a[name.len..]
+  nil
+
+# Returns the value of a codegen option, given as `-C KEY=VALUE` or
+# `-CKEY=VALUE`.
+def codegen argv@Array[Str] key@Str -> (Str | nil)
+  let prefix = "$key="
+  for i = 0..argv.len
+    let a = argv[i]
+    let value = if (a == "-C" && i + 1 < argv.len)
+      argv[i + 1]
+    else if (a.starts_with "-C")
+      a[2..]
+    else
+      nil
+    if (value && value.starts_with(prefix))
+      return value[prefix.len..]
+  nil
+
+let crate = option $argv --crate-name
+let recorded = (
+  crate != nil && crate != "___" &&
+  (env.get("CARGO_PRIMARY_PACKAGE") != nil ||
+    env.get("PTS_ALL_CRATES") != nil)
+)
+
+if !recorded
+  shell.exec $rustc ...argv
+
+let out_dir = env["PTS_OUT"]
+let all_types = (env.get("PTS_ALL_TYPES") != nil)
+
+let header = Regex r|-
+  (?x)
+  ^print-type-size\ type:\ `(?<name>.*)`:
+  \ (?<size>\d+)\ bytes,\ alignment:\ (?<align>\d+)\ bytes$
+let item = Regex r|-
+  (?x)
+  ^print-type-size(?<indent>\ +)
+  (?<kind>[a-z]+(?:\ [a-z]+)?)     # e.g. `field`, `end padding`
+  (?:\ `(?<name>[^`]*)`)?
+  :\ (?<size>\d+)\ bytes
+  (?:,\ offset:\ (?<offset>\d+)\ bytes)?
+  (?:,\ alignment:\ (?<align>\d+)\ bytes)?
+  (?:,\ type:\ (?<type>.*))?$
+let async_name = Regex r"^\{async (?:fn body of (?<fn>.*)\(\)|closure body@(?<closure>.*)|block@(?<block>.*))\}$"
+
+# Returns a group's text, or `nil` for a group that didn't participate.
+def text m@(Match | nil) -> (Str | nil)
+  (m && str(m) || nil)
+
+# Returns a group as an `Int`, or `nil` for a group that didn't participate.
+def num m@(Match | nil) -> (Int | nil)
+  if m
+    int $ str(m)
+
+let lines @ Array[Str] = []
+let failed = try
+  env RUSTC_BOOTSTRAP: 1 do
+    run $rustc ...argv -Zprint-type-sizes stdout: $lines.prechomp()
+catch proc.Error: err
+  err
+
+# A recorded type, or one of its items.
+@let Entry = Dict[Sym, json.EncodeValue]
+
+let types @ Array[Entry] = []
+# The items of the type being read, or `nil` if it isn't recorded.
+let type_items = nil
+# The items of the variant being read, if any.
+let variant_items = nil
+
+for line = lines
+  if !line.starts_with("print-type-size")
+    shell.stdout.write "$line\n"
+    continue
+
+  if let Captures(_ :name :size :align) = header.match $line
+    let name = str $name
+    variant_items = nil
+    type_items = nil
+    let kind path = match async_name.match $name
+      Captures(_ :fn = nil :closure = nil :block = nil ...) do
+        if fn
+          ("fn", str(fn))
+        else if closure
+          ("closure", str(closure))
+        else
+          ("block", str(block))
+      nil do ("other", nil)
+    if (path != nil || all_types)
+      let items @ Array[Entry] = []
+      types.push $
+        :name :kind :path :items
+        size: (num size)
+        align: (num align)
+      type_items = items
+    continue
+
+  bind item.match $line
+    Captures $
+      _ :indent :kind :size
+      :name = nil :offset = nil
+      :align = nil :type = nil
+  else throw std.ValueError "unrecognized print-type-size line: $line"
+  if (type_items == nil)
+    continue
+  let kind = str $kind
+  let entry @ Entry = $
+    :kind
+    name: (text name)
+    size: (num size)
+    offset: (num offset)
+    align: (num align)
+    type: (text type)
+  # Five spaces follow the prefix for a type's items, nine for a variant's.
+  if (str(indent).len <= 5)
+    variant_items = nil
+    if (kind == "variant")
+      let items @ Array[Entry] = []
+      entry[:items:] = items
+      variant_items = items
+    type_items.push $entry
+  else if (variant_items != nil)
+    variant_items.push $entry
+  else
+    throw std.ValueError "nested item outside a variant: $line"
+
+if failed
+  exit (failed.rc || 1)
+
+let metadata = codegen $argv metadata
+let file = if metadata
+  "$crate-$metadata.json"
+else
+  "$crate.json"
+fs.create_dir $out_dir all: true
+fs.write "$out_dir/$file" $ json.encode indent: 2 {:crate, :metadata, :types}

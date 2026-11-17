@@ -429,6 +429,35 @@ def install_bin_symlink spec bin_dir from to
   tmp.rename $dst
   echo "link: $dst -> $src"
 
+# Where `pts` builds and writes its reports. Both are cleared on every run:
+# rustc prints type sizes only for crates it compiles, so a cached crate would
+# be missing from the reports.
+let PTS_DIR = (Path("target") / "pts")
+
+# Builds the workspace with `tools/pts.dol` as the rustc wrapper, recording
+# async future layouts in `target/pts/out`.
+def pts spec args
+  remove $PTS_DIR all: true ignore: true
+  create_dir $PTS_DIR all: true
+  # Cargo runs `RUSTC_WRAPPER` as a single program with no arguments of its
+  # own, so give it a shim that runs the script under the installed
+  # interpreter.
+  let script = Path("tools/pts.dol").absolute()
+  let wrapper = if (sys.os_info().family == :WINDOWS:)
+    let shim = (PTS_DIR / "rustc-wrapper.cmd")
+    shim.write "@dolang \"$script\" %*\r\n"
+    shim
+  else
+    let shim = (PTS_DIR / "rustc-wrapper")
+    shim.write "#!/bin/sh\nexec dolang $(shlex.quote(script)) \"\$@\"\n"
+    update_metadata $shim mode: 0o755
+    shim
+  env
+    RUSTC_WRAPPER: $wrapper.absolute()
+    PTS_OUT: $(PTS_DIR / "out").absolute()
+    CARGO_TARGET_DIR: $(PTS_DIR / "build").absolute()
+    do spec.cargo build ...args
+
 def build_pages()
   with_mkdocs do dodo.show mkdocs build --strict
   rustdoc_build()
@@ -540,6 +569,22 @@ return $
     do |args|
       let spec = Spec $args profile: bench
       spec.cargo bench ...args.args
+
+  pts:
+    help: record async future sizes in target/pts/out, rebuilding from scratch
+    - arg: args
+      help: "arguments to `cargo build`, such as `-p dolang-runtime`"
+      collect: true
+    do |args|
+      pts (Spec args) $args.args
+
+  "pts-report":
+    help: summarize the async future sizes recorded by `pts`
+    - arg: args
+      help: "options to tools/pts_report.dol, such as `-n 30 -d 10`"
+      collect: true
+    do |args|
+      dodo.show dolang tools/pts_report.dol ...args.args (PTS_DIR / "out")
 
   "gen-system-error-codes":
     help: generate system error code lookup tables from public source documents
