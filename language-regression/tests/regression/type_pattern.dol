@@ -202,10 +202,10 @@ def arm value
   let C = std.Int
   let _keep = (do C)
   match value
-    C(n) do
+    C(n)
       let get = (do n)
       get()
-    _ do nil
+    _ => nil
 assert_eq (arm 2) 2
 assert_eq (arm "b") nil
 

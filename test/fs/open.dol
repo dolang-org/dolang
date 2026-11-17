@@ -172,8 +172,8 @@ def kinds_can_be_matched()
   for buffer = [true, false]
     open match.txt :buffer do |file|
       let label = match file
-        File(_) do "buffered"
-        RawFile(_) do "raw"
+        File(_) => "buffered"
+        RawFile(_) => "raw"
       assert_eq $label (buffer && "buffered" || "raw")
 
 #[test]

@@ -613,8 +613,8 @@ def malformed what @ Str -> Never
 # A string in inspect output, or `nil` where it's absent or null
 def optional_str what@Str value@DecodeValue -> (Str | nil)
   match value
-    Str(s) do s
-    nil do nil
+    Str(s) => s
+    nil => nil
   else
     malformed $what
 
@@ -652,8 +652,8 @@ def string_dict what@Str value@DecodeValue -> (Dict[Str, Str] | nil)
 # was quoted before it reached the runtime.
 def normalize_argv what@Str value@DecodeValue -> (Array[Str] | nil)
   match value
-    Str(s) do [...shlex.split(s)]
-    nil do nil
+    Str(s) => [...shlex.split(s)]
+    nil => nil
   else
     strings $what $value
 
@@ -769,8 +769,8 @@ do -> Array[Value]
 
 def normalize_platform platform @ (Platform | nil) -> (Str | nil)
   match platform
-    nil do nil
-    Str(s) do s
+    nil => nil
+    Str(s) => s
   else
     bind platform
       :os
@@ -866,13 +866,13 @@ def parse_container_ports ports @ DecodeValue -> Array[PortBinding]
     let protocol = normalize_known $PORT_PROTOCOLS $proto
     let container_port = int $port
     match bindings
-      nil do
+      nil
         mapped.push $ PortBinding
           :protocol
           :container_port
           host_ip: nil
           host_port: nil
-      Array(items) do
+      Array(items)
         for binding = items
           bind binding
             Dict $
@@ -1391,8 +1391,8 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
       source = cache_dir $(id || str(target))
       kind = "bind"
     let label = match selinux
-      :SHARED: do "z"
-      :PRIVATE: do "Z"
+      :SHARED: => "z"
+      :PRIVATE: => "Z"
     if (kind == "bind")
       let parts = $
         if readonly
@@ -1451,7 +1451,7 @@ def url_leaf url @ Url -> Str
 
 def parse_source source @ (Str | Path | Url) -> (Path | Url)
   match source
-    Str(s) do
+    Str(s)
       if (s.starts_with "http://" || s.starts_with "https://")
         Url $s
       else
@@ -1486,8 +1486,8 @@ def prefetch_add_urls adds @ Array[AddSpec]
 def patch_name p @ patch.Patch -> Str
   let kind = p.type
   match kind
-    :CREATE: do "create $(p.target)"
-    :DELETE: do "delete $(p.source)"
+    :CREATE: => "create $(p.target)"
+    :DELETE: => "delete $(p.source)"
   else
     let source = p.source
     let target = p.target
@@ -1668,10 +1668,10 @@ pub class Builder
       self.#add_content $content (Path target) $chmod
     else if (source != nil)
       match parse_source(source)
-        Url(url) do
+        Url(url)
           let path = self.#resolve_target $target (url_leaf url)
           self.#add_file (cache.path url) $path $chmod
-        Path(source) do
+        Path(source)
           let path = self.#resolve_target $target (path_leaf source)
           self.#add_file $source $path $chmod
     else
@@ -1724,11 +1724,11 @@ pub class Builder
 
   def step[I, O] self entry @ Entries[BuildSteps[I, O]] <I >O
     match entry
-      (:run: func) do self.#live_agent().with $func
-      (:add: spec) do self.#step_add $spec
-      (:patch: spec) do self.#step_patch $spec
-      (:commit: msg) do self.#step_commit $msg
-      (:tag: _) do nil
+      (:run: func) => self.#live_agent().with $func
+      (:add: spec) => self.#step_add $spec
+      (:patch: spec) => self.#step_patch $spec
+      (:commit: msg) => self.#step_commit $msg
+      (:tag: _) => nil
 
   def finish_image self tags @ Array[Str] -> Image
     let runtime = self.#runtime
@@ -1752,8 +1752,8 @@ pub class Builder
     let adds @ Array[AddSpec] = []
     for entry = steps
       match entry
-        (:tag: tag) do tags.push $tag
-        (:add: spec) do adds.push $spec
+        (:tag: tag) => tags.push $tag
+        (:add: spec) => adds.push $spec
     let message = if tags.len
       tags[0]
     else

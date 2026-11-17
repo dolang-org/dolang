@@ -85,24 +85,24 @@ while true
     continue
   if !stop_options
     match arg
-      "--" do
+      "--"
         stop_options = true
         continue
-      "-h" | "--help" do help()
-      "-m" | "--main" do
+      "-h" | "--help" => help()
+      "-m" | "--main"
         if check
           conflict --check --main
         main = true
         continue
-      "--check" do
+      "--check"
         if main
           conflict --check --main
         check = true
         continue
-      "--module-path" do
+      "--module-path"
         module_paths.push (fs.Path(value "--module-path <PATH>"))
         continue
-      "--import" | "--import-item" do
+      "--import" | "--import-item"
         let spec = value "$(arg) <$(arg == "--import" && "MODULE[=NAME]" || "MODULE.ITEM[=NAME]")>"
         let parts = [...spec.split "=" limit: 1]
         let name = parts[0]
@@ -123,13 +123,13 @@ while true
             item
           prelude.insert $qualified[1] {$item: binding}
         continue
-      "--no-history" do
+      "--no-history"
         history = false
         continue
-      "--no-cache" do
+      "--no-cache"
         cache = false
         continue
-      "--strict" do
+      "--strict"
         strict = true
         continue
     if (arg.starts_with("-") && arg != "-")

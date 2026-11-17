@@ -1,0 +1,8 @@
+match [1]
+  x =>
+    # error: `=>` takes its body on the same line
+    #   --> match_arrow_block.dol:LL:LL
+    #    |
+    # LL |   x =>
+    #    |     ^^
+    x

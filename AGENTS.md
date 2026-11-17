@@ -419,19 +419,20 @@ else
 ```
 
 `match` runs the first arm whose pattern (and optional `if` guard) matches. A
-bare name matches anything, `else` lines up with `match`, and no match without
-`else` gives `nil`. Unpacking a value that isn't a sequence or keyed value
-raises rather than trying the next arm, so type-test first:
+body on the same line follows `=>`; an indented block follows the pattern or
+guard directly, with no `do`. A bare name matches anything, `else` lines up with
+`match`, and no match without `else` gives `nil`. Unpacking a value that isn't a
+sequence or keyed value raises rather than trying the next arm, so type-test
+first:
 
 ```
 let label = match value
-  Int(n) if (n < 0)
-    "negative"
-  0 | 1 do "small"
-  Array(first _) do
+  Int(n) if (n < 0) => "negative"
+  0 | 1 => "small"
+  Array(first _)
     echo $first
     "pair"
-  other do "other: $other"
+  other => "other: $other"
 ```
 
 ### Commands and Calls

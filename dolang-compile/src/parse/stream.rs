@@ -14,6 +14,7 @@ use crate::{
 pub(crate) enum ExpectKind {
     ArgSep,
     Arrow,
+    FatArrow,
     At,
     BangAt,
     Const,
@@ -66,6 +67,7 @@ impl Display for ExpectKind {
         match self {
             ArgSep => &"<whitespace>",
             Arrow => &"->",
+            FatArrow => &"=>",
             At => &"@",
             BangAt => &"!@",
             Const => &"constant",
@@ -116,6 +118,7 @@ impl From<&TokenInfo> for ExpectKind {
         match value {
             ArgSep => ExpectKind::ArgSep,
             Arrow => ExpectKind::Arrow,
+            FatArrow => ExpectKind::FatArrow,
             At => ExpectKind::At,
             BangAt => ExpectKind::BangAt,
             Question => ExpectKind::Question,

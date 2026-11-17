@@ -228,6 +228,7 @@ pub(crate) enum Mode {
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum RawToken {
     Arrow,
+    FatArrow,
     At,
     BangAt,
     DecoratorOpen,
@@ -290,6 +291,7 @@ enum RawState {
     End,
     Equal,
     EqualEqual,
+    FatArrow,
     Error,
     Exponent,
     ExponentStart,
@@ -1001,8 +1003,10 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                 Percent => symbol!(self, RawToken::Op(Op::Percent), {}),
                 Equal => symbol!(self, RawToken::Equal, {
                     match Some(b'=') => self.trans(EqualEqual),
+                    match Some(b'>') => self.trans(FatArrow),
                 }),
                 EqualEqual => symbol!(self, RawToken::Op(Op::EqEq), {}),
+                FatArrow => symbol!(self, RawToken::FatArrow, {}),
                 Dollar => return self.token(RawToken::Dollar, Empty),
                 DQuote => return self.token(RawToken::DQuote, Empty),
                 LeftParen => return self.token(RawToken::LeftParen, Empty),
@@ -1563,6 +1567,7 @@ pub(crate) struct Error;
 pub(crate) enum TokenInfo {
     ArgSep,
     Arrow,
+    FatArrow,
     At,
     BangAt,
     Bool(bool),
@@ -1988,6 +1993,7 @@ impl<'a> Iterator for Lexer<'a> {
                     continue;
                 }
                 Ok((Arrow, span)) => self.token(TokenInfo::Arrow, span),
+                Ok((FatArrow, span)) => self.token(TokenInfo::FatArrow, span),
                 Ok((At, span)) => self.token(TokenInfo::At, span),
                 Ok((BangAt, span)) => self.token(TokenInfo::BangAt, span),
                 Ok((Question, span)) => self.token(TokenInfo::Question, span),

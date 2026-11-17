@@ -1,5 +1,6 @@
 use super::{
     Error, ExprMode, Parser, Result, Scope,
+    cmd::CmdContext,
     diag::{InvalidLValue, SyntaxDiag},
     stream::ExpectKind,
 };
@@ -51,7 +52,9 @@ impl Parser<'_> {
             Some(token!(TokenInfo::Keyword(Keyword::Try))) => {
                 Ok(PrimStmt::Try(self.parse_try(scope)?))
             }
-            _ => Ok(PrimStmt::Expr(self.parse_cmd_or_expr(scope, true)?)),
+            _ => Ok(PrimStmt::Expr(
+                self.parse_cmd_or_expr(scope, CmdContext::Stmt)?,
+            )),
         }
     }
 
@@ -159,7 +162,7 @@ impl Parser<'_> {
     fn parse_bind(&mut self, scope: &mut Scope) -> Result<Bind> {
         let bind_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Bind)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let expr = self.parse_cmd_or_expr(scope, false)?;
+        let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
         let bind = self.parse_pattern(scope, true)?;
         let else_branch = self.parse_binding_else(scope)?;
         Ok(Bind {
@@ -211,35 +214,82 @@ impl Parser<'_> {
     /// scrutinee and separates them with `=`, `bind` puts it after in an indented
     /// block terminated by `do`, and the plain form has no pattern at all.
     pub(super) fn parse_cond(&mut self, scope: &mut Scope) -> Result<(Expr, Option<CondPattern>)> {
+        let (expr, bind, _) = self.parse_cond_with(scope, false)?;
+        Ok((expr, bind))
+    }
+
+    /// Parse a condition as [`Self::parse_cond`] does. For a `match` arm's
+    /// `guard`, the condition can end at a `=>` instead of the body's `Indent`,
+    /// and its span is returned.
+    fn parse_cond_with(
+        &mut self,
+        scope: &mut Scope,
+        guard: bool,
+    ) -> Result<(Expr, Option<CondPattern>, Option<Span>)> {
         use self::Keyword;
         use TokenInfo::*;
 
+        let ctx = if guard {
+            CmdContext::Guard
+        } else {
+            CmdContext::Head
+        };
         let (keyword_span, is_let) = match self.peek()? {
             Some(token!(Keyword(Keyword::Let))) => (self.advance(), true),
             Some(token!(Keyword(Keyword::Bind))) => (self.advance(), false),
             _ => {
-                let expr = self.parse_cmd_or_expr(scope, false)?;
-                self.expect(scope, &[ExpectKind::Indent])?;
-                return Ok((expr, None));
+                let expr = self.parse_cmd_or_expr(scope, ctx)?;
+                let arrow_span = self.expect_cond_end(scope, guard)?;
+                return Ok((expr, None, arrow_span));
             }
         };
         self.expect(scope, &[ExpectKind::ArgSep])?;
 
-        let (expr, pattern, kind) = if is_let {
+        let (expr, pattern, kind, arrow_span) = if is_let {
             let pattern = self.parse_pattern(scope, false)?;
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let expr = self.parse_cmd_or_expr(scope, false)?;
-            self.expect(scope, &[ExpectKind::Indent])?;
-            (expr, pattern, CondPatternKind::Let { equal_span })
+            let expr = self.parse_cmd_or_expr(scope, ctx)?;
+            let arrow_span = self.expect_cond_end(scope, guard)?;
+            (
+                expr,
+                pattern,
+                CondPatternKind::Let { equal_span },
+                arrow_span,
+            )
         } else {
-            let expr = self.parse_cmd_or_expr(scope, false)?;
+            let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
             // The vertical pattern consumes its own indented block through the
-            // closing `Dedent`, leaving `do` as the next token
+            // closing `Dedent`, leaving `do` (or a guard's `=>`) as the next token
             let pattern = self.parse_pattern(scope, true)?;
-            let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
-            self.expect(scope, &[ExpectKind::Indent])?;
-            (expr, pattern, CondPatternKind::Bind { do_span })
+            match self.peek()? {
+                Some(token!(FatArrow)) if guard => {
+                    let arrow_span = self.advance();
+                    (
+                        expr,
+                        pattern,
+                        CondPatternKind::Bind { do_span: None },
+                        Some(arrow_span),
+                    )
+                }
+                _ => {
+                    let kinds: &[ExpectKind] = if guard {
+                        &[ExpectKind::Keyword(Keyword::Do), ExpectKind::FatArrow]
+                    } else {
+                        &[ExpectKind::Keyword(Keyword::Do)]
+                    };
+                    let do_span = self.expect(scope, kinds)?;
+                    self.expect(scope, &[ExpectKind::Indent])?;
+                    (
+                        expr,
+                        pattern,
+                        CondPatternKind::Bind {
+                            do_span: Some(do_span),
+                        },
+                        None,
+                    )
+                }
+            }
         };
 
         Ok((
@@ -249,7 +299,22 @@ impl Parser<'_> {
                 kind,
                 pattern,
             }),
+            arrow_span,
         ))
+    }
+
+    /// Consume the end of a horizontal condition: the `Indent` opening its body,
+    /// or in a guard, a `=>` introducing a same-line body.
+    fn expect_cond_end(&mut self, scope: &mut Scope, guard: bool) -> Result<Option<Span>> {
+        if guard {
+            if let Some(token!(TokenInfo::FatArrow)) = self.peek()? {
+                return Ok(Some(self.advance()));
+            }
+            self.expect(scope, &[ExpectKind::Indent, ExpectKind::FatArrow])?;
+        } else {
+            self.expect(scope, &[ExpectKind::Indent])?;
+        }
+        Ok(None)
     }
 
     fn parse_if(&mut self, scope: &mut Scope) -> Result<If<Block>> {
@@ -322,7 +387,7 @@ impl Parser<'_> {
 
         let match_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Match)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let scrutinee = self.parse_cmd_or_expr(scope, false)?;
+        let scrutinee = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
         self.expect(scope, &[ExpectKind::Indent])?;
 
         let mut arms = Vec::new();
@@ -372,13 +437,16 @@ impl Parser<'_> {
         })
     }
 
-    /// Parse an arm of a `match`: its pattern, then a guard and its block, or `do`
-    /// and a body, which is a block or a statement on the same line.
+    /// Parse an arm of a `match`: its pattern, an optional guard, and its body.
+    ///
+    /// The body is an indented block or, after `=>`, a statement on the same
+    /// line. A block follows a horizontal pattern or a guard directly, and a `|`
+    /// group after `do`.
     fn parse_arm(&mut self, scope: &mut Scope) -> Result<Arm> {
         use self::{Keyword, Op};
         use TokenInfo::*;
 
-        if let token @ Some(token!(Keyword(Keyword::Do | Keyword::If))) = self.peek()? {
+        if let token @ Some(token!(Keyword(Keyword::Do | Keyword::If) | FatArrow)) = self.peek()? {
             return Err(self.syntax_error(
                 scope,
                 token,
@@ -388,56 +456,60 @@ impl Parser<'_> {
         if let token @ Some(token!(Keyword(Keyword::Else))) = self.peek()? {
             return Err(self.syntax_error(scope, token, "`else` lines up with its `match`"));
         }
+        let vertical = matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar))));
         let pattern = self.parse_arm_pattern(scope)?;
         if let Some(token!(ArgSep)) = self.peek()? {
             self.advance();
         }
-        match self.peek()? {
+        let mut guard = None;
+        let mut do_span = None;
+        let mut arrow_span = None;
+        let body = match self.peek()? {
             Some(token!(Keyword(Keyword::If))) => {
                 let if_span = self.advance();
                 self.expect(scope, &[ExpectKind::ArgSep])?;
-                let (expr, bind) = self.parse_cond(scope)?;
-                let body = self.parse_block_through_dedent(scope)?;
-                Ok(Arm {
-                    pattern,
-                    guard: Some(Guard {
-                        if_span,
-                        expr,
-                        bind,
-                    }),
-                    do_span: None,
-                    body,
-                })
+                let (expr, bind, arrow) = self.parse_cond_with(scope, true)?;
+                guard = Some(Guard {
+                    if_span,
+                    expr,
+                    bind,
+                });
+                arrow_span = arrow;
+                match arrow {
+                    Some(arrow) => self.parse_arm_inline(scope, arrow)?,
+                    None => self.parse_block_through_dedent(scope)?,
+                }
             }
-            Some(token!(Keyword(Keyword::Do))) => {
-                let do_span = self.advance();
-                let body = match self.peek()? {
-                    Some(token!(Indent)) => {
-                        self.advance();
-                        self.parse_block_through_dedent(scope)?
+            Some(token!(FatArrow)) => {
+                let arrow = self.advance();
+                arrow_span = Some(arrow);
+                self.parse_arm_inline(scope, arrow)?
+            }
+            Some(token!(Indent)) if !vertical => {
+                self.advance();
+                self.parse_block_through_dedent(scope)?
+            }
+            token @ Some(token!(Keyword(Keyword::Do), span)) => {
+                self.advance();
+                if let Some(token!(Indent)) = self.peek()? {
+                    if vertical {
+                        do_span = Some(span);
+                    } else {
+                        self.fail = true;
+                        self.diags.push(SyntaxDiag::new(
+                            span,
+                            "an arm's block follows its pattern directly, without `do`",
+                        ));
                     }
-                    _ => {
-                        self.expect(scope, &[ExpectKind::ArgSep])?;
-                        if let token @ Some(token!(TokenInfo::Op(Op::Bar))) = self.peek()? {
-                            return Err(self.syntax_error(
-                                scope,
-                                token,
-                                "an arm's `do` starts its body, which takes no parameters",
-                            ));
-                        }
-                        Block {
-                            stmts: vec![self.parse_stmt(scope)?],
-                            vars: Vec::new(),
-                            repl: None,
-                        }
-                    }
-                };
-                Ok(Arm {
-                    pattern,
-                    guard: None,
-                    do_span: Some(do_span),
-                    body,
-                })
+                    self.advance();
+                    self.parse_block_through_dedent(scope)?
+                } else {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "an arm's body on the same line follows `=>`, not `do`",
+                    ));
+                }
             }
             token => {
                 // At the end of the line, point at the end of the pattern
@@ -448,9 +520,42 @@ impl Parser<'_> {
                     }),
                     token => token,
                 };
-                Err(self.syntax_error(scope, token, "expected `do` or `if` after an arm's pattern"))
+                let msg = if vertical {
+                    "expected `do`, `=>` or `if` after an arm's `|` group"
+                } else {
+                    "expected `=>`, `if` or an indented block after an arm's pattern"
+                };
+                return Err(self.syntax_error(scope, token, msg));
             }
+        };
+        Ok(Arm {
+            pattern,
+            guard,
+            do_span,
+            arrow_span,
+            body,
+        })
+    }
+
+    /// Parse an arm's same-line body, after its `=>` at `arrow_span`
+    fn parse_arm_inline(&mut self, scope: &mut Scope, arrow_span: Span) -> Result<Block> {
+        if let Some(token!(TokenInfo::Indent)) = self.peek()? {
+            let token = Token {
+                info: TokenInfo::FatArrow,
+                span: arrow_span,
+            };
+            return Err(self.syntax_error(
+                scope,
+                Some(token),
+                "`=>` takes its body on the same line",
+            ));
         }
+        self.expect(scope, &[ExpectKind::ArgSep])?;
+        Ok(Block {
+            stmts: vec![self.parse_stmt(scope)?],
+            vars: Vec::new(),
+            repl: None,
+        })
     }
 
     fn parse_try(&mut self, scope: &mut Scope) -> Result<Try> {
@@ -610,7 +715,7 @@ impl Parser<'_> {
         let (equal_span, expr) = match self.next()? {
             Some(token!(TokenInfo::Equal, equal_span)) => {
                 self.expect(scope, &[ExpectKind::ArgSep])?;
-                let expr = self.parse_cmd_or_expr(scope, false)?;
+                let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
                 self.expect(scope, &[ExpectKind::Indent])?;
                 (Some(equal_span), Some(expr))
             }
@@ -746,7 +851,7 @@ impl Parser<'_> {
                 let expr = match self.peek()? {
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        Some(self.parse_cmd_or_expr(scope, true)?)
+                        Some(self.parse_cmd_or_expr(scope, CmdContext::Stmt)?)
                     }
                     None | Some(token!(Dedent | StmtSep)) => None,
                     _ => {
@@ -767,13 +872,13 @@ impl Parser<'_> {
             Some(token!(Keyword(Throw))) => {
                 let span = self.advance();
                 self.expect(scope, &[ExpectKind::ArgSep])?;
-                let expr = self.parse_cmd_or_expr(scope, true)?;
+                let expr = self.parse_cmd_or_expr(scope, CmdContext::Stmt)?;
                 Ok(Stmt::Throw(Throw { expr, span }))
             }
             Some(token!(Keyword(Continue))) => Ok(Stmt::Continue(self.advance(), None)),
             Some(token!(Keyword(Break))) => Ok(Stmt::Break(self.advance(), None)),
             Some(token!(Keyword(Do))) => Ok(Stmt::Prim(PrimStmt::Expr(
-                self.parse_do_block(scope, true)?,
+                self.parse_do_block(scope, CmdContext::Stmt)?,
             ))),
             Some(token!(TokenInfo::Dollar)) => {
                 let dollar_span = self.advance();
@@ -809,7 +914,7 @@ impl Parser<'_> {
                     _ => {
                         // This is just an expression
                         let mut args = vec![];
-                        self.parse_cmd_args(scope, true, true, &mut args)?;
+                        self.parse_cmd_args(scope, CmdContext::Stmt, &mut args)?;
                         let expr = Self::finish_call(arg0, args);
                         Ok(Stmt::Prim(PrimStmt::Expr(expr)))
                     }

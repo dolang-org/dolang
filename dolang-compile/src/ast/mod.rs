@@ -245,8 +245,9 @@ pub(crate) enum CondPatternKind {
     /// `if let PATTERN = SCRUTINEE`
     Let { equal_span: Span },
     /// `if bind SCRUTINEE`, with the pattern laid out vertically and the body
-    /// introduced by `do`
-    Bind { do_span: Span },
+    /// introduced by `do`. In a `match` arm's guard, a `=>` can take the place
+    /// of `do`, and then the arm records it.
+    Bind { do_span: Option<Span> },
 }
 
 /// A pattern matched against the condition of an `if` or `while`, binding its
@@ -279,7 +280,10 @@ fn accept_cond<'a, V: Visit>(
         CondPatternKind::Bind { do_span } => {
             visit.node(cond)?;
             visit.node(&bind.pattern)?;
-            visit.token(Token::Keyword, do_span, None)
+            match do_span {
+                Some(do_span) => visit.token(Token::Keyword, do_span, None),
+                None => ControlFlow::Continue(()),
+            }
         }
     }
 }
@@ -368,12 +372,18 @@ pub(crate) struct Guard {
     pub(crate) bind: Option<CondPattern>,
 }
 
-/// An arm of a `match`: a pattern, an optional guard, and a body
+/// An arm of a `match`: a pattern, an optional guard, and a body.
+///
+/// The body is an indented block, which follows a horizontal pattern or a guard
+/// directly and a `|` group after `do`, or a statement on the same line after
+/// `=>`.
 pub(crate) struct Arm {
     pub(crate) pattern: Pattern,
     pub(crate) guard: Option<Guard>,
-    /// Span of the `do` introducing the body, absent after a guard
+    /// Span of the `do` starting the block after a `|` group
     pub(crate) do_span: Option<Span>,
+    /// Span of the `=>` introducing a same-line body
+    pub(crate) arrow_span: Option<Span>,
     pub(crate) body: Block,
 }
 
@@ -386,6 +396,9 @@ impl Node for Arm {
         }
         if let Some(do_span) = self.do_span {
             visit.token(Token::Keyword, do_span, None)?;
+        }
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
         }
         self.body.trans(visit)
     }

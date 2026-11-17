@@ -80,10 +80,10 @@ class Future
     let variants @ Array[Variant] = []
     for item = items
       match item
-        Dict("kind": "variant" "name": Str(vname) "size": Int(vsize) "items": Array(slots) ...) do
+        Dict("kind": "variant" "name": Str(vname) "size": Int(vsize) "items": Array(slots) ...)
           variants.push (Variant vname vsize slots)
-        Dict("kind": Str(_) ...) do nil
-        other do throw std.DataError "malformed item: $(dbg other)"
+        Dict("kind": Str(_) ...) => nil
+        other => throw std.DataError "malformed item: $(dbg other)"
     self.variants = variants
 
   # A readable name: the function path, or the source location of a block.

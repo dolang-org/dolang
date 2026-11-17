@@ -64,6 +64,7 @@ macro_rules! decay_shell {
             | TokenInfo::TBar
             | TokenInfo::DecoratorOpen
             | TokenInfo::Arrow
+            | TokenInfo::FatArrow
             | TokenInfo::At
             | TokenInfo::BangAt
             | TokenInfo::Question => TokenInfo::Literal)
@@ -125,6 +126,7 @@ macro_rules! expr_tail_break {
             | TokenInfo::Equal
             | TokenInfo::Escape(_)
             | TokenInfo::Arrow
+            | TokenInfo::FatArrow
             | TokenInfo::At
             | TokenInfo::BangAt
             | TokenInfo::Question
@@ -161,6 +163,7 @@ macro_rules! decay_string {
             | TokenInfo::Hash
             | TokenInfo::DecoratorOpen
             | TokenInfo::Arrow
+            | TokenInfo::FatArrow
             | TokenInfo::At
             | TokenInfo::BangAt
             | TokenInfo::Question => TokenInfo::Literal)

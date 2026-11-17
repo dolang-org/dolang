@@ -310,7 +310,7 @@ fn returns_cannot_exit_modules_or_repl() {
         "while true\n  return\n",
         "for x = [1]\n  return x\n",
         "try\n  return\ncatch _\n  nil\n",
-        "match 1\n  _ do return\n",
+        "match 1\n  _ => return\n",
         "let _f = do return 42\n",
         "def call block\n  block()\ncall do return 42\n",
         "throw 1\nreturn\n",

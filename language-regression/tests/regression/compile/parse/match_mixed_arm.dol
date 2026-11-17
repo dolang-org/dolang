@@ -1,8 +1,8 @@
 match [1]
   | (x)
-  y do x
-# error: expected `do` or `if` after an arm's pattern
+  y => x
+# error: expected `do`, `=>` or `if` after an arm's `|` group
 #   --> match_mixed_arm.dol:LL:LL
 #    |
-# LL |   y do x
+# LL |   y => x
 #    |   ^

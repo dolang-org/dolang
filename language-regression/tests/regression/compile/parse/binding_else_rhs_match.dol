@@ -1,5 +1,5 @@
 let x = match 1
-  _ do 1
+  _ => 1
 else
   2
 else return nil

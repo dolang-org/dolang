@@ -81,7 +81,7 @@ pub def conditional()
     let _ = a
     #       ^: flow std.Bool | std.Str
   let result = match (())
-    ?k: Int(n = 0) do n
+    ?k: Int(n = 0) => n
   let _ = result
   #       ^~~~~~: flow std.Int | std.Nil
 

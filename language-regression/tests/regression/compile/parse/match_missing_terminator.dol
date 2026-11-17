@@ -1,7 +1,7 @@
 match [1]
   | (x)
   | x
-# error: expected `do` or `if` after an arm's pattern
+# error: expected `do`, `=>` or `if` after an arm's `|` group
 #   --> match_missing_terminator.dol:LL:LL
 #    |
 # LL |   | x

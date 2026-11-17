@@ -941,12 +941,12 @@ class Guest
   # payload is installed over SSH after the wait returns.
   def probe_for self probe @ Probe -> (() -> Value)
     match probe
-      :VFS: do
+      :VFS:
         do self.with do
           nil
-      :CLOUD_INIT: do
+      :CLOUD_INIT:
         do self.#exec "test -f $(shlex.quote READY_PATH)"
-      :SSH: do
+      :SSH:
         do self.#exec "true"
 
   # Waits until the guest answers the probe `probe` names.
@@ -2150,11 +2150,11 @@ do -> DomainImpl
       source.provision $domain
       for step = steps
         match step
-          Add(add) do domain.add $add $app
-          :REBOOT: do
+          Add(add) => domain.add $add $app
+          :REBOOT:
             domain.reboot_ready probe: $source.probe timeout: $wait_seconds :screenshot_dir
             continue
-          block do domain.with $block
+          block => domain.with $block
         # Power state belongs to this module. A step that took the guest down
         # is an error, not a case to tolerate — `reboot` exists precisely so
         # that no step has to — and it is said here, where the step that did it
@@ -2478,14 +2478,14 @@ def parse_installer spec @ InstallerSpec -> Installer
     | :source
       :digest = nil
       :edition
-    do Installer :source :digest :edition
+    => Installer :source :digest :edition
     | :source
       :digest = nil
       :index
-    do Installer :source :digest :index
+    => Installer :source :digest :index
     | :source
       :digest = nil
-    do Installer :source :digest
+    => Installer :source :digest
   else
     throw std.ValueError "installer: edition: and index: are alternatives"
 
@@ -2506,8 +2506,8 @@ def parse_add spec @ InitAddSpec name @ Str -> Add
   let payload @ (Artifact | Str | Bin) = match spec
     # Pinned the same way as every other artifact, rather than with an
     # `add:`-specific spelling.
-    (:source ...) do parse_artifact $source
-    (:content ...) do content
+    (:source ...) => parse_artifact $source
+    (:content ...) => content
   else
     throw std.ValueError "$name: expected exactly one of source or content"
 
@@ -2569,7 +2569,7 @@ def prepared_image source@Path root@Path -> Path
 def image_format image @ Path -> Str
   let output = cli qemu-img info --output json -- $image
   match json.decode(output)
-    Dict("format": Str(format) ...) do format
+    Dict("format": Str(format) ...) => format
   else
     throw std.ValueError "qemu-img did not report an image format"
 
@@ -2991,13 +2991,13 @@ def parse_init init @ (InitSpec | nil) -> InitState
   if (init != nil)
     for entry = init
       match entry
-        (:add: spec) do write.push $ parse_add $spec init.add
-        (:run: command) do
+        (:add: spec) => write.push $ parse_add $spec init.add
+        (:run: command)
           if (type command Str)
             boot.push [...shlex.split(command)]
           else
             boot.push [...command]
-        (:packages: names) do
+        (:packages: names)
           if (type names Str)
             packages.push $names
           else
@@ -3029,11 +3029,11 @@ def parse_options[I, O] options @ Pack[...DomainOptions[I, O]] -> ParsedOptions[
   for entry = options
     match entry
       # The positional `reboot`.
-      (Int(_) _) do steps.push :REBOOT:
-      (:add: spec) do steps.push $ parse_add $spec add
-      (:run: block) do steps.push $block
-      (:installer: spec) do installers.push $ parse_installer $spec
-      (:drivers: spec) do drivers.push $ parse_artifact $spec
+      (Int(_) _) => steps.push :REBOOT:
+      (:add: spec) => steps.push $ parse_add $spec add
+      (:run: block) => steps.push $block
+      (:installer: spec) => installers.push $ parse_installer $spec
+      (:drivers: spec) => drivers.push $ parse_artifact $spec
   (:steps, :installers, :drivers)
 
 # Unpacks the guest payload archive into the image store, cached under a
@@ -3152,8 +3152,8 @@ def dolang_release spec @ (DolangSpec | nil) -> (Str | Artifact)
   if (type spec Path || type spec Url)
     return Artifact source: $spec
   match spec
-    (:version) do version
-    artifact do parse_artifact $artifact
+    (:version) => version
+    artifact => parse_artifact $artifact
 
 # The archive `dolang:` names, as an `Artifact`.
 #

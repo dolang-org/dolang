@@ -68,8 +68,8 @@ pub def mismatch_nested value @ (Tuple[Int, Tuple[Int, Int] | Tuple[Int]] | Tupl
 
 pub def mismatch_arms value @ (Tuple[Int, Int] | Tuple[Str]) -> Str
   match value
-    _ _ do "pair"
-    other do
+    _ _ => "pair"
+    other
       let _ = other
       #       ^~~~~: flow (std.Str,)
       "single"

@@ -1,0 +1,9 @@
+match [1]
+  | (x)
+  | x
+  do x
+# error: an arm's body on the same line follows `=>`, not `do`
+#   --> match_group_inline_do.dol:LL:LL
+#    |
+# LL |   do x
+#    |   ^^

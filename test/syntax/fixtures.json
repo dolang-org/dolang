@@ -12,7 +12,7 @@
       "  echo done",
       "let keys = {if: 1, match: 2, class: 3}",
       "match value",
-      "  1 do true",
+      "  1 => true",
       "re.if()",
       "echo $obj.match()"
     ],
@@ -22,6 +22,12 @@
         "text": "class",
         "scopes": ["keyword.control.dol"],
         "vim": ["dolKeyword"]
+      },
+      {
+        "line": 11,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
       },
       {
         "line": 2,
@@ -1311,11 +1317,11 @@
       "match value",
       "  Int(n) if (n < 0)",
       "    echo $n",
-      "  Array(first _) do",
+      "  Array(first _)",
       "    let copy = Int(first)",
       "    echo \"value\"",
-      "  std.Int(n) do \"integer\"",
-      "  _ do \"other\"",
+      "  std.Int(n) => \"integer\"",
+      "  _ => \"other\"",
       "let copy = Int(value)",
       "echo true"
     ],
@@ -1581,15 +1587,15 @@
     "name": "match as assignment and nested matches",
     "lines": [
       "let label = match value",
-      "  Int(n) do",
+      "  Int(n)",
       "    match n",
-      "      1 do \"one\"",
-      "      Int(other) do \"integer\"",
+      "      1 => \"one\"",
+      "      Int(other) => \"integer\"",
       "    let result = Int(n)",
-      "  _ do \"other\"",
+      "  _ => \"other\"",
       "label = match value",
-      "  Array(first _) do \"array\"",
-      "  _ do \"other\"",
+      "  Array(first _) => \"array\"",
+      "  _ => \"other\"",
       "echo true"
     ],
     "checks": [
@@ -1766,7 +1772,7 @@
       "  | Array(n)",
       "  do",
       "    echo $n",
-      "  _ if check(value) do \"fallback\"",
+      "  _ if check(value) => \"fallback\"",
       "echo true"
     ],
     "checks": [
@@ -1812,9 +1818,9 @@
     "name": "quoted match patterns do not introduce guards",
     "lines": [
       "match value",
-      "  \"do this\" do \"done\"",
-      "  r\"if\" do \"raw\"",
-      "  Int(n) if test(n) do \"number\"",
+      "  \"do this\" => \"done\"",
+      "  r\"if\" => \"raw\"",
+      "  Int(n) if test(n) => \"number\"",
       "echo true"
     ],
     "checks": [
