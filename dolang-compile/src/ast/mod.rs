@@ -170,6 +170,23 @@ impl<T> ExprBody<T> {
     }
 }
 
+/// A body of either form, with the variables its scope declares
+pub(crate) trait Body {
+    fn vars(&self) -> &[Var];
+}
+
+impl<T> Body for ExprBody<T> {
+    fn vars(&self) -> &[Var] {
+        &self.vars
+    }
+}
+
+impl Body for Block {
+    fn vars(&self) -> &[Var] {
+        &self.vars
+    }
+}
+
 impl<T: Node> Node for ExprBody<T> {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         self.elems.accept(visit)

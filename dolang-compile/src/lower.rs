@@ -7,7 +7,7 @@ use dolang_bytecode::builtin;
 use crate::{
     Mode, PreludeImport, RestKind,
     ast::{
-        Arg, Arm, ArrayElem, Assign, Bind, Block, Class, ClassMember, ClassSuper, CondPattern,
+        Arg, ArrayElem, Assign, Bind, Block, Body, Class, ClassMember, ClassSuper, CondPattern,
         Const, Decorator, Def, DictElem, Expand, Expr, ExprBody, FieldInit, FmtParamName, For,
         FormatAlign, FormatKind, FormatSign, FormatSpec, Function, GetVariant, Guard, Ident, If,
         Import, ImportElement, ImportItem, Key, LValue, Let, Match, MemberScope, Method, NlGuard,
@@ -143,13 +143,14 @@ struct Params<'a> {
     break_result: bool,
     continue_id: Option<cfg::BlockId>,
     exit_id: cfg::BlockId,
+    /// A `match` arm's guard, tested in the body's prologue after its bindings,
+    /// with the block it fails to
+    guard: Option<(&'a Guard, cfg::BlockId)>,
 }
 
 enum WorkAst<'a> {
     Function(&'a Function, sig::UnpackId),
     Block(&'a Block, bool),
-    /// A `match` arm's body, with the block its guard fails to
-    Arm(&'a Arm, bool, cfg::BlockId),
     Stmt(&'a Stmt),
     Args(&'a [Arg]),
     ArrayElems(&'a [ArrayElem]),
@@ -1358,76 +1359,10 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         node: &'a For<ExprBody<T>>,
         work_ast: fn(&'a [T]) -> WorkAst<'a>,
     ) -> Result<()> {
-        let For {
-            bind,
-            expr,
-            body,
-            iter,
-            for_span,
-            ..
-        } = node;
-        let empty = {
-            let call = sig::Pack::new([].into_iter());
-            self.packtab.id(&call)
-        };
-        self.block
-            .insts
-            .push(Inst(InstInfo::Builtin(builtin::ARG_ACC, empty), *for_span));
-
-        let sig = if let Some(expr) = expr {
-            self.lower_expr(expr)?;
-            let call = sig::Pack::new([sig::Arg::Value].into_iter());
-            self.packtab.id(&call)
-        } else {
-            let call = sig::Pack::new([].into_iter());
-            self.packtab.id(&call)
-        };
-        let iter_span = expr.as_ref().map_or(*for_span, Expr::span);
-        self.block
-            .insts
-            .push(Inst(InstInfo::Builtin(builtin::ITER, sig), iter_span));
-        self.lower_store_res(
-            iter.as_ref().expect("unresolved for iterator"),
-            *for_span,
-            false,
-        );
-        let advance = self.graph.alloc_block(self.block.func, self.block.scope);
-        let next = self.graph.alloc_block(self.block.func, self.block.scope);
-        let bscope = self.graph.alloc_scope(
-            false,
-            false,
-            self.block.func,
-            Some(self.block.scope),
-            &body.vars,
-        );
-        let bodyid = self.graph.alloc_block(self.block.func, bscope);
-        let bind_params = Some(Defaults::Pattern(bind));
-        // FIXME: include span of keyword, not of block
-        self.queue(Work {
-            bb: bodyid,
-            ast: work_ast(&body.elems),
-            params: Params {
-                bind: Some(Prologue::Pattern(bind)),
-                bind_params,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: Some(advance),
-                break_id: None,
-                break_result: false,
-                continue_id: None,
-                exit_id: self.params.exit_id,
-            },
-        });
-        self.block.term = Term(TermInfo::Branch(advance), *for_span);
-        self.link(advance);
-        self.switch(advance);
-        self.lower_load(iter.as_ref().unwrap(), *for_span);
-        self.block.insts.push(Inst(InstInfo::Next, iter_span));
-        self.block.term = Term(TermInfo::If(bodyid, next), *for_span);
-        self.link(bodyid);
-        self.link(next);
-        self.switch(next);
-        self.block.insts.push(Inst(InstInfo::Pop, *for_span));
+        let span = node.for_span;
+        self.lower_arg_acc(span);
+        self.lower_for_loop(node, span, work_ast(&node.body.elems), false)?;
+        self.block.insts.push(Inst(InstInfo::Pop, span));
         Ok(())
     }
 
@@ -1436,126 +1371,20 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         node: &'a If<ExprBody<T>>,
         work_ast: fn(&'a [T]) -> WorkAst<'a>,
     ) -> Result<()> {
+        self.lower_arg_acc(node.tbranch.span);
+        self.lower_if_chain(node, None, |body| work_ast(&body.elems))
+    }
+
+    /// Push the accumulator a vertical-element `for` or `if` pushes its
+    /// elements to
+    fn lower_arg_acc(&mut self, span: Span) {
         let empty = {
             let call = sig::Pack::new([].into_iter());
             self.packtab.id(&call)
         };
-        self.block.insts.push(Inst(
-            InstInfo::Builtin(builtin::ARG_ACC, empty),
-            node.tbranch.span,
-        ));
-
-        let next = self.graph.alloc_block(self.block.func, self.block.scope);
-
-        let start = self.bb;
-
-        // Build the control flow structure from the inside out
-        let mut fallback = next;
-
-        // Handle final else branch if present
-        if let Some((else_body, _)) = &node.else_branch {
-            let fscope = self.graph.alloc_scope(
-                false,
-                false,
-                self.block.func,
-                Some(self.block.scope),
-                &else_body.vars,
-            );
-            fallback = self.graph.alloc_block(self.block.func, fscope);
-            self.queue(Work {
-                bb: fallback,
-                ast: work_ast(&else_body.elems),
-                params: Params {
-                    bind: None,
-                    bind_params: None,
-                    mode: self.params.mode.clone(),
-                    is_top_level: false,
-                    next_id: Some(next),
-                    break_id: self.params.break_id,
-                    break_result: self.params.break_result,
-                    continue_id: self.params.continue_id,
-                    exit_id: self.params.exit_id,
-                },
-            });
-        }
-
-        // Process elif branches in reverse order (last to first)
-        for (elif_branch, _) in node.elif_branches.iter().rev() {
-            let current_fallback = fallback;
-            fallback = self.graph.alloc_block(self.block.func, self.block.scope);
-
-            let tscope = self.graph.alloc_scope(
-                false,
-                false,
-                self.block.func,
-                Some(self.block.scope),
-                &elif_branch.body.vars,
-            );
-            let tid = self.graph.alloc_block(self.block.func, tscope);
-
-            self.switch(fallback);
-            let (bind, bind_params) = self.lower_cond(
-                &elif_branch.expr,
-                elif_branch.bind.as_ref(),
-                tscope,
-                tid,
-                current_fallback,
-                elif_branch.span,
-            )?;
-            self.queue(Work {
-                bb: tid,
-                ast: work_ast(&elif_branch.body.elems),
-                params: Params {
-                    bind,
-                    bind_params,
-                    mode: self.params.mode.clone(),
-                    is_top_level: false,
-                    next_id: Some(next),
-                    break_id: self.params.break_id,
-                    break_result: self.params.break_result,
-                    continue_id: self.params.continue_id,
-                    exit_id: self.params.exit_id,
-                },
-            });
-        }
-
-        // Finally, process the initial if branch
-        self.switch(start);
-        let current_fallback = fallback;
-        let tscope = self.graph.alloc_scope(
-            false,
-            false,
-            self.block.func,
-            Some(self.block.scope),
-            &node.tbranch.body.vars,
-        );
-        let tid = self.graph.alloc_block(self.block.func, tscope);
-        let (bind, bind_params) = self.lower_cond(
-            &node.tbranch.expr,
-            node.tbranch.bind.as_ref(),
-            tscope,
-            tid,
-            current_fallback,
-            node.tbranch.span,
-        )?;
-        self.queue(Work {
-            bb: tid,
-            ast: work_ast(&node.tbranch.body.elems),
-            params: Params {
-                bind,
-                bind_params,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: Some(next),
-                break_id: self.params.break_id,
-                break_result: self.params.break_result,
-                continue_id: self.params.continue_id,
-                exit_id: self.params.exit_id,
-            },
-        });
-
-        self.switch(next);
-        Ok(())
+        self.block
+            .insts
+            .push(Inst(InstInfo::Builtin(builtin::ARG_ACC, empty), span));
     }
 
     /// Lower a `match`.  The scrutinee is stored once, and each arm loads it to
@@ -1613,10 +1442,14 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             self.lower_load(&scrutinee, span);
             let (bind, bind_params) =
                 self.lower_cond_test(&arm.pattern, tscope, tid, current_fallback, span)?;
+            let params = Params {
+                guard: arm.guard.as_ref().map(|guard| (guard, current_fallback)),
+                ..self.branch_params(bind, bind_params, next)
+            };
             self.queue(Work {
                 bb: tid,
-                ast: WorkAst::Arm(arm, want_result, current_fallback),
-                params: self.branch_params(bind, bind_params, next),
+                ast: WorkAst::Block(&arm.body, want_result),
+                params,
             });
         }
 
@@ -1645,6 +1478,24 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             break_result: self.params.break_result,
             continue_id: self.params.continue_id,
             exit_id: self.params.exit_id,
+            guard: None,
+        }
+    }
+
+    /// The parameters of a function body queued from the current block, which
+    /// exits to `exit`
+    fn func_params(&self, exit: cfg::BlockId) -> Params<'a> {
+        Params {
+            bind: None,
+            bind_params: None,
+            mode: self.params.mode.clone(),
+            is_top_level: false,
+            next_id: None,
+            break_id: None,
+            break_result: false,
+            continue_id: None,
+            exit_id: exit,
+            guard: None,
         }
     }
 
@@ -1677,6 +1528,18 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
     }
 
     fn lower_if(&mut self, node: &'a If<Block>, want_result: bool) -> Result<()> {
+        let nil_fallback = (want_result && node.else_branch.is_none()).then(|| node.span());
+        self.lower_if_chain(node, nil_fallback, |body| WorkAst::Block(body, want_result))
+    }
+
+    /// Lower an `if` of either form, queuing each branch's body as `ast` gives
+    /// it.  With no `else`, a `nil_fallback` span loads `nil` when no branch runs.
+    fn lower_if_chain<B: Body>(
+        &mut self,
+        node: &'a If<B>,
+        nil_fallback: Option<Span>,
+        ast: impl Fn(&'a B) -> WorkAst<'a>,
+    ) -> Result<()> {
         let next = self.graph.alloc_block(self.block.func, self.block.scope);
 
         let start = self.bb;
@@ -1685,37 +1548,25 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let mut fallback = next;
 
         // Handle final else branch if present
-        if let Some((else_block, _)) = &node.else_branch {
+        if let Some((else_body, _)) = &node.else_branch {
             let fscope = self.graph.alloc_scope(
                 false,
                 false,
                 self.block.func,
                 Some(self.block.scope),
-                &else_block.vars,
+                else_body.vars(),
             );
             fallback = self.graph.alloc_block(self.block.func, fscope);
             self.queue(Work {
                 bb: fallback,
-                ast: WorkAst::Block(else_block, want_result),
-                params: Params {
-                    bind: None,
-                    bind_params: None,
-                    mode: self.params.mode.clone(),
-                    is_top_level: false,
-                    next_id: Some(next),
-                    break_id: self.params.break_id,
-                    break_result: self.params.break_result,
-                    continue_id: self.params.continue_id,
-                    exit_id: self.params.exit_id,
-                },
+                ast: ast(else_body),
+                params: self.branch_params(None, None, next),
             });
-        }
-
-        if node.else_branch.is_none() && want_result {
+        } else if let Some(span) = nil_fallback {
             fallback = self.graph.alloc_block(self.block.func, self.block.scope);
             self.switch(fallback);
-            self.lower_load_nil(node.span());
-            self.block.term = Term(TermInfo::Branch(next), node.span());
+            self.lower_load_nil(span);
+            self.block.term = Term(TermInfo::Branch(next), span);
             self.link(next);
         }
 
@@ -1729,7 +1580,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 false,
                 self.block.func,
                 Some(self.block.scope),
-                &elif_branch.body.vars,
+                elif_branch.body.vars(),
             );
             let tid = self.graph.alloc_block(self.block.func, tscope);
 
@@ -1744,18 +1595,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             )?;
             self.queue(Work {
                 bb: tid,
-                ast: WorkAst::Block(&elif_branch.body, want_result),
-                params: Params {
-                    bind,
-                    bind_params,
-                    mode: self.params.mode.clone(),
-                    is_top_level: false,
-                    next_id: Some(next),
-                    break_id: self.params.break_id,
-                    break_result: self.params.break_result,
-                    continue_id: self.params.continue_id,
-                    exit_id: self.params.exit_id,
-                },
+                ast: ast(&elif_branch.body),
+                params: self.branch_params(bind, bind_params, next),
             });
         }
 
@@ -1767,7 +1608,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             false,
             self.block.func,
             Some(self.block.scope),
-            &node.tbranch.body.vars,
+            node.tbranch.body.vars(),
         );
         let tid = self.graph.alloc_block(self.block.func, tscope);
         let (bind, bind_params) = self.lower_cond(
@@ -1780,18 +1621,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         )?;
         self.queue(Work {
             bb: tid,
-            ast: WorkAst::Block(&node.tbranch.body, want_result),
-            params: Params {
-                bind,
-                bind_params,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: Some(next),
-                break_id: self.params.break_id,
-                break_result: self.params.break_result,
-                continue_id: self.params.continue_id,
-                exit_id: self.params.exit_id,
-            },
+            ast: ast(&node.tbranch.body),
+            params: self.branch_params(bind, bind_params, next),
         });
 
         self.switch(next);
@@ -1812,17 +1643,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.queue(Work {
             bb: enter,
             ast: WorkAst::Function(func, sig),
-            params: Params {
-                bind: None,
-                bind_params: None,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: None,
-                break_id: None,
-                break_result: false,
-                continue_id: None,
-                exit_id: exit,
-            },
+            params: self.func_params(exit),
         });
         self.block.insts.push(Inst(InstInfo::Close(fid), span));
         Ok(())
@@ -1906,6 +1727,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
                 break_result: false,
                 continue_id: Some(test),
                 exit_id: self.params.exit_id,
+                guard: None,
             },
         });
         self.switch(next);
@@ -1917,6 +1739,23 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
 
     fn lower_for(&mut self, node: &'a For<Block>, want_result: bool) -> Result<()> {
         let span = node.span();
+        self.lower_for_loop(node, span, WorkAst::Block(&node.body, false), true)?;
+        if !want_result {
+            self.block.insts.push(Inst(InstInfo::Pop, span));
+        }
+        Ok(())
+    }
+
+    /// Lower a `for` of either form, queuing its body as `ast`, and finish in the
+    /// block after the loop.  Only a statement `for` is a loop that `break` and
+    /// `continue` target.
+    fn lower_for_loop<B: Body>(
+        &mut self,
+        node: &'a For<B>,
+        span: Span,
+        ast: WorkAst<'a>,
+        is_loop: bool,
+    ) -> Result<()> {
         let sig = if let Some(expr) = &node.expr {
             self.lower_expr(expr)?;
             let call = sig::Pack::new([sig::Arg::Value].into_iter());
@@ -1941,24 +1780,25 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             false,
             self.block.func,
             Some(self.block.scope),
-            &node.body.vars,
+            node.body.vars(),
         );
         let bodyid = self.graph.alloc_block(self.block.func, bscope);
         let bind_params = Some(Defaults::Pattern(&node.bind));
         // FIXME: include span of keyword, not of block
         self.queue(Work {
             bb: bodyid,
-            ast: WorkAst::Block(&node.body, false),
+            ast,
             params: Params {
                 bind: Some(Prologue::Pattern(&node.bind)),
                 bind_params,
                 mode: self.params.mode.clone(),
                 is_top_level: false,
                 next_id: Some(advance),
-                break_id: Some(next),
-                break_result: true,
-                continue_id: Some(advance),
+                break_id: is_loop.then_some(next),
+                break_result: is_loop,
+                continue_id: is_loop.then_some(advance),
                 exit_id: self.params.exit_id,
+                guard: None,
             },
         });
         self.block.term = Term(TermInfo::Branch(advance), span);
@@ -1970,9 +1810,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.link(bodyid);
         self.link(next);
         self.switch(next);
-        if !want_result {
-            self.block.insts.push(Inst(InstInfo::Pop, span));
-        }
         Ok(())
     }
 
@@ -2172,17 +2009,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.queue(Work {
             bb: enter,
             ast: WorkAst::Function(&node.func, sig),
-            params: Params {
-                bind: None,
-                bind_params: None,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: None,
-                break_id: None,
-                break_result: false,
-                continue_id: None,
-                exit_id: exit,
-            },
+            params: self.func_params(exit),
         });
         self.block
             .insts
@@ -2250,17 +2077,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.queue(Work {
             bb: enter,
             ast: WorkAst::Function(&node.func, sig),
-            params: Params {
-                bind: None,
-                bind_params: None,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: None,
-                break_id: None,
-                break_result: false,
-                continue_id: None,
-                exit_id: exit,
-            },
+            params: self.func_params(exit),
         });
         self.block
             .insts
@@ -2606,7 +2423,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         block: &'a Block,
         mut want_result: bool,
         stub_span: Option<Span>,
-        guard: Option<(&'a Guard, cfg::BlockId)>,
     ) -> Result<()> {
         let scope = self.graph.scope(self.block.scope);
         // An empty stub block has no span of its own, so use its marker for the
@@ -2727,9 +2543,6 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         }
 
         self.lower_prologue_bind(span)?;
-        if let Some((guard, fail)) = guard {
-            self.lower_guard(guard, fail, span)?;
-        }
 
         // End prologue
         if let Some(span) = stub_span {
@@ -2833,17 +2646,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         self.queue(Work {
             bb: enter,
             ast: WorkAst::Stmt(&guard.body),
-            params: Params {
-                bind: None,
-                bind_params: None,
-                mode: self.params.mode.clone(),
-                is_top_level: false,
-                next_id: None,
-                break_id: None,
-                break_result: false,
-                continue_id: None,
-                exit_id: exit,
-            },
+            params: self.func_params(exit),
         });
 
         // Emit NlGuard (creates closure internally, invokes it, pushes result + indicator)
@@ -3135,7 +2938,7 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         // Compute order in which to move arguments into locals or upvars
         self.params.bind = Some(Prologue::Plan(self.bind_plan(&function.params, sig)?));
         self.params.bind_params = Some(Defaults::Items(&function.params));
-        self.lower_block(&function.body, true, function.stub_span, None)?;
+        self.lower_block(&function.body, true, function.stub_span)?;
         Ok(())
     }
 
@@ -3814,13 +3617,25 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
             Some(Defaults::Pattern(pattern)) => self.lower_pattern_defaults(pattern, span)?,
             None => {}
         }
+        if let Some((guard, fail)) = self.params.guard.take() {
+            self.lower_guard(guard, fail, span)?;
+        }
         Ok(())
     }
 
-    fn lower_for_args(&mut self, body: &'a [Arg]) -> Result<()> {
+    /// Lower a vertical-element body, pushing its elements' arguments, as
+    /// `elem` lowers each, to the accumulator under it
+    fn lower_elem_body<T>(
+        &mut self,
+        body: &'a [T],
+        mut elem: impl FnMut(&mut Self, &'a T, &mut Vec<sig::Arg>) -> Result<()>,
+    ) -> Result<()>
+    where
+        T: Node,
+    {
         let scope = self.graph.scope(self.block.scope);
         // FIXME: choose better span for this
-        let span = body.span();
+        let span = Node::span(&body);
 
         // Prologue
 
@@ -3836,153 +3651,8 @@ impl<'a, 'c, 'q> Scope<'a, 'c, 'q> {
         let mut sig = Vec::new();
         self.block.insts.push(Inst(InstInfo::Dup, span));
         // End prologue
-        for arg in body.iter() {
-            sig.push(self.lower_arg(arg)?);
-        }
-        let sig = sig::Pack::new(sig.into_iter());
-        let sig = self.packtab.id(&sig);
-
-        self.block.insts.push(Inst(
-            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
-            span,
-        ));
-        self.block.insts.push(Inst(InstInfo::Pop, span));
-
-        // Epilogue
-        if scope.has_upvars() {
-            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
-        }
-        // End epilogue
-
-        if let Some(next) = self.params.next_id {
-            self.block.term = Term(TermInfo::Branch(next), span);
-            self.link(next);
-        } else {
-            unreachable!();
-        }
-
-        Ok(())
-    }
-
-    fn lower_for_record(&mut self, body: &'a [DictElem]) -> Result<()> {
-        let scope = self.graph.scope(self.block.scope);
-        // FIXME: choose better span for this
-        let span = body.span();
-
-        // Prologue
-
-        // Push upvars if we have captures in this scope
-        if scope.has_upvars() {
-            self.block
-                .insts
-                .push(Inst(InstInfo::PushUpvars(scope.caps), span));
-        }
-
-        self.lower_prologue_bind(span)?;
-
-        let mut sig = Vec::new();
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-        // End prologue
-        for elem in body.iter() {
-            sig.push(self.lower_record_elem(elem)?);
-        }
-        let sig = sig::Pack::new(sig.into_iter());
-        let sig = self.packtab.id(&sig);
-
-        self.block.insts.push(Inst(
-            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
-            span,
-        ));
-        self.block.insts.push(Inst(InstInfo::Pop, span));
-
-        // Epilogue
-        if scope.has_upvars() {
-            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
-        }
-        // End epilogue
-
-        if let Some(next) = self.params.next_id {
-            self.block.term = Term(TermInfo::Branch(next), span);
-            self.link(next);
-        } else {
-            unreachable!();
-        }
-
-        Ok(())
-    }
-
-    fn lower_for_array(&mut self, body: &'a [ArrayElem]) -> Result<()> {
-        let scope = self.graph.scope(self.block.scope);
-        // FIXME: choose better span for this
-        let span = body.span();
-
-        // Prologue
-
-        // Push upvars if we have captures in this scope
-        if scope.has_upvars() {
-            self.block
-                .insts
-                .push(Inst(InstInfo::PushUpvars(scope.caps), span));
-        }
-
-        self.lower_prologue_bind(span)?;
-
-        let mut sig = Vec::new();
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-        // End prologue
-        for elem in body.iter() {
-            sig.push(self.lower_array_elem(elem)?);
-        }
-        let sig = sig::Pack::new(sig.into_iter());
-        let sig = self.packtab.id(&sig);
-
-        self.block.insts.push(Inst(
-            InstInfo::MethodCall(self.symtab.id(&self.bintab.id_str("push")), sig),
-            span,
-        ));
-        self.block.insts.push(Inst(InstInfo::Pop, span));
-
-        // Epilogue
-        if scope.has_upvars() {
-            self.block.insts.push(Inst(InstInfo::PopUpvars, span));
-        }
-        // End epilogue
-
-        if let Some(next) = self.params.next_id {
-            self.block.term = Term(TermInfo::Branch(next), span);
-            self.link(next);
-        } else {
-            unreachable!();
-        }
-
-        Ok(())
-    }
-
-    fn lower_for_dict(&mut self, body: &'a [DictElem]) -> Result<()> {
-        let scope = self.graph.scope(self.block.scope);
-        // FIXME: choose better span for this
-        let span = body.span();
-
-        // Prologue
-
-        // Push upvars if we have captures in this scope
-        if scope.has_upvars() {
-            self.block
-                .insts
-                .push(Inst(InstInfo::PushUpvars(scope.caps), span));
-        }
-
-        self.lower_prologue_bind(span)?;
-
-        let mut sig = Vec::new();
-        self.block.insts.push(Inst(InstInfo::Dup, span));
-        // End prologue
-        for elem in body.iter() {
-            let (arg1, arg2) = self.lower_dict_elem(elem)?;
-            sig.push(arg1);
-            if let Some(arg2) = arg2 {
-                sig.push(arg2)
-            }
+        for item in body.iter() {
+            elem(self, item, &mut sig)?;
         }
         let sig = sig::Pack::new(sig.into_iter());
         let sig = self.packtab.id(&sig);
@@ -4056,6 +3726,7 @@ impl<'c> Lowerer<'c> {
                 break_id: None,
                 break_result: false,
                 exit_id: exit,
+                guard: None,
             },
         });
         while let Some(work) = queue.pop() {
@@ -4077,19 +3748,27 @@ impl<'c> Lowerer<'c> {
             match work.ast {
                 WorkAst::Function(function, sig) => scope.lower_function(function, sig)?,
                 WorkAst::Block(block, want_result) => {
-                    scope.lower_block(block, want_result, None, None)?
+                    scope.lower_block(block, want_result, None)?
                 }
-                WorkAst::Arm(arm, want_result, fail) => scope.lower_block(
-                    &arm.body,
-                    want_result,
-                    None,
-                    arm.guard.as_ref().map(|guard| (guard, fail)),
-                )?,
                 WorkAst::Stmt(stmt) => scope.lower_nl_guard_body(stmt)?,
-                WorkAst::Args(body) => scope.lower_for_args(body)?,
-                WorkAst::ArrayElems(body) => scope.lower_for_array(body)?,
-                WorkAst::DictElems(body) => scope.lower_for_dict(body)?,
-                WorkAst::RecordElems(body) => scope.lower_for_record(body)?,
+                WorkAst::Args(body) => scope.lower_elem_body(body, |this, arg, sig| {
+                    sig.push(this.lower_arg(arg)?);
+                    Ok(())
+                })?,
+                WorkAst::ArrayElems(body) => scope.lower_elem_body(body, |this, elem, sig| {
+                    sig.push(this.lower_array_elem(elem)?);
+                    Ok(())
+                })?,
+                WorkAst::DictElems(body) => scope.lower_elem_body(body, |this, elem, sig| {
+                    let (arg1, arg2) = this.lower_dict_elem(elem)?;
+                    sig.push(arg1);
+                    sig.extend(arg2);
+                    Ok(())
+                })?,
+                WorkAst::RecordElems(body) => scope.lower_elem_body(body, |this, elem, sig| {
+                    sig.push(this.lower_record_elem(elem)?);
+                    Ok(())
+                })?,
             }
         }
         mem::drop(queue);

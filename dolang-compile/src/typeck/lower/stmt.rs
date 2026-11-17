@@ -16,8 +16,9 @@ use super::{
 use crate::{
     ast::{
         self, Assign, Block, Class, ClassMember, CondPattern, Decorator, Def, FieldInit, For,
-        Function, Ident, If, IfBranch, LValue, Match, MemberScope, Method, PatBind, PatIdent,
-        PatItem, PrimStmt, Return, SpecialMethod, Stmt, Try, TypeExpr, While, visit::Node,
+        Function, Guard, Ident, If, IfBranch, LValue, Match, MemberScope, Method, PatBind,
+        PatIdent, PatItem, PrimStmt, Return, SpecialMethod, Stmt, Try, TypeExpr, While,
+        visit::Node,
     },
     diag,
     source::Span,
@@ -1234,25 +1235,19 @@ impl<'u> Scope<'_, '_, 'u> {
     fn if_(&mut self, node: &'u If<Block>, dest: Option<VarId>) {
         let complete = node.else_branch.is_some();
         let join = self.block();
-        let branches: Vec<&IfBranch<Block>> = std::iter::once(&node.tbranch)
-            .chain(node.elif_branches.iter().map(|(branch, _)| branch))
-            .collect();
-        for (index, branch) in branches.iter().enumerate() {
-            let fallback = if index + 1 < branches.len() || complete || dest.is_some() {
-                self.block()
-            } else {
-                join
-            };
-            let frame = self.block_frame(&branch.body);
-            let body = self.block();
-            self.test(&branch.expr, branch.bind.as_ref(), &frame, body, fallback);
-            let ctx = Ctx {
-                frame,
-                ..self.ctx.clone()
-            };
-            self.queue_block(body, ctx, &branch.body, dest, join);
-            self.switch(fallback);
-        }
+        self.if_chain(
+            node,
+            join,
+            complete || dest.is_some(),
+            Self::block_frame,
+            |scope, branch, frame, body| {
+                let ctx = Ctx {
+                    frame,
+                    ..scope.ctx.clone()
+                };
+                scope.queue_block(body, ctx, &branch.body, dest, join);
+            },
+        );
         if let Some((block, _)) = &node.else_branch {
             let ctx = Ctx {
                 frame: self.block_frame(block),
@@ -1268,6 +1263,57 @@ impl<'u> Scope<'_, '_, 'u> {
             });
         }
         self.switch(join);
+    }
+
+    /// Lower the branches of an `if` of either form: test each condition in turn,
+    /// running `on_branch` with the branch's frame in the block where its body
+    /// starts, and finish in the block after the last test fails.  That block is
+    /// `join` only when the last branch can fall straight through to it, so
+    /// `need_fallback` says whether something, such as an `else`, follows.
+    pub(super) fn if_chain<B>(
+        &mut self,
+        node: &'u If<B>,
+        join: BlockId,
+        need_fallback: bool,
+        frame: impl Fn(&Self, &'u B) -> Rc<Frame<'u>>,
+        mut on_branch: impl FnMut(&mut Self, &'u IfBranch<B>, Rc<Frame<'u>>, BlockId),
+    ) {
+        let branches: Vec<&IfBranch<B>> = std::iter::once(&node.tbranch)
+            .chain(node.elif_branches.iter().map(|(branch, _)| branch))
+            .collect();
+        for (index, branch) in branches.iter().enumerate() {
+            let fallback = if index + 1 < branches.len() || need_fallback {
+                self.block()
+            } else {
+                join
+            };
+            let frame = frame(self, &branch.body);
+            let body = self.block();
+            self.test(&branch.expr, branch.bind.as_ref(), &frame, body, fallback);
+            on_branch(self, branch, frame, body);
+            self.switch(fallback);
+        }
+    }
+
+    /// Branch on whether a `match` arm's pattern matches `value`, then on its
+    /// guard, if it has one, binding both in `frame` on the way to `body`
+    pub(super) fn test_arm(
+        &mut self,
+        value: Expr,
+        pattern: &'u ast::Pattern,
+        guard: Option<&'u Guard>,
+        frame: &Rc<Frame<'u>>,
+        body: BlockId,
+        fallback: BlockId,
+    ) {
+        let entry = if guard.is_some() { self.block() } else { body };
+        self.test_pattern(value, pattern, false, frame, entry, fallback);
+        if let Some(guard) = guard {
+            self.switch(entry);
+            self.in_frame(frame, |scope| {
+                scope.test(&guard.expr, guard.bind.as_ref(), frame, body, fallback)
+            });
+        }
     }
 
     fn match_(&mut self, node: &'u Match, dest: Option<VarId>) {
@@ -1291,19 +1337,15 @@ impl<'u> Scope<'_, '_, 'u> {
             };
             let frame = self.block_frame(&arm.body);
             let body = self.block();
-            let entry = if arm.guard.is_some() {
-                self.block()
-            } else {
-                body
-            };
             let value = expr(ExprKind::Var(var), self.locate(span));
-            self.test_pattern(value, &arm.pattern, false, &frame, entry, fallback);
-            if let Some(guard) = &arm.guard {
-                self.switch(entry);
-                self.in_frame(&frame, |scope| {
-                    scope.test(&guard.expr, guard.bind.as_ref(), &frame, body, fallback)
-                });
-            }
+            self.test_arm(
+                value,
+                &arm.pattern,
+                arm.guard.as_ref(),
+                &frame,
+                body,
+                fallback,
+            );
             let ctx = Ctx {
                 frame,
                 ..self.ctx.clone()

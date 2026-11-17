@@ -619,29 +619,23 @@ impl<'u> Scope<'_, '_, 'u> {
         let hoist = mem::replace(&mut self.ctx.hoist, false);
         let complete = node.else_branch.is_some();
         let join = self.block();
-        let branches: Vec<_> = std::iter::once(&node.tbranch)
-            .chain(node.elif_branches.iter().map(|(branch, _)| branch))
-            .collect();
         let mut arms = Vec::new();
         let mut spans = Vec::new();
-        for (index, branch) in branches.iter().enumerate() {
-            let fallback = if index + 1 < branches.len() || complete {
-                self.block()
-            } else {
-                join
-            };
-            let frame = self.body_frame(&branch.body);
-            let then = self.block();
-            self.test(&branch.expr, branch.bind.as_ref(), &frame, then, fallback);
-            self.switch(then);
-            arms.push(self.body_items(&frame, &branch.body.elems, items));
-            spans.push(branch.span);
-            self.end(Terminal::Branch {
-                target: join,
-                span: diag::INVALID_SPAN,
-            });
-            self.switch(fallback);
-        }
+        self.if_chain(
+            node,
+            join,
+            complete,
+            Self::body_frame,
+            |scope, branch, frame, then| {
+                scope.switch(then);
+                arms.push(scope.body_items(&frame, &branch.body.elems, items));
+                spans.push(branch.span);
+                scope.end(Terminal::Branch {
+                    target: join,
+                    span: diag::INVALID_SPAN,
+                });
+            },
+        );
         let mut else_ = match &node.else_branch {
             Some((body, _)) => {
                 let frame = self.body_frame(body);

@@ -13,6 +13,26 @@ use crate::{
     source::Span,
 };
 
+/// How a construct with both a statement and a vertical-element form, such as
+/// `if` or `for`, parses its bodies.  The opening `Indent` has already been
+/// consumed, and the body is parsed through its closing `Dedent`.
+pub(super) trait BodyMode {
+    type Body;
+
+    fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self::Body>;
+}
+
+/// Bodies are blocks of statements
+pub(super) struct StmtBody;
+
+impl BodyMode for StmtBody {
+    type Body = Block;
+
+    fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Block> {
+        parser.parse_block_through_dedent(scope)
+    }
+}
+
 impl Parser<'_> {
     fn parse_rhs(&mut self, scope: &mut Scope) -> Result<PrimStmt> {
         self.expect(scope, &[ExpectKind::ArgSep])?;
@@ -233,6 +253,15 @@ impl Parser<'_> {
     }
 
     fn parse_if(&mut self, scope: &mut Scope) -> Result<If<Block>> {
+        self.parse_if_with(scope, &StmtBody)
+    }
+
+    /// Parse an `if` whose branch bodies `mode` parses
+    pub(super) fn parse_if_with<M: BodyMode>(
+        &mut self,
+        scope: &mut Scope,
+        mode: &M,
+    ) -> Result<If<M::Body>> {
         use self::{If, IfBranch, Keyword};
         use Keyword::*;
         use TokenInfo::*;
@@ -240,7 +269,7 @@ impl Parser<'_> {
         let if_span = self.expect(scope, &[ExpectKind::Keyword(If)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let (cond, bind) = self.parse_cond(scope)?;
-        let tbranch = self.parse_block_through_dedent(scope)?;
+        let tbranch = mode.parse_body(self, scope)?;
 
         let mut elif_branches = Vec::new();
         let mut else_branch = None;
@@ -254,7 +283,7 @@ impl Parser<'_> {
                 let elif_if_span = self.expect(scope, &[ExpectKind::Keyword(If)])?;
                 self.expect(scope, &[ExpectKind::ArgSep])?;
                 let (elif_cond, elif_bind) = self.parse_cond(scope)?;
-                let elif_body = self.parse_block_through_dedent(scope)?;
+                let elif_body = mode.parse_body(self, scope)?;
 
                 elif_branches.push((
                     IfBranch {
@@ -268,7 +297,7 @@ impl Parser<'_> {
             } else {
                 // This is final "else"
                 self.expect(scope, &[ExpectKind::Indent])?;
-                let else_body = self.parse_block_through_dedent(scope)?;
+                let else_body = mode.parse_body(self, scope)?;
 
                 else_branch = Some((else_body, else_span));
                 break;
@@ -566,6 +595,15 @@ impl Parser<'_> {
     }
 
     fn parse_for(&mut self, scope: &mut Scope) -> Result<Stmt> {
+        Ok(Stmt::For(self.parse_for_with(scope, &StmtBody)?))
+    }
+
+    /// Parse a `for` whose body `mode` parses
+    pub(super) fn parse_for_with<M: BodyMode>(
+        &mut self,
+        scope: &mut Scope,
+        mode: &M,
+    ) -> Result<For<M::Body>> {
         let for_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::For)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let bind = self.parse_pattern(scope, false)?;
@@ -585,15 +623,15 @@ impl Parser<'_> {
                 ));
             }
         };
-        let body = self.parse_block_through_dedent(scope)?;
-        Ok(Stmt::For(For {
+        let body = mode.parse_body(self, scope)?;
+        Ok(For {
             bind,
             expr,
             body,
             iter: None,
             for_span,
             equal_span,
-        }))
+        })
     }
 
     pub(super) fn parse_decl_marker(
