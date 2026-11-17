@@ -15,7 +15,7 @@ use super::{
 };
 use crate::{
     ast::{
-        self, Assign, Block, Class, ClassMember, CondPattern, Decorator, Def, FieldInit, For,
+        self, Arm, Assign, Block, Class, ClassMember, CondPattern, Decorator, Def, FieldInit, For,
         Function, Guard, Ident, If, IfBranch, LValue, Match, MemberScope, Method, PatBind,
         PatIdent, PatItem, PrimStmt, Return, SpecialMethod, Stmt, Try, TypeExpr, While,
         visit::Node,
@@ -1316,43 +1316,22 @@ impl<'u> Scope<'_, '_, 'u> {
         }
     }
 
-    fn match_(&mut self, node: &'u Match, dest: Option<VarId>) {
+    fn match_(&mut self, node: &'u Match<Block>, dest: Option<VarId>) {
         let complete = node.else_branch.is_some();
         let join = self.block();
-        let span = node.scrutinee.span();
-        // Later arms test the same variable, which earlier arms' failed tests narrow
-        let value = self.expr(&node.scrutinee);
-        let var = match value.kind {
-            ExprKind::Var(var) | ExprKind::Copy(var) => {
-                self.emit(Step::Eval(value));
-                var
-            }
-            _ => self.temporary(value),
-        };
-        for (index, arm) in node.arms.iter().enumerate() {
-            let fallback = if index + 1 < node.arms.len() || complete || dest.is_some() {
-                self.block()
-            } else {
-                join
-            };
-            let frame = self.block_frame(&arm.body);
-            let body = self.block();
-            let value = expr(ExprKind::Var(var), self.locate(span));
-            self.test_arm(
-                value,
-                &arm.pattern,
-                arm.guard.as_ref(),
-                &frame,
-                body,
-                fallback,
-            );
-            let ctx = Ctx {
-                frame,
-                ..self.ctx.clone()
-            };
-            self.queue_block(body, ctx, &arm.body, dest, join);
-            self.switch(fallback);
-        }
+        self.match_arms(
+            node,
+            join,
+            complete || dest.is_some(),
+            Self::block_frame,
+            |scope, arm, frame, body| {
+                let ctx = Ctx {
+                    frame,
+                    ..scope.ctx.clone()
+                };
+                scope.queue_block(body, ctx, &arm.body, dest, join);
+            },
+        );
         if let Some((block, _)) = &node.else_branch {
             let ctx = Ctx {
                 frame: self.block_frame(block),
@@ -1368,6 +1347,49 @@ impl<'u> Scope<'_, '_, 'u> {
             });
         }
         self.switch(join);
+    }
+
+    /// Lower the arms of a `match` of either form, as [`Self::if_chain`] lowers
+    /// an `if`'s branches: evaluate the scrutinee, then test each arm in turn,
+    /// running `on_arm` with the arm's frame in the block where its body starts.
+    pub(super) fn match_arms<B>(
+        &mut self,
+        node: &'u Match<B>,
+        join: BlockId,
+        need_fallback: bool,
+        frame: impl Fn(&Self, &'u B) -> Rc<Frame<'u>>,
+        mut on_arm: impl FnMut(&mut Self, &'u Arm<B>, Rc<Frame<'u>>, BlockId),
+    ) {
+        let span = node.scrutinee.span();
+        // Later arms test the same variable, which earlier arms' failed tests narrow
+        let value = self.expr(&node.scrutinee);
+        let var = match value.kind {
+            ExprKind::Var(var) | ExprKind::Copy(var) => {
+                self.emit(Step::Eval(value));
+                var
+            }
+            _ => self.temporary(value),
+        };
+        for (index, arm) in node.arms.iter().enumerate() {
+            let fallback = if index + 1 < node.arms.len() || need_fallback {
+                self.block()
+            } else {
+                join
+            };
+            let frame = frame(self, &arm.body);
+            let body = self.block();
+            let value = expr(ExprKind::Var(var), self.locate(span));
+            self.test_arm(
+                value,
+                &arm.pattern,
+                arm.guard.as_ref(),
+                &frame,
+                body,
+                fallback,
+            );
+            on_arm(self, arm, frame, body);
+            self.switch(fallback);
+        }
     }
 
     fn loop_ctx(&self, frame: Rc<Frame<'u>>, exit: BlockId, next: BlockId) -> Ctx<'u> {

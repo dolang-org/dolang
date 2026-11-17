@@ -1,0 +1,9 @@
+let d = $
+  items:
+    match 1
+      x
+# error: expected `if` or an indented block after an arm's pattern
+#   --> match_vert_nested_missing_body.dol:LL:LL
+#    |
+# LL |       x
+#    |       ^

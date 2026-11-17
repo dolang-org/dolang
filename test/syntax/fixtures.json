@@ -1632,6 +1632,44 @@
     ]
   },
   {
+    "name": "match as a vertical element",
+    "lines": [
+      "let items = $",
+      "  - first",
+      "  match value",
+      "    Int(n) => big $n",
+      "    Str(s)",
+      "      - $s",
+      "  - last"
+    ],
+    "checks": [
+      {
+        "line": 4,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 4,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 5,
+        "text": "Str",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 6,
+        "text": "-",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      }
+    ]
+  },
+  {
     "name": "numbers beside ranges and trailing decimal points",
     "lines": [
       "echo 1. 2.e3 1.2_3 -0B1_0",

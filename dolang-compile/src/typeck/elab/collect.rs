@@ -1629,27 +1629,7 @@ impl<'u> Walk<'_, 'u> {
         match prim {
             PrimStmt::Expr(expr) => self.expr(frame, expr),
             PrimStmt::If(node) => self.if_body(frame, node),
-            PrimStmt::Match(node) => {
-                self.expr(frame, &node.scrutinee);
-                for arm in &node.arms {
-                    let inner = self.scope(Some(frame), &arm.body.vars, &arm.body.stmts);
-                    self.pattern_classes(frame, &arm.pattern);
-                    self.pattern(&inner, &arm.pattern);
-                    if let Some(guard) = &arm.guard {
-                        self.expr(&inner, &guard.expr);
-                        if let Some(bind) = &guard.bind {
-                            self.pattern_classes(&inner, &bind.pattern);
-                            self.pattern(&inner, &bind.pattern);
-                        }
-                    }
-                    for stmt in &arm.body.stmts {
-                        stmt.walk(self, &inner);
-                    }
-                }
-                if let Some((body, _)) = &node.else_branch {
-                    self.branch(frame, body, None);
-                }
-            }
+            PrimStmt::Match(node) => self.match_body(frame, node),
             PrimStmt::Try(node) => {
                 self.function(Some(frame), &node.body);
                 for handler in &node.handlers {
@@ -1704,6 +1684,30 @@ impl<'u> Walk<'_, 'u> {
                 &branch.body,
                 branch.bind.as_ref().map(|bind| &bind.pattern),
             );
+        }
+        if let Some((body, _)) = &node.else_branch {
+            self.branch(frame, body, None);
+        }
+    }
+
+    /// A `match` of either form
+    fn match_body<T: Body>(&mut self, frame: &Frame<'_, 'u>, node: &'u ast::Match<T>) {
+        self.expr(frame, &node.scrutinee);
+        for arm in &node.arms {
+            let (vars, elems) = arm.body.parts();
+            let inner = self.scope(Some(frame), vars, elems);
+            self.pattern_classes(frame, &arm.pattern);
+            self.pattern(&inner, &arm.pattern);
+            if let Some(guard) = &arm.guard {
+                self.expr(&inner, &guard.expr);
+                if let Some(bind) = &guard.bind {
+                    self.pattern_classes(&inner, &bind.pattern);
+                    self.pattern(&inner, &bind.pattern);
+                }
+            }
+            for elem in elems {
+                elem.walk(self, &inner);
+            }
         }
         if let Some((body, _)) = &node.else_branch {
             self.branch(frame, body, None);
@@ -2173,6 +2177,7 @@ impl Element for Arg {
             }
             Self::For(node) => walk.for_elem(frame, node),
             Self::If(node) => walk.if_body(frame, node),
+            Self::Match(node) => walk.match_body(frame, node),
         }
     }
 }
@@ -2184,6 +2189,7 @@ impl Element for ArrayElem {
             Self::Expand(node) => walk.expr(frame, &node.expr),
             Self::For(node) => walk.for_elem(frame, node),
             Self::If(node) => walk.if_body(frame, node),
+            Self::Match(node) => walk.match_body(frame, node),
         }
     }
 }
@@ -2200,6 +2206,7 @@ impl Element for DictElem {
             Self::Expand(node) => walk.expr(frame, &node.expr),
             Self::For(node) => walk.for_elem(frame, node),
             Self::If(node) => walk.if_body(frame, node),
+            Self::Match(node) => walk.match_body(frame, node),
         }
     }
 }

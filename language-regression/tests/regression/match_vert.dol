@@ -1,0 +1,120 @@
+# `match` in vertical layout, where the arm bodies are element lists rather
+# than blocks
+
+def describe v
+  $
+    - start
+    match v
+      Int(n) if (n > 1) => big $n
+      Int(n)
+        - small
+        - $n
+      Str(s) => str $s
+      | :name
+      => named $name
+    else
+      - other
+    - end
+
+# Array literal: a guarded `=>` arm, a block arm, a `|` group with `=>`, and
+# `else`
+assert_eq $describe(5) ["start", "big", 5, "end"]
+assert_eq $describe(1) ["start", "small", 1, "end"]
+assert_eq $describe("x") ["start", "str", "x", "end"]
+assert_eq $describe({name: "n"}) ["start", "named", "n", "end"]
+assert_eq $describe([]) ["start", "other", "end"]
+
+# No match and no `else` adds nothing
+def zero v
+  $
+    - a
+    match v
+      0 => zero
+    - b
+assert_eq $zero(0) ["a", "zero", "b"]
+assert_eq $zero(1) ["a", "b"]
+
+# Dict literal, with keys from a block arm
+def keyed v
+  $
+    base: 1
+    match v
+      Int(n)
+        n: $n
+      | :code
+      do
+        code: $code
+assert_eq $keyed(3) {base: 1, n: 3}
+assert_eq $keyed({code: 4}) {base: 1, code: 4}
+
+# Record literal, mixing positional and keyed items
+let rec = $
+  - first
+  match 2
+    Int(n)
+      - $n
+      tag: int
+assert_eq $rec {"first", 2, tag: "int"}
+
+# Command arguments, with a `...` expansion after `=>`
+def collect :verbose *args
+  [args, verbose]
+let got = collect
+  - x
+  match [1, 2]
+    Array(a ...rest) => $a ...rest
+  verbose: true
+assert_eq $got [("x", 1, 2), true]
+
+# A guard that fails falls through to the next arm, and an `if let` guard binds
+# for its arm
+def guarded v
+  $
+    match v
+      Int(n) if (n > 100)
+        - huge
+      Int(n) if let a b = [n, (n * 2)] => $a $b
+    else
+      - none
+assert_eq $guarded(500) ["huge"]
+assert_eq $guarded(3) [3, 6]
+assert_eq $guarded("x") ["none"]
+
+# Arm bindings are scoped to their arm
+let n = "outer"
+let scoped = $
+  match 1
+    Int(n) => $n
+  - $n
+assert_eq $scoped [1, "outer"]
+
+# `else if`
+def chain v
+  $
+    match v
+      0 => zero
+    else if (v == 1)
+      - one
+    else
+      - many
+assert_eq $chain(0) ["zero"]
+assert_eq $chain(1) ["one"]
+assert_eq $chain(2) ["many"]
+
+# A `match` in a `for` element, and a `for` in an arm
+let mixed = $
+  for x = [1, "a", 2]
+    match x
+      Int(n) => $n
+      Str(s)
+        for c = [1, 2]
+          - "$s$c"
+assert_eq $mixed [1, "a1", "a2", 2]
+
+# A nested `match`, under a key, takes block arms
+let nested = $
+  items:
+    match 7
+      Int(n)
+        - $n
+assert_eq $nested {items: [7]}

@@ -1957,6 +1957,9 @@ impl<'a> Elaborater<'a> {
             ArrayElem::For(node) => {
                 self.visit_elem_for(scope, node, is_arg, Self::visit_array_elem)
             }
+            ArrayElem::Match(node) => {
+                self.visit_elem_match(scope, node, is_arg, Self::visit_array_elem)
+            }
         }
     }
 
@@ -1976,6 +1979,9 @@ impl<'a> Elaborater<'a> {
             DictElem::Expand(Expand { expr, .. }) => self.visit_expr(scope, expr, is_arg),
             DictElem::If(node) => self.visit_elem_if(scope, node, is_arg, Self::visit_dict_elem),
             DictElem::For(node) => self.visit_elem_for(scope, node, is_arg, Self::visit_dict_elem),
+            DictElem::Match(node) => {
+                self.visit_elem_match(scope, node, is_arg, Self::visit_dict_elem)
+            }
         }
     }
 
@@ -2391,6 +2397,11 @@ impl<'a> Elaborater<'a> {
             Arg::For(node) => self.visit_elem_for(scope, node, false, |this, scope, elem, _| {
                 this.visit_cmd_arg(scope, elem)
             }),
+            Arg::Match(node) => {
+                self.visit_elem_match(scope, node, false, |this, scope, elem, _| {
+                    this.visit_cmd_arg(scope, elem)
+                })
+            }
         }
     }
 
@@ -2845,12 +2856,52 @@ impl<'a> Elaborater<'a> {
     ///
     /// Each arm's body gets a scope of its own, into which its pattern binds, then
     /// its guard's pattern: the guard sees the arm's names, and the body both.
-    fn visit_match(&mut self, scope: &mut Scope<'_>, node: &mut Match) -> Result<()> {
+    fn visit_match(&mut self, scope: &mut Scope<'_>, node: &mut Match<Block>) -> Result<()> {
+        self.visit_match_with(scope, node, false, |this, mut inner, body| {
+            this.visit_block_inner(&mut inner, body)?;
+            inner.finish(this, &mut body.vars);
+            Ok(())
+        })
+    }
+
+    /// Elaborate a `match` in vertical-element layout, as [`Self::visit_match`]
+    /// does, where each body is a list of arguments, array elements, or dict
+    /// elements. `visit_elem` and `is_arg` are as for [`Self::visit_elem_if`].
+    fn visit_elem_match<T>(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut Match<ExprBody<T>>,
+        is_arg: bool,
+        visit_elem: fn(&mut Self, &mut Scope<'_>, &mut T, bool) -> Result<()>,
+    ) -> Result<()> {
+        self.visit_match_with(scope, node, true, |this, mut inner, body| {
+            for elem in body.elems.iter_mut() {
+                visit_elem(this, &mut inner, elem, is_arg)?;
+            }
+            inner.finish(this, &mut body.vars);
+            Ok(())
+        })
+    }
+
+    /// Elaborate a `match` of either form. Each body gets a scope nested in
+    /// `scope`, an element scope if `element`, which `visit_body` visits the
+    /// body in and finishes.
+    fn visit_match_with<B>(
+        &mut self,
+        scope: &mut Scope<'_>,
+        node: &mut Match<B>,
+        element: bool,
+        mut visit_body: impl FnMut(&mut Self, Scope<'_>, &mut B) -> Result<()>,
+    ) -> Result<()> {
         self.visit_expr(scope, &mut node.scrutinee, false)?;
         node.var = Some(scope.insert_synthetic(self.epoch));
 
         for arm in &mut node.arms {
-            let mut inner = scope.nested();
+            let mut inner = if element {
+                scope.nested_element()
+            } else {
+                scope.nested()
+            };
             self.visit_pattern(&mut inner, &mut arm.pattern, PatternSite::Branch)?;
             if let Some(guard) = &mut arm.guard {
                 self.visit_expr(&mut inner, &mut guard.expr, false)?;
@@ -2858,12 +2909,16 @@ impl<'a> Elaborater<'a> {
                     self.bind_pattern(&mut inner, &mut bind.pattern)?;
                 }
             }
-            self.visit_block_inner(&mut inner, &mut arm.body)?;
-            inner.finish(self, &mut arm.body.vars);
+            visit_body(self, inner, &mut arm.body)?;
         }
 
-        if let Some((else_block, _)) = &mut node.else_branch {
-            self.visit_block(scope, else_block)?;
+        if let Some((else_body, _)) = &mut node.else_branch {
+            let inner = if element {
+                scope.nested_element()
+            } else {
+                scope.nested()
+            };
+            visit_body(self, inner, else_body)?;
         }
 
         Ok(())
