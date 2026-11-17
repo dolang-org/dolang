@@ -9,8 +9,8 @@ use super::{
 };
 use crate::{
     ast::{
-        self, Arg, ArrayElem, DictElem, ExprBody, For, GetVariant, Ident, If, Key, Pair, Single,
-        SpecialMethod, visit::Node,
+        self, Arg, ArrayElem, DictElem, ExprBody, For, GetVariant, Ident, If, Key, Match, Pair,
+        Single, SpecialMethod, visit::Node,
     },
     diag,
     lex::Op,
@@ -506,6 +506,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 Arg::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
                 Arg::For(node) => self.item_for(node, Self::args),
                 Arg::If(node) => self.item_if(node, Self::args),
+                Arg::Match(node) => self.item_match(node, Self::args),
             })
             .collect()
     }
@@ -518,6 +519,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 ArrayElem::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
                 ArrayElem::For(node) => self.item_for(node, Self::array_items),
                 ArrayElem::If(node) => self.item_if(node, Self::array_items),
+                ArrayElem::Match(node) => self.item_match(node, Self::array_items),
             })
             .collect()
     }
@@ -537,6 +539,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 DictElem::Expand(expand) => Item::Spread(self.expr(&expand.expr)),
                 DictElem::For(node) => self.item_for(node, Self::dict_items),
                 DictElem::If(node) => self.item_if(node, Self::dict_items),
+                DictElem::Match(node) => self.item_match(node, Self::dict_items),
             })
             .collect()
     }
@@ -620,7 +623,6 @@ impl<'u> Scope<'_, '_, 'u> {
         let complete = node.else_branch.is_some();
         let join = self.block();
         let mut arms = Vec::new();
-        let mut spans = Vec::new();
         self.if_chain(
             node,
             join,
@@ -628,15 +630,61 @@ impl<'u> Scope<'_, '_, 'u> {
             Self::body_frame,
             |scope, branch, frame, then| {
                 scope.switch(then);
-                arms.push(scope.body_items(&frame, &branch.body.elems, items));
-                spans.push(branch.span);
+                let then_items = scope.body_items(&frame, &branch.body.elems, items);
+                arms.push((then_items, branch.span));
                 scope.end(Terminal::Branch {
                     target: join,
                     span: diag::INVALID_SPAN,
                 });
             },
         );
-        let mut else_ = match &node.else_branch {
+        let item = self.item_branches(arms, node.else_branch.as_ref(), join, items);
+        self.ctx.hoist = hoist;
+        item
+    }
+
+    /// A comprehension's `match`, lowered as [`Self::item_if`] lowers an `if`:
+    /// each arm's items are the `then` of a nested [`Item::If`]
+    fn item_match<T>(
+        &mut self,
+        node: &'u Match<ExprBody<T>>,
+        items: fn(&mut Self, &'u [T]) -> Vec<Item>,
+    ) -> Item {
+        let hoist = mem::replace(&mut self.ctx.hoist, false);
+        let complete = node.else_branch.is_some();
+        let join = self.block();
+        let mut arms = Vec::new();
+        self.match_arms(
+            node,
+            join,
+            complete,
+            Self::body_frame,
+            |scope, arm, frame, then| {
+                scope.switch(then);
+                let then_items = scope.body_items(&frame, &arm.body.elems, items);
+                arms.push((then_items, arm.pattern.span()));
+                scope.end(Terminal::Branch {
+                    target: join,
+                    span: diag::INVALID_SPAN,
+                });
+            },
+        );
+        let item = self.item_branches(arms, node.else_branch.as_ref(), join, items);
+        self.ctx.hoist = hoist;
+        item
+    }
+
+    /// Finish a comprehension `if` or `match` after its tests: lower the `else`
+    /// body, if there is one, and nest the branches' items, each with the span
+    /// of its test, into one [`Item::If`]
+    fn item_branches<T>(
+        &mut self,
+        arms: Vec<(Vec<Item>, Span)>,
+        else_branch: Option<&'u (ExprBody<T>, Span)>,
+        join: BlockId,
+        items: fn(&mut Self, &'u [T]) -> Vec<Item>,
+    ) -> Item {
+        let mut else_ = match else_branch {
             Some((body, _)) => {
                 let frame = self.body_frame(body);
                 let items = self.body_items(&frame, &body.elems, items);
@@ -649,15 +697,16 @@ impl<'u> Scope<'_, '_, 'u> {
             }
             None => Vec::new(),
         };
-        for (then, span) in arms.into_iter().zip(spans).rev() {
+        for (then, span) in arms.into_iter().rev() {
             else_ = vec![Item::If {
                 then: then.into(),
                 else_: else_.into(),
                 span: self.locate(span),
             }];
         }
-        self.ctx.hoist = hoist;
-        else_.pop().expect("an `if` has a first branch")
+        else_
+            .pop()
+            .expect("a comprehension `if` or `match` has a first branch")
     }
 
     /// Push a value, unless it's already on top of the stack

@@ -710,7 +710,9 @@ assert_eq (lookup {"a": 1} 4) "not found"
 
 Like `if`, `match` can be the right-hand side of `let` or an assignment, and
 gives the result of the body that runs. Without `else`, it gives `nil` when no
-arm matches. The value being matched is evaluated once, before the first arm.
+arm matches. The value being matched is evaluated once, before the first arm. In
+[vertical layout](./vertical-layout.md#match-in-vertical-layout), the bodies
+hold items instead.
 
 The [type checker](./type-checking.md#narrowing) narrows the value by each arm
 that does not match, so a later arm sees only what remains:

@@ -1,0 +1,8 @@
+let d = $
+  match 1
+    x => - $x
+# error: a `-` item heads its own line
+#   --> match_vert_arrow_dash.dol:LL:LL
+#    |
+# LL |     x => - $x
+#    |          ^

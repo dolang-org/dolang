@@ -376,18 +376,31 @@ pub(crate) struct Guard {
 ///
 /// The body is an indented block, which follows a horizontal pattern or a guard
 /// directly and a `|` group after `do`, or a statement on the same line after
-/// `=>`.
-pub(crate) struct Arm {
+/// `=>`. In vertical layout, the body holds the arm's items, and a same-line
+/// body is a line of bin-packed items.
+pub(crate) struct Arm<T> {
     pub(crate) pattern: Pattern,
     pub(crate) guard: Option<Guard>,
     /// Span of the `do` starting the block after a `|` group
     pub(crate) do_span: Option<Span>,
     /// Span of the `=>` introducing a same-line body
     pub(crate) arrow_span: Option<Span>,
-    pub(crate) body: Block,
+    pub(crate) body: T,
 }
 
-impl Node for Arm {
+impl<T> Arm<T> {
+    pub(crate) fn map<R>(self, f: &mut impl FnMut(T) -> R) -> Arm<R> {
+        Arm {
+            body: f(self.body),
+            pattern: self.pattern,
+            guard: self.guard,
+            do_span: self.do_span,
+            arrow_span: self.arrow_span,
+        }
+    }
+}
+
+impl<T: Node> Node for Arm<T> {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.node(&self.pattern)?;
         if let Some(guard) = &self.guard {
@@ -409,17 +422,37 @@ impl Node for Arm {
 }
 
 /// A `match`: the first arm whose pattern and guard match the scrutinee runs.
-pub(crate) struct Match {
+pub(crate) struct Match<T> {
     pub(crate) match_span: Span,
     pub(crate) scrutinee: Expr,
-    pub(crate) arms: Vec<Arm>,
+    pub(crate) arms: Vec<Arm<T>>,
     /// The `else` body, which for `else if` holds the `if` alone
-    pub(crate) else_branch: Option<(Block, Span)>,
+    pub(crate) else_branch: Option<(T, Span)>,
     /// The synthetic variable holding the scrutinee, filled in by elaboration
     pub(crate) var: Option<usize>,
 }
 
-impl Node for Match {
+impl<T> Match<T> {
+    pub(crate) fn map<R>(self, f: &mut impl FnMut(T) -> R) -> Match<R> {
+        Match {
+            arms: self.arms.into_iter().map(|arm| arm.map(f)).collect(),
+            else_branch: self.else_branch.map(|(v, s)| (f(v), s)),
+            match_span: self.match_span,
+            scrutinee: self.scrutinee,
+            var: self.var,
+        }
+    }
+
+    /// The arm bodies, then the `else` body
+    pub(crate) fn branches(&self) -> impl Iterator<Item = &T> {
+        self.arms
+            .iter()
+            .map(|arm| &arm.body)
+            .chain(self.else_branch.iter().map(|(body, _)| body))
+    }
+}
+
+impl<T: Node> Node for Match<T> {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.token(Token::Keyword, self.match_span, None)?;
         visit.node(&self.scrutinee)?;
@@ -483,6 +516,7 @@ pub(crate) enum ArrayElem {
     Expand(Expand),
     For(For<ExprBody<Self>>),
     If(If<ExprBody<Self>>),
+    Match(Match<ExprBody<Self>>),
 }
 
 impl Node for ArrayElem {
@@ -492,6 +526,7 @@ impl Node for ArrayElem {
             ArrayElem::Expand(node) => node.accept(visit),
             ArrayElem::For(node) => node.accept(visit),
             ArrayElem::If(node) => node.accept(visit),
+            ArrayElem::Match(node) => node.accept(visit),
         }
     }
 
@@ -501,6 +536,7 @@ impl Node for ArrayElem {
             ArrayElem::Expand(expand) => expand.kind(),
             ArrayElem::For(node) => node.kind(),
             ArrayElem::If(node) => node.kind(),
+            ArrayElem::Match(node) => node.kind(),
         }
     }
 }
@@ -548,6 +584,7 @@ pub(crate) enum DictElem {
     Expand(Expand),
     For(For<ExprBody<Self>>),
     If(If<ExprBody<Self>>),
+    Match(Match<ExprBody<Self>>),
 }
 
 impl DictElem {
@@ -563,6 +600,11 @@ impl DictElem {
                         Self::each_item(&branch.body.elems, f);
                     }
                     if let Some((body, _)) = &node.else_branch {
+                        Self::each_item(&body.elems, f);
+                    }
+                }
+                DictElem::Match(node) => {
+                    for body in node.branches() {
                         Self::each_item(&body.elems, f);
                     }
                 }
@@ -592,6 +634,7 @@ impl Node for DictElem {
             DictElem::Expand(node) => node.accept(visit),
             DictElem::For(node) => node.accept(visit),
             DictElem::If(node) => node.accept(visit),
+            DictElem::Match(node) => node.accept(visit),
         }
     }
 
@@ -603,6 +646,7 @@ impl Node for DictElem {
             DictElem::Expand(expand) => expand.kind(),
             DictElem::For(node) => node.kind(),
             DictElem::If(node) => node.kind(),
+            DictElem::Match(node) => node.kind(),
         }
     }
 }
@@ -1108,6 +1152,8 @@ impl Expr {
                     );
                     Self::combine_effects(cond, branch_effect)
                 }
+                // Patterns test the scrutinee in ways that can be overloaded
+                ArrayElem::Match(_) => SideEffect::Likely,
             })),
 
             // Dict literals - check all elements
@@ -1161,6 +1207,8 @@ impl Expr {
                     );
                     Self::combine_effects(cond, branch_effect)
                 }
+                // Patterns test the scrutinee in ways that can be overloaded
+                DictElem::Match(_) => SideEffect::Likely,
             })),
 
             // Tuple literals - check all elements
@@ -1666,6 +1714,7 @@ pub(crate) enum Arg {
     Expand(Expand),
     For(For<ExprBody<Arg>>),
     If(If<ExprBody<Arg>>),
+    Match(Match<ExprBody<Arg>>),
 }
 
 impl Node for Arg {
@@ -1677,6 +1726,7 @@ impl Node for Arg {
             Arg::DynamicKey(node) => node.accept(visit),
             Arg::For(node) => node.accept(visit),
             Arg::If(node) => node.accept(visit),
+            Arg::Match(node) => node.accept(visit),
         }
     }
 
@@ -1688,6 +1738,7 @@ impl Node for Arg {
             Arg::Expand(expand) => expand.kind(),
             Arg::For(node) => node.kind(),
             Arg::If(node) => node.kind(),
+            Arg::Match(node) => node.kind(),
         }
     }
 }
@@ -2470,7 +2521,7 @@ impl Node for Try {
 pub(crate) enum PrimStmt {
     Expr(Expr),
     If(If<Block>),
-    Match(Match),
+    Match(Match<Block>),
     Try(Try),
 }
 

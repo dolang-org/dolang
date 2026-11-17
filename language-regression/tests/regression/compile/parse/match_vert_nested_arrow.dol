@@ -1,0 +1,9 @@
+let d = $
+  items:
+    match 1
+      x => $x
+# error: a nested `match` arm's items go in an indented block, or in a block introduced with `$`
+#   --> match_vert_nested_arrow.dol:LL:LL
+#    |
+# LL |       x => $x
+#    |         ^^

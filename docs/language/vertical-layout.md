@@ -203,6 +203,32 @@ assert_eq $items [1, 2]
 
 See [Conditional Matching](./patterns.md#conditional-matching).
 
+## `match` in Vertical Layout
+
+A [`match`](./patterns.md#match) passes the items of the first arm that
+matches, or of `else`. An arm's bindings are in scope for its items. Where
+bin-packing is allowed, an arm can give a line of bin-packed items after `=>`;
+inside [nested items](#nested-data), its items go in an indented block.
+
+```playground
+#> import test:
+#>   - assert_eq
+def flags level
+  $
+    - --color
+    match level
+      Int(n) if (n > 1) => --jobs $n
+      :quiet:
+        - --quiet
+        - --no-progress
+    else
+      - --verbose
+
+assert_eq $flags(4) ["--color", "--jobs", 4]
+assert_eq $flags(:quiet:) ["--color", "--quiet", "--no-progress"]
+assert_eq $flags(nil) ["--color", "--verbose"]
+```
+
 ## Spreading
 
 Use `...` to spread in vertical layout. It must not be preceded by `-`.

@@ -21,6 +21,29 @@ pub(super) trait BodyMode {
     type Body;
 
     fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self::Body>;
+
+    /// Parse a `match` arm's same-line body, after its `=>` at `arrow_span`
+    fn parse_inline(
+        &self,
+        parser: &mut Parser<'_>,
+        scope: &mut Scope,
+        arrow_span: Span,
+    ) -> Result<Self::Body>;
+
+    /// The error for a `match` arm with no body, after a `|` group if `group`
+    fn arm_expected(&self, group: bool) -> &'static str;
+
+    /// The body holding the `if` of a `match`'s `else if`
+    fn wrap_if(&self, node: If<Self::Body>) -> Self::Body;
+}
+
+/// [`BodyMode::arm_expected`] where an arm can take `=>`
+pub(super) fn arm_expected_inline(group: bool) -> &'static str {
+    if group {
+        "expected `do`, `=>` or `if` after an arm's `|` group"
+    } else {
+        "expected `=>`, `if` or an indented block after an arm's pattern"
+    }
 }
 
 /// Bodies are blocks of statements
@@ -31,6 +54,27 @@ impl BodyMode for StmtBody {
 
     fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Block> {
         parser.parse_block_through_dedent(scope)
+    }
+
+    fn parse_inline(
+        &self,
+        parser: &mut Parser<'_>,
+        scope: &mut Scope,
+        arrow_span: Span,
+    ) -> Result<Block> {
+        parser.parse_arm_inline(scope, arrow_span)
+    }
+
+    fn arm_expected(&self, group: bool) -> &'static str {
+        arm_expected_inline(group)
+    }
+
+    fn wrap_if(&self, node: If<Block>) -> Block {
+        Block {
+            stmts: vec![Stmt::Prim(PrimStmt::If(node))],
+            vars: Vec::new(),
+            repl: None,
+        }
     }
 }
 
@@ -381,7 +425,16 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_match(&mut self, scope: &mut Scope) -> Result<Match> {
+    fn parse_match(&mut self, scope: &mut Scope) -> Result<Match<Block>> {
+        self.parse_match_with(scope, &StmtBody)
+    }
+
+    /// Parse a `match` whose arm and `else` bodies `mode` parses
+    pub(super) fn parse_match_with<M: BodyMode>(
+        &mut self,
+        scope: &mut Scope,
+        mode: &M,
+    ) -> Result<Match<M::Body>> {
         use self::Keyword;
         use TokenInfo::*;
 
@@ -400,7 +453,7 @@ impl Parser<'_> {
                     self.advance();
                     break;
                 }
-                _ => arms.push(self.parse_arm(scope)?),
+                _ => arms.push(self.parse_arm(scope, mode)?),
             }
         }
         if arms.is_empty() {
@@ -413,15 +466,11 @@ impl Parser<'_> {
                 let else_span = self.advance();
                 let body = if let Some(token!(ArgSep)) = self.peek()? {
                     self.advance();
-                    let node = self.parse_if(scope)?;
-                    Block {
-                        stmts: vec![Stmt::Prim(PrimStmt::If(node))],
-                        vars: Vec::new(),
-                        repl: None,
-                    }
+                    let node = self.parse_if_with(scope, mode)?;
+                    mode.wrap_if(node)
                 } else {
                     self.expect(scope, &[ExpectKind::Indent])?;
-                    self.parse_block_through_dedent(scope)?
+                    mode.parse_body(self, scope)?
                 };
                 Some((body, else_span))
             }
@@ -441,8 +490,8 @@ impl Parser<'_> {
     ///
     /// The body is an indented block or, after `=>`, a statement on the same
     /// line. A block follows a horizontal pattern or a guard directly, and a `|`
-    /// group after `do`.
-    fn parse_arm(&mut self, scope: &mut Scope) -> Result<Arm> {
+    /// group after `do`. `mode` parses the body.
+    fn parse_arm<M: BodyMode>(&mut self, scope: &mut Scope, mode: &M) -> Result<Arm<M::Body>> {
         use self::{Keyword, Op};
         use TokenInfo::*;
 
@@ -476,18 +525,18 @@ impl Parser<'_> {
                 });
                 arrow_span = arrow;
                 match arrow {
-                    Some(arrow) => self.parse_arm_inline(scope, arrow)?,
-                    None => self.parse_block_through_dedent(scope)?,
+                    Some(arrow) => mode.parse_inline(self, scope, arrow)?,
+                    None => mode.parse_body(self, scope)?,
                 }
             }
             Some(token!(FatArrow)) => {
                 let arrow = self.advance();
                 arrow_span = Some(arrow);
-                self.parse_arm_inline(scope, arrow)?
+                mode.parse_inline(self, scope, arrow)?
             }
             Some(token!(Indent)) if !vertical => {
                 self.advance();
-                self.parse_block_through_dedent(scope)?
+                mode.parse_body(self, scope)?
             }
             token @ Some(token!(Keyword(Keyword::Do), span)) => {
                 self.advance();
@@ -502,7 +551,7 @@ impl Parser<'_> {
                         ));
                     }
                     self.advance();
-                    self.parse_block_through_dedent(scope)?
+                    mode.parse_body(self, scope)?
                 } else {
                     return Err(self.syntax_error(
                         scope,
@@ -520,12 +569,7 @@ impl Parser<'_> {
                     }),
                     token => token,
                 };
-                let msg = if vertical {
-                    "expected `do`, `=>` or `if` after an arm's `|` group"
-                } else {
-                    "expected `=>`, `if` or an indented block after an arm's pattern"
-                };
-                return Err(self.syntax_error(scope, token, msg));
+                return Err(self.syntax_error(scope, token, mode.arm_expected(vertical)));
             }
         };
         Ok(Arm {

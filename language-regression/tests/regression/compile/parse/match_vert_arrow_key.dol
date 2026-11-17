@@ -1,0 +1,8 @@
+let d = $
+  match 1
+    x => k: $x
+# error: key arguments must head a line in vertical contexts
+#   --> match_vert_arrow_key.dol:LL:LL
+#    |
+# LL |     x => k: $x
+#    |          ^

@@ -1060,6 +1060,15 @@ impl<'a, 'c> Scope<'a, 'c> {
                 })?;
                 (sig::Arg::Pack, None)
             }
+            DictElem::Match(node) => {
+                self.lower_elem_match(node, |this, elem, sig| {
+                    let (arg1, arg2) = this.lower_dict_elem(elem)?;
+                    sig.push(arg1);
+                    sig.extend(arg2);
+                    Ok(())
+                })?;
+                (sig::Arg::Pack, None)
+            }
         })
     }
 
@@ -1101,6 +1110,13 @@ impl<'a, 'c> Scope<'a, 'c> {
                 })?;
                 sig::Arg::Pack
             }
+            DictElem::Match(node) => {
+                self.lower_elem_match(node, |this, elem, sig| {
+                    sig.push(this.lower_record_elem(elem)?);
+                    Ok(())
+                })?;
+                sig::Arg::Pack
+            }
         })
     }
 
@@ -1124,6 +1140,13 @@ impl<'a, 'c> Scope<'a, 'c> {
             }
             ArrayElem::For(node) => {
                 self.lower_elem_for(node, |this, elem, sig| {
+                    sig.push(this.lower_array_elem(elem)?);
+                    Ok(())
+                })?;
+                sig::Arg::Pack
+            }
+            ArrayElem::Match(node) => {
+                self.lower_elem_match(node, |this, elem, sig| {
                     sig.push(this.lower_array_elem(elem)?);
                     Ok(())
                 })?;
@@ -1158,6 +1181,13 @@ impl<'a, 'c> Scope<'a, 'c> {
             }
             Arg::If(node) => {
                 self.lower_elem_if(node, |this, elem, sig| {
+                    sig.push(this.lower_arg(elem)?);
+                    Ok(())
+                })?;
+                sig::Arg::Pack
+            }
+            Arg::Match(node) => {
+                self.lower_elem_match(node, |this, elem, sig| {
                     sig.push(this.lower_arg(elem)?);
                     Ok(())
                 })?;
@@ -1438,9 +1468,37 @@ impl<'a, 'c> Scope<'a, 'c> {
             .push(Inst(InstInfo::Builtin(builtin::ARG_ACC, empty), span));
     }
 
-    /// Lower a `match`.  The scrutinee is stored once, and each arm loads it to
-    /// test its pattern, failing over to the next arm, then `else`.
-    fn lower_match(&mut self, node: &'a Match, want_result: bool) -> Result<()> {
+    fn lower_match(&mut self, node: &'a Match<Block>, want_result: bool) -> Result<()> {
+        let nil_fallback = (want_result && node.else_branch.is_none()).then_some(node.match_span);
+        self.lower_match_chain(node, nil_fallback, |this, body| {
+            this.lower_stmts(body, want_result)
+        })
+    }
+
+    /// Lower a `match` in vertical-element layout, as [`Self::lower_elem_if`]
+    /// lowers an `if`
+    fn lower_elem_match<T: Node>(
+        &mut self,
+        node: &'a Match<ExprBody<T>>,
+        elem: impl Fn(&mut Self, &'a T, &mut Vec<sig::Arg>) -> Result<()>,
+    ) -> Result<()> {
+        self.lower_arg_acc(node.match_span);
+        self.lower_match_chain(node, None, |this, body| {
+            this.lower_elems(&body.elems, &elem)?;
+            Ok(false)
+        })
+    }
+
+    /// Lower a `match` of either form, each body after its prologue as
+    /// `contents` lowers it.  The scrutinee is stored once, and each arm loads
+    /// it to test its pattern, failing over to the next arm, then `else`.  With
+    /// no `else`, a `nil_fallback` span loads `nil` when no arm runs.
+    fn lower_match_chain<B: Body>(
+        &mut self,
+        node: &'a Match<B>,
+        nil_fallback: Option<Span>,
+        contents: impl Fn(&mut Self, &'a B) -> Result<bool>,
+    ) -> Result<()> {
         let span = node.match_span;
         let scrutinee = Res {
             index: node.var.expect("unelaborated match"),
@@ -1454,23 +1512,19 @@ impl<'a, 'c> Scope<'a, 'c> {
         let start = self.bb;
         let mut fallback = next;
 
-        if let Some((else_block, _)) = &node.else_branch {
+        if let Some((else_body, _)) = &node.else_branch {
             let fscope = self.graph.alloc_scope(
                 false,
                 false,
                 self.block.func,
                 Some(self.block.scope),
-                &else_block.vars,
+                else_body.vars(),
             );
             fallback = self.graph.alloc_block(self.block.func, fscope);
             self.lower_in(fallback, self.targets.branch(next), |this| {
-                this.lower_body(
-                    else_block,
-                    |_, _| Ok(()),
-                    |this, body| this.lower_stmts(body, want_result),
-                )
+                this.lower_body(else_body, |_, _| Ok(()), &contents)
             })?;
-        } else if want_result {
+        } else if let Some(span) = nil_fallback {
             fallback = self.graph.alloc_block(self.block.func, self.block.scope);
             self.switch(fallback);
             self.lower_load_nil(span);
@@ -1487,7 +1541,7 @@ impl<'a, 'c> Scope<'a, 'c> {
                 false,
                 self.block.func,
                 Some(self.block.scope),
-                &arm.body.vars,
+                arm.body.vars(),
             );
             let tid = self.graph.alloc_block(self.block.func, tscope);
             self.switch(fallback);
@@ -1506,7 +1560,7 @@ impl<'a, 'c> Scope<'a, 'c> {
                             None => Ok(()),
                         }
                     },
-                    |this, body| this.lower_stmts(body, want_result),
+                    &contents,
                 )
             })?;
         }

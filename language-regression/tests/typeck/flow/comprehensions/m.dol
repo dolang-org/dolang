@@ -130,6 +130,38 @@ pub def specified xs @ Array[Int]
           y
   let _ = ds
 
+# A `match` passes its arms' items as an `if` chain does, and narrows its
+# scrutinee in each arm
+pub def matched v @ (Int | Str)
+  one
+    match v
+      Int(n) => $n
+    else
+      - 1
+  ints
+    match v
+      Int(n)
+        - $n
+      Str(_s) => 1 2
+  let ys = $
+    match v
+      Int(n)
+        - $n
+        #  ^: flow std.Int
+      Str(s) => $s
+  let _ = ys
+  #       ^~: flow std.Array[std.Int | std.Str]
+  one
+    match v
+      Int(n) => $n
+# error: this call is missing an argument
+#   --> m.dol:LL:LL
+#    |
+# LL | /   one
+# LL | |     match v
+# LL | |       Int(n) => $n
+#    | |__________________^
+
 pub def wrong c @ Bool xs @ Array[Int]
   one
     if c

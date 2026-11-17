@@ -1392,28 +1392,7 @@ impl Index<'_> {
         match prim {
             PrimStmt::Expr(expr) => self.expr(scope, expr),
             PrimStmt::If(node) => self.if_body(scope, node, false, Self::block),
-            PrimStmt::Match(node) => {
-                self.expr(scope, &mut node.scrutinee);
-                for arm in &mut node.arms {
-                    let span = arm.span();
-                    let id = self.push(scope, Kind::Arm, span);
-                    self.pattern_classes(scope, &mut arm.pattern);
-                    let inner = scope.nested(&mut arm.body.vars, Some(id));
-                    self.pattern(&inner, &mut arm.pattern, false, None);
-                    if let Some(guard) = &mut arm.guard {
-                        self.expr(&inner, &mut guard.expr);
-                        if let Some(bind) = &mut guard.bind {
-                            self.pattern_classes(&inner, &mut bind.pattern);
-                            self.pattern(&inner, &mut bind.pattern, false, None);
-                        }
-                    }
-                    self.block(&inner, &mut arm.body.stmts);
-                }
-                if let Some((body, span)) = &mut node.else_branch {
-                    let span = *span | body.span();
-                    self.branch(scope, body, None, Kind::Else, span, Self::block);
-                }
-            }
+            PrimStmt::Match(node) => self.match_body(scope, node, Self::block),
             PrimStmt::Try(node) => {
                 // A handler is a node of its own, so the `try` covers its own
                 // body alone: sibling constructs stay disjoint.
@@ -1488,6 +1467,36 @@ impl Index<'_> {
                 span,
                 visit,
             );
+        }
+        if let Some((body, span)) = &mut node.else_branch {
+            let span = *span | body.span();
+            self.branch(scope, body, None, Kind::Else, span, visit);
+        }
+    }
+
+    /// A `match` of either form, whose bodies `visit` indexes
+    fn match_body<T: Body>(
+        &mut self,
+        scope: &Scope<'_>,
+        node: &mut Match<T>,
+        visit: fn(&mut Self, &Scope<'_>, &mut [T::Element]),
+    ) {
+        self.expr(scope, &mut node.scrutinee);
+        for arm in &mut node.arms {
+            let span = arm.span();
+            let id = self.push(scope, Kind::Arm, span);
+            self.pattern_classes(scope, &mut arm.pattern);
+            let (vars, elems) = arm.body.parts();
+            let inner = scope.nested(vars, Some(id));
+            self.pattern(&inner, &mut arm.pattern, false, None);
+            if let Some(guard) = &mut arm.guard {
+                self.expr(&inner, &mut guard.expr);
+                if let Some(bind) = &mut guard.bind {
+                    self.pattern_classes(&inner, &mut bind.pattern);
+                    self.pattern(&inner, &mut bind.pattern, false, None);
+                }
+            }
+            visit(self, &inner, elems);
         }
         if let Some((body, span)) = &mut node.else_branch {
             let span = *span | body.span();
@@ -1651,6 +1660,7 @@ impl Element for Arg {
             }
             Self::For(node) => index.for_elem(scope, node),
             Self::If(node) => index.if_body(scope, node, true, Index::elements),
+            Self::Match(node) => index.match_body(scope, node, Index::elements),
         }
     }
 }
@@ -1661,6 +1671,7 @@ impl Element for ArrayElem {
             Self::Expand(node) => index.expr(scope, &mut node.expr),
             Self::For(node) => index.for_elem(scope, node),
             Self::If(node) => index.if_body(scope, node, true, Index::elements),
+            Self::Match(node) => index.match_body(scope, node, Index::elements),
         }
     }
 }
@@ -1676,6 +1687,7 @@ impl Element for DictElem {
             Self::Expand(node) => index.expr(scope, &mut node.expr),
             Self::For(node) => index.for_elem(scope, node),
             Self::If(node) => index.if_body(scope, node, true, Index::elements),
+            Self::Match(node) => index.match_body(scope, node, Index::elements),
         }
     }
 }

@@ -1,0 +1,8 @@
+let d = $
+  match 1
+    x =>
+# error: `=>` needs items on the same line
+#   --> match_vert_arrow_empty.dol:LL:LL
+#    |
+# LL |     x =>
+#    |       ^^

@@ -1,9 +1,12 @@
 use super::{
-    ExprMode, Parser, Result, Scope, cmd::CmdContext, cmd::UnquotedMode, stmt::BodyMode,
+    ExprMode, Parser, Result, Scope,
+    cmd::CmdContext,
+    cmd::UnquotedMode,
+    stmt::{BodyMode, arm_expected_inline},
     stream::ExpectKind,
 };
 use crate::{
-    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, Key, Pair, Single},
+    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, If, Key, Pair, Single},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
@@ -19,9 +22,112 @@ impl BodyMode for VertBody {
     fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<ExprBody<Arg>> {
         parser.parse_cmd_vert_body(scope, self.bin_pack)
     }
+
+    fn parse_inline(
+        &self,
+        parser: &mut Parser<'_>,
+        scope: &mut Scope,
+        arrow_span: Span,
+    ) -> Result<ExprBody<Arg>> {
+        parser.parse_vert_arm_inline(scope, arrow_span, self.bin_pack)
+    }
+
+    fn arm_expected(&self, group: bool) -> &'static str {
+        match (self.bin_pack, group) {
+            (true, _) => arm_expected_inline(group),
+            (false, true) => "expected `do` or `if` after an arm's `|` group",
+            (false, false) => "expected `if` or an indented block after an arm's pattern",
+        }
+    }
+
+    fn wrap_if(&self, node: If<ExprBody<Arg>>) -> ExprBody<Arg> {
+        ExprBody {
+            elems: vec![Arg::If(node)],
+            vars: Vec::new(),
+        }
+    }
 }
 
 impl Parser<'_> {
+    /// Parse a vertical `match` arm's same-line items, after its `=>` at
+    /// `arrow_span`: one line of bin-packed positional items, where the
+    /// context allows bin-packing
+    fn parse_vert_arm_inline(
+        &mut self,
+        scope: &mut Scope,
+        arrow_span: Span,
+        bin_pack: bool,
+    ) -> Result<ExprBody<Arg>> {
+        use self::Op;
+        use TokenInfo::*;
+
+        let arrow = Token {
+            info: FatArrow,
+            span: arrow_span,
+        };
+        if !bin_pack {
+            return Err(self.syntax_error(
+                scope,
+                Some(arrow),
+                "a nested `match` arm's items go in an indented block, or in a block introduced \
+                 with `$`",
+            ));
+        }
+        match self.peek()? {
+            Some(token!(ArgSep)) => {
+                self.advance();
+            }
+            None | Some(token!(StmtSep | Dedent)) => {
+                return Err(self.syntax_error(
+                    scope,
+                    Some(arrow),
+                    "`=>` needs items on the same line",
+                ));
+            }
+            Some(token!(Indent)) => {
+                return Err(self.syntax_error(
+                    scope,
+                    Some(arrow),
+                    "`=>` takes its items on the same line",
+                ));
+            }
+            _ => {
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+            }
+        }
+        let mut elems = Vec::new();
+        if let Some(token!(Op(Op::Minus))) = self.peek()? {
+            let minus_span = self.advance();
+            if let Some(token!(ArgSep)) = self.peek()? {
+                let token = Token {
+                    info: Op(Op::Minus),
+                    span: minus_span,
+                };
+                return Err(self.syntax_error(scope, Some(token), "a `-` item heads its own line"));
+            }
+            elems.push(Arg::Pos(Single {
+                expr: self.parse_implicit_concat(
+                    scope,
+                    Some(Expr::Literal(minus_span)),
+                    UnquotedMode::Shell,
+                )?,
+                delim_span: None,
+            }));
+        }
+        self.parse_cmd_args(scope, CmdContext::VertLine, &mut elems)?;
+        if let Some(token!(Indent)) = self.peek()? {
+            return Err(self.syntax_error(
+                scope,
+                Some(arrow),
+                "`=>` takes its items on the same line",
+            ));
+        }
+        Ok(ExprBody {
+            elems,
+            vars: Vec::new(),
+        })
+    }
+
     fn parse_cmd_vert_line_expr(&mut self, scope: &mut Scope, allow_object: bool) -> Result<Expr> {
         use self::Keyword;
         use self::Op;
@@ -269,6 +375,12 @@ impl Parser<'_> {
                 ));
                 Ok(())
             }
+            Some(token!(Keyword(Keyword::Match))) => {
+                args.push(Arg::Match(
+                    self.parse_match_with(scope, &VertBody { bin_pack })?,
+                ));
+                Ok(())
+            }
             Some(token!(expr_start!())) => {
                 let key = self.parse_expr(scope, ExprMode::Shell)?;
                 self.parse_cmd_vert_dynamic_or_pos(scope, args, key)
@@ -496,6 +608,11 @@ impl Parser<'_> {
                         return true;
                     }
                 }
+                Arg::Match(node) => {
+                    if node.branches().any(|body| self.args_have_key(&body.elems)) {
+                        return true;
+                    }
+                }
             }
         }
         false
@@ -510,6 +627,9 @@ impl Parser<'_> {
             }
             Arg::For(node) => {
                 ArrayElem::For(node.map(&mut |body| body.map(&mut Self::arg_to_array_elem)))
+            }
+            Arg::Match(node) => {
+                ArrayElem::Match(node.map(&mut |body| body.map(&mut Self::arg_to_array_elem)))
             }
             _ => unreachable!("Unexpected arg type in array conversion"),
         }
@@ -526,6 +646,9 @@ impl Parser<'_> {
             }
             Arg::For(node) => {
                 DictElem::For(node.map(&mut |body| body.map(&mut Self::arg_to_dict_elem)))
+            }
+            Arg::Match(node) => {
+                DictElem::Match(node.map(&mut |body| body.map(&mut Self::arg_to_dict_elem)))
             }
         }
     }
