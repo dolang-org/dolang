@@ -11,7 +11,7 @@ use super::{
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind, Origin},
     elab::{Designated, Referent, Tables, Target},
-    solver::Status,
+    solver::{NarrowTarget, Status},
     r#type::{
         Argument, Binding, BoundRef, Database, DeclId, DeclKind, Intrinsic, SymbolId, Type, TypeId,
         UnitId, UnitSpan,
@@ -286,6 +286,31 @@ impl Flow<'_, '_> {
                 [Argument::Positional(instance)] => self
                     .class_of_instance(*instance)
                     .map(|class| (class, false)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// What a class object of type `ty` narrows a tested value against, and
+    /// whether a failed test narrows it too. A `Type[X]` may hold a subclass's
+    /// object, so failing its test subtracts nothing unless `X` is a final
+    /// class. With no class for `X`, as for a rigid, it's the instance type `X`.
+    pub(super) fn object_target(&self, ty: TypeId) -> Option<(NarrowTarget<'static>, bool)> {
+        if let Some((class, exact)) = self.class_of(ty) {
+            let exact = exact || self.db.declaration(class).source.is_final;
+            return Some((NarrowTarget::Class(class), exact));
+        }
+        let ty = match self.db.ty(ty) {
+            Type::Quantified { body, .. } => *body,
+            _ => ty,
+        };
+        let class_type = self.db.intrinsic(Intrinsic::Type)?;
+        match self.db.ty(ty) {
+            Type::Apply { base, args, .. } if *base == class_type => match &args[..] {
+                [Argument::Positional(instance)] if !self.db.contains_unknown(*instance) => {
+                    Some((NarrowTarget::Instance(*instance), false))
+                }
                 _ => None,
             },
             _ => None,

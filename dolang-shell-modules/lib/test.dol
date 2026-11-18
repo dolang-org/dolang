@@ -1077,9 +1077,7 @@ do -> E
         throw Assert "$msg (error str ${std.str(e):?} == ${str:?})"
       else
         throw Assert "error str ${std.str(e):?} == ${str:?}"
-    # Caught by `type`, so it's an `E`; the checker doesn't narrow by a class
-    # object yet (#1644)
-    return (e !@ E)
+    return e
   if msg
     throw Assert "$msg ($type thrown)"
   else

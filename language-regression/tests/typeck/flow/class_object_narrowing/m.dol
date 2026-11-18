@@ -1,0 +1,83 @@
+# dolang: strict
+# A value that passes a test against a class object typed `Type[X]` is an `X`.
+# One that fails it may still be an `X`, since the object may be a subclass's, so
+# only a named class, or a final one, narrows the failing edge.
+
+import std
+
+pub class Base
+  def (init) _self
+    nil
+
+pub class Sub: Base
+  def (init) self
+    Base.(init) $self
+
+pub def caught[E] t @ Type[E] block @ (() -> Value) -> (E | nil)
+  try
+    block()
+  catch t: e
+    let _ = e
+    #       ^: flow m.caught.#0
+    return e
+  catch e
+    # Not caught by `t`, but possibly an `E`
+    let _ = e
+    #       ^: flow Value
+    nil
+  nil
+
+pub def named block @ (() -> Value) -> (std.ValueError | nil)
+  try
+    block()
+  catch std.ValueError: e
+    return e
+  nil
+
+pub def tested[E] t @ Type[E] v @ (E | Int) -> (E | nil)
+  if (type v t)
+    let _ = v
+    #       ^: flow m.tested.#0
+    return v
+  let _ = v
+  #       ^: flow m.tested.#0 | std.Int
+  nil
+
+pub def kept[E] t @ Type[E] v @ (E | nil) -> (E | nil)
+  if (type v t)
+    let _ = v
+    #       ^: flow m.kept.#0
+    return v
+  nil
+
+# A `Type[Base]` may hold `Sub`'s object, so a failed test leaves a `Base`
+pub def subclassed t @ Type[Base] v @ (Base | Int)
+  if (type v t)
+    let _ = v
+    #       ^: flow m.Base
+    nil
+  else
+    let _ = v
+    #       ^: flow m.Base | std.Int
+    nil
+  if (type v Base)
+    nil
+  else
+    let _ = v
+    #       ^: flow std.Int
+    nil
+  nil
+
+pub def uncaught t @ Type[Base] block @ (() -> (Base | Int))
+  try
+    throw block()
+  catch t: e
+    let _ = e
+    #       ^: flow m.Base
+  catch Base: e
+    let _ = e
+    #       ^: flow m.Base
+  catch e
+    let _ = e
+    #       ^: flow Value
+  nil

@@ -17,6 +17,10 @@
 //! nearest disjoint ancestors are unrelated. Any other class becomes the gradual
 //! function type, since a subclass may reach `Func`.
 //!
+//! A class object typed `Type[X]` where `X` has no class to narrow by, as a
+//! rigid hasn't, gives an instance type: a positive relation meets the type with
+//! `X`, and a negative one keeps it, since the object may be a subclass's.
+//!
 //! A class's `(==)` may be user-defined, so a literal comparison strips only
 //! other literals and never reduces a class to the literal. Only a `Nil` or a
 //! `Bool` member, whose values are all literals, loses the literal it's unequal
@@ -34,6 +38,10 @@ use crate::typeck::cfg::Relation as Narrowing;
 pub(crate) enum Target<'a> {
     /// The class `C` of `Type[C]`, possibly generic and unapplied
     Class(DeclId),
+    /// The instance type `X` of a `Type[X]` with no class to narrow by, such as
+    /// a rigid. A positive relation meets with it, and a negative one keeps the
+    /// type.
+    Instance(TypeId),
     /// A literal type
     Literal(TypeId),
     /// A destructuring pattern, through `unpack`, the `Unpack` declaration. Only
@@ -66,6 +74,12 @@ impl Solver<'_> {
     ) -> TypeId {
         let literal = match target {
             Target::Class(_) => None,
+            Target::Instance(instance) => {
+                return match negated {
+                    true => ty,
+                    false => self.refine(ty, instance),
+                };
+            }
             Target::Shape { unpack, pattern } => {
                 return match negated {
                     true => self.mismatched(ty, unpack, pattern),
@@ -96,7 +110,9 @@ impl Solver<'_> {
                     assert_eq!(relation, Narrowing::Exact, "narrowing below a literal");
                     self.narrow_literal(member, negated, literal)
                 }
-                (Target::Literal(_), None) | (Target::Shape { .. }, _) => unreachable!(),
+                (Target::Literal(_), None)
+                | (Target::Instance(_), _)
+                | (Target::Shape { .. }, _) => unreachable!(),
             };
             if let Some(narrowed) = narrowed {
                 result = self.lub(result, narrowed);
