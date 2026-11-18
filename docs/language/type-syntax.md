@@ -52,6 +52,17 @@ let index @ Dict[Str, Array[Int]] = {}
 let result @ Pack[value: Int, error: std.Error | nil] = (value: 1, error: nil)
 ```
 
+As in a call, `:Name` is short for `Name: Name`, passing the type `Name` names
+in scope, usually a binder, as the keyword argument `Name`:
+
+```
+class Keyed[T, :K = Int]
+  pub field key @ K = nil
+
+def key_of[:K] x @ Keyed[Str, :K] -> K
+  x.key
+```
+
 An argument may also [expand a schema](#expanding-schemas) into further
 arguments.
 

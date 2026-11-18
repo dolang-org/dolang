@@ -590,9 +590,16 @@ impl Index<'_> {
             .map(|arg| {
                 let (kind, ty, start) = match &arg.kind {
                     TypeArgKind::Pos(ty) => (doc::TypeArgKind::Pos, ty, None),
-                    TypeArgKind::Key { name, ty, .. } => {
-                        (doc::TypeArgKind::Key { name: *name }, ty, Some(*name))
-                    }
+                    // The colon precedes the name in the `:Name` shorthand
+                    TypeArgKind::Key {
+                        name,
+                        colon_span,
+                        ty,
+                    } => (
+                        doc::TypeArgKind::Key { name: *name },
+                        ty,
+                        Some(*name | *colon_span),
+                    ),
                     TypeArgKind::Expand { ellipsis_span, ty } => {
                         (doc::TypeArgKind::Expand, ty, Some(*ellipsis_span))
                     }

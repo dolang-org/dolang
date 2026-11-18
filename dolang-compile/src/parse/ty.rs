@@ -739,6 +739,19 @@ impl Parser<'_> {
                             ty: this.parse_type_full(scope)?,
                         }
                     }
+                    // `:Name` is `Name: Name`
+                    Some(token!(TokenInfo::DittoKey, name)) => {
+                        this.advance();
+                        TypeArgKind::Key {
+                            name,
+                            colon_span: name.before_left_char(),
+                            ty: TypeExpr::Name {
+                                head: name,
+                                fields: Vec::new(),
+                                res: None,
+                            },
+                        }
+                    }
                     _ => {
                         let ty = this.parse_type_full(scope)?;
                         if let Some(token @ token!(TokenInfo::Colon)) = this.peek()? {

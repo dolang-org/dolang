@@ -553,7 +553,11 @@ impl Node for TypeArg {
                 colon_span,
                 ty,
             } => {
-                visit.token(Token::TypeKey, *name, None)?;
+                // In the `:Name` shorthand the name is the type as well, and is
+                // visited only as the type
+                if colon_span.start > name.start {
+                    visit.token(Token::TypeKey, *name, None)?;
+                }
                 visit.token(Token::Delim, *colon_span, None)?;
                 visit.node(ty)?
             }

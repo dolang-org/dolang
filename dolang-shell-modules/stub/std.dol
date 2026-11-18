@@ -576,7 +576,7 @@ pub @class Unpack[S @ {...}, :Rest @ UnpackRest[S] = UnpackRest[S], :Pos @ Unpac
   field pos @Phantom[Pos]
 
   # Returns a value to destructure in place of this one.
-  pub def (unpack) self -> Unpack[S, Rest: Rest, Pos: Pos]
+  pub def (unpack) self -> Unpack[S, :Rest, :Pos]
 
 
 # Iterates as the values in `S`, and spreads and destructures as `S`, leaving
