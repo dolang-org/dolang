@@ -115,6 +115,87 @@ pub def alternatives r @ (Stops | Goes)
   y
 # ^: flow std.Int
 
+# A short circuit's operand that never returns ends only its own path
+pub def or_else x @ (Str | nil) -> Str
+  (x || fail "missing")
+
+pub def and_then ok @ Bool -> Bool
+  (ok && fail "bad")
+
+pub def or_bound x @ (Str | nil)
+  let y = (x || fail "missing")
+  y
+# ^: flow std.Str
+
+# What follows an operand that never returns is unreachable
+pub def or_first x @ (Str | nil)
+  (fail "missing" || x)
+# warning: this call never returns, so its result is never used
+#   --> m.dol:LL:LL
+#    |
+# LL |   (fail "missing" || x)
+#    |    ^^^^^^^^^^^^^^
+
+# A comprehension's branch or loop body that never returns ends only its own
+# path
+pub def item_else c @ Bool
+  let y = $
+    - a
+    if c
+      - b
+    else
+      - $fail("no")
+    - z
+  y
+
+pub def item_then c @ Bool
+  let y = $
+    - a
+    if c
+      - $fail("no")
+    - z
+  y
+
+pub def item_match c @ Sym
+  let y = $
+    - a
+    match c
+      :X: => b
+    else
+      - $fail("no")
+    - z
+  y
+
+pub def item_for xs @ Array[Str]
+  let y = $
+    - a
+    for x = xs
+      - $fail(x)
+    - z
+  y
+
+# Both branches never returning ends the path
+pub def item_both c @ Bool
+  let y = $
+    - a
+    if c
+      - $fail("no")
+    else
+      - $fail("no")
+    - z
+  # warning: unreachable code
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | /     - a
+  # LL | |     if c
+  # LL | |       - $fail("no")
+  #    | |          ---------- any code after this call is unreachable
+  # LL | |     else
+  # LL | |       - $fail("no")
+  # LL | |     - z
+  #    | |_______^
+  y
+
 # What a call that never returns makes unreachable is warned about at the first
 # thing after it
 pub def after()

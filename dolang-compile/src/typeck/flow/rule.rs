@@ -30,7 +30,8 @@
 //! bottom only picks the least type the call's result can have. It's decided
 //! never to return only if its rule is decided and doesn't take a `do` block's
 //! result that isn't known yet to be bottom. A union's alternatives end it only
-//! if they all do.
+//! if they all do, as do a comprehension `if`'s branches, and a comprehension
+//! `for`'s body, which may run no times, never does.
 
 use crate::diag::INVALID_SPAN;
 use std::{collections::VecDeque, ops::ControlFlow};
@@ -2712,7 +2713,11 @@ impl<'a> Flow<'a, '_> {
                         group: Some(group),
                         comprehension: true,
                     };
+                    // The body may run no times, so what never returns in it
+                    // doesn't end the path
+                    let diverged = self.diverged;
                     self.gather(at, state, operands, items, gathering, inner, values, out);
+                    self.diverged = diverged;
                 }
                 &Item::If {
                     ref then,
@@ -2721,6 +2726,15 @@ impl<'a> Flow<'a, '_> {
                 } => {
                     values.comprehension = true;
                     gathering.exact = false;
+                    // A branch that never returns ends the path only if both do
+                    let diverged = self.diverged.take();
+                    let mut first = None;
+                    let mut converges = false;
+                    let mut branch_diverged = |flow: &mut Self| {
+                        let branch = flow.diverged.take();
+                        first = first.or(branch);
+                        converges |= branch.is_none();
+                    };
                     if place.group.is_some() {
                         let inner = Place {
                             comprehension: true,
@@ -2728,7 +2742,9 @@ impl<'a> Flow<'a, '_> {
                         };
                         for items in [then, else_] {
                             self.gather(at, state, operands, items, gathering, inner, values, out);
+                            branch_diverged(self);
                         }
+                        self.diverged = diverged.or(first.filter(|_| !converges));
                         continue;
                     }
                     let inner = Place {
@@ -2739,7 +2755,9 @@ impl<'a> Flow<'a, '_> {
                     let mut branches = [Vec::new(), Vec::new()];
                     for (items, branch) in [then, else_].into_iter().zip(&mut branches) {
                         self.gather(at, state, operands, items, gathering, inner, values, branch);
+                        branch_diverged(self);
                     }
+                    self.diverged = diverged.or(first.filter(|_| !converges));
                     let [then, else_] = branches;
                     let arms = match self.alike(&then, &else_, span) {
                         Some(arms) => arms,
