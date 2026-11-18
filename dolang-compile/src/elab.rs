@@ -610,6 +610,100 @@ impl Annotate for BinaryOpAnnotation {
     }
 }
 
+// Lint: a bareword argument spelled like a local in scope, which is a
+// literal string rather than the variable
+struct BarewordLocal {
+    span: Span,
+    binding: Option<Span>,
+}
+
+impl Diagnose for BarewordLocal {
+    fn severity(&self) -> Severity {
+        Severity::Lint
+    }
+
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let name = file.str(self.span);
+        write!(
+            w,
+            "bareword is the literal string \"{name}\", not the variable `{name}`"
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn annotations(&self) -> Box<dyn Iterator<Item = Box<dyn Annotate>>> {
+        Box::new(
+            self.binding
+                .map(|span| Box::new(BarewordBinding(span)) as Box<dyn Annotate>)
+                .into_iter(),
+        )
+    }
+
+    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
+        Box::new(
+            [
+                Box::new(BarewordPatch {
+                    span: self.span,
+                    quote: false,
+                }) as Box<dyn Patch>,
+                Box::new(BarewordPatch {
+                    span: self.span,
+                    quote: true,
+                }),
+            ]
+            .into_iter(),
+        )
+    }
+}
+
+struct BarewordBinding(Span);
+
+impl Annotate for BarewordBinding {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "variable bound here")
+    }
+
+    fn kind(&self) -> AnnotationKind {
+        AnnotationKind::Context
+    }
+}
+
+struct BarewordPatch {
+    span: Span,
+    /// Quote the string rather than reference the variable
+    quote: bool,
+}
+
+impl Patch for BarewordPatch {
+    fn span(&self) -> Span {
+        self.span
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        if self.quote {
+            write!(w, "quote it for the string")
+        } else {
+            write!(w, "write `$` for the variable")
+        }
+    }
+
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        let name = file.str(self.span);
+        if self.quote {
+            write!(w, "\"{name}\"")
+        } else {
+            write!(w, "${name}")
+        }
+    }
+}
+
 // Error: a key other than a written symbol in a data literal with positional
 // items, which makes a record
 struct RecordKey {
@@ -1183,6 +1277,30 @@ impl<'s> Scope<'s> {
 
     fn is_class(&self) -> bool {
         matches!(self, Scope::Class { .. })
+    }
+
+    /// The initialized local or parameter bound under `id`, without marking it
+    /// used. Module-level bindings, imports and prelude items don't count.
+    fn peek_local(&self, id: sym::Id) -> Option<Var> {
+        match self {
+            Scope::Base => None,
+            Scope::Class { parent, .. } => parent.peek_local(id),
+            Scope::Nested { .. } if self.is_top_level() => None,
+            Scope::Nested {
+                index,
+                vars,
+                parent,
+                ..
+            } => match index.get(&id) {
+                Some(&index) => {
+                    let (var, _) = vars[index].get();
+                    (var.flags.contains(VarFlags::INITIALIZED)
+                        && matches!(var.origin, Origin::Source(_) | Origin::SelfParam(_)))
+                    .then_some(var)
+                }
+                None => parent.peek_local(id),
+            },
+        }
     }
 
     fn nested(&'s self) -> Self {
@@ -1950,9 +2068,11 @@ impl<'a> Elaborater<'a> {
         is_arg: bool,
     ) -> Result<()> {
         match node {
-            ArrayElem::Single(Single { expr, .. }) | ArrayElem::Expand(Expand { expr, .. }) => {
+            ArrayElem::Single(Single { expr, .. }) => {
+                self.check_bareword_local(scope, expr);
                 self.visit_expr(scope, expr, is_arg)
             }
+            ArrayElem::Expand(Expand { expr, .. }) => self.visit_expr(scope, expr, is_arg),
             ArrayElem::If(node) => self.visit_elem_if(scope, node, is_arg, Self::visit_array_elem),
             ArrayElem::For(node) => {
                 self.visit_elem_for(scope, node, is_arg, Self::visit_array_elem)
@@ -1970,10 +2090,13 @@ impl<'a> Elaborater<'a> {
         is_arg: bool,
     ) -> Result<()> {
         match node {
-            DictElem::Single(Single { expr, .. }) => self.visit_expr(scope, expr, is_arg),
-            DictElem::Key(Key { expr, .. }) => self.visit_expr(scope, expr, is_arg),
+            DictElem::Single(Single { expr, .. }) | DictElem::Key(Key { expr, .. }) => {
+                self.check_bareword_local(scope, expr);
+                self.visit_expr(scope, expr, is_arg)
+            }
             DictElem::Pair(Pair { key, value, .. }) => {
                 self.visit_expr(scope, key, is_arg)?;
+                self.check_bareword_local(scope, value);
                 self.visit_expr(scope, value, is_arg)
             }
             DictElem::Expand(Expand { expr, .. }) => self.visit_expr(scope, expr, is_arg),
@@ -2007,6 +2130,27 @@ impl<'a> Elaborater<'a> {
                 | "<<"
                 | ">>"
         )
+    }
+
+    /// Warn about a bareword spelled like a local in scope, which is a literal
+    /// string rather than the variable. Quoting it says the string is meant.
+    fn check_bareword_local(&self, scope: &Scope<'_>, expr: &Expr) {
+        let Expr::Literal(span) = *expr else {
+            return;
+        };
+        let Some(id) = self
+            .bintab
+            .get_str(self.file.str(span))
+            .and_then(|id| self.symtab.get(&id))
+        else {
+            return;
+        };
+        if let Some(var) = scope.peek_local(id) {
+            self.diags.push(BarewordLocal {
+                span,
+                binding: var.origin.name(),
+            });
+        }
     }
 
     fn check_not_as_arg(&mut self, expr: &Expr) {
@@ -2384,8 +2528,10 @@ impl<'a> Elaborater<'a> {
 
     fn visit_cmd_arg(&mut self, scope: &mut Scope<'_>, node: &mut Arg) -> Result<()> {
         match node {
-            Arg::Pos(Single { expr, .. }) => self.visit_expr(scope, expr, true),
-            Arg::Key(Key { expr, .. }) => self.visit_expr(scope, expr, true),
+            Arg::Pos(Single { expr, .. }) | Arg::Key(Key { expr, .. }) => {
+                self.check_bareword_local(scope, expr);
+                self.visit_expr(scope, expr, true)
+            }
             Arg::DynamicKey(Pair { key, value, .. }) => {
                 self.visit_expr(scope, key, true)?;
                 self.visit_expr(scope, value, true)

@@ -341,9 +341,9 @@ def text_format_measures_cells()
   assert_eq (str $ FmtValue red precision: 1) ""
 
   # Numeric options remain unsupported, as for any other text value.
-  assert_throws $std.RuntimeError do str $ FmtValue red kind: :HEX:
-  assert_throws $std.RuntimeError do str $ FmtValue red sign: :PLUS:
-  assert_throws $std.RuntimeError do str $ FmtValue red fill: :ZERO: width: 5
+  assert_throws $std.RuntimeError do str $ FmtValue $red kind: :HEX:
+  assert_throws $std.RuntimeError do str $ FmtValue $red sign: :PLUS:
+  assert_throws $std.RuntimeError do str $ FmtValue $red fill: :ZERO: width: 5
 
 #[test]
 def console_formats_bound_text()

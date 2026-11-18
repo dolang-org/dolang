@@ -164,21 +164,20 @@ pub enum Directive {
 const OUTPUT: &[u8] = b"# output:";
 
 /// Returns true if stripped content starts a top-level diagnostic block.
-/// error: and warning: are always top-level diagnostics.
+/// error:, warning: and lint: are always top-level diagnostics.
 /// note: and help: can also trigger blocks (e.g., standalone notes).
 fn is_diag_start(stripped: &[u8]) -> bool {
-    stripped.starts_with(b"error:")
-        || stripped.starts_with(b"warning:")
-        || stripped.starts_with(b"note:")
-        || stripped.starts_with(b"help:")
+    is_top_level_diag(stripped) || stripped.starts_with(b"note:") || stripped.starts_with(b"help:")
 }
 
 /// Returns true if stripped content starts a NEW top-level diagnostic,
 /// meaning we should close the current block and start a fresh one.
-/// Only error: and warning: can interrupt an existing block; note: and help:
-/// are sub-elements of the current diagnostic's rendered output.
+/// Only error:, warning: and lint: can interrupt an existing block; note: and
+/// help: are sub-elements of the current diagnostic's rendered output.
 fn is_top_level_diag(stripped: &[u8]) -> bool {
-    stripped.starts_with(b"error:") || stripped.starts_with(b"warning:")
+    stripped.starts_with(b"error:")
+        || stripped.starts_with(b"warning:")
+        || stripped.starts_with(b"lint:")
 }
 
 /// Parse the directives written in a test file's comments.
