@@ -22,6 +22,29 @@ compile_sources
   - file name with spaces.c
 ```
 
+A dash item continues onto following lines that start at its content column,
+the column after `- `. Each line break between them folds into a space, as in a
+YAML plain scalar. Blank lines fold into one newline each instead, and comment
+lines are skipped. The item ends at the first line indented less than its
+content column; a line indented further is an error.
+
+```
+let banner = $
+  - This is a long line of text that
+    continues here
+
+  - First paragraph.
+
+    Second paragraph.
+# banner == ["This is a long line of text that continues here",
+#            "First paragraph.\nSecond paragraph."]
+```
+
+Folding applies when the item's value starts with text, a quoted string, a
+constant, a parenthesized expression, or a `$` expression. A sub-list, a `$`
+command, `$` data, a `do` block, or a here string doesn't fold. After `- `, a
+key item's value folds as a key item's does.
+
 ## Key Items
 
 A line may instead start with a leading key, in which case it's considered a
@@ -35,13 +58,26 @@ copy_file
 
 A key's colon must be followed by whitespace or an indented block.
 
+A key item's value continues onto following lines indented past its key, folding
+the way a dash item's does. Continuation lines may sit at any deeper column; the
+value ends at the first line at or before the key's column.
+
+```
+let config = $
+  motd: This is a long line of text that
+    continues here
+  user: admin
+# config == {motd: "This is a long line of text that continues here",
+#            user: "admin"}
+```
+
 ## Line Items
 
 Items that span the line (after `-` or `key:`) are treated like ordinary
 command arguments, except that whitespace is preserved literally instead being
-a separator. There is also a special form: `$` followed by a space interprets
-the remainder of the line as a full command statement, with the value being its
-result.
+a separator. Whitespace before a trailing comment is not part of the item. There
+is also a special form: `$` followed by a space interprets the remainder of the
+line as a full command statement, with the value being its result.
 
 ```
 some_func

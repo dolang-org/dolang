@@ -1,0 +1,128 @@
+# A dash item continues onto lines at its content column, folding each line
+# break into a space.
+let banner = $
+  - This is a long line of text that
+    continues here
+
+assert_eq $banner ["This is a long line of text that continues here"]
+
+# Vertical arguments fold the same way.
+def args ...rest
+  [...rest]
+
+let passed = args
+  - one
+    two
+  - three
+
+assert_eq $passed ["one two", "three"]
+
+# Whitespace within a line is kept, and interpolation works on any line.
+let y = 2
+let spaced = $
+  - a  b $y
+    $y   c
+
+assert_eq $spaced ["a  b 2 2   c"]
+
+# Each blank line folds to a newline instead of a space.
+let paragraphs = $
+  - one
+
+    two
+
+
+    three
+
+assert_eq $paragraphs ["one\ntwo\n\nthree"]
+
+# Comment lines are skipped, and don't count as blank.
+let commented = $
+  - x
+    # skipped
+    y
+
+    # skipped
+    z
+
+assert_eq $commented ["x y\nz"]
+
+# A continuation line's leading `-` or key is text.
+let literal = $
+  - first
+    - dash
+    key: v
+
+assert_eq $literal ["first - dash key: v"]
+
+# A value that starts with a quoted string, a number or `$` folds too.
+let values = $
+  - "quoted"
+    more
+  - 42
+    x
+  - $y
+    after
+
+assert_eq $values ["quoted more", "42 x", "2 after"]
+
+# The item ends where indentation drops below its content column.
+let nested = $
+  - outer:
+      - inner
+        text
+      - next
+  - last
+
+assert_eq $nested [{outer: ["inner text", "next"]}, "last"]
+
+# A key item's value continues onto lines indented past its key, at any
+# column, folding the same way.
+let keyed = $
+  motd: This is a long line of text that
+    continues here
+  deep: one
+      two
+        three
+      four
+
+      five
+  "quoted": a
+    b
+  short: c
+
+assert_eq $keyed $
+  motd: This is a long line of text that continues here
+  deep: "one two three four\nfive"
+  "quoted": "a b"
+  short: c
+
+# The same holds for a key in a compact dict after `- `.
+let compact = $
+  - nested: a
+      b
+
+assert_eq $compact [{nested: "a b"}]
+
+# So does a dynamic key's, and the compact dict it starts continues at the
+# dash item's content column.
+let dynamic = $
+  - (y): a
+      b
+    z: c
+  - (y): d
+  - last
+
+assert_eq $dynamic [{2: "a b", z: "c"}, {2: "d"}, "last"]
+
+# A line at the key's column is a sibling item.
+let siblings = $
+  - a: one
+    b: two
+
+assert_eq $siblings [{a: "one", b: "two"}]
+
+let at_end = $
+  - eof
+    end
+assert_eq $at_end ["eof end"]

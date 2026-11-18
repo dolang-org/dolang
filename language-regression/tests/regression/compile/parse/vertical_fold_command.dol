@@ -1,0 +1,14 @@
+let command = $
+  - $ echo hi
+
+    # comment
+    more
+# error: got <new statement>, expected: <unindent>
+#   --> vertical_fold_command.dol:LL:LL
+#    |
+# LL |     - $ echo hi
+#    |  ______________^
+# LL | |
+# LL | |     # comment
+# LL | |     more
+#    | |_^

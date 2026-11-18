@@ -4,5 +4,7 @@ echo
 # error: inconsistent indentation
 #   --> unindent_data_error.dol:LL:LL
 #    |
-# LL |  - "world"
-#    | ^
+# LL |     - "hello"
+#    |  ____________^
+# LL | |  - "world"
+#    | |_^

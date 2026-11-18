@@ -1,17 +1,11 @@
 echo
-  - foo: bar
-      c d
-# error: unexpected indent in vertical data
-#   --> data_unexpected_indent.dol:LL:LL
-#    |
-# LL |       c d
-#    | ^^^^^^
-echo
   if false
     a
       b
 # error: unexpected indent in vertical data
 #   --> data_unexpected_indent.dol:LL:LL
 #    |
-# LL |       b
-#    | ^^^^^^
+# LL |       a
+#    |  ______^
+# LL | |       b
+#    | |______^

@@ -1,0 +1,10 @@
+let block = $
+  - do 1
+    more
+# error: got <new statement>, expected: <unindent>
+#   --> vertical_fold_do.dol:LL:LL
+#    |
+# LL |     - do 1
+#    |  _________^
+# LL | |     more
+#    | |_^

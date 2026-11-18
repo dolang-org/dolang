@@ -1035,6 +1035,11 @@ impl VisitAdapter<'_, '_> {
         node: Option<doc::Id>,
         context: Context,
     ) -> ControlFlow<Infallible> {
+        // A folded line break in a dash item is a synthetic escape spanning the
+        // gap between lines; it has no text of its own to highlight
+        if matches!(token, Token::Escape) && !self.file.slice(span).starts_with(b"\\") {
+            return ControlFlow::Continue(());
+        }
         let diag_span = self.file.locate(span);
         let node = node.map(public_node_id);
         self.emit.emit(token, diag_span, node, context);

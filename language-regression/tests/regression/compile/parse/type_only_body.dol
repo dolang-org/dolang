@@ -3,5 +3,7 @@
 # error: a type-only declaration has no body
 #   --> type_only_body.dol:LL:LL
 #    |
-# LL |   x
-#    | ^^
+# LL |   @def foo x
+#    |  ___________^
+# LL | |   x
+#    | |__^

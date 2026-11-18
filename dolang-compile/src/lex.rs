@@ -336,7 +336,10 @@ enum RawState {
     // A `#` at the start of a line in Shell mode, while a `NewlineIndent` is
     // pending: either a decorator or a comment line folded into the indent
     IndentHash,
-    // A comment line being folded into the pending `NewlineIndent`
+    // A `#` after whitespace in Shell mode, while a `Space` is pending: either
+    // a decorator or a trailing comment folded into the whitespace
+    SpaceHash,
+    // A comment being folded into the pending `NewlineIndent` or `Space`
     IndentComment,
     // Emit `DecoratorOpen` after flushing the `NewlineIndent` before it
     IndentDecoratorOpen,
@@ -547,8 +550,9 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
         self.defer = None;
     }
 
-    /// End a comment line folded into a pending `NewlineIndent`, which then
-    /// continues from the newline that ends it.
+    /// End a comment folded into a pending `NewlineIndent` or `Space`, which
+    /// keeps its start so that its span covers the comment. A pending `Space`
+    /// becomes a `NewlineIndent` at the newline, or is dropped at EOF.
     fn fold_comment(&mut self, state: RawState) {
         let end = if state == RawState::End {
             self.offset
@@ -561,7 +565,12 @@ impl<'a, I: Iterator<Item = u8>> RawLexer<'a, I> {
                 end,
             })
         }
-        self.skip(state);
+        if state == RawState::End {
+            self.skip(state);
+        } else {
+            self.state = state;
+            self.defer = None;
+        }
     }
 
     fn emit(
@@ -915,12 +924,19 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     lex! {
                         self: token => {
                             match None => self.skip(End),
-                            match Some(b'\n') => if self.keep_newlines || matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc) {
+                            // A pending `NewlineIndent` keeps its start, so its span covers
+                            // every blank and comment line in the gap
+                            match Some(b'\n') => if self.keep_newlines
+                                || (self.state == Indent && self.mode == Mode::Shell)
+                                || matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc)
+                            {
                                 self.trans(Indent)
                             } else {
                                 self.skip(Indent)
                             },
-                            match Some(b'\r') => if self.keep_newlines {
+                            match Some(b'\r') => if self.keep_newlines
+                                || (self.state == Indent && self.mode == Mode::Shell)
+                            {
                                 self.trans(Cr)
                             } else {
                                 self.skip(Cr)
@@ -937,6 +953,12 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             match Some(b'#') if self.state == Indent && self.mode == Mode::Shell && !self.keep_newlines => {
                                 self.comment_start = self.offset - 1;
                                 self.trans(IndentHash)
+                            },
+                            // A trailing comment folds into the whitespace before it, so that
+                            // whitespace ends the line as it would without the comment
+                            match Some(b'#') if self.state == Space && self.mode == Mode::Shell && !self.keep_newlines => {
+                                self.comment_start = self.offset - 1;
+                                self.trans(SpaceHash)
                             },
                             match Some(b'#') => emit!(self.emit, token, Hash),
                             match Some(b':') => emit!(self.emit, token, Colon),
@@ -959,8 +981,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     }
                 }
                 Cr => match self.advance() {
-                    Some(b'\n') if self.keep_newlines => self.trans(Indent),
-                    Some(b'\n') => self.skip(Indent),
+                    Some(b'\n') => self.trans(Indent),
                     _ => return self.error_adj(ErrorDiagKind::BadCr, 1, 0),
                 },
                 Ident => literal!(self, RawToken::Ident, {
@@ -1338,6 +1359,16 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     // Flush the pending `NewlineIndent`, which ends before `#[`
                     Some(b'[') => {
                         return self.token_adj(RawToken::NewlineIndent, IndentDecoratorOpen, 0, -2);
+                    }
+                    None => self.fold_comment(End),
+                    Some(b'\r') => self.fold_comment(Cr),
+                    Some(b'\n') => self.fold_comment(Indent),
+                    _ => self.trans(IndentComment),
+                },
+                SpaceHash => match self.advance() {
+                    // Flush the pending `Space`, which ends before `#[`
+                    Some(b'[') => {
+                        return self.token_adj(RawToken::Space, IndentDecoratorOpen, 0, -2);
                     }
                     None => self.fold_comment(End),
                     Some(b'\r') => self.fold_comment(Cr),
@@ -1772,7 +1803,8 @@ impl<'a> Lexer<'a> {
         if matches!(self.raw.mode, Mode::Heredoc | Mode::RawHeredoc) {
             return self.heredoc_newline(span);
         }
-        // The span holds several newlines only in `Mode::HeredocIntro`
+        // The span holds every newline in the gap, with any blank and comment
+        // lines between them
         let slice = self.file.slice(span);
         let first_nl = slice.iter().position(|&b| b == b'\n').unwrap() as Offset + span.start;
         let last_nl = slice.iter().rposition(|&b| b == b'\n').unwrap() as Offset + span.start;
@@ -1780,6 +1812,8 @@ impl<'a> Lexer<'a> {
         self.nl = last_nl + 1;
         // Set indentation level based on span
         self.set_indent((last_nl + 1..span.end).into());
+        // `Indent` and `Dedent` span the whole gap, with its indentation
+        self.span = (first_nl..span.end).into();
         self.heredoc_leading = if self.heredoc_intro && self.target > self.current {
             (first_nl + 1..last_nl + 1).into()
         } else {
@@ -1790,7 +1824,7 @@ impl<'a> Lexer<'a> {
         } else {
             Some(Ok(Token::new(
                 TokenInfo::StmtSep,
-                (last_nl..last_nl + 1).into(),
+                (first_nl..last_nl + 1).into(),
             )))
         }
     }
