@@ -184,9 +184,9 @@ def text_string_coercion()
     term.text("rgb", bg: Tuple([4, 5, 6])).encode()
   ) "$ESC[48;2;4;5;6mrgb$ESC[0m"
 
-  assert_throws $ValueError do term.text fg: 256 text
-  assert_throws $ValueError do term.text fg: [1, 2] text
-  assert_throws $TypeError do term.text fg: [1, "x", 3] text
+  assert_throws $ValueError do term.text fg: 256 "text"
+  assert_throws $ValueError do term.text fg: [1, 2] "text"
+  assert_throws $TypeError do term.text fg: [1, "x", 3] "text"
 
 #[test]
 def reusable_styles()
@@ -202,7 +202,7 @@ def reusable_styles()
   assert_eq (ambient("Notice").encode()) "$ESC[4mNotice$ESC[0m"
 
   let plain = ambient underline: :INHERIT:
-  assert_eq (str $ plain("plain")) plain
+  assert_eq (str $ plain("plain")) "plain"
   assert_eq (str $ term.text("text", fg: :INHERIT:)) text
 
   assert_throws $ValueError do warning bold: false
@@ -217,8 +217,8 @@ def nested_styles()
   # Stripping leaves the content of every layer, in order.
   assert_eq (str text) "outer inner after outer"
 
-  assert_throws $ValueError do term.text bold: false text
-  assert_throws $TypeError do term.text fg: RED text
+  assert_throws $ValueError do term.text bold: false "text"
+  assert_throws $TypeError do term.text fg: RED "text"
 
 #[test]
 def preformatted_text()
@@ -376,7 +376,7 @@ def console_formats_bound_text()
   # produced — including by `encode` on the very same `Text`.
   assert_eq
     - (term.sub can_style: true do echo (FmtValue (red.encode()) width: 5))
-    - red
+    - "red"
 
 #[test]
 def console_walks_sequences()

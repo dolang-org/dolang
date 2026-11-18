@@ -500,11 +500,11 @@ def construct_vertical_layout()
   assert_eq $encode(text) "<note>plainliteralwords</note>"
 
   # `- $ ` introduces a command-or-expression running to end of line.
-  let dollar = Element disk
+  let dollar = Element "disk"
     - $ Element driver attrs: {name: "qemu"}
   assert_eq $encode(dollar) r#"<disk><driver name="qemu"></driver></disk>"#
 
-  let nested = Element disk
+  let nested = Element "disk"
     - $ Element source
         attrs:
           file: /tmp/disk.qcow2

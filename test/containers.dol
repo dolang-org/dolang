@@ -346,7 +346,7 @@ def container_inspect_lifecycle()
             true
           assert $unwound
           let reentered = ctr.with do sub do run printf reentered
-          assert_eq $reentered reentered
+          assert_eq $reentered "reentered"
       - name: stop and list stopped
         do
           ctr.stop()

@@ -661,7 +661,7 @@ def local_group_lifecycle :user :group
   let info = group.update comment: "renamed" name: $renamed
   assert_eq $info.name $renamed
   assert_eq $group.info().name $renamed
-  assert_eq $group.info().comment renamed
+  assert_eq $group.info().comment "renamed"
   let renamed_lookup = winnet.group $renamed
   assert_eq (str renamed_lookup.sid) (str group.sid)
 

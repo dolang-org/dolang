@@ -939,9 +939,9 @@ def parse_image_tags runtime@Runtime repo_tags@Array[Str] -> Array[ImageTag]
 # The first object in what `inspect` printed
 def inspected output @ Str -> Dict[Str, DecodeValue]
   let Array(items) = json.decode $output
-  else malformed output
+  else malformed "output"
   let Dict(data) = items[0]
-  else malformed output
+  else malformed "output"
   data
 
 def inspect_image runtime@Runtime ref@Str -> Dict[Str, DecodeValue]
@@ -1151,7 +1151,7 @@ pub class Runtime
       :name :mounts :labels :ports :networks :user :init
     self.cli run --rm -i --pull=never
       ...config_args
-      --entrypoint env $ctr ...(_vfs.env_args cd env)
+      --entrypoint "env" $ctr ...(_vfs.env_args cd env)
       $executable ...executable_args
       stdin: $strand.input()
 
@@ -1411,7 +1411,7 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
         if (source != nil)
           - source=$source
         if readonly
-          - readonly
+          - "readonly"
         else
           - rw
         if (size != nil)
@@ -1737,7 +1737,7 @@ pub class Builder
       sub do runtime.cli commit $ctr_name
     progress.show message: tag do |_|
       for tag = tags
-        runtime.quiet_cli tag $img_id $tag
+        runtime.quiet_cli "tag" $img_id $tag
     runtime.image $img_id
 
   pub def build[I, O]

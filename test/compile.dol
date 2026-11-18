@@ -1313,7 +1313,7 @@ def check_refuses_units_it_cannot_check()
   let plain = compile.compile "plain.dol" "let x = 1\n"
   assert_throws $std.ValueError do compile.check [plain]
   let a = compile.compile "a.dol" "" module: a typecheck: true
-  let again = compile.compile "again.dol" "" module: a typecheck: true
+  let again = compile.compile "again.dol" "" module: "a" typecheck: true
   assert_throws $std.ValueError do compile.check [a, again]
   # Checking leaves the units usable
   assert_type $Bin $a.emit()
@@ -1348,7 +1348,7 @@ def check_add_refuses_units_it_cannot_check()
   let check = compile.Check()
   let a = compile.compile "a.dol" "" module: a typecheck: true
   check.add $a
-  let again = compile.compile "again.dol" "" module: a typecheck: true
+  let again = compile.compile "again.dol" "" module: "a" typecheck: true
   assert_throws $std.ValueError do check.add $again
   let plain = compile.compile "plain.dol" "let x = 1\n"
   assert_throws $std.ValueError do check.add $plain
