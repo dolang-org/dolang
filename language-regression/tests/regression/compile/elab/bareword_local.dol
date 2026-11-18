@@ -117,9 +117,27 @@ def key_item label
 def quoted dir
   show "dir" $dir dir/x pre$dir dir: :dir:
 
-# Nor do module-level bindings, imports and prelude items
+# So is a top-level variable, inside a function or at the top level
 def module_level()
-  show top std echo
+  show top
+# lint: bareword is the literal string "top", not the variable `top`
+#   --> bareword_local.dol:LL:LL
+#    |
+# LL | let top = "module"
+#    |     --- variable bound here
+# ...
+# LL |   show top
+#    |        ^^^
+#    |
+# help: write `$` for the variable
+#    |
+# LL |   show $top
+#    |        +
+# help: quote it for the string
+#    |
+# LL -   show top
+# LL +   show "top"
+#    |
 
 # A name isn't in scope on its own `let` right-hand side
 def own_rhs()
@@ -131,6 +149,36 @@ def before_binding()
   show later
   let later = 1
   later
+
+show top
+# lint: bareword is the literal string "top", not the variable `top`
+#   --> bareword_local.dol:LL:LL
+#    |
+# LL | let top = "module"
+#    |     --- variable bound here
+# ...
+# LL | show top
+#    |      ^^^
+#    |
+# help: write `$` for the variable
+#    |
+# LL | show $top
+#    |      +
+# help: quote it for the string
+#    |
+# LL - show top
+# LL + show "top"
+#    |
+
+# Classes, `def`s, imports and prelude items don't
+import std:
+  - verbatim
+class Point
+  pub field x = 0
+def items()
+  show Point show verbatim std echo
+items()
+show $Point $verbatim
 
 show $top
 parameter "x"

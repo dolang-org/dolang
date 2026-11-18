@@ -17,12 +17,12 @@ echo
     - - 2
       - 3
     - foo: bar
-      "bar": foo
+      "bar": qux
   func: do
     echo hi
   - foo:
       - bar
   chown: 1000:1000
 # output: END
-# foo: bar true baz one url: https://google.com a (literal) [a,b] {c,d} "string" foo:bar true:bar bar: 42 true b: [1, 2] ham: ["-not_a_sublist", 1, [2, 3], {foo: "bar", "bar": "foo"}] func: 2 {foo: ["bar"]} chown: 1000:1000
+# foo: bar true baz one url: https://google.com a (literal) [a,b] {c,d} "string" foo:bar true:bar bar: 42 true b: [1, 2] ham: ["-not_a_sublist", 1, [2, 3], {foo: "bar", "bar": "qux"}] func: 2 {foo: ["bar"]} chown: 1000:1000
 # END

@@ -115,9 +115,9 @@ assert_eq (str $ FmtValue p fill: "-" width: 7) "(1,2)--"
 assert_eq (str $ FmtValue p precision: 3) "(1,"
 
 # A numeric kind is a type error rather than being silently ignored.
-assert_throws $std.RuntimeError do str $ FmtValue p kind: :HEX:
-assert_throws $std.RuntimeError do str $ FmtValue p sign: :PLUS:
-assert_throws $std.RuntimeError do str $ FmtValue p fill: :ZERO: width: 9
+assert_throws $std.RuntimeError do str $ FmtValue $p kind: :HEX:
+assert_throws $std.RuntimeError do str $ FmtValue $p sign: :PLUS:
+assert_throws $std.RuntimeError do str $ FmtValue $p fill: :ZERO: width: 9
 
 # Symbols, bools and nil use the text kinds only.
 assert_eq (str $ FmtValue :sym: width: 5) "sym  "

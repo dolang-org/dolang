@@ -43,7 +43,7 @@ assert_eq $s x
 assert_eq [...sr] ["y", "z"]
 
 let p *pr = ("a,b,c".split(","))
-assert_eq $p a
+assert_eq $p "a"
 assert_eq [...pr] ["b", "c"]
 
 let q *qr **qk = (b"a,b".split(b","))
