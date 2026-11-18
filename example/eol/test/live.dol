@@ -20,5 +20,5 @@ def gets_python()
   if !env.get("EOL_LIVE", default: nil)
     skip "set EOL_LIVE=1 to call the real API"
   let python = eol.Client().product "python"
-  assert_eq $python.name python
+  assert_eq $python.name "python"
   assert (python.releases.len > 0)

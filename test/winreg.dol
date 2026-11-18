@@ -77,14 +77,14 @@ def registry_crud_round_trips()
   # Recursive deletion removes values and nested subkeys. Missing keys are
   # ignored only when requested.
   let tree = scratch.create "tree" access: :READ_WRITE:
-  tree.set value root
+  tree.set value "root"
   let leaf = tree.create r"branch\leaf" access: :READ_WRITE:
   leaf.set value 1
   leaf.close()
   tree.close()
-  scratch.delete tree all: true
+  scratch.delete "tree" all: true
   assert_throws $NotFoundError do
-    scratch.open tree
+    scratch.open "tree"
   scratch.delete missing all: true ignore: true
   assert_throws $NotFoundError do
     scratch.delete missing

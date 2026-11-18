@@ -1142,8 +1142,8 @@ class DomainConfig
         if (boot != nil && boot > last)
           last = boot
       self.#disk_boot = (last + 1)
-    self.#cache = require_disk_mode $cache $DISK_CACHE_MODES cache
-    self.#io = require_disk_mode $io $DISK_IO_MODES io
+    self.#cache = require_disk_mode $cache $DISK_CACHE_MODES "cache"
+    self.#io = require_disk_mode $io $DISK_IO_MODES "io"
 
   # The `<os>` element: firmware selection, and on a BIOS profile the boot
   # device.
@@ -1200,7 +1200,7 @@ class DomainConfig
         $ Element target attrs: {dev: MEDIA_TARGETS[index], bus: "sata"}
         $ Element readonly
         if (boot != nil)
-          $ Element boot attrs: {order: str(boot)}
+          $ Element "boot" attrs: {order: str(boot)}
       nodes.push $cdrom
       index = (index + 1)
     nodes
@@ -1294,7 +1294,7 @@ class DomainConfig
             $ Element model attrs: {type: "vga"}
           $ Element input attrs: {type: "tablet", bus: "usb"}
         if (tpm != nil)
-          $ Element tpm attrs: {model: "tpm-crb"}
+          $ Element "tpm" attrs: {model: "tpm-crb"}
             $ Element backend attrs: {type: "emulator", version: "2.0"}
               # libvirt launches swtpm as the session user and lets it keep its
               # state here, so the vTPM lives and dies with the workdir like
@@ -1315,10 +1315,10 @@ class DomainConfig
           # Recorded so a restored bundle takes its machine shape from what it
           # was built as, rather than from whatever `Profile` says today.
           if (machine != nil)
-            $ Element machine $machine
+            $ Element "machine" $machine
           $ Element firmware (str(profile.firmware).lower())
           if (tpm != nil)
-            $ Element tpm (str(tpm).lower())
+            $ Element "tpm" (str(tpm).lower())
           ...self.guest.to_metadata()
 
 # A read-only view over a libvirt domain document.
@@ -2871,12 +2871,12 @@ def read_manifest bundle @ Path -> Manifest
         throw std.ValueError "bundle manifest is missing member disk: $bundle"
       Manifest $
         :app :user :command :memory :vcpus :machine :disk
-        os: $ manifest_enum $os $MANIFEST_OS os $bundle
-        arch: $ manifest_enum $arch $MANIFEST_ARCH arch $bundle
-        firmware: $ manifest_optional_enum $firmware $MANIFEST_FIRMWARE firmware $bundle
-        tpm: $ manifest_optional_enum $tpm $MANIFEST_TPM tpm $bundle
+        os: $ manifest_enum $os $MANIFEST_OS "os" $bundle
+        arch: $ manifest_enum $arch $MANIFEST_ARCH "arch" $bundle
+        firmware: $ manifest_optional_enum $firmware $MANIFEST_FIRMWARE "firmware" $bundle
+        tpm: $ manifest_optional_enum $tpm $MANIFEST_TPM "tpm" $bundle
         nvram: $ manifest_member $members nvram $bundle
-        tpm_state: $ manifest_member $members tpm $bundle
+        tpm_state: $ manifest_member $members "tpm" $bundle
   else
     throw std.ValueError "bundle manifest is malformed: $bundle"
 

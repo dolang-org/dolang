@@ -61,7 +61,7 @@ def serving path json block
 def gets_product()
   serving /api/v1/products/python $envelope(PYTHON) do |client _|
     let python = client.product python
-    assert_eq $python.name python
+    assert_eq $python.name "python"
     assert_eq $python.label Python
     assert_eq $python.category lang
     assert_eq [...python.releases.map(do |r| r.name)] ["3.15", "3.9"]

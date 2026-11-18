@@ -408,6 +408,6 @@ def example_project_passes()
   assert_eq $rc 0 $output
   fs.with_temp_dir do |dir|
     let bundle = (dir / "eol.dolz")
-    let output rc = doze --project $project bundle -o $bundle
+    let output rc = doze --project $project "bundle" -o $bundle
     assert_eq $rc 0 $output
     let _ = run_bundle $bundle --help

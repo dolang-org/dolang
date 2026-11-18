@@ -115,7 +115,7 @@ class Spec
     let exe = self.target.get :exe:
     let path = (self.target_dir / name).absolute()
     if exe
-      path.add_ext exe
+      path.add_ext "exe"
     else
       path
 
@@ -325,14 +325,14 @@ def vscode_test spec
   spec.cargo_vfs build --bin dolang
   with_lsp_bundle $spec do spec.cargo build -p dolang-lsp --bin dolang-lsp
   for script = ["test:syntax", "test:language-config", "test:version"]
-    dodo.show npm --prefix dolang-code run $script
+    dodo.show "npm" --prefix dolang-code run $script
   session do
     npm test
     env
       DOLANG_CODE_DOLANG: (spec.bin "dolang")
       DOLANG_CODE_LSP: (spec.bin "dolang-lsp")
       do npm "test:integration"
-  dodo.show npm --prefix dolang-code run "package:vsix"
+  dodo.show "npm" --prefix dolang-code run "package:vsix"
 
 def shell_test spec args
   spec.cargo_vfs build --bin dolang

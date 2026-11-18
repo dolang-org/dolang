@@ -208,7 +208,7 @@ def file_backed_part_round_trips()
 
           open $path buffer: false do |file|
             let file_parts = $
-              - name: file
+              - name: "file"
                 filename: report.txt
                 content_type: text/plain
                 body: $file
@@ -241,7 +241,7 @@ def buffered_file_part_sends_bytes()
           open $path do |file|
             http.post (server.url / "/multipart-file")
               multipart:
-                - name: file
+                - name: "file"
                   body: $file
 
         let parts = (parts_of handle)

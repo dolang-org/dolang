@@ -310,7 +310,7 @@ def overloads_are_type_only()
 def values_aliases_and_imports()
   let out = extract()
   let value = entity $out default_name
-  assert_eq $value["kind"] value
+  assert_eq $value["kind"] "value"
   assert_eq $value["doc"] "The module's default name."
   let opaque = entity $out Opaque
   assert_eq $opaque["kind"] alias
@@ -401,7 +401,7 @@ def implicit_parameters()
   assert_eq (untargeted transform["returns"]) {"kind": "const", "text": "nil"}
   let func = entity(out, "with_channels")["params"][0]["type"]
   assert_eq (untargeted func) $
-    "kind": func
+    "kind": "func"
     "params": [{"kind": "pos", "quant": nil, "type": name_type("Int")}]
     "input": $iter_int
     "output": $sink_str

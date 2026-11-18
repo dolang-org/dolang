@@ -36,7 +36,7 @@ do -> nil
   proc.run toolbox run
     if (name != nil)
       --container $name
-    -- env ...(_vfs.env_args cd env) $cmd ...args
+    -- "env" ...(_vfs.env_args cd env) $cmd ...args
 
 # Runs `block` inside a toolbox container.
 #
