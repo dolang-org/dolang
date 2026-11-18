@@ -42,7 +42,7 @@ for name value = disk.attrs
 (find "target").attrs.delete bus
 
 # Build a new element with explicit attributes and positional children.
-let cdrom = xml.Element disk
+let cdrom = xml.Element "disk"
   attrs:
     type: file
     device: cdrom
