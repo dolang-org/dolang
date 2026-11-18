@@ -343,7 +343,7 @@ def print_failure failure @ Failure diagnose @ compile.Severity fail @ compile.S
   if (type e ModuleCompileError)
     print (err_style "failed") ": " (name_style "$module")
       " (" (note_style "compilation failed") ")\n"
-    print_diagnostics $ e.output.diagnostics().filter do |diag| shown $diag $diagnose $fail
+    print_diagnostics $ e.output.diagnostics.filter do |diag| shown $diag $diagnose $fail
     return
   if test
     print (err_style "failed") ": " (name_style "$module/$test") ": "
@@ -480,7 +480,7 @@ class Harness
     try
       let source = path.read_str()
       let compiled = compile.compile $str(path) $source
-      let diagnostics = [...compiled.diagnostics()]
+      let diagnostics = compiled.diagnostics
       if diagnostics.any(do |d| d.at_least(self.#fail))
         throw ModuleCompileError $path $compiled
       let notes = [...diagnostics.filter(do |d| d.at_least(self.#diagnose))]
@@ -680,7 +680,7 @@ def module_record result @ ModuleResult -> Json
     if (type e ModuleCompileError)
       error[:kind:] = "compile"
       error[:message:] = str $e
-      error[:diagnostics:] = [...e.output.diagnostics().map(do |d| diagnostic_record d result.path)]
+      error[:diagnostics:] = [...e.output.diagnostics.map(do |d| diagnostic_record d result.path)]
     else
       error[:kind:] = "load"
       error[:message:] = str $e

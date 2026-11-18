@@ -186,7 +186,7 @@ class Compiler
     let units @ Array[Str] = []
     for path unit = self.#units
       units.push "$path"
-      for diag = unit.diagnostics()
+      for diag = unit.diagnostics
         diagnostics.push $diag
         reporters.push "$path"
     let fail = self.#fail

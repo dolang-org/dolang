@@ -1580,6 +1580,16 @@ impl Unit<'_> {
         self.diags.iter().map(|diag| diag.resolve(&self.file))
     }
 
+    /// How many diagnostics [`Unit::diagnostics`] yields.
+    pub fn diagnostic_count(&self) -> usize {
+        self.diags.len()
+    }
+
+    /// The diagnostic at `index` in the order [`Unit::diagnostics`] yields them.
+    pub fn diagnostic(&self, index: usize) -> Option<diag::Diag> {
+        self.diags.get(index).map(|diag| diag.resolve(&self.file))
+    }
+
     /// Iterate the document nodes of the unit: its declarations and constructs.
     ///
     /// Requires [`Config::document`]. This reads the index and walks no syntax tree, so

@@ -16,7 +16,7 @@ use dolang::{
     extension::CompilerExt,
     runtime::{
         Args, Error, Instance, Object, Result, Slot, State, Strand, Sym, Type, Value,
-        object::{Mut, Ref, TypeBuilder},
+        object::{ArrayLike, Mut, Ref, TypeBuilder},
         unpack,
         value::{Array, Dict, Nil, PinBin, PinStr, TypeObject, View},
         vm::{Register, StateTag},
@@ -28,7 +28,6 @@ use dolang::runtime::{error::ErrorKind as RuntimeErrorKind, method};
 
 pub(crate) struct Types<'v> {
     unit: Type<'v, UnitObject<'v>>,
-    diagnostic_iter: Type<'v, DiagnosticIter>,
     node_iter: Type<'v, NodeIter>,
     token_iter: Type<'v, TokenIter<'v>>,
     token: Type<'v, TokenObject>,
@@ -219,7 +218,6 @@ impl<'v> Global<'v> {
         Self {
             types: Types {
                 unit: builder.register_type(),
-                diagnostic_iter: builder.register_type(),
                 node_iter: builder.register_type(),
                 token_iter: builder.register_type(),
                 token: builder.register_type(),
@@ -433,9 +431,11 @@ pub(crate) struct PatchAnnex<'v> {
     sub: String,
 }
 
-pub(crate) struct DiagnosticIter {
-    index: usize,
-}
+/// The array view of a unit's diagnostics
+struct UnitDiagnostics;
+
+/// The array view of a check's diagnostics
+struct CheckedDiagnostics;
 
 /// Units and typelibs to check together, and the modules they need
 pub(crate) struct CheckObject {
@@ -450,6 +450,10 @@ pub(crate) struct CheckObject {
 /// The result of checking units together
 pub(crate) struct CheckedObject;
 pub(crate) struct CheckedAnnex {
+    /// The paths of the accepted inputs, by unit ID
+    paths: Vec<String>,
+    /// The checker's diagnostics, with their locations' ranges in the sources
+    diags: Vec<(Ranges, Diag)>,
     /// A rendering of the checks the checker couldn't decide
     undecided: String,
     /// The check, if it was asked for typelibs, with the ID of each input it
@@ -538,7 +542,8 @@ const DIAG_SOURCE: usize = 3;
 /// The inputs added to a check
 const CHECK_INPUTS: usize = 0;
 
-const CHECKED_DIAGNOSTICS: usize = 0;
+/// The sources of the inputs the checker accepted, by unit ID; never modified
+const CHECKED_SOURCES: usize = 0;
 /// The inputs the checker accepted, by unit ID
 const CHECKED_INPUTS: usize = 1;
 
@@ -902,11 +907,9 @@ fn check_units<'v, 's>(
                          mut source,
                          mut taken_sources,
                          mut sources,
-                         mut diagnostics,
                          mut inputs| {
         strand.new_array(&mut taken_sources);
         strand.new_array(&mut sources);
-        strand.new_array(&mut diagnostics);
         strand.new_array(&mut inputs);
         let taken_array = taken_sources.as_array(strand).unwrap();
         let sources_array = sources.as_array(strand).unwrap();
@@ -984,29 +987,20 @@ fn check_units<'v, 's>(
         }
         let (paths, diags, undecided, check) = checked?;
 
-        let diagnostics_array = diagnostics.as_array(strand).unwrap();
-        for diag in diags {
-            create_diagnostic(
-                global,
-                strand,
-                DiagSources::Checked(&paths, &sources),
-                diag,
-                &mut item,
-            )?;
-            diagnostics_array.push(strand, &*item)?;
-        }
         global.types.checked.create_with_annex(
             strand,
             CheckedObject,
-            CheckedAnnex { undecided, check },
+            CheckedAnnex {
+                paths,
+                diags,
+                undecided,
+                check,
+            },
             &mut *out,
         );
         with_instance!(strand, global.types.checked.cast(&*out).unwrap(), |check| {
             let mut borrow = check.borrow_mut_unwrap();
-            strand.store(
-                Mut::slot_mut::<CHECKED_DIAGNOSTICS>(&mut borrow),
-                &*diagnostics,
-            );
+            strand.store(Mut::slot_mut::<CHECKED_SOURCES>(&mut borrow), &*sources);
             strand.store(Mut::slot_mut::<CHECKED_INPUTS>(&mut borrow), &*inputs);
         });
         Ok(())
@@ -1269,16 +1263,11 @@ impl<'v> Object<'v> for UnitObject<'v> {
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
-            .method("diagnostics", async move |this, strand, args, mut out| {
-                unpack!(strand, args =>);
+            .get("diagnostics", |this, strand, out| {
                 if this.borrow(strand)?.unit.is_none() {
                     return Err(Error::state_error(strand, "unit was emitted"));
                 }
-                let ty = strand.state::<Tag>().types.diagnostic_iter;
-                ty.create(strand, DiagnosticIter { index: 0 }, &mut out);
-                with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
-                    strand.store(Mut::slot_mut::<OWNER>(&mut iter.borrow_mut_unwrap()), this);
-                });
+                strand.array_view(this, UnitDiagnostics, out);
                 Ok(())
             })
             .method("nodes", async move |this, strand, args, mut out| {
@@ -1527,8 +1516,7 @@ impl<'v> Object<'v> for CheckedObject {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("diagnostics", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                strand.store(out, Ref::slot::<CHECKED_DIAGNOSTICS>(&borrow));
+                strand.array_view(this, CheckedDiagnostics, out);
                 Ok(())
             })
             .method("undecided", async move |this, strand, args, out| {
@@ -1649,53 +1637,68 @@ impl<'v> Object<'v> for TypelibObject<'v> {
     }
 }
 
-impl<'v> Object<'v> for DiagnosticIter {
-    const NAME: &'v str = "DiagnosticIter";
+impl<'v> ArrayLike<'v> for UnitDiagnostics {
+    type Object = UnitObject<'v>;
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 1;
-    type Annex = ();
-    type Type = ();
-    type TypeAnnex = ();
-    fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
+    const NAME: &'v str = "UnitDiagnostics";
+
+    /// Zero once the unit is emitted
+    fn len(&self, this: Instance<'v, '_, UnitObject<'v>>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.borrow_unwrap()
+            .unit
+            .as_ref()
+            .map_or(0, compile::Unit::diagnostic_count)
     }
 
-    async fn iter<'a, 's>(
-        this: Instance<'v, 'a, Self>,
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, UnitObject<'v>>,
         strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        strand.store(out, this);
-        Ok(())
-    }
-    async fn next<'a, 's>(
-        this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
+        index: usize,
         mut out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, bool> {
-        let mut iter = this.borrow_mut(strand)?;
-        let index = iter.index;
-        iter.index += 1;
-        let owner_value = Mut::slot::<OWNER>(&iter);
-        with_unit(strand, owner_value, |strand, owner| {
-            let unit_borrow = owner.borrow(strand)?;
-            let Some(unit) = unit_borrow.unit.as_ref() else {
-                return Err(Error::state_error(strand, "unit was emitted"));
-            };
-            let Some(diag) = unit.diagnostics().nth(index) else {
-                return Ok(false);
-            };
-            let source = Ref::slot::<UNIT_SOURCE>(&unit_borrow);
-            let path = unit_borrow.path.to_string_lossy();
-            create_diagnostic(
-                strand.state::<Tag>(),
-                strand,
-                DiagSources::Unit(&path, source),
-                (ranges(&diag, |_| Some(unit)), diag),
-                &mut out,
-            )?;
-            Ok(true)
-        })
+    ) -> Result<'v, 's, ()> {
+        let borrow = this.borrow(strand)?;
+        let Some(unit) = borrow.unit.as_ref() else {
+            return Err(Error::state_error(strand, "unit was emitted"));
+        };
+        let diag = unit.diagnostic(index).expect("index is within len");
+        let source = Ref::slot::<UNIT_SOURCE>(&borrow);
+        let path = borrow.path.to_string_lossy();
+        create_diagnostic(
+            strand.state::<Tag>(),
+            strand,
+            DiagSources::Unit(&path, source),
+            (ranges(&diag, |_| Some(unit)), diag),
+            &mut out,
+        )
+    }
+}
+
+impl<'v> ArrayLike<'v> for CheckedDiagnostics {
+    type Object = CheckedObject;
+    const MODULE: &'v str = "compile";
+    const NAME: &'v str = "CheckedDiagnostics";
+
+    fn len(&self, this: Instance<'v, '_, CheckedObject>, _strand: &mut Strand<'v, '_>) -> usize {
+        this.annex().diags.len()
+    }
+
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, CheckedObject>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let annex = this.annex();
+        let borrow = this.borrow(strand)?;
+        create_diagnostic(
+            strand.state::<Tag>(),
+            strand,
+            DiagSources::Checked(&annex.paths, Ref::slot::<CHECKED_SOURCES>(&borrow)),
+            annex.diags[index].clone(),
+            &mut out,
+        )
     }
 }
 

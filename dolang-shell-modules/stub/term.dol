@@ -469,7 +469,7 @@ pub class Text
   # ## Example
   #
   # ```
-  # let diagnostic = [...unit.diagnostics()][0].render()
+  # let diagnostic = unit.diagnostics[0].render()
   # echo $diagnostic.indent(4)
   # ```
   pub def indent

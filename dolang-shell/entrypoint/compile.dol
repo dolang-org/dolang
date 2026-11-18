@@ -831,7 +831,7 @@ class Document
 # from a file that simply declares less -- so it is not written at all.
 def build_extract source display_path module doc all fail tokens
   let unit = compile.compile $display_path $source recover: true document: true
-  let diagnostics = [...unit.diagnostics()]
+  let diagnostics = unit.diagnostics
   if ((doc || fail != nil) && diagnostics.any do |diag| diag.at_least(fail || :ERROR:))
     throw std.RuntimeError ("\n".join $ diagnostics.map do |diag| diag.render())
   let index = Index $unit
@@ -955,7 +955,7 @@ def typelib p
   let check = check.run()
   let diagnostics = $
     for unit = units
-      for diag = unit.diagnostics()
+      for diag = unit.diagnostics
         - $diag
     for diag = check.diagnostics
       - $diag
@@ -986,7 +986,7 @@ def emit_source path text module
   else
     compile.compile $path $text :module
   let failed = false
-  for diag = unit.diagnostics()
+  for diag = unit.diagnostics
     if (diag.severity == :ERROR:)
       failed = true
     echo $diag.render()

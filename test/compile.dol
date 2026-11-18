@@ -20,7 +20,7 @@ def declared_name unit node
     name
 
 def assert_no_errors unit
-  let errors = [...unit.diagnostics().filter(do |d| (d.severity == :ERROR:))]
+  let errors = [...unit.diagnostics.filter(do |d| (d.severity == :ERROR:))]
   assert_eq $errors.len 0
 
 def assert_span_contract left right
@@ -46,7 +46,7 @@ def success()
     foo()
 
   assert_type $compile.Unit $result
-  assert_eq 0 $ result.diagnostics().count()
+  assert_eq 0 $ result.diagnostics.len
   assert_type $Bin $result.emit()
 
 #[test]
@@ -56,7 +56,7 @@ def warning()
       nil
     foo 1
 
-  let diagnostics = [...result.diagnostics()]
+  let diagnostics = result.diagnostics
   assert_eq $diagnostics.len 1
 
   let diag = diagnostics[0]
@@ -81,7 +81,7 @@ def warning()
 #[test]
 def error()
   let result = compile.compile "bad.dol" "let =\n"
-  let diagnostics = [...result.diagnostics()]
+  let diagnostics = result.diagnostics
   assert (diagnostics.len > 0)
 
   let diag = diagnostics[0]
@@ -217,7 +217,7 @@ def spans_count_characters()
 def emit_without_recovery_fails_after_diagnostics()
   let source = "let x = 1\nlet = 2\n"
   let result = compile.compile "bad.dol" $source
-  let diagnostics = [...result.diagnostics()]
+  let diagnostics = result.diagnostics
   assert (diagnostics.len > 0)
   let err = try
     result.emit()
@@ -225,11 +225,22 @@ def emit_without_recovery_fails_after_diagnostics()
     e
   assert_type $std.CompileError $err
 
+# The view reads the unit, which emitting consumes
+#[test]
+def unit_diagnostics_end_with_emission()
+  let unit = compile.compile "warn.dol" "def f unused\n  nil\n"
+  let diagnostics = unit.diagnostics
+  assert (diagnostics.len > 0)
+  assert_type $compile.Diagnostic $diagnostics[0]
+  unit.emit()
+  assert_eq $diagnostics.len 0
+  assert_throws $std.StateError do unit.diagnostics
+
 #[test]
 def recover_option_keeps_describing_the_source_but_still_refuses_to_emit()
   let source = "let x = 1\nlet = 2\n"
   let result = compile.compile "bad.dol" $source recover: true document: true
-  let diagnostics = [...result.diagnostics()]
+  let diagnostics = result.diagnostics
   assert (diagnostics.len > 0)
   # Recovery keeps describing whatever the compiler could still read, despite
   # the error.
@@ -262,14 +273,14 @@ def pub_imports_are_documented_and_dotted_names_must_be_renamed()
     assert $pair[1].is_pub
 
   let invalid = compile.compile "imports.dol" "pub import foo.bar\n"
-  let invalid_diags = [...invalid.diagnostics()]
+  let invalid_diags = invalid.diagnostics
   assert (invalid_diags.len > 0)
   let invalid_messages = [...invalid_diags.map(do |d| d.message)]
   assert (invalid_messages.contains(
     "public dotted module imports must be renamed"))
 
   let nested = compile.compile "imports.dol" "def load()\n  pub import std\n"
-  let nested_diags = [...nested.diagnostics()]
+  let nested_diags = nested.diagnostics
   assert (nested_diags.len > 0)
   let nested_messages = [...nested_diags.map(do |d| d.message)]
   assert (nested_messages.contains "`pub` may only be used at the top level")
@@ -937,7 +948,7 @@ def sibling_module_type_imports_resolve_separately()
   let unit = compile.compile "siblings.dol" $source document: true
   assert_no_errors $unit
   # Both imports are used, so neither is reported unused
-  let diagnostics = [...unit.diagnostics()]
+  let diagnostics = unit.diagnostics
   assert_eq $diagnostics.len 0
   let nodes = [...unit.nodes()]
   let imports = [...nodes.filter(do |pair| type(pair[1], compile.ImportModule))]
@@ -957,7 +968,7 @@ def unused_module_type_import_names_its_whole_path()
     pub @let First = not_loaded.one.Thing
   let unit = compile.compile "unused_sibling.dol" $source document: true
   assert_no_errors $unit
-  let diagnostics = [...unit.diagnostics()]
+  let diagnostics = unit.diagnostics
   assert_eq $diagnostics.len 1
   assert_eq (span_text(unit, diagnostics[0].span.span)) "not_loaded.two"
 
@@ -973,7 +984,7 @@ def a_module_import_names_types_in_that_module_alone()
     pub @let Runtime = loaded.nested.Thing
   let unit = compile.compile "reach.dol" $source document: true
   assert_no_errors $unit
-  let unbound = [...unit.diagnostics().filter(do |d| (d.message == "unbound type name"))]
+  let unbound = [...unit.diagnostics.filter(do |d| (d.message == "unbound type name"))]
   # The module is what is unbound, so each is reported over its whole path
   assert_eq [...unbound.map(do |d| span_text(unit, d.span.span))] ["not_loaded.deeper", "loaded.nested"]
 
@@ -1029,7 +1040,7 @@ def invalid_rest_annotation_expansions()
     "def f ...x @ ... Int\n  x\n",
   ]
     let unit = compile.compile "bad-rest.dol" $source recover: true
-    assert (unit.diagnostics().count() > 0)
+    assert (unit.diagnostics.len > 0)
 
 #[test]
 def statement_type_imports_keep_document_targets()
@@ -1048,7 +1059,7 @@ def statement_type_imports_keep_document_targets()
     pub @let Fifth = Explicit
   let unit = compile.compile "static_imports.dol" $source document: true
   assert_no_errors $unit
-  assert_eq ([...unit.diagnostics()].len) 0
+  assert_eq (unit.diagnostics.len) 0
   let nodes = [...unit.nodes()]
   let imports = [...nodes.filter(do |pair|
     (type(pair[1], compile.ImportModule) || type(pair[1], compile.ImportItem)))]
@@ -1249,7 +1260,7 @@ def check_accepts_well_typed_units()
   let lib main = checked_units $source
   let result = compile.check (lib, main)
   assert_type $compile.Checked $result
-  assert_eq $result.diagnostics []
+  assert_eq $result.diagnostics.len 0
   assert_type $Str $result.undecided()
 
 #[test]
@@ -1262,7 +1273,7 @@ def check_writes_typelibs()
   let result = compile.check [lib, main] typelibs: true
   let typelib = compile.Typelib $result.typelib(lib)
   assert_eq $typelib.module a
-  assert_eq $compile.check([typelib, main]).diagnostics []
+  assert_eq $compile.check([typelib, main]).diagnostics.len 0
   # A script has none
   assert_throws $std.CompileError do result.typelib $main
   let other = compile.compile "other.dol" "" module: other typecheck: true
@@ -1301,12 +1312,25 @@ def check_reports_diagnostics_across_units()
   assert_eq $diag.message "module `a` has no export `Absent`"
   assert ("$(diag.render())".contains "user.dol")
 
+# Each read of the view projects the check's diagnostics anew; it cannot change them
+#[test]
+def checked_diagnostics_are_a_read_only_view()
+  let source = |-
+    import a:
+      - @Absent
+    pub let absent @ Absent = nil
+  let result = compile.check (checked_units source)
+  let diagnostics = result.diagnostics
+  assert_eq [...diagnostics.map(do |d| d.message)] ["module `a` has no export `Absent`"]
+  assert_eq $result.diagnostics[0].message $diagnostics[0].message
+  assert_throws $std.ImmutableError do diagnostics.push nil
+
 #[test]
 def check_skips_units_that_failed_to_compile()
   let broken = compile.compile "broken.dol" "let = \n" typecheck: true
-  assert (broken.diagnostics().count() > 0)
+  assert (broken.diagnostics.len > 0)
   let result = compile.check [broken]
-  assert_eq $result.diagnostics []
+  assert_eq $result.diagnostics.len 0
 
 #[test]
 def check_refuses_units_it_cannot_check()

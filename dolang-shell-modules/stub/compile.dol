@@ -61,8 +61,15 @@ pub @let Prelude = $
 # let bytecode = unit.emit()
 # ```
 pub class Unit
-  # Returns a fresh iterator of diagnostics.
-  pub def diagnostics self -> Iter[Diagnostic]
+  # The diagnostics generated while compiling the unit, in order.
+  #
+  # The view reads the unit, so it is empty once the unit is emitted.
+  #
+  # ## Errors
+  #
+  # `std.StateError` if the unit was emitted.
+  #[getter]
+  pub def diagnostics self -> Seq[Diagnostic]
     ...
 
   # Returns a fresh iterator of node IDs paired with their nodes.
@@ -871,7 +878,7 @@ pub class Token
 #
 # ```
 # let unit = compile "bad.dol" "let =\n"
-# for diag = unit.diagnostics()
+# for diag = unit.diagnostics
 #   echo $diag.render()
 # ```
 pub class Diagnostic
@@ -1234,7 +1241,7 @@ pub class Checked
   # The checker's diagnostics. Their locations may be in any of the units, and
   # their rendering shows each one's source.
   #[getter]
-  pub def diagnostics self -> Array[Diagnostic]
+  pub def diagnostics self -> Seq[Diagnostic]
     ...
 
   # Renders the checks the checker couldn't decide, grouped by the kind of
