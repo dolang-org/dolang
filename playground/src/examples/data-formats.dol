@@ -26,5 +26,5 @@ let manifest = $
     $format:
       sha256: "${digest.sha256(text):x}"
       integrity: "sha256-$(base64.encode(digest.sha256(text)))"
-echo -- manifest --
+echo -- "manifest" --
 echo $ yaml.encode $manifest
