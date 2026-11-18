@@ -194,6 +194,30 @@ fn upper_bounds_keep_reaching_members() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn instance_targets_meet_only_positively() {
+    let mut w = World::new();
+    w.db.seal();
+    let gas = Gas::default();
+    let s = Solver::new(&w.db, &gas);
+    let bottom = w.db.bottom();
+    let instance = |ty, relation, negated| s.narrow(ty, relation, negated, Target::Instance(w.sub));
+
+    for relation in [Relation::Upper, Relation::Exact] {
+        assert_eq!(instance(w.sub, relation, false), w.sub);
+        assert_eq!(instance(w.subsub, relation, false), w.subsub);
+        assert_eq!(instance(w.db.top(), relation, false), w.sub);
+        assert_eq!(instance(w.db.unknown(), relation, false), w.sub);
+        assert_eq!(instance(w.nil, relation, false), bottom);
+        let mixed = union(&w.db, &[w.subsub, w.nil]);
+        assert_eq!(instance(mixed, relation, false), w.subsub);
+        // A failed test may still leave an instance of a subclass's object
+        assert_eq!(instance(mixed, relation, true), mixed);
+        assert_eq!(instance(w.sub, relation, true), w.sub);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn negated_upper_bounds_drop_reaching_members() {
     let mut w = World::new();
     w.db.seal();

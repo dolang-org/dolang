@@ -2026,8 +2026,11 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if ty == bottom {
                     return false;
                 }
-                self.class_of(ty)
-                    .map(|(class, _)| NarrowTarget::Class(class))
+                match self.object_target(ty) {
+                    // A failed test against a `Type[C]` may leave a `C`
+                    Some((_, false)) if assume.negated => return true,
+                    target => target.map(|(target, _)| target),
+                }
             }
             Against::Value(value) => {
                 let ty = self.eval(at, state, &mut none, value);
@@ -2065,7 +2068,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             assume.relation,
             match target {
                 NarrowTarget::Class(decl) => self.tables.qualified(decl),
-                NarrowTarget::Literal(ty) => self.show(ty),
+                NarrowTarget::Literal(ty) | NarrowTarget::Instance(ty) => self.show(ty),
                 NarrowTarget::Shape { .. } => "a pattern".into(),
             },
             self.show(fact.ty),
@@ -2226,12 +2229,14 @@ impl<'a, 'u> Flow<'a, 'u> {
                     if self.diverged.is_some() {
                         return;
                     }
-                    let caught = match self.class_of(ty).map(|(class, _)| class) {
-                        Some(class) => {
-                            let target = NarrowTarget::Class(class);
+                    let caught = match self.object_target(ty) {
+                        Some((target, exact)) => {
                             let upper = super::cfg::Relation::Upper;
                             let caught = solver.narrow(rest, upper, false, target);
-                            rest = solver.narrow(rest, upper, true, target);
+                            // A `Type[C]` may be a subclass's, leaving a `C` uncaught
+                            if exact {
+                                rest = solver.narrow(rest, upper, true, target);
+                            }
                             caught
                         }
                         None => unclassed(rest),
