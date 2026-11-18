@@ -185,3 +185,8 @@ let q @(@[T] (T) -> T) = nil
 #                ^~: operator
 #                   ^: type_token, node=binder
 #                    ^: delim
+
+# The `:Name` shorthand's name is visited as the type it passes
+let p @ Pack[:Str] = nil
+#            ^: delim
+#             ^~~: type_token

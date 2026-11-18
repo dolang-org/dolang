@@ -1,0 +1,43 @@
+# `:Name` in type arguments is `Name: Name`, passing the type `Name` names as
+# the keyword argument `Name`.
+
+pub class Keyed[T, :K = Int]
+  pub field item @ T = ...
+  pub field key @ K = ...
+
+pub def forward[:K] x @ Keyed[Str, :K] -> K
+  x.key
+
+pub def mismatch[:K] x @ Keyed[Str, :K] -> Str
+  x.key
+# error: `K` does not fit the declared result `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL |   x.key
+#    |   ^^^^^
+
+pub class Sub[:K]: Keyed[Int, :K]
+  pub def key_of self -> K
+    self.key
+
+pub def bounded[:K, J @ Keyed[Int, :K] = Keyed[Int, :K]] x @ J -> K
+  x.key
+
+pub let symbol @ Keyed[:k:] = ...
+pub let unknown @ Keyed[Int, :Other] = ...
+# warning: unbound type name
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let unknown @ Keyed[Int, :Other] = ...
+#    |                               ^^^^^
+# error: no binder takes the keyword type argument `Other`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let unknown @ Keyed[Int, :Other] = ...
+#    |                               ^^^^^
+pub let unbound @ Keyed[Int, :K] = ...
+# warning: unbound type name
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let unbound @ Keyed[Int, :K] = ...
+#    |                               ^
