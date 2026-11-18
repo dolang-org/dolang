@@ -329,30 +329,29 @@ def print_diagnostics diagnostics @ Iterable[compile.Diagnostic]
 def print_failure failure @ Failure diagnose @ compile.Severity fail @ compile.Severity
   let e = failure.error
   let module = module_name $failure.path
-  if (type e Ignore)
-    return
   let test = failure.test
-  if (type e Skip)
-    let name = (test && "$module/$test" || module)
-    print (info_style "skipped") ": " (name_style name)
-    let message = e.message
-    if message
-      print " (" (note_style message) ")"
-    echo()
-    return
-  if (type e ModuleCompileError)
-    print (err_style "failed") ": " (name_style "$module")
-      " (" (note_style "compilation failed") ")\n"
-    print_diagnostics $ e.output.diagnostics.filter do |diag| shown $diag $diagnose $fail
-    return
-  if test
-    print (err_style "failed") ": " (name_style "$module/$test") ": "
+  match e
+    Ignore(_) => return
+    Skip(s)
+      let name = (test && "$module/$test" || module)
+      print (info_style "skipped") ": " (name_style name)
+      let message = s.message
+      if message
+        print " (" (note_style message) ")"
+      echo()
+    ModuleCompileError(c)
+      print (err_style "failed") ": " (name_style "$module")
+        " (" (note_style "compilation failed") ")\n"
+      print_diagnostics $ c.output.diagnostics.filter do |diag| shown $diag $diagnose $fail
   else
-    print (err_style "failed") ": " (name_style "$module") ": "
-  echo $ shell.render_error $e backtrace: $failure.backtrace
-  let output = failure.output
-  if output
-    print "  ──\n" $term.preformat(output).indent(2)
+    if test
+      print (err_style "failed") ": " (name_style "$module/$test") ": "
+    else
+      print (err_style "failed") ": " (name_style "$module") ": "
+    echo $ shell.render_error $e backtrace: $failure.backtrace
+    let output = failure.output
+    if output
+      print "  ──\n" $term.preformat(output).indent(2)
 
 # Loads modules and runs their tests. With `redirect`, strand output goes to
 # the capture buffer as well, so none of it reaches stdout. With `plain`,
@@ -449,10 +448,9 @@ class Harness
     catch std.RuntimeError: e
       error = e
       backtrace = strand.error_backtrace()
-      outcome = if (type e Skip)
-        :skipped:
-      else if (type e Ignore)
-        :ignored:
+      outcome = match e
+        Skip(_) => :skipped:
+        Ignore(_) => :ignored:
       else
         :failed:
     let duration = (DateTime.now() - start).secs
@@ -496,10 +494,9 @@ class Harness
       result.cases = [...cases.filter(do |case| self.#matches_filter case)]
       result
     catch std.RuntimeError: e
-      let status @ ModuleStatus = if (type e Skip)
-        :SKIPPED:
-      else if (type e Ignore)
-        :IGNORED:
+      let status @ ModuleStatus = match e
+        Skip(_) => :SKIPPED:
+        Ignore(_) => :IGNORED:
       else
         :FAILED:
       let result = ModuleResult $path $status
@@ -612,10 +609,8 @@ do -> Json
     duration: $duration
   if (error == nil)
     return record
-  if (type error Skip)
-    record[:message:] = error.message
-  else if (type error Ignore)
-    record[:message:] = error.message
+  match error
+    Skip(e) | Ignore(e) => record[:message:] = e.message
   else
     record[:message:] = str $error
     let frames @ Array[Json] = []
@@ -677,10 +672,11 @@ def module_record result @ ModuleResult -> Json
   else if (result.status == :FAILED:)
     record[:status:] = "failed"
     let error @ Json = {}
-    if (type e ModuleCompileError)
-      error[:kind:] = "compile"
-      error[:message:] = str $e
-      error[:diagnostics:] = [...e.output.diagnostics.map(do |d| diagnostic_record d result.path)]
+    match e
+      ModuleCompileError(c)
+        error[:kind:] = "compile"
+        error[:message:] = str $c
+        error[:diagnostics:] = [...c.output.diagnostics.map(do |d| diagnostic_record d result.path)]
     else
       error[:kind:] = "load"
       error[:message:] = str $e
@@ -691,10 +687,8 @@ def module_record result @ ModuleResult -> Json
     record[:error:] = error
   else
     record[:status:] = (result.status == :SKIPPED: && "skipped" || "ignored")
-    record[:message:] = if (type e Skip)
-      e.message
-    else if (type e Ignore)
-      e.message
+    record[:message:] = match e
+      Skip(s) | Ignore(s) => s.message
     else
       nil
   record

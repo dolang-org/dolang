@@ -58,16 +58,12 @@ pub def build_command
 do -> Array[Value]
   let identities @ Array[Value] = []
   let jumps @ Array[Value] = []
-  for key value = options
-    if (key == :identity:)
-      identities.push $value
-    else if (key == :jump:)
-      jumps.push $value
-    else
-      if (type key Int)
-        throw UnexpectedPosError $key
-      else
-        throw UnexpectedKeyError $key
+  for entry = options
+    match entry
+      (:identity: v) => identities.push $v
+      (:jump: v) => jumps.push $v
+      (Int(k) _) => throw UnexpectedPosError $k
+      (k _) => throw UnexpectedKeyError $k
 
   if !(HOST_KEY_VALID.contains host_key)
     throw ValueError "ssh.with: invalid host-key policy: $host_key"
@@ -98,10 +94,10 @@ do -> Array[Value]
       -o ServerAliveInterval=$keepalive_interval
     if (keepalive_count != nil)
       -o ServerAliveCountMax=$keepalive_count
-    if (host_key == :STRICT:)
-      -o StrictHostKeyChecking=yes
-    else if (host_key == :ACCEPT_NEW:)
-      -o StrictHostKeyChecking=accept-new
+    match host_key
+      :STRICT: => -o StrictHostKeyChecking=yes
+      :ACCEPT_NEW: => -o StrictHostKeyChecking=accept-new
+      :DEFAULT: => ...()
     if (known_hosts != nil)
       -o UserKnownHostsFile=$known_hosts
     -- $host ...command.iter() ...vfs_args --stdio

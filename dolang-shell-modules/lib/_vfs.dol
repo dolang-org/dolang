@@ -37,12 +37,10 @@ def login_option encode@Value shell@Str -> Str
 # file-type bits (`IFREG`, `IFDIR`, ...) aren't meaningful for a chmod-style
 # operation, so they're masked off rather than propagated.
 pub def parse_mode value @ (Int | unix_fs.Mode | nil) -> (Int | nil)
-  if (value == nil)
-    nil
-  else if (type value Int)
-    value
-  else if (type value unix_fs.Mode)
-    (value.int & 0o7777)
+  match value
+    nil => nil
+    Int(n) => n
+    unix_fs.Mode(m) => (m.int & 0o7777)
   else
     throw std.TypeError "mode: expected Int or fs.unix.Mode"
 

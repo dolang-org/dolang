@@ -73,35 +73,29 @@ def opens node @ Node -> Bool
 # Renders a leaf colored as the token it would be in source. A `Text` has
 # already decided how it looks and is left alone.
 def scalar value @ Leaf -> term.Text
-  if (value == nil)
-    absent_style "~"
-  else if (type value term.Text)
-    value
-  else if (type value Sym || type value Bool)
-    constant_style (str value)
-  else if (type value Int || type value Float)
-    number_style (str value)
-  else if (type value Str)
-    literal_style $value
+  match value
+    nil => absent_style "~"
+    term.Text(t) => t
+    Sym(_) | Bool(_) => constant_style (str value)
+    Int(_) | Float(_) => number_style (str value)
+    Str(s) => literal_style $s
   else
     term.text $value
 
 # Renders the one-line form of `node`, which for an empty block is the marker
 # it reads as in place.
 def inline node @ Node -> term.Text
-  if (type node std.BaseDict)
-    absent_style "{}"
-  else if (type node std.BaseArray || type node Tuple)
-    absent_style "[]"
+  match node
+    std.BaseDict(_) => absent_style "{}"
+    std.BaseArray(_) | Tuple(_) => absent_style "[]"
   else
     scalar $node
 
 # Renders the block `node` opens, its lines starting at `indent`.
 def rows node @ Node indent @ Int -> Array[Row]
-  if (type node std.BaseDict)
-    entry_rows $node $indent
-  else if (type node std.BaseArray || type node Tuple)
-    item_rows $node $indent
+  match node
+    std.BaseDict(d) => entry_rows $d $indent
+    std.BaseArray(a) | Tuple(a) => item_rows $a $indent
   else
     [(indent, scalar(node))]
 
