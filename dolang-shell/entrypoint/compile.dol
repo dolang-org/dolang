@@ -927,13 +927,14 @@ def check p
 # Writes the typelibs of modules, checked together with the modules they import.
 # Each is written into `--output` as `<module>.dolt`, or a lone source's by
 # default beside it. A module is named by `--module`, or by where its source is
-# under a search directory.
+# under a search directory. As with `extract`, diagnostics are rendered only
+# when one is at or above `--fail`, and then nothing is written.
 def typelib p
   import _compile:
     - gather
     - is_typelib
     - module_among
-  let :sources :module :path :output :no_bundled ... = p.typelib
+  let :sources :module :path :output :no_bundled :fail ... = p.typelib
   let dirs = [...path.map do |dir| (Path dir)]
   if (sources.len == 0)
     throw args.Error "name a source to write the typelib of"
@@ -952,17 +953,15 @@ def typelib p
     roots.push [file, named]
   let :check :units ... = gather $roots $dirs :no_bundled typelibs: true
   let check = check.run()
-  let failed = false
-  def report diag
-    if (diag.severity == :ERROR:)
-      failed = true
-    echo $diag.render()
-  for unit = units
-    for diag = unit.diagnostics()
-      report $diag
-  for diag = check.diagnostics
-    report $diag
-  if failed
+  let diagnostics = $
+    for unit = units
+      for diag = unit.diagnostics()
+        - $diag
+    for diag = check.diagnostics
+      - $diag
+  if diagnostics.any(do |diag| diag.at_least(fail))
+    for diag = diagnostics
+      echo $diag.render()
     shell.exit 1
   if (output != nil && sources.len > 1)
     Path(output).create_dir all: true
@@ -1110,6 +1109,11 @@ args.with
       help: Directory to search for sources' modules and those they import, as `a/b.dol` for module `a.b`, before the bundled typelibs
     - flag: no-bundled
       help: Disable bundled typelibs; an imported module must be found under a search directory
+    - opt: fail
+      parse: $parse_level
+      default: :ERROR:
+      meta: LEVEL
+      help: Fail on a compiler or type-checker diagnostic at or above LEVEL (lint, warning, or error), rendering the diagnostics and writing nothing
     - opt: output
       short: o
       default: nil
