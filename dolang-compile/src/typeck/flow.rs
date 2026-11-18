@@ -74,9 +74,10 @@
 //!
 //! The final pass also warns about the code a call decided never to return makes
 //! unreachable. A call that is all of a statement, as its root expression or a
-//! result's value, ends its path as `throw` would, so the warning goes to the next
-//! step or terminal of its block that has a span, if any. Otherwise what's
-//! unreachable is the rest of the step or terminal the call is in.
+//! result's value, or all of a short circuit's operand, ends its path as `throw`
+//! would, so the warning goes to the next step or terminal of its block that has
+//! a span, if any. Otherwise what's unreachable is the rest of the step or
+//! terminal the call is in.
 
 /// Trace under `typeck.flow`
 macro_rules! trace {
@@ -1332,7 +1333,7 @@ impl<'a, 'u> Flow<'a, 'u> {
         let data = self.ir.block(block);
         let span = match data.steps.get(index) {
             // The call is the whole statement: what's unreachable is what follows
-            Some(Step::Eval(value)) if value.span == call => None,
+            Some(Step::Eval(value) | Step::Push(value)) if value.span == call => None,
             Some(Step::Assign(Target::Var { var, value }))
                 if value.span == call
                     && !matches!(self.ir.var(*var).origin, Origin::Source(..)) =>
