@@ -41,10 +41,11 @@ def cache_path
   path @ fs.Path
   mode @ (:SCRIPT: | Str)
   prelude @ Prelude
-  strict @ Bool
+  diagnose @ compile.Severity
+  fail @ compile.Severity
 do -> fs.Path
   import digest
-  let key = dbg ["dolang-shell-cache-v3", str(path.absolute()), mode, strict, [...prelude.pairs()]]
+  let key = dbg ["dolang-shell-cache-v4", str(path.absolute()), mode, diagnose, fail, [...prelude.pairs()]]
   let hash = digest.blake3 $key
   (fs.cache_dir(app: "dolang") / "bytecode" / "${hash:x}.dolc")
 
@@ -55,16 +56,17 @@ def compile_source
   path @ fs.Path
   mode @ (:SCRIPT: | Str)
   prelude @ Prelude
-  strict @ Bool
+  diagnose @ compile.Severity
+  fail @ compile.Severity
   cache @ Bool
   refresh @ Bool
 do -> (Bin, Bool)
   shell.with_host do
-    let cached = (cache && cache_path(path, mode, prelude, strict) || nil)
+    let cached = (cache && cache_path(path, mode, prelude, diagnose, fail) || nil)
     if let fs.Path(cached) = cached
       if (!refresh && cached.exists() && path.metadata().modified <= cached.metadata().modified)
         return (cached.read(), true)
-    let bytecode = _shell.compile $path $path.read_str() :mode :prelude :strict
+    let bytecode = _shell.compile $path $path.read_str() :mode :prelude :diagnose :fail
     if let fs.Path(cached) = cached
       # A cache entry always has a parent directory.
       let dir = (cached.parent !@ fs.Path)
@@ -105,8 +107,8 @@ class Bundle
 
   # Run a member's bytecode, else compile its source. Stale bytecode is
   # recompiled from its source when there is one. Sources compile with default
-  # options, whatever the CLI's prelude and strictness, so a bundle means the
-  # same thing however it is invoked.
+  # options, whatever the CLI's prelude and diagnostic levels, so a bundle means
+  # the same thing however it is invoked.
   def load_member self stem @ Str mode @ (:SCRIPT: | Str) <Iter[Value] >Sink[Value] -> Value
     let label = "$(self.#path)/$stem.dol"
     let source = self.#members.get "$stem.dol"
@@ -174,13 +176,14 @@ def read_bundle path @ fs.Path offset @ Int -> Bundle
 
 # Load the program at `path`, returning a function that runs it in the caller's
 # context. Everything is read from the host now, so a missing file or compile
-# error surfaces before the caller runs it. Prelude, strictness, and the cache
-# apply only to a source file; a bundle runs as built.
+# error surfaces before the caller runs it. Prelude, diagnostic levels, and the
+# cache apply only to a source file; a bundle runs as built.
 pub def load
   path @ fs.Path
   :mode @ (:SCRIPT: | Str) = :SCRIPT:
   :prelude @ Prelude = {}
-  :strict @ Bool = false
+  :diagnose @ compile.Severity = :WARNING:
+  :fail @ compile.Severity = :ERROR:
   :cache @ Bool = true
 do -> ((<Iter[Value], >Sink[Value]) -> Value)
   let kind = shell.with_host do classify $path script: (mode == :SCRIPT:)
@@ -190,12 +193,12 @@ do -> ((<Iter[Value], >Sink[Value]) -> Value)
   if (kind == :BYTECODE:)
     let bytecode = shell.with_host do path.read()
     return (do loader.run(bytecode))
-  let bytecode cached = compile_source $path $mode $prelude $strict $cache false
+  let bytecode cached = compile_source $path $mode $prelude $diagnose $fail $cache false
   do
     # Retry only cache verification failures, with a fresh compile.
     def retry() -> (Bin | nil)
       if cached
-        let fresh _cached = compile_source $path $mode $prelude $strict $cache true
+        let fresh _cached = compile_source $path $mode $prelude $diagnose $fail $cache true
         fresh
       else
         nil
@@ -206,16 +209,23 @@ do -> ((<Iter[Value], >Sink[Value]) -> Value)
 pub def run
   path @ fs.Path
   :prelude @ Prelude = {}
-  :strict @ Bool = false
+  :diagnose @ compile.Severity = :WARNING:
+  :fail @ compile.Severity = :ERROR:
   :cache @ Bool = true
   <Iter[Value]
   >Sink[Value]
 do -> Value
-  let program = load $path :prelude :strict :cache
+  let program = load $path :prelude :diagnose :fail :cache
   program()
 
 # Load and run the module `name` from its source or bytecode at `path`, for an
 # import handler. Like any import, it runs without strand I/O.
-pub def run_module path @ fs.Path name @ Str :strict @ Bool = false :cache @ Bool = true -> Value
-  let program = load $path mode: $name :strict :cache
+pub def run_module
+  path @ fs.Path
+  name @ Str
+  :diagnose @ compile.Severity = :WARNING:
+  :fail @ compile.Severity = :ERROR:
+  :cache @ Bool = true
+do -> Value
+  let program = load $path mode: $name :diagnose :fail :cache
   strand.redirect input: ([] @ Array[Value]) output: $std.null do program()

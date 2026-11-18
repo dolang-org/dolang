@@ -188,7 +188,7 @@ def strict_check_rejects_compiler_warnings()
     assert ((printed out).contains "1 diagnostics")
     out = BinBuf()
     let err = assert_throws $proc.Error do
-      run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+      run $shell.exe -m compile check --fail warning $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
     assert_eq $err.rc 1
     assert ((printed out).contains "failed:")
 
@@ -214,7 +214,7 @@ def strict_check_rejects_unverified_code()
     assert ((printed out).contains "undecided checks:")
     out = BinBuf()
     let err = assert_throws $proc.Error do
-      run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+      run $shell.exe -m compile check --fail warning $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
     assert_eq $err.rc 1
 
 #[test]
@@ -265,5 +265,5 @@ def vfs_scopes_preserve_unconstrained_input()
       pub def in_toolbox() -> Int
         toolbx.with do 42
     let out = BinBuf()
-    run $shell.exe -m compile check --strict $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    run $shell.exe -m compile check --fail warning $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
     assert ((printed out).contains "0 diagnostics")

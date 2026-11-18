@@ -4,6 +4,7 @@ pub use dolang_compile::{
     TypeQuant, Unit, UnitId,
     diag::{
         Annotation, AnnotationKind, Diag, Note, NoteKind, Patch, Pos, Severity, SourceSpan, Span,
+        Thresholds,
     },
     typeck,
 };

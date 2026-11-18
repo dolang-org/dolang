@@ -19,7 +19,7 @@ suite("Doze Tasks", () => {
             dolang: "/bin/dolang",
             root: "/p",
             command: "check",
-            args: ["--strict"],
+            args: ["--fail", "warning"],
             report: "/s/r.json",
             keepOpen: true
         });
@@ -32,7 +32,8 @@ suite("Doze Tasks", () => {
             "--project",
             "/p",
             "check",
-            "--strict",
+            "--fail",
+            "warning",
             "--json",
             "/s/r.json"
         ]);
@@ -42,7 +43,7 @@ suite("Doze Tasks", () => {
         assert.deepStrictEqual(task.definition, {
             type: "doze",
             command: "check",
-            args: ["--strict"]
+            args: ["--fail", "warning"]
         });
         assert.deepStrictEqual(dozeTaskPaths(task), { root: "/p", report: "/s/r.json" });
     });

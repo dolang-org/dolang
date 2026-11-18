@@ -124,7 +124,7 @@ def checker_wrappers_keep_distinct_output()
     assert (Str(out.freeze()).contains("passed: 1 units, 1 diagnostics"))
 
 #[test]
-def strict_check_rejects_warnings_and_cli_prelude_is_checked()
+def fail_warning_rejects_warnings_and_cli_prelude_is_checked()
   with_temp_dir do |dir|
     let script = (dir / "main.dol")
     script.write "let _x @ Int = stringify(1)\n"
@@ -135,5 +135,44 @@ def strict_check_rejects_warnings_and_cli_prelude_is_checked()
     assert (Str(out.freeze()).contains("does not fit the annotation"))
     script.write "return nil\necho unreachable\n"
     let error = assert_throws $proc.Error do
-      run $exe --strict --check $script stdout: (BinBuf()) stderr: :STDOUT: mode: :CHUNK:
+      run $exe --fail warning --check $script stdout: (BinBuf()) stderr: :STDOUT: mode: :CHUNK:
     assert_eq $error.rc 1
+
+#[test]
+def diagnose_level_hides_less_severe_diagnostics()
+  with_temp_dir do |dir|
+    let script = (dir / "main.dol")
+    script.write "return nil\necho unreachable\n"
+    def run_check *options
+      let out = BinBuf()
+      run $exe ...options --check $script stdout: $out stderr: :STDOUT: mode: :CHUNK:
+      Str $out.freeze()
+    assert (run_check() != "")
+    assert_eq (run_check("--diagnose", "error")) ""
+    # A diagnostic that fails the run is shown whatever `--diagnose` says.
+    let out = BinBuf()
+    let error = assert_throws $proc.Error do
+      run $exe --diagnose error --fail warning --check $script stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $error.rc 1
+    assert (Str(out.freeze()) != "")
+
+#[test]
+def diagnose_level_applies_when_running()
+  with_temp_dir do |dir|
+    let script = (dir / "main.dol")
+    script.write "return nil\necho unreachable\n"
+    def run_script *options
+      let out = BinBuf()
+      run $exe --no-cache ...options $script stdout: $out stderr: :STDOUT: mode: :CHUNK:
+      Str $out.freeze()
+    assert (run_script() != "")
+    assert_eq (run_script("--diagnose", "error")) ""
+
+#[test]
+def invalid_level_is_a_usage_error()
+  with_temp_dir do |dir|
+    let script = (dir / "main.dol")
+    script.write "nil\n"
+    let error = assert_throws $proc.Error do
+      run $exe --fail severe $script stdout: (BinBuf()) stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $error.rc 2

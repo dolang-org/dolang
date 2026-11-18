@@ -81,7 +81,7 @@ def cached_scripts_do_not_retry_runtime_bytecode_errors()
     assert_eq $marker.read_str() "xx"
 
 #[test]
-def strictness_and_compilation_mode_have_separate_cache_entries()
+def diagnostic_levels_and_compilation_mode_have_separate_cache_entries()
   isolated do |dir|
     let module = (dir / "shared.dol")
     module.write "pub let value = 42\n"
@@ -90,13 +90,13 @@ def strictness_and_compilation_mode_have_separate_cache_entries()
     main.write "import shared\nshared.value\n"
     assert_eq (run_script(main, "--module-path", str(dir))) ""
     assert_eq $(entries dir).len 3
-    assert_eq (run_script(module, "--strict")) ""
+    assert_eq (run_script(module, "--fail", "warning")) ""
     assert_eq $(entries dir).len 4
     let warnings = (dir / "warnings.dol")
     warnings.write "return nil\necho unreachable\n"
     let _ = run_script $warnings
     import proc
     let error = assert_throws $proc.Error do
-      run_script $warnings --strict
+      run_script $warnings --fail warning
     assert_eq $error.rc 1
     assert_eq $(entries dir).len 5

@@ -272,7 +272,7 @@
                         "items": {
                             "type": "string"
                         },
-                        "description": "Arguments passed to the command, such as `--strict` or `--no-check`, without any shell interpretation"
+                        "description": "Arguments passed to the command, such as `--fail warning` or `--no-check`, without any shell interpretation"
                     }
                 }
             }

@@ -5,7 +5,7 @@ the [endoflife.date](https://endoflife.date) API, which reports when releases of
 products such as Python, Ubuntu and PostgreSQL stop being supported.
 
 ```
-doze check --strict
+doze check --fail warning
 doze test --tags '!network'
 doze bundle
 dolang build/eol.dolz check python 3.12

@@ -897,12 +897,16 @@ pub class Diagnostic
 
   # The severity.
   #[getter]
-  pub def severity self -> (:ERROR: | :WARNING:)
+  pub def severity self -> Severity
     ...
 
   # The primary source span.
   #[getter]
   pub def span self -> SourceSpan
+    ...
+
+  # Whether the severity is `level` or more severe.
+  pub def at_least self level @ Severity -> Bool
     ...
 
   # Renders the diagnostic for terminal presentation.
@@ -912,6 +916,16 @@ pub class Diagnostic
   # The rendering, without a final newline.
   pub def render self -> Text
     ...
+
+# How severe a [`Diagnostic`](compile.Diagnostic) is, from least to most
+# severe.
+pub @let Severity = $
+  # A likely mistake that may misfire on intended code; not shown by default
+  | :LINT:
+  # A warning
+  | :WARNING:
+  # An error, which always fails compilation
+  | :ERROR:
 
 # The role of an [`Annotation`](compile.Annotation).
 pub @let AnnotationKind = $

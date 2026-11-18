@@ -62,6 +62,11 @@ def warning()
   let diag = diagnostics[0]
   assert_type $compile.Diagnostic $diag
   assert_eq $diag.severity :WARNING:
+  assert $diag.at_least(:LINT:)
+  assert $diag.at_least(:WARNING:)
+  assert $!diag.at_least(:ERROR:)
+  assert_throws $std.TypeError do
+    diag.at_least :SEVERE:
   assert_type $compile.SourceSpan $diag.span
   assert_eq $diag.span.unit nil
   assert_eq $diag.span $diag.span

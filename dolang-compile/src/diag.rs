@@ -6,23 +6,83 @@ pub(crate) const CLASS_TOP_LEVEL: &str =
     "`class` and `@class` declarations are only allowed at module top level";
 
 /// Diagnostic severity
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+///
+/// Severities are ordered from least to most severe.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Severity {
+    /// Lint
+    ///
+    /// A likely mistake that may misfire on intended code. Not shown by
+    /// default.
+    Lint,
+    /// Warning
+    Warning,
     /// Error
     ///
     /// Always fatal to compilation
     Error,
-    /// Warning
-    Warning,
 }
 
 impl Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Severity::Error => write!(f, "error"),
+            Severity::Lint => write!(f, "lint"),
             Severity::Warning => write!(f, "warning"),
+            Severity::Error => write!(f, "error"),
         }
+    }
+}
+
+/// Which diagnostics a run shows, and which fail it
+///
+/// A diagnostic at or above the fail threshold fails the run, and is shown
+/// even if it is below the show threshold. Errors always fail.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Thresholds {
+    show: Severity,
+    fail: Severity,
+}
+
+impl Default for Thresholds {
+    /// Show warnings and errors; fail only on errors.
+    fn default() -> Self {
+        Self::new(Severity::Warning, Severity::Error)
+    }
+}
+
+impl Thresholds {
+    /// Show diagnostics at or above `show`, and fail on those at or above
+    /// `fail`
+    pub const fn new(show: Severity, fail: Severity) -> Self {
+        Self { show, fail }
+    }
+
+    /// Set the least severe diagnostic shown
+    pub fn show(&mut self, show: Severity) -> &mut Self {
+        self.show = show;
+        self
+    }
+
+    /// Set the least severe diagnostic that fails
+    pub fn fail(&mut self, fail: Severity) -> &mut Self {
+        self.fail = fail;
+        self
+    }
+
+    /// The least severe diagnostic that fails
+    pub fn fail_level(&self) -> Severity {
+        self.fail
+    }
+
+    /// Whether a diagnostic of this severity is shown
+    pub fn shows(&self, severity: Severity) -> bool {
+        severity >= self.show.min(self.fail)
+    }
+
+    /// Whether a diagnostic of this severity fails the run
+    pub fn fails(&self, severity: Severity) -> bool {
+        severity >= self.fail
     }
 }
 
@@ -236,5 +296,41 @@ impl Diag {
             kind: n.kind.dup(),
             message: n.message.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Severity, Thresholds};
+
+    #[test]
+    fn severity_order() {
+        assert!(Severity::Lint < Severity::Warning);
+        assert!(Severity::Warning < Severity::Error);
+    }
+
+    #[test]
+    fn default_thresholds() {
+        let t = Thresholds::default();
+        assert!(!t.shows(Severity::Lint));
+        assert!(t.shows(Severity::Warning));
+        assert!(t.shows(Severity::Error));
+        assert!(!t.fails(Severity::Warning));
+        assert!(t.fails(Severity::Error));
+    }
+
+    #[test]
+    fn failing_diagnostics_are_shown() {
+        let t = Thresholds::new(Severity::Error, Severity::Lint);
+        assert!(t.shows(Severity::Lint));
+        assert!(t.fails(Severity::Lint));
+    }
+
+    #[test]
+    fn errors_always_fail() {
+        let t = Thresholds::new(Severity::Lint, Severity::Error);
+        assert!(t.shows(Severity::Lint));
+        assert!(!t.fails(Severity::Warning));
+        assert!(t.fails(Severity::Error));
     }
 }

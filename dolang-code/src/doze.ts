@@ -154,7 +154,14 @@ export function spanRange(text: string, span: DozeSpan): vscode.Range {
 }
 
 function severity(name: string): vscode.DiagnosticSeverity {
-    return name === "error" ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning;
+    switch (name) {
+        case "error":
+            return vscode.DiagnosticSeverity.Error;
+        case "lint":
+            return vscode.DiagnosticSeverity.Information;
+        default:
+            return vscode.DiagnosticSeverity.Warning;
+    }
 }
 
 /**

@@ -263,7 +263,7 @@ pub def extract_doc_json spec
     let workers = sys.cpu_info().logical_count
     strand.pool $workers $collect_doc_jobs() do |job|
       let :name :path = job
-      spec.dolang -m compile extract --doc --strict --module $name $path stdout: (out_dir / "$name.json")
+      spec.dolang -m compile extract --doc --fail warning --module $name $path stdout: (out_dir / "$name.json")
   out_dir
 
 # The playground's hover docs (see playground/src/docs.ts), written to
@@ -295,7 +295,7 @@ pub def extract_playground_docs spec out_dir
     let name = dol_module_name $path $stub
     (modules_dir / "$name.json").write $json.encode(modules[name])
   let test = (spec.target_dir / "playground-test-doc.json").absolute()
-  spec.dolang -m compile extract --doc --strict --module test
+  spec.dolang -m compile extract --doc --fail warning --module test
     dolang-shell-modules/wasm/stub/test.dol
     stdout: $test
   let test_doc = json.decode(str(test.read()))["doc"]

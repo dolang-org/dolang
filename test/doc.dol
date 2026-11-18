@@ -535,7 +535,7 @@ def tokens_are_written_only_when_asked_for()
 #[test]
 def stub_field_has_no_documented_default()
   let buf = BinBuf()
-  run $shell.exe -m compile extract --doc --strict --module stub_fields
+  run $shell.exe -m compile extract --doc --fail warning --module stub_fields
     $(FIXTURE / "stub-fields.dol")
     stdout: $buf
     mode: :CHUNK:

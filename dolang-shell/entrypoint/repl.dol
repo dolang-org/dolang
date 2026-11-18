@@ -32,7 +32,8 @@ try
       let bytecode = _shell.compile "<repl>" $line
         mode: :REPL:
         prelude: $prelude
-        strict: $options.strict
+        diagnose: $options.diagnose
+        fail: $options.fail
       let result = run_turn $bytecode $bindings
       for key value = result
         bindings[key] = value

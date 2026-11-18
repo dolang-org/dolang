@@ -113,7 +113,8 @@ do
 pub def check
   entries
   :paths = []
-  :strict = false
+  :diagnose = :WARNING:
+  :fail = :ERROR:
   :no_bundled = false
   :undecided = false
   :script = false
@@ -123,18 +124,18 @@ do
   let found = roots $entries $dirs :script
   let :check :units :typelibs :bundled = gather $found $dirs :no_bundled :script :prelude
 
-  let counts = {diagnostics: 0, errors: 0, warnings: 0}
+  let counts = {diagnostics: 0, errors: 0}
   let failed = false
 
   def report diag
-    counts[:diagnostics:] = (counts[:diagnostics:] + 1)
     if (diag.severity == :ERROR:)
       counts[:errors:] = (counts[:errors:] + 1)
+    let fails = diag.at_least $fail
+    if fails
       failed = true
-    else if (diag.severity == :WARNING:)
-      counts[:warnings:] = (counts[:warnings:] + 1)
-    if (strict && (!script || diag.severity == :WARNING:))
-      failed = true
+    if (!fails && !diag.at_least(diagnose))
+      return nil
+    counts[:diagnostics:] = (counts[:diagnostics:] + 1)
     if script
       if (counts[:errors:] <= 10)
         term.print $diag.render() "\n"
@@ -150,8 +151,8 @@ do
   if script
     if (counts[:errors:] > 0)
       throw std.CompileError "check failed"
-    if (strict && counts[:warnings:] > 0)
-      throw std.CompileError "warnings treated as errors due to --strict flag"
+    if failed
+      throw std.CompileError "diagnostics treated as errors due to --fail flag"
     return nil
   if undecided
     let listing = result.undecided()
@@ -163,5 +164,5 @@ do
   if failed
     shell.exit 1
 
-pub def check_script path :paths = [] :prelude = {} :strict = false
-  check [path] :paths :prelude :strict script: true
+pub def check_script path :paths = [] :prelude = {} :diagnose = :WARNING: :fail = :ERROR:
+  check [path] :paths :prelude :diagnose :fail script: true

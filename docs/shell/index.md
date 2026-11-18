@@ -12,11 +12,15 @@ Run a Do script from the command line:
 dolang script.dol
 ```
 
-With the `--strict` flag, compiler warnings are treated as errors (runtime
-errors always propagate if uncaught, regardless of this flag):
+Compiler diagnostics have three severities, from least to most severe: `lint`,
+`warning`, and `error`. A lint flags a likely mistake that may also match
+intended code. `--diagnose LEVEL` shows diagnostics at or above `LEVEL`
+(`warning` by default), and `--fail LEVEL` fails the run on any at or above
+`LEVEL` (`error` by default). A diagnostic that fails the run is always shown.
+To treat warnings as errors:
 
 ```bash
-dolang --strict script.dol
+dolang --fail warning script.dol
 ```
 
 Other options:
@@ -29,6 +33,10 @@ Other options:
     (repeatable)
 - `--no-cache` -- disable reading and writing the bytecode cache
 - `--no-history` -- disable loading and saving REPL history
+- `--diagnose LEVEL` -- show diagnostics at or above `LEVEL`: `lint`,
+    `warning` (default), or `error`
+- `--fail LEVEL` -- fail on diagnostics at or above `LEVEL`: `lint`,
+    `warning`, or `error` (default)
 - `-h`, `--help` -- show command-line help
 
 Explicit module paths are searched in command-line order before the `site/`
@@ -47,7 +55,7 @@ dolang --import fs \
 Scripts can use a shebang for direct execution:
 
 ```
-#!/usr/bin/env -S dolang --strict
+#!/usr/bin/env -S dolang --fail warning
 echo Hello from Do!
 ```
 
@@ -73,7 +81,7 @@ dolang --check script.dol
 
 The checker follows imports using the ordinary module search paths, including
 any `--module-path` directories, and uses bundled type libraries when no source
-module is found. With `--strict`, warnings fail the check too.
+module is found. `--diagnose` and `--fail` apply to the check's diagnostics too.
 
 ### Script Bundles
 

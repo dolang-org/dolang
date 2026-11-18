@@ -14,7 +14,8 @@ def load_target main target
     let script = Path $target
     let program = _script.load $script
       prelude: $_boot_options.prelude
-      strict: $_boot_options.strict
+      diagnose: $_boot_options.diagnose
+      fail: $_boot_options.fail
       cache: $_boot_options.cache
     [program, script]
 

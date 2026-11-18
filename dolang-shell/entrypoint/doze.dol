@@ -30,7 +30,7 @@ class Report
   field units @ Array[Str] = []
   field sources @ Int = 0
   field checked @ Bool = false
-  field strict @ Bool = false
+  field fail @ compile.Severity = :ERROR:
 
   def (init)
     self
@@ -43,15 +43,15 @@ class Report
     sources @ Int
     # Whether the sources' types were checked.
     checked @ Bool
-    # Whether warnings fail too.
-    :strict @ Bool = false
+    # The least severe diagnostic that fails.
+    :fail @ compile.Severity = :ERROR:
   do
     self.#diagnostics = diagnostics
     self.#reporters = reporters
     self.#units = units
     self.#sources = sources
     self.#checked = checked
-    self.#strict = strict
+    self.#fail = fail
 
   #[getter]
   pub def diagnostics self -> Seq[compile.Diagnostic]
@@ -73,12 +73,13 @@ class Report
 
   #[getter]
   pub def warnings self -> Int
-    (self.#diagnostics.len - self.errors)
+    self.#diagnostics.filter(do |diag| diag.severity == :WARNING:).count()
 
-  # Whether the sources passed: no errors, and no warnings when strict.
+  # Whether the sources passed: no diagnostic at or above the fail level.
   #[getter]
   pub def passed self -> Bool
-    (self.errors == 0 && (!self.#strict || self.warnings == 0))
+    let fail = self.#fail
+    !self.#diagnostics.any(do |diag| diag.at_least(fail))
 
   # The report as data for `json.encode`: the summary, and each diagnostic with
   # its locations resolved to paths.
@@ -145,7 +146,7 @@ def span_json span @ compile.Span -> Dict[Sym, json.EncodeValue]
 # report.
 class Compiler
   field check @ Bool = false
-  field strict @ Bool = false
+  field fail @ compile.Severity = :ERROR:
   # Each source's unit, by path.
   field units @ Dict[Path, compile.Unit] = {}
   # Each source's text, by path.
@@ -155,11 +156,11 @@ class Compiler
     self
     # Whether to check the sources' types.
     :check @ Bool = false
-    # Whether warnings fail too.
-    :strict @ Bool = false
+    # The least severe diagnostic that fails.
+    :fail @ compile.Severity = :ERROR:
   do
     self.#check = check
-    self.#strict = strict
+    self.#fail = fail
 
   # Adds the module `name`, whose source is at `path`.
   pub def add_module self name@Str path@Path
@@ -188,10 +189,10 @@ class Compiler
       for diag = unit.diagnostics()
         diagnostics.push $diag
         reporters.push "$path"
-    let strict = self.#strict
+    let fail = self.#fail
     let count = self.#units.len
     if (!self.#check || diagnostics.any(do |diag| diag.severity == :ERROR:))
-      return Report $diagnostics $reporters $units $count $self.#check :strict
+      return Report $diagnostics $reporters $units $count $self.#check :fail
     # With no errors, the check accepts every unit, so unit indices follow the
     # order they are added in
     let checker = compile.Check()
@@ -203,7 +204,7 @@ class Compiler
       else throw std.RuntimeError "checker diagnostic without a unit: $(diag.message)"
       diagnostics.push $diag
       reporters.push $units[unit]
-    Report $diagnostics $reporters $units $count true :strict
+    Report $diagnostics $reporters $units $count true :fail
 
   def add self path@Path module@(Str | nil)
     let text = path.read_str()
@@ -264,8 +265,8 @@ class Project
     self.#discover()
 
   # Checks the types of the project's sources, its tests included.
-  pub def check self :strict @ Bool = false -> Report
-    let compiler = self.#compile check: true :strict tests: true
+  pub def check self :fail @ compile.Severity = :ERROR: -> Report
+    let compiler = self.#compile check: true :fail tests: true
     compiler.check()
 
   # Packs the program and every module into a bundle, after checking them
@@ -277,14 +278,14 @@ class Project
     :output @ (Path | nil) = nil
     # Whether to check the sources' types first. True by default.
     :check @ Bool = true
-    # Whether warnings fail too.
-    :strict @ Bool = false
+    # The least severe diagnostic that fails the check.
+    :fail @ compile.Severity = :ERROR:
     # Interpreter command for a `#!` line.
     :shebang @ (Str | nil) = nil
   do -> Report
     let Path(main) = self.#main
     else throw ProjectError "no main.dol in $(self.#root)"
-    let compiler = self.#compile :check :strict tests: false
+    let compiler = self.#compile :check :fail tests: false
     let report = compiler.check()
     if !report.passed
       return report
@@ -391,8 +392,8 @@ class Project
     ".".join $parts
 
   # The project's sources, compiled together, with its tests if `tests` is true.
-  def compile self :check@Bool :strict@Bool :tests@Bool -> Compiler
-    let compiler = Compiler :check :strict
+  def compile self :check@Bool :fail@compile.Severity :tests@Bool -> Compiler
+    let compiler = Compiler :check :fail
     let main = self.#main
     if let Path(main) = main
       compiler.add_script $main
@@ -419,10 +420,12 @@ def unknown file@Path prefix@Str rest@Iterable[(Str, toml.DecodeValue)]
   if (keys.len > 0)
     throw ProjectError "$file: unknown keys: $(", ".join(keys))"
 
-# Renders `report` and a summary, then exits with failure unless it passed.
-def finish report @ Report
+# Renders the diagnostics of `report` at or above `diagnose`, or that fail it,
+# and a summary, then exits with failure unless it passed.
+def finish report @ Report diagnose @ compile.Severity fail @ compile.Severity
   for diag = report.diagnostics
-    echo $diag.render()
+    if (diag.at_least(diagnose) || diag.at_least(fail))
+      echo $diag.render()
   let verb = (report.checked && "checked" || "compiled")
   echo "$verb $(report.sources) sources: $(report.errors) errors, $(report.warnings) warnings"
   if !report.passed
@@ -431,15 +434,29 @@ def finish report @ Report
 # Runs a command on the project at `path`, the current directory by default,
 # reporting a `ProjectError` as its failure. The report is also written as JSON
 # to `report`, if given, unless the project couldn't be read.
-def with_project path@(Str | nil) report@(Str | nil) command@((Project) -> Report)
+def with_project
+  path @ (Str | nil)
+  report @ (Str | nil)
+  diagnose @ compile.Severity
+  fail @ compile.Severity
+  command @ ((Project) -> Report)
+do
   try
     let result = command(Project(Path(path || ".")))
     if let Str(file) = report
       Path(file).write $json.encode(result.json(), indent: 2)
-    finish $result
+    finish $result $diagnose $fail
   catch ProjectError: e
     echo "error: $e"
     shell.exit 1
+
+# A diagnostic severity level, as `--diagnose` and `--fail` take it.
+def parse_level value @ Str -> compile.Severity
+  match value
+    "lint" => :LINT:
+    "warning" => :WARNING:
+    "error" => :ERROR:
+    _ => throw args.Error "expected lint, warning, or error"
 
 args.with
   help: Check, test and bundle a Do project.
@@ -448,14 +465,22 @@ args.with
     help: The project directory; by default, the current directory
   - cmd: check
     help: Check the types of the project's modules under `lib/`, its `main.dol`, and its tests under `test/`.
-    - flag: strict
-      help: Fail on warnings too
+    - opt: diagnose
+      parse: $parse_level
+      default: :WARNING:
+      meta: LEVEL
+      help: Show diagnostics at or above LEVEL (lint, warning, or error)
+    - opt: fail
+      parse: $parse_level
+      default: :ERROR:
+      meta: LEVEL
+      help: Fail on a diagnostic at or above LEVEL
     - opt: json
       default: nil
       help: File to also write the report to, as JSON
     do |p|
-      let :strict :json ... = p.check
-      with_project $p.project $json do |it| it.check(:strict)
+      let :diagnose :fail :json ... = p.check
+      with_project $p.project $json $diagnose $fail do |it| it.check(:fail)
   - cmd: test
     help: Run the project's tests under `test/` with `dolang -m test`, with `lib/` on the module path.
     divider: true
@@ -464,11 +489,19 @@ args.with
       help: Arguments to `dolang -m test`
     do |p|
       let :harness ... = p.test
-      with_project $p.project nil do |it| it.test $harness
+      with_project $p.project nil :WARNING: :ERROR: do |it| it.test $harness
   - cmd: bundle
     help: Check the project, then pack `main.dol` and every module under `lib/` into a bundle.
-    - flag: strict
-      help: Fail the check on warnings too
+    - opt: diagnose
+      parse: $parse_level
+      default: :WARNING:
+      meta: LEVEL
+      help: Show diagnostics at or above LEVEL (lint, warning, or error)
+    - opt: fail
+      parse: $parse_level
+      default: :ERROR:
+      meta: LEVEL
+      help: Fail on a diagnostic at or above LEVEL
     - flag: no-check
       help: Only compile the sources, without checking their types
     - opt: json
@@ -482,11 +515,12 @@ args.with
       default: nil
       help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
     do |p|
-      let :strict :no_check :output :shebang :json ... = p.bundle
+      let :diagnose :fail :no_check :output :shebang :json ... = p.bundle
       if (shebang != nil && shebang.contains("\n"))
         throw args.Error "--shebang must be a single line"
       let out = if (output != nil)
         Path $output
       else
         nil
-      with_project $p.project $json do |it| it.bundle(output: out, check: !no_check, :strict, :shebang)
+      with_project $p.project $json $diagnose $fail do |it|
+        it.bundle(output: out, check: !no_check, :fail, :shebang)

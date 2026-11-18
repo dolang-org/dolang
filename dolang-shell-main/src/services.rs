@@ -1,7 +1,7 @@
 //! Native services used by bundled shell entrypoints.
 use dolang::runtime::AllocExt;
 use dolang::{
-    compile::Mode,
+    compile::{Mode, Severity, Thresholds},
     resource::{self, Payload},
     runtime::{Error, io::IoResultExt as _, unpack, value::Nil, vm::Register},
 };
@@ -13,7 +13,11 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
     let prelude_sym = builder.sym("prelude");
     let editor = builder.build_type::<LineEditor>((), prelude_sym).build();
     let mode = builder.sym("mode");
-    let strict_sym = builder.sym("strict");
+    let diagnose_sym = builder.sym("diagnose");
+    let fail_sym = builder.sym("fail");
+    let lint_sym = builder.sym("LINT");
+    let warning_sym = builder.sym("WARNING");
+    let error_sym = builder.sym("ERROR");
     let script_sym = builder.sym("SCRIPT");
     let repl_sym = builder.sym("REPL");
     builder
@@ -25,7 +29,8 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
                 ?source,
                 ?:mode,
                 ?prelude_sym: prelude,
-                ?strict_sym: strict_arg
+                ?diagnose_sym: diagnose_arg,
+                ?fail_sym: fail_arg
             );
             let path = dolang_ext_shell::as_path(strand, &path)
                 .ok_or_else(|| Error::type_error(strand, "path must be Str or fs.Path"))?;
@@ -46,10 +51,26 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
                         .into(),
                 },
             };
-            let strict = strict_arg
-                .map(|value| value.to_bool(strand))
-                .transpose()?
-                .unwrap_or(false);
+            let level = |value: Option<Option<_>>, default| match value {
+                None => Some(default),
+                Some(Some(sym)) if sym == lint_sym => Some(Severity::Lint),
+                Some(Some(sym)) if sym == warning_sym => Some(Severity::Warning),
+                Some(Some(sym)) if sym == error_sym => Some(Severity::Error),
+                Some(_) => None,
+            };
+            let diagnose = diagnose_arg.map(|value| value.as_sym(strand));
+            let fail = fail_arg.map(|value| value.as_sym(strand));
+            let defaults = Thresholds::default();
+            let (Some(diagnose), Some(fail)) = (
+                level(diagnose, Severity::Warning),
+                level(fail, defaults.fail_level()),
+            ) else {
+                return Err(Error::type_error(
+                    strand,
+                    "diagnose and fail must be :LINT:, :WARNING:, or :ERROR:",
+                ));
+            };
+            let thresholds = Thresholds::new(diagnose, fail);
             let source = source
                 .map(|value| {
                     value
@@ -69,7 +90,7 @@ pub(crate) fn register<'v>(builder: &mut Register<'v>) {
                 Some(source) => source,
                 None => tokio::fs::read_to_string(&path).await.into_do_io(strand)?,
             };
-            let data = load::compile_config(strand, &path, &source, &config, strict).await?;
+            let data = load::compile_config(strand, &path, &source, &config, thresholds).await?;
             strand.store(out, data.as_slice());
             Ok(())
         })

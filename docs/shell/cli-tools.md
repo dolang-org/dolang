@@ -6,7 +6,7 @@
 downloads files concurrently with progress reporting:
 
 ```
-#!/usr/bin/env -S dolang --strict
+#!/usr/bin/env -S dolang --fail warning
 import args progress http fs url strand
 
 def download client url

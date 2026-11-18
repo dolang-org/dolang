@@ -1,4 +1,4 @@
-#!/usr/bin/env -S dolang --strict
+#!/usr/bin/env -S dolang --fail warning
 # Reports end-of-life dates from endoflife.date.
 #
 # Results go to standard output, as a table or, with `--format json`, as JSON.

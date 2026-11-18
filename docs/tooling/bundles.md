@@ -18,8 +18,8 @@ in the bundle runs once. Bytecode for `main.dol` is compiled as a script, and
 bytecode for a module in module mode under the module's name, as
 `dolang -m compile bytecode --module` does. Bytecode that fails verification is
 recompiled from its source when the bundle has one. Sources in a bundle compile
-with no prelude, whatever the prelude options and `--strict` say, so a bundle
-runs the same however it is invoked.
+with no prelude, whatever the prelude options, `--diagnose`, and `--fail` say,
+so a bundle runs the same however it is invoked.
 
 ## Building
 

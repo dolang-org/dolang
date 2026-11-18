@@ -83,14 +83,14 @@ def check_failures_fail()
       assert $output.contains("$path") $output
 
 #[test]
-def warnings_fail_only_when_strict()
+def warnings_fail_only_at_fail_warning()
   fs.with_temp_dir do |dir|
     write_project $dir
     (dir / "lib/w.dol").write "pub def f()\n  let unused = 1\n  nil\n"
     let output rc = doze --project $dir check
     assert_eq $rc 0
     assert $output.contains("1 warnings")
-    let _output rc = doze --project $dir check --strict
+    let _output rc = doze --project $dir check --fail warning
     assert_eq $rc 1
 
 #[test]
@@ -402,7 +402,7 @@ def bad_configurations_fail()
 #[test]
 def example_project_passes()
   let project = "example/eol"
-  let output rc = doze --project $project check --strict
+  let output rc = doze --project $project check --fail warning
   assert_eq $rc 0 $output
   let output rc = doze --project $project test --tags !network
   assert_eq $rc 0 $output
