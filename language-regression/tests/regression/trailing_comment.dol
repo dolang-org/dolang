@@ -1,0 +1,35 @@
+# A trailing comment takes the whitespace before it, so a line ends as it would
+# without the comment.
+let items = $
+  - first # comment
+  - two  # comment
+  key: value # comment
+
+assert_eq $items {"first", "two", key: "value"}
+
+# The same holds where a dash item folds.
+let folded = $
+  - first # comment
+    second
+
+assert_eq $folded ["first second"]
+
+# A key or `$` followed only by a comment still takes the indented block after
+# it.
+let keyed = $
+  key: # comment
+    - x
+
+assert_eq $keyed {key: ["x"]}
+
+let data = $ # comment
+  - x
+
+assert_eq $data ["x"]
+
+# A dash followed only by a comment is a bare `-`, a literal.
+let dash = $
+  - # comment
+  - x
+
+assert_eq $dash ["-", "x"]

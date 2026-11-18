@@ -5,6 +5,7 @@ use super::{
 use crate::{
     ast::{Arg, Expr, Key, PrimStmt, Single, visit::Node},
     lex::{Keyword, Op, Token, TokenInfo},
+    source::{Offset, Span},
 };
 
 /// Where a command sits, which decides what its arguments may be and what ends
@@ -47,9 +48,29 @@ impl CmdContext {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum UnquotedMode {
+    /// Command arguments, which whitespace separates
     Shell,
+    /// A line item's value, which keeps its whitespace
     Data,
+    /// A dash item's value, which keeps its whitespace and continues onto
+    /// lines at its content column, the offset given
+    DashData(Offset),
+    /// A key item's value, which keeps its whitespace and continues onto
+    /// lines indented past its key
+    KeyData,
+}
+
+impl UnquotedMode {
+    /// Whether a value in this mode continues at `token`, which ends its line
+    pub(super) fn folds_at(self, token: &Option<Token>) -> bool {
+        matches!(
+            (self, token),
+            (Self::DashData(_), Some(token!(TokenInfo::StmtSep)))
+                | (Self::KeyData, Some(token!(TokenInfo::Indent)))
+        )
+    }
 }
 
 impl Parser<'_> {
@@ -72,8 +93,37 @@ impl Parser<'_> {
                 }
             }
         };
+        // Indentation levels a key item's continuation lines have entered
+        let mut depth = 0;
         loop {
             let next = match self.peek()? {
+                Some(token!(StmtSep, span))
+                    if matches!(mode, UnquotedMode::DashData(_)) || depth > 0 =>
+                {
+                    self.advance();
+                    self.push_fold(&mut exprs, span);
+                    continue;
+                }
+                Some(token!(Indent, span)) if mode == UnquotedMode::KeyData => {
+                    self.advance();
+                    self.push_fold(&mut exprs, span);
+                    depth += 1;
+                    continue;
+                }
+                // A line less indented than the one before it, but still past
+                // the key, continues the value
+                Some(token!(Dedent, span)) if depth > 1 => {
+                    self.advance();
+                    depth -= 1;
+                    if !matches!(self.peek()?, Some(token!(Dedent))) {
+                        self.push_fold(&mut exprs, span);
+                    }
+                    continue;
+                }
+                Some(token!(Dedent)) if depth == 1 => {
+                    self.advance();
+                    break;
+                }
                 None | Some(token!(StmtSep | Indent | Dedent)) => break,
                 Some(token!(ArgSep)) if matches!(mode, UnquotedMode::Shell) => break,
                 Some(token!(DQuote)) if matches!(mode, UnquotedMode::Shell) => {
@@ -103,6 +153,24 @@ impl Parser<'_> {
                 verbatim: true,
             }
             .optimize())
+        }
+    }
+
+    /// Push the characters a folded line break stands for: a space, or a
+    /// newline per blank line in the gap. Comment lines don't count.
+    fn push_fold(&self, exprs: &mut Vec<Expr>, gap: Span) {
+        // The lines between the gap's first and last newline
+        let mut lines: Vec<_> = self.file.slice(gap).split(|&b| b == b'\n').collect();
+        lines.pop();
+        let blank = lines
+            .iter()
+            .skip(1)
+            .filter(|line| line.iter().all(|b| matches!(b, b' ' | b'\r')))
+            .count();
+        if blank == 0 {
+            exprs.push(Expr::Escape(' ', gap));
+        } else {
+            exprs.extend((0..blank).map(|_| Expr::Escape('\n', gap)));
         }
     }
 

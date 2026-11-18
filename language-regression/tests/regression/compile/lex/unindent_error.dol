@@ -3,13 +3,17 @@ echo two
 # error: inconsistent indentation
 #   --> unindent_error.dol:LL:LL
 #    |
-# LL | echo two
-#    | ^
+# LL |    echo one
+#    |  __________^
+# LL | | echo two
+#    | |_^
 echo three
   - four
  - five
 # error: inconsistent indentation
 #   --> unindent_error.dol:LL:LL
 #    |
-# LL |  - five
-#    | ^
+# LL |     - four
+#    |  _________^
+# LL | |  - five
+#    | |_^

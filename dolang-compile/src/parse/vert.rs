@@ -128,20 +128,28 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_cmd_vert_line_expr(&mut self, scope: &mut Scope, allow_object: bool) -> Result<Expr> {
+    /// Parse the value of a line item. `UnquotedMode::DashData` is a dash
+    /// item's value, which may be a dynamic key, and `UnquotedMode::KeyData`
+    /// a key item's; a text-like value in either may continue onto later
+    /// lines.
+    fn parse_cmd_vert_item_expr(&mut self, scope: &mut Scope, mode: UnquotedMode) -> Result<Expr> {
         use self::Keyword;
         use self::Op;
         use TokenInfo::*;
         match self.peek()? {
             Some(token!(expr_start!())) => {
                 let expr = self.parse_expr(scope, ExprMode::Shell)?;
-                if allow_object && let Some(token!(Colon)) = self.peek()? {
+                if let UnquotedMode::DashData(column) = mode
+                    && let Some(token!(Colon)) = self.peek()?
+                {
                     let colon_span = self.advance();
-                    let sep = self.expect(scope, &[ExpectKind::ArgSep])?;
-                    self.add_indent(sep.end);
+                    self.expect(scope, &[ExpectKind::ArgSep])?;
+                    // The dict's further items line up with this one, at the
+                    // dash item's content column
+                    self.add_indent(column);
                     let arg = Arg::DynamicKey(Pair {
                         key: expr,
-                        value: self.parse_cmd_vert_line_expr(scope, false)?,
+                        value: self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?,
                         colon_span: Some(colon_span),
                         delim_span: None,
                     });
@@ -154,10 +162,20 @@ impl Parser<'_> {
                             while let Some(token!(ArgSep)) = self.peek()? {
                                 self.advance();
                             }
-                            Ok(expr)
+                            if mode.folds_at(&self.peek()?) {
+                                self.parse_implicit_concat(scope, Some(expr), mode)
+                            } else {
+                                Ok(expr)
+                            }
                         }
-                        None | Some(token!(StmtSep | Indent | Dedent)) => Ok(expr),
-                        _ => self.parse_implicit_concat(scope, Some(expr), UnquotedMode::Data),
+                        token @ (None | Some(token!(StmtSep | Indent | Dedent))) => {
+                            if mode.folds_at(&token) {
+                                self.parse_implicit_concat(scope, Some(expr), mode)
+                            } else {
+                                Ok(expr)
+                            }
+                        }
+                        _ => self.parse_implicit_concat(scope, Some(expr), mode),
                     }
                 }
             }
@@ -178,10 +196,13 @@ impl Parser<'_> {
                     _ => {
                         let expr = self.parse_expr(scope, ExprMode::Compact)?;
                         let expr = Self::dollar_group(expr, span);
-                        if matches!(self.peek()?, Some(token!(Dedent | StmtSep)) | None) {
-                            Ok(expr)
-                        } else {
-                            self.parse_implicit_concat(scope, Some(expr), UnquotedMode::Data)
+                        match self.peek()? {
+                            token @ (None | Some(token!(StmtSep | Indent | Dedent)))
+                                if !mode.folds_at(&token) =>
+                            {
+                                Ok(expr)
+                            }
+                            _ => self.parse_implicit_concat(scope, Some(expr), mode),
                         }
                     }
                 }
@@ -201,7 +222,7 @@ impl Parser<'_> {
                     )
                 }
             }
-            _ => self.parse_implicit_concat(scope, None, UnquotedMode::Data),
+            _ => self.parse_implicit_concat(scope, None, mode),
         }
     }
 
@@ -262,7 +283,7 @@ impl Parser<'_> {
                 self.parse_data(scope, vec![], false)?
             } else {
                 self.expect(scope, &[ExpectKind::ArgSep])?;
-                self.parse_cmd_vert_line_expr(scope, false)?
+                self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?
             };
             args.push(Arg::DynamicKey(Pair {
                 key,
@@ -322,7 +343,7 @@ impl Parser<'_> {
                         let expr = if let Some(token!(Keyword(Keyword::Do))) = self.peek()? {
                             self.parse_do_block(scope, CmdContext::Stmt)?
                         } else {
-                            self.parse_cmd_vert_line_expr(scope, false)?
+                            self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?
                         };
                         args.push(Arg::Key(Key {
                             key_span: span,
@@ -480,7 +501,7 @@ impl Parser<'_> {
                         self.advance();
                         // Parse first item on this line
                         let arg = Arg::Key(Key {
-                            expr: self.parse_cmd_vert_line_expr(scope, false)?,
+                            expr: self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?,
                             key_span: span,
                             colon_span: span.after_right_char(),
                             delim_span: None,
@@ -500,7 +521,7 @@ impl Parser<'_> {
                     )?,
                 }
             }
-            _ => self.parse_cmd_vert_line_expr(scope, true)?,
+            _ => self.parse_cmd_vert_item_expr(scope, UnquotedMode::DashData(sep.end))?,
         };
         self.expect(scope, &[ExpectKind::Dedent])?;
         Ok(Arg::Pos(Single {

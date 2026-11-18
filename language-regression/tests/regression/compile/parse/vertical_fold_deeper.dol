@@ -1,0 +1,10 @@
+let deeper = $
+  - only lines at the content column
+      continue
+# error: got <indent>, expected: <unindent>
+#   --> vertical_fold_deeper.dol:LL:LL
+#    |
+# LL |     - only lines at the content column
+#    |  _____________________________________^
+# LL | |       continue
+#    | |______^

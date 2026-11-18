@@ -1,0 +1,15 @@
+# Each line of a folded dash item is its own literal. The line break between
+# them is synthetic and has no token.
+
+#~~: keyword
+let text = $
+  - first line
+#   ^~~~~~~~~~: literal
+    second line
+#   ^~~~~~~~~~~: literal
+
+# A trailing comment's token starts at its `#`, not at the whitespace it takes.
+#~~: keyword
+let commented = $
+  - first # note
+#         ^~~~~~: comment
