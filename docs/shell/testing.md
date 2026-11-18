@@ -43,8 +43,8 @@ A test fails when it raises an error. The assertion functions raise
 `assert_throws` returns the error, for further checks.
 
 Modules load concurrently, and so do tests. A test or module reads no input,
-and its output is captured and shown when it fails. A module that compiles with
-warnings fails like one with errors.
+and its output is captured and shown when it fails. By default, a module that
+compiles with warnings fails like one with errors; `--fail error` lets it load.
 
 ### Skipping Tests
 
@@ -151,18 +151,24 @@ the module path.
 
 ### Options
 
-| Option                  | Default | Description                                    |
-| ----------------------- | ------- | ---------------------------------------------- |
-| `-j`, `--jobs N`        | 8       | Maximum concurrent tests across all modules    |
-| `--module-jobs N`       | 4       | Maximum concurrent modules                     |
-| `--timeout SECS`        | 600     | Time limit for each test and each module load  |
-| `--no-capture`          |         | Print output as it is written                  |
-| `--filter GLOB`         | `**`    | Select tests whose ID matches                  |
-| `--tags TAGS`           |         | Select tests by tag; repeatable                |
-| `--id ID`               |         | Select a test by exact ID; repeatable          |
-| `--list`                |         | List the selected tests without running them   |
-| `--format json\|jsonl`  |         | Write a JSON listing or JSONL progress events  |
-| `-o`, `--output FILE`   |         | Write `--format` output to `FILE`              |
+| Option                 | Default | Description                                       |
+| ---------------------- | ------- | ------------------------------------------------- |
+| `-j`, `--jobs N`       | 8       | Maximum concurrent tests across all modules       |
+| `--module-jobs N`      | 4       | Maximum concurrent modules                        |
+| `--timeout SECS`       | 600     | Time limit for each test and each module load     |
+| `--diagnose LEVEL`     | warning | Show compiler diagnostics at or above `LEVEL`     |
+| `--fail LEVEL`         | warning | Fail a module on a diagnostic at or above `LEVEL` |
+| `--no-capture`         |         | Print output as it is written                     |
+| `--filter GLOB`        | `**`    | Select tests whose ID matches                     |
+| `--tags TAGS`          |         | Select tests by tag; repeatable                   |
+| `--id ID`              |         | Select a test by exact ID; repeatable             |
+| `--list`               |         | List the selected tests without running them      |
+| `--format json\|jsonl` |         | Write a JSON listing or JSONL progress events     |
+| `-o`, `--output FILE`  |         | Write `--format` output to `FILE`                 |
+
+`LEVEL` is `lint`, `warning` or `error`. A failed module's report shows the
+diagnostics at or above either level; a module that loads lists those at or
+above `--diagnose`.
 
 `--format json` requires `--list`, and `--format jsonl` applies only to runs,
 without `--no-capture`. `--output` requires `--format`.
@@ -239,7 +245,7 @@ writes one JSON document to standard output, or to the file given by
   `null` when unknown.
 - A failed module's `error` has a `kind` of `compile` or `load` and a
   `message`. A compile error lists `diagnostics`, each with a `severity`
-  (`error` or `warning`), `message` and `location`. A load error has
+  (`error`, `warning` or `lint`), `message` and `location`. A load error has
   `rendered`, the error as the run report prints it, with its backtrace. An
   `output` field holds what the module wrote while loading, when it wrote
   anything.

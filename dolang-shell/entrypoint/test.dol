@@ -40,6 +40,14 @@ def parse_tags value
       group.push [false, alternative]
   group
 
+# A compiler diagnostic severity, as `--diagnose` and `--fail` take it.
+def parse_level value
+  match value
+    "lint" => :LINT:
+    "warning" => :WARNING:
+    "error" => :ERROR:
+    _ => throw args.Error "expected lint, warning, or error"
+
 def tag_filter groups info
   for group = groups
     let matched = group.any do |alternative|
@@ -77,6 +85,16 @@ args.with args: $shell.args
     default: 600
     meta: SECS
     help: Max seconds for each test and module load.
+  - opt: diagnose
+    parse: $parse_level
+    default: :WARNING:
+    meta: LEVEL
+    help: Show a module's compiler diagnostics at or above LEVEL (lint, warning, or error)
+  - opt: fail
+    parse: $parse_level
+    default: :WARNING:
+    meta: LEVEL
+    help: Fail a module with a compiler diagnostic at or above LEVEL
   - opt: id
     collect: true
     meta: ID
@@ -101,7 +119,7 @@ args.with args: $shell.args
     collect: true
     help: Test directories or files to run.
   do |p|
-    let :filter :tags :id :jobs :module_jobs :timeout :no_capture :list :format :output :paths ... = p
+    let :filter :tags :id :jobs :module_jobs :timeout :diagnose :fail :no_capture :list :format :output :paths ... = p
     if (format == "json" && !list)
       throw args.Error "--format json requires --list"
     if (format == "jsonl" && list)
@@ -118,18 +136,20 @@ args.with args: $shell.args
       (name_filter.matches info.id && tag_filter tags info &&
         (ids.len == 0 || ids.contains info.id))
     if (format == "json")
-      exit $ test.list :module_jobs :filter :timeout format: :JSON: :output ...paths
+      exit $ test.list :module_jobs :filter :timeout :diagnose :fail format: :JSON: :output ...paths
     if (format == "jsonl")
-      exit $ test.run :jobs :module_jobs :filter :timeout format: :JSONL: :output ...paths
+      exit $ test.run :jobs :module_jobs :filter :timeout :diagnose :fail format: :JSONL: :output ...paths
     let rc = progress.with do
       if list
-        test.list :module_jobs :filter :timeout ...paths
+        test.list :module_jobs :filter :timeout :diagnose :fail ...paths
       else
         test.run
           jobs: $jobs
           module_jobs: $module_jobs
           filter: $filter
           timeout: $timeout
+          diagnose: $diagnose
+          fail: $fail
           capture: $!no_capture
           ...paths
     exit $rc

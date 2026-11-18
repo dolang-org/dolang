@@ -602,6 +602,32 @@ def cli_list_reports_module_failures()
     assert_eq $rc 0
 
 #[test]
+def cli_fail_level_decides_whether_warnings_fail()
+  with_temp_dir do |dir|
+    let path = (dir / "warns.dol")
+    path.write r|
+      import test:
+        - test
+      let unused = 1
+      #[test]
+      def passes()
+        nil
+    let rc out = list_cli --format json $path
+    assert_eq $rc 1
+    let module = json.decode(out)["modules"][0]
+    assert_eq $module["status"] "failed"
+    assert_eq $module["error"]["diagnostics"][0]["severity"] "warning"
+
+    let rc out = list_cli --format json --fail error $path
+    assert_eq $rc 0
+    assert_eq $json.decode(out)["modules"][0]["status"] "loaded"
+
+    let rc _out = test_cli --fail error --diagnose lint $path
+    assert_eq $rc 0
+    let rc _out = test_cli --fail bogus $path
+    assert (rc != 0)
+
+#[test]
 def cli_list_writes_json_to_output_file()
   with_temp_dir do |dir|
     let path = tagged_module $dir

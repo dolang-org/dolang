@@ -100,6 +100,8 @@ def cache_key
   name @ (Str | nil)
   prelude @ BaseDict[Str | Sym, compile.PreludeBinding]
   inject @ BaseDict[Sym, Value]
+  diagnose @ compile.Severity
+  fail @ compile.Severity
 do -> Str
   let state = digest.Blake3()
   state.update $ str $ path.absolute().normalize()
@@ -111,6 +113,8 @@ do -> Str
   state.update (str prelude)
   state.update "\0"
   state.update (str $ inject_keys inject)
+  state.update "\0"
+  state.update "$diagnose $fail"
   "${state.digest():x}"
 
 # A source to compile, cache and run: a module when it has a `name`, otherwise a
@@ -120,6 +124,8 @@ class Operation
   field name @ (Str | nil)
   field prelude @ BaseDict[Str | Sym, compile.PreludeBinding]
   field inject @ BaseDict[Sym, Value]
+  field diagnose @ compile.Severity
+  field fail @ compile.Severity
   field import @ Dict[Str, Value]
   field key @ Str
   field cache @ fs.Path
@@ -133,6 +139,8 @@ class Operation
     :prelude @ BaseDict[Str | Sym, compile.PreludeBinding]
     :inject @ BaseDict[Sym, Value]
     :import @ BaseDict[Str | Sym, Value]
+    :diagnose @ compile.Severity
+    :fail @ compile.Severity
   do
     if !(type inject Dict)
       throw std.TypeError "inject: expected `Dict`"
@@ -142,8 +150,10 @@ class Operation
     self.#name = name
     self.#prelude = prelude
     self.#inject = inject
+    self.#diagnose = diagnose
+    self.#fail = fail
     self.#import = normalize_imports $import
-    self.#key = cache_key $self.#path $name $prelude $inject
+    self.#key = cache_key $self.#path $name $prelude $inject $diagnose $fail
     self.#cache = (cache_root app / "$(self.#key).dolc")
     self.#synthetic = synthetic_module_name $self.#key
 
@@ -168,10 +178,14 @@ class Operation
 
   def compile_cached self <Iter[Value] >Sink[Value] -> Value
     let compiled = self.#compile()
-    let diagnostics = [...compiled.diagnostics()]
-    for diag = diagnostics
-      echo $diag.render()
-    if diagnostics.any do |diag| (diag.severity == :ERROR:)
+    let failed = false
+    for diag = compiled.diagnostics()
+      let fails = diag.at_least $self.#fail
+      if fails
+        failed = true
+      if (fails || diag.at_least(self.#diagnose))
+        echo $diag.render()
+    if failed
       let path = self.#path.shorten()
       throw std.CompileError "failed to compile $path"
     let bytecode = compiled.emit()
@@ -219,6 +233,11 @@ pub def run
   # Modules supplied by name while running. A dictionary with symbol keys is
   # exposed as a module whose fields are its entries.
   :import @ BaseDict[Str | Sym, Value] = {}
+  # Show compiler diagnostics at or above this severity.
+  :diagnose @ compile.Severity = :WARNING:
+  # Fail on a compiler diagnostic at or above this severity, which is also
+  # shown. Errors always fail.
+  :fail @ compile.Severity = :ERROR:
   # Arguments the script sees as [`shell.args`](shell.args). Defaults to the
   # caller's.
   :args @ Iterable[Value] = nil
@@ -228,7 +247,7 @@ pub def run
   <Iter[Value]
   >Sink[Value]
 do -> Value
-  let op = Operation $path name: nil :app :prelude :inject :import
+  let op = Operation $path name: nil :app :prelude :inject :import :diagnose :fail
   with_invocation $args $program do op.run()
 
 # Compiles a module if needed, caches the bytecode, and loads it.
@@ -266,6 +285,11 @@ pub def module
   # Modules supplied by name while running. A dictionary with symbol keys is
   # exposed as a module whose fields are its entries.
   :import @ BaseDict[Str | Sym, Value] = {}
+  # Show compiler diagnostics at or above this severity.
+  :diagnose @ compile.Severity = :WARNING:
+  # Fail on a compiler diagnostic at or above this severity, which is also
+  # shown. Errors always fail.
+  :fail @ compile.Severity = :ERROR:
   # Arguments the module sees as [`shell.args`](shell.args) while it loads.
   # Defaults to the caller's.
   :args @ Iterable[Value] = nil
@@ -274,7 +298,7 @@ pub def module
   :program @ (Str | fs.Path) = nil
 do -> std.Module
   let name = module_name (fs.Path path) $name
-  let op = Operation $path :name :app :prelude :inject :import
+  let op = Operation $path :name :app :prelude :inject :import :diagnose :fail
   let module = strand.redirect input: $std.null output: $std.null do
     with_invocation $args $program do op.run()
   if type(module, std.Module)

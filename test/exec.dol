@@ -69,6 +69,16 @@ def run_merges_dict_prelude_with_inject()
     ) 41
 
 #[test]
+def run_fails_at_its_fail_level()
+  fs.with_temp_dir do |dir|
+    let script = (dir / "script.dol")
+    script.write "let unused = 1\n2\n"
+    # Compiled and cached at the default level, which a warning doesn't fail
+    assert_eq (exec.run script) 2
+    assert_throws $CompileError do exec.run $script fail: :WARNING:
+    assert_eq (exec.run script) 2
+
+#[test]
 def run_rejects_non_dict_inject()
   fs.with_temp_dir do |dir|
     let script = (dir / "script.dol")

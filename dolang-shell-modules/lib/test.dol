@@ -314,8 +314,19 @@ class EventWriter
 
 @let Outcome = (:passed: | :failed: | :skipped: | :ignored:)
 
-# Prints a failure, skip or ignore in the run report's style.
-def print_failure failure @ Failure
+# Whether a diagnostic is shown at the levels: at or above `diagnose`, or
+# failing the compile
+def shown diag @ compile.Diagnostic diagnose @ compile.Severity fail @ compile.Severity -> Bool
+  (diag.at_least(diagnose) || diag.at_least(fail))
+
+# Prints a module's compiler diagnostics, indented under its report line.
+def print_diagnostics diagnostics @ Iterable[compile.Diagnostic]
+  for diag = diagnostics
+    echo $diag.render().indent(2)
+
+# Prints a failure, skip or ignore in the run report's style, with the
+# compiler diagnostics shown at the levels.
+def print_failure failure @ Failure diagnose @ compile.Severity fail @ compile.Severity
   let e = failure.error
   let module = module_name $failure.path
   if (type e Ignore)
@@ -332,9 +343,7 @@ def print_failure failure @ Failure
   if (type e ModuleCompileError)
     print (err_style "failed") ": " (name_style "$module")
       " (" (note_style "compilation failed") ")\n"
-    for diag = e.output.diagnostics()
-      if diag.at_least(:WARNING:)
-        echo $diag.render().indent(2)
+    print_diagnostics $ e.output.diagnostics().filter do |diag| shown $diag $diagnose $fail
     return
   if test
     print (err_style "failed") ": " (name_style "$module/$test") ": "
@@ -358,7 +367,11 @@ class Harness
   field redirect @ Bool
   field plain @ Bool
   field events @ (EventWriter | nil)
+  field diagnose @ compile.Severity
+  field fail @ compile.Severity
   field errors @ Array[Failure] = []
+  # Each module that loaded with diagnostics to show, and those diagnostics
+  field notes @ Array[Tuple[Path, Array[compile.Diagnostic]]] = []
   field counts @ Dict[{passed: Int, failed: Int, skipped: Int, ignored: Int}] = {passed: 0, failed: 0, skipped: 0, ignored: 0}
   field module_failed @ Bool = false
 
@@ -372,6 +385,8 @@ class Harness
     :redirect @ Bool = false
     :plain @ Bool = false
     :events @ (EventWriter | nil) = nil
+    :diagnose @ compile.Severity = :WARNING:
+    :fail @ compile.Severity = :WARNING:
   do
     self.#module_jobs = strand.Resource $module_jobs
     self.#jobs = strand.Resource $jobs
@@ -381,6 +396,8 @@ class Harness
     self.#redirect = redirect
     self.#plain = plain
     self.#events = events
+    self.#diagnose = diagnose
+    self.#fail = fail
 
   def matches_filter self case @ TestCase -> Bool
     self.#filter $case.info
@@ -464,8 +481,11 @@ class Harness
       let source = path.read_str()
       let compiled = compile.compile $str(path) $source
       let diagnostics = [...compiled.diagnostics()]
-      if diagnostics.any(do |d| d.at_least(:WARNING:))
+      if diagnostics.any(do |d| d.at_least(self.#fail))
         throw ModuleCompileError $path $compiled
+      let notes = [...diagnostics.filter(do |d| d.at_least(self.#diagnose))]
+      if (notes.len > 0)
+        self.#notes.push (path, notes)
 
       let cases = collect_key.with (TestCollection path) do
         self.#with_capture $output do
@@ -501,8 +521,12 @@ class Harness
       self.#record_error $error $result.backtrace $path nil $result.output
 
   def report self
+    for note = self.#notes
+      let path diagnostics = note
+      print (info_style "diagnostics") ": " (name_style $ module_name path) "\n"
+      print_diagnostics $diagnostics
     for failure = self.#errors
-      print_failure $failure
+      print_failure $failure $self.#diagnose $self.#fail
     let :passed :failed :skipped ... = self.#counts
     print (pass_style "passed") ": $passed/$(passed + failed)"
     if skipped
@@ -675,7 +699,7 @@ def module_record result @ ModuleResult -> Json
       nil
   record
 
-def print_listing results @ Array[ModuleResult]
+def print_listing results @ Array[ModuleResult] diagnose @ compile.Severity fail @ compile.Severity
   let tests = 0
   let modules = 0
   for result = results
@@ -693,7 +717,7 @@ def print_listing results @ Array[ModuleResult]
   for result = results
     let error = result.error
     if (result.status != :LOADED: && error != nil)
-      print_failure $Failure(error, result.backtrace, result.path, nil, result.output)
+      print_failure $Failure(error, result.backtrace, result.path, nil, result.output) $diagnose $fail
   print (pass_style "listed") ": $tests " (tests == 1 && "test" || "tests")
   print " in $modules " (modules == 1 && "module" || "modules")
   echo()
@@ -1109,6 +1133,11 @@ pub def run
   :timeout @ Int = 600
   # Capture output and show it for failures.
   :capture @ Bool = true
+  # Show compiler diagnostics at or above this severity.
+  :diagnose @ compile.Severity = :WARNING:
+  # Fail to load a module with a compiler diagnostic at or above this severity.
+  # Errors always fail.
+  :fail @ compile.Severity = :WARNING:
   # `:HUMAN:` for a report on the console, or `:JSONL:` for progress events.
   :format @ (:HUMAN: | :JSONL:) = :HUMAN:
   # File to write progress events to instead of standard output.
@@ -1119,14 +1148,14 @@ pub def run
 do -> Int
   let files = test_files $paths
   if (format != :JSONL:)
-    let harness = Harness :jobs :module_jobs :filter :timeout :capture
+    let harness = Harness :jobs :module_jobs :filter :timeout :capture :diagnose :fail
     return harness.run $files
   if !capture
     throw std.ValueError "run: progress events require capture"
   let run_with = do |sink @ Sink[Str] >Sink[Value]|
     let events = EventWriter $sink
-    let harness = Harness :jobs :module_jobs :filter :timeout capture: true
-      redirect: true plain: true events: $events
+    let harness = Harness capture: true redirect: true plain: true events: $events
+      :jobs :module_jobs :filter :timeout :diagnose :fail
     try
       harness.run $files
     finally
@@ -1158,6 +1187,11 @@ pub def list
   :filter @ ((TestInfo, <Value, >Value) -> Bool) = (do |_| true)
   # Module-load timeout in seconds.
   :timeout @ Int = 600
+  # Show compiler diagnostics at or above this severity.
+  :diagnose @ compile.Severity = :WARNING:
+  # Fail to load a module with a compiler diagnostic at or above this severity.
+  # Errors always fail.
+  :fail @ compile.Severity = :WARNING:
   # `:HUMAN:` for a report on the console, or `:JSON:` for a JSON document.
   :format @ (:HUMAN: | :JSON:) = :HUMAN:
   # File to write the JSON document to instead of standard output.
@@ -1166,8 +1200,8 @@ pub def list
   *paths @ (Str | Path)
   >Sink[Value]
 do -> Int
-  let harness = Harness jobs: 1 :module_jobs :filter :timeout capture: true
-    redirect: true plain: (format == :JSON:)
+  let harness = Harness jobs: 1 capture: true redirect: true plain: (format == :JSON:)
+    :module_jobs :filter :timeout :diagnose :fail
   let results = harness.list $(test_files paths)
   if (format == :JSON:)
     let document @ Json = $
@@ -1179,5 +1213,5 @@ do -> Int
     else
       shell.stdout.write $text
   else
-    print_listing $results
+    print_listing $results $diagnose $fail
   (results.any(do |r| r.status == :FAILED:) && 1 || 0)
