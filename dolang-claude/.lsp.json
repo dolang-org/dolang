@@ -1,0 +1,8 @@
+{
+  "dolang": {
+    "command": "dolang-lsp",
+    "extensionToLanguage": {
+      ".dol": "dolang"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "dolang",
+  "owner": {
+    "name": "dolang-org"
+  },
+  "plugins": [
+    {
+      "name": "dolang",
+      "source": "./",
+      "description": "Do language support: dolang-lsp diagnostics and code navigation for .dol files."
+    }
+  ]
+}

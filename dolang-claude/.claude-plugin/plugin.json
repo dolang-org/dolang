@@ -1,0 +1,8 @@
+{
+  "name": "dolang",
+  "version": "0.1.1",
+  "description": "Do language support for Claude Code: dolang-lsp diagnostics and code navigation for .dol files.",
+  "homepage": "https://github.com/dolang-org/dolang",
+  "repository": "https://github.com/dolang-org/dolang",
+  "license": "Apache-2.0 OR MIT"
+}
