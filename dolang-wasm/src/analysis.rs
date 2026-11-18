@@ -440,6 +440,22 @@ pub mod tests {
     }
 
     #[wasm_bindgen_test]
+    fn lint_is_reported_as_info() {
+        let source = "let name = \"é\"\necho name $name";
+        let byte = source.rfind("name $").unwrap();
+        let from = source[..byte].encode_utf16().count();
+        let lint = Analyzed::new(source.to_owned())
+            .diagnostics()
+            .into_iter()
+            .find(|diag| diag.message.starts_with("bareword"))
+            .expect("a bareword lint");
+        assert_eq!(
+            (lint.from, lint.to, lint.severity),
+            (from, from + 4, "info")
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn only_unbundled_imports_are_reported() {
         // `json` is bundled and `fs` is not
         let source = "import fs\nimport json\nfs.read_text (json.encode 1)";

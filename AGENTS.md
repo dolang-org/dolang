@@ -200,9 +200,10 @@ echo $items.len
 ```
 
 No error results when the parameter accepts `Str`. To catch a bareword
-spelled like a local or parameter in scope, run with `--diagnose lint`
-(`dolang --diagnose lint script.dol`). Quote a string that is meant to match a
-local's name: `"name"`.
+spelled like a variable in scope, run with `--diagnose lint`
+(`dolang --diagnose lint script.dol`); the LSP shows it too. Top-level classes,
+`def`s and imports don't count. Quote a string that is meant to match a
+variable's name: `"name"`.
 
 #### `$name` Inside a String Literal Does Not Chain
 

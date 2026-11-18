@@ -58,6 +58,8 @@ bitflags::bitflags! {
         const TYPE_USED = 1 << 5;
         /// Bound by a `class` statement, so it cannot be reassigned
         const CLASS = 1 << 6;
+        /// Bound by a `def` statement or an imported item
+        const ITEM = 1 << 7;
     }
 }
 

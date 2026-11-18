@@ -86,7 +86,7 @@ assert_eq (duplex.written()) b"x"
 # Reading through a lent buffer flushes its pending writes first
 let sink = ByteBuf b"" 0 "d"
 let pending = Buffered $sink
-pending.write pending
+pending.write "pending"
 byte_read $pending
 assert_eq (sink.written()) b"pending"
 

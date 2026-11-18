@@ -1279,13 +1279,13 @@ impl<'s> Scope<'s> {
         matches!(self, Scope::Class { .. })
     }
 
-    /// The initialized local or parameter bound under `id`, without marking it
-    /// used. Module-level bindings, imports and prelude items don't count.
-    fn peek_local(&self, id: sym::Id) -> Option<Var> {
+    /// The initialized variable bound in source under `id`, without marking it
+    /// used. Imports and prelude items don't count, nor do the top level's
+    /// classes, `def`s and imported items, which most of its names are.
+    fn peek_variable(&self, id: sym::Id) -> Option<Var> {
         match self {
             Scope::Base => None,
-            Scope::Class { parent, .. } => parent.peek_local(id),
-            Scope::Nested { .. } if self.is_top_level() => None,
+            Scope::Class { parent, .. } => parent.peek_variable(id),
             Scope::Nested {
                 index,
                 vars,
@@ -1295,10 +1295,12 @@ impl<'s> Scope<'s> {
                 Some(&index) => {
                     let (var, _) = vars[index].get();
                     (var.flags.contains(VarFlags::INITIALIZED)
-                        && matches!(var.origin, Origin::Source(_) | Origin::SelfParam(_)))
+                        && matches!(var.origin, Origin::Source(_) | Origin::SelfParam(_))
+                        && !(self.is_top_level()
+                            && var.flags.intersects(VarFlags::CLASS | VarFlags::ITEM)))
                     .then_some(var)
                 }
-                None => parent.peek_local(id),
+                None => parent.peek_variable(id),
             },
         }
     }
@@ -1806,14 +1808,15 @@ impl<'s> Scope<'s> {
         }
     }
 
-    /// Mark a binding as a class's own, which cannot be reassigned
-    fn mark_class(&self, index: usize) {
+    /// Mark a binding with `flags`, such as `CLASS` for a class's own, which
+    /// cannot be reassigned
+    fn mark(&self, index: usize, flags: VarFlags) {
         match self {
             Self::Base => panic!("Can't mark vars in base scope"),
             Self::Class { .. } => unreachable!("class scope is not lexical"),
             Self::Nested { vars, .. } => {
                 vars[index].update(|(mut var, epoch)| {
-                    var.flags.insert(VarFlags::CLASS);
+                    var.flags.insert(flags);
                     (var, epoch)
                 });
             }
@@ -2145,7 +2148,7 @@ impl<'a> Elaborater<'a> {
         else {
             return;
         };
-        if let Some(var) = scope.peek_local(id) {
+        if let Some(var) = scope.peek_variable(id) {
             self.diags.push(BarewordLocal {
                 span,
                 binding: var.origin.name(),
@@ -3167,6 +3170,7 @@ impl<'a> Elaborater<'a> {
                         // the import
                         let node = Origin::Source(bind.span);
                         let index = scope.insert(id, node, self.epoch, exported);
+                        scope.mark(index, VarFlags::ITEM);
                         bind.res = Some(Res {
                             index,
                             depth: 0,
@@ -3581,6 +3585,7 @@ impl<'a> Elaborater<'a> {
                     let exported = node.pub_span.is_some();
                     let origin = Origin::Source(ident_span);
                     let index = scope.insert_pending(sym, origin, self.epoch, exported);
+                    scope.mark(index, VarFlags::ITEM);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
@@ -3594,7 +3599,7 @@ impl<'a> Elaborater<'a> {
                     let exported = node.pub_span.is_some();
                     let origin = Origin::Source(node.ident.span);
                     let index = scope.insert_pending(sym, origin, self.epoch, exported);
-                    scope.mark_class(index);
+                    scope.mark(index, VarFlags::CLASS);
                     node.ident.res = Some(Res {
                         index,
                         depth: 0,
