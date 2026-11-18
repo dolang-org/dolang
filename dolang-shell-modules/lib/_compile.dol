@@ -143,7 +143,7 @@ do
       echo $diag.render()
 
   for unit = units
-    for diag = unit.diagnostics()
+    for diag = unit.diagnostics
       report $diag
   let result = check.run()
   for diag = result.diagnostics

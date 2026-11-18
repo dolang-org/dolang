@@ -179,7 +179,7 @@ class Operation
   def compile_cached self <Iter[Value] >Sink[Value] -> Value
     let compiled = self.#compile()
     let failed = false
-    for diag = compiled.diagnostics()
+    for diag = compiled.diagnostics
       let fails = diag.at_least $self.#fail
       if fails
         failed = true
