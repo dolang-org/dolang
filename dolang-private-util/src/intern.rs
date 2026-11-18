@@ -397,6 +397,13 @@ impl BinTable {
         StrId(self.id(s.as_bytes()).0)
     }
 
+    /// Returns the `StrId` of a string already interned, without interning it.
+    pub fn get_str(&self, s: &str) -> Option<StrId> {
+        self.index
+            .get_index_of(s.as_bytes())
+            .map(|i| StrId(Id::new(i)))
+    }
+
     /// Stores `bytes` without interning them and returns their logical
     /// offsets.
     ///

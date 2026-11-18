@@ -199,6 +199,11 @@ echo items.len
 echo $items.len
 ```
 
+No error results when the parameter accepts `Str`. To catch a bareword
+spelled like a local or parameter in scope, run with `--diagnose lint`
+(`dolang --diagnose lint script.dol`). Quote a string that is meant to match a
+local's name: `"name"`.
+
 #### `$name` Inside a String Literal Does Not Chain
 
 Inside a `"..."` string, `$name` interpolates **only the bare identifier**.

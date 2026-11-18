@@ -1,0 +1,145 @@
+let top = "module"
+
+def show ...args
+  args
+
+# A parameter or local spelled as a bareword is a literal string
+def parameter dir
+  show dir
+  # lint: bareword is the literal string "dir", not the variable `dir`
+  #   --> bareword_local.dol:LL:LL
+  #    |
+  # LL | def parameter dir
+  #    |               --- variable bound here
+  # LL |   show dir
+  #    |        ^^^
+  #    |
+  # help: write `$` for the variable
+  #    |
+  # LL |   show $dir
+  #    |        +
+  # help: quote it for the string
+  #    |
+  # LL -   show dir
+  # LL +   show "dir"
+  #    |
+  let key = "k"
+  show key: key
+  # lint: bareword is the literal string "key", not the variable `key`
+  #   --> bareword_local.dol:LL:LL
+  #    |
+  # LL |   let key = "k"
+  #    |       --- variable bound here
+  # LL |   show key: key
+  #    |             ^^^
+  #    |
+  # help: write `$` for the variable
+  #    |
+  # LL |   show key: $key
+  #    |             +
+  # help: quote it for the string
+  #    |
+  # LL -   show key: key
+  # LL +   show key: "key"
+  #    |
+  for item = [1]
+    show item
+    # lint: bareword is the literal string "item", not the variable `item`
+    #   --> bareword_local.dol:LL:LL
+    #    |
+    # LL |   for item = [1]
+    #    |       ---- variable bound here
+    # LL |     show item
+    #    |          ^^^^
+    #    |
+    # help: write `$` for the variable
+    #    |
+    # LL |     show $item
+    #    |          +
+    # help: quote it for the string
+    #    |
+    # LL -     show item
+    # LL +     show "item"
+    #    |
+    show $item
+  show $dir $key
+
+# So is one in a vertical dash or key item
+def dash name
+  let shown = show
+    - name
+  # lint: bareword is the literal string "name", not the variable `name`
+  #   --> bareword_local.dol:LL:LL
+  #    |
+  # LL | def dash name
+  #    |          ---- variable bound here
+  # LL |   let shown = show
+  # LL |     - name
+  #    |       ^^^^
+  #    |
+  # help: write `$` for the variable
+  #    |
+  # LL |     - $name
+  #    |       +
+  # help: quote it for the string
+  #    |
+  # LL -     - name
+  # LL +     - "name"
+  #    |
+  show $name
+  shown
+
+def key_item label
+  let shown = show
+    key: label
+  # lint: bareword is the literal string "label", not the variable `label`
+  #   --> bareword_local.dol:LL:LL
+  #    |
+  # LL | def key_item label
+  #    |              ----- variable bound here
+  # LL |   let shown = show
+  # LL |     key: label
+  #    |          ^^^^^
+  #    |
+  # help: write `$` for the variable
+  #    |
+  # LL |     key: $label
+  #    |          +
+  # help: quote it for the string
+  #    |
+  # LL -     key: label
+  # LL +     key: "label"
+  #    |
+  show $label
+  shown
+
+# Quoting, `$`, concatenation and non-identifier text don't
+def quoted dir
+  show "dir" $dir dir/x pre$dir dir: :dir:
+
+# Nor do module-level bindings, imports and prelude items
+def module_level()
+  show top std echo
+
+# A name isn't in scope on its own `let` right-hand side
+def own_rhs()
+  let metadata = show metadata
+  metadata
+
+# Nor before it is bound
+def before_binding()
+  show later
+  let later = 1
+  later
+
+show $top
+parameter "x"
+let dashed = dash "x"
+assert_eq $dashed[0] "name"
+let keyed = key_item "x"
+assert_eq $keyed[:key:] "label"
+quoted "x"
+module_level()
+let rhs = own_rhs()
+assert_eq $rhs[0] "metadata"
+before_binding()
