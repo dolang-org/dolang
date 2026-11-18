@@ -228,7 +228,7 @@ def cli_options_do_not_affect_recompiled_bundles()
     script.write $prelude_source
     assert_eq (run_bundle("--import-item", "std.str=stringify", script)) "42\n"
     script.write $warning_source
-    let _output rc = fail_bundle --strict $script
+    let _output rc = fail_bundle --fail warning $script
     assert_eq $rc 1
 
     let prelude_app = (dir / "prelude")
@@ -237,4 +237,4 @@ def cli_options_do_not_affect_recompiled_bundles()
     assert $output.contains("stringify")
     let warning_app = (dir / "warning")
     make_bundle $warning_app {"main.dol": warning_source, "main.dolc": b"invalid bytecode"}
-    assert_eq (run_bundle("--strict", warning_app)) "ran\n"
+    assert_eq (run_bundle("--fail", "warning", warning_app)) "ran\n"

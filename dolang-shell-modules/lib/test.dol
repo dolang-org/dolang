@@ -333,7 +333,8 @@ def print_failure failure @ Failure
     print (err_style "failed") ": " (name_style "$module")
       " (" (note_style "compilation failed") ")\n"
     for diag = e.output.diagnostics()
-      echo $diag.render().indent(2)
+      if diag.at_least(:WARNING:)
+        echo $diag.render().indent(2)
     return
   if test
     print (err_style "failed") ": " (name_style "$module/$test") ": "
@@ -463,9 +464,7 @@ class Harness
       let source = path.read_str()
       let compiled = compile.compile $str(path) $source
       let diagnostics = [...compiled.diagnostics()]
-      let warnings = diagnostics.any do |d| (d.severity == :WARNING:)
-      let errors = diagnostics.any do |d| (d.severity == :ERROR:)
-      if (errors || warnings)
+      if diagnostics.any(do |d| d.at_least(:WARNING:))
         throw ModuleCompileError $path $compiled
 
       let cases = collect_key.with (TestCollection path) do
@@ -630,8 +629,12 @@ do -> Json
 
 def diagnostic_record diag @ compile.Diagnostic path @ Path -> Json
   let span = diag.span.span
+  let severity = match diag.severity
+    :ERROR: => "error"
+    :WARNING: => "warning"
+    :LINT: => "lint"
   $
-    severity: (diag.severity == :ERROR: && "error" || "warning")
+    severity: $severity
     message: $diag.message
     location:
       file: $(str path)

@@ -87,8 +87,16 @@ def prelude_and_module_name_affect_compilation()
   assert (one != two)
 
 #[test]
-def strict_compilation_rejects_warnings()
+def fail_level_rejects_warnings()
   let source = "return nil\necho unreachable\n"
-  let _ = compile "<warnings>" $source strict: false
+  let _ = compile "<warnings>" $source
+  let _ = compile "<warnings>" $source fail: :ERROR:
   assert_throws $std.CompileError do
-    compile "<warnings>" $source strict: true
+    compile "<warnings>" $source fail: :WARNING:
+  assert_throws $std.CompileError do
+    compile "<warnings>" $source diagnose: :ERROR: fail: :WARNING:
+
+#[test]
+def invalid_level_is_a_type_error()
+  assert_throws $std.TypeError do
+    compile "<module>" "nil\n" fail: :SEVERE:

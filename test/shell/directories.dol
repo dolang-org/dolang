@@ -40,13 +40,14 @@ def boot_options_deliver_history_and_prelude()
         test:
           - assert_eq
       assert_eq $_boot_options.history (s.args[0] == "true")
-      assert_eq $_boot_options.strict true
+      assert_eq $_boot_options.fail :WARNING:
+      assert_eq $_boot_options.diagnose :WARNING:
       assert_eq [..._boot_options.prelude.pairs()] [("shell", "s")]
-    run $shell.exe --strict --import shell=s $script true
-    run $shell.exe --strict --no-history --import shell=s $script false
+    run $shell.exe --fail warning --import shell=s $script true
+    run $shell.exe --fail warning --no-history --import shell=s $script false
     if (sys.os_info().family == :UNIX: && sys.os_info().os != :MACOS:)
       env XDG_STATE_HOME: relative do
-        run $shell.exe --no-history --strict --import shell=s $script false
+        run $shell.exe --no-history --fail warning --import shell=s $script false
 
 #[test]
 def repl_directory_errors_are_sys_errors()

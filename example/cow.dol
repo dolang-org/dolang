@@ -1,4 +1,4 @@
-#!/usr/bin/env -S dolang --strict
+#!/usr/bin/env -S dolang --fail warning
 import xml progress docker
 
 def search name

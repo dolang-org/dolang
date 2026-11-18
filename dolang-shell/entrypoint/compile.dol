@@ -829,11 +829,10 @@ class Document
 # this: a description built from a file that did not compile is missing
 # whatever the compiler could not read, and nothing downstream can tell that
 # from a file that simply declares less -- so it is not written at all.
-def build_extract source display_path module doc all strict tokens
+def build_extract source display_path module doc all fail tokens
   let unit = compile.compile $display_path $source recover: true document: true
   let diagnostics = [...unit.diagnostics()]
-  if ((doc || strict) && diagnostics.any do |diag|
-    (diag.severity == :ERROR: || (strict && diag.severity == :WARNING:)))
+  if ((doc || fail != nil) && diagnostics.any do |diag| diag.at_least(fail || :ERROR:))
     throw std.RuntimeError ("\n".join $ diagnostics.map do |diag| diag.render())
   let index = Index $unit
   let id_to_index = index.id_to_index()
@@ -852,15 +851,23 @@ def build_extract source display_path module doc all strict tokens
     if doc
       doc: $Document(unit, module, all, index).result(unit, display_path)
 
+# A diagnostic severity level, as `--diagnose` and `--fail` take it.
+def parse_level value
+  match value
+    "lint" => :LINT:
+    "warning" => :WARNING:
+    "error" => :ERROR:
+    _ => throw args.Error "expected lint, warning, or error"
+
 def extract p
-  let :doc :module :all :strict :tokens :path ... = p.extract
+  let :doc :module :all :fail :tokens :path ... = p.extract
   let source = if (path == nil)
     shell.stdin.read()
   else
     Path(path).read_str()
   let display_path = (path || "<stdin>")
   let result = try
-    build_extract $source $display_path $module $doc $all $strict $tokens
+    build_extract $source $display_path $module $doc $all $fail $tokens
   catch std.RuntimeError: e
     echo $e
     shell.exit 1
@@ -882,9 +889,10 @@ def serve_line line
       "module": module = nil
       "doc": doc = false
       "all": all = false
-      "strict": strict = false
+      "fail": fail = nil
       "tokens": tokens = false
-    build_extract $source (path || "<server>") $module $doc $all $strict $tokens
+    let level = (fail != nil && parse_level(fail) || nil)
+    build_extract $source (path || "<server>") $module $doc $all $level $tokens
   catch e
     $
       error: "$e"
@@ -897,7 +905,7 @@ def serve_line line
 # only used for diagnostics and the output's `source.path`):
 #
 # ```
-# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false, "strict": false, "tokens": false}
+# {"source": "let x = 1", "path": "example.dol", "doc": false, "module": null, "all": false, "fail": null, "tokens": false}
 # ```
 #
 # Meant for a client that would otherwise shell out to `extract` once per
@@ -913,8 +921,8 @@ def serve()
 
 def check p
   import _compile
-  let :entries :path :strict :no_bundled :undecided ... = p.check
-  _compile.check $entries paths: $path :strict :no_bundled :undecided
+  let :entries :path :diagnose :fail :no_bundled :undecided ... = p.check
+  _compile.check $entries paths: $path :diagnose :fail :no_bundled :undecided
 
 # Writes the typelibs of modules, checked together with the modules they import.
 # Each is written into `--output` as `<module>.dolt`, or a lone source's by
@@ -1054,8 +1062,11 @@ args.with
       help: Module name recorded in the output
     - flag: all
       help: With --doc, include declarations that are not `pub`
-    - flag: strict
-      help: Fail when compilation emits a warning
+    - opt: fail
+      parse: $parse_level
+      default: nil
+      meta: LEVEL
+      help: Fail on a diagnostic at or above LEVEL (lint, warning, or error)
     - arg: path
       default: nil
       help: Source file; standard input is read when omitted
@@ -1070,8 +1081,16 @@ args.with
     - opt: path
       collect: true
       help: Directory to search for imported modules, as `a/b.dol` for module `a.b`, before the bundled typelibs
-    - flag: strict
-      help: Fail on any compiler or type-checker diagnostic, including warnings
+    - opt: diagnose
+      parse: $parse_level
+      default: :WARNING:
+      meta: LEVEL
+      help: Show compiler and type-checker diagnostics at or above LEVEL (lint, warning, or error)
+    - opt: fail
+      parse: $parse_level
+      default: :ERROR:
+      meta: LEVEL
+      help: Fail on a compiler or type-checker diagnostic at or above LEVEL
     - flag: no-bundled
       help: Disable bundled typelibs and fail if an imported module is missing
     - flag: undecided

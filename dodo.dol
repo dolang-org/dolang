@@ -367,7 +367,7 @@ def typecheck spec rest :all = false
     spec.cargo build --bin dolang
     spec.dolang -m compile check
       if all
-        --strict --no-bundled
+        --fail warning --no-bundled
       for dir = dirs
         --path $dir
       ...sources ...rest
@@ -459,7 +459,7 @@ def pts spec args
     do spec.cargo build ...args
 
 def build_pages()
-  with_mkdocs do dodo.show mkdocs build --strict
+  with_mkdocs do dodo.show mkdocs build --fail warning
   rustdoc_build()
   copy target/doc site/rustdoc all: true
   copy .github/rustdoc-index.html site/rustdoc/index.html
@@ -690,7 +690,7 @@ return $
   mkdocs:
     help: build the MkDocs site
     do |_|
-      with_mkdocs do dodo.show mkdocs build --strict
+      with_mkdocs do dodo.show mkdocs build --fail warning
 
   "wasm-build":
     help: build browser Wasm adapter

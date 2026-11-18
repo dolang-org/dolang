@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use dolang::{
-    compile::{Config, Mode, Severity},
+    compile::{Config, Mode, Severity, Thresholds},
     extension::CompilerExt,
     runtime::{Error, Result, Strand},
 };
@@ -14,22 +14,25 @@ pub(crate) async fn compile_config<'v, 's>(
     path: &Path,
     source: &str,
     config: &Config<'_>,
-    strict: bool,
+    thresholds: Thresholds,
 ) -> Result<'v, 's, Vec<u8>> {
     let mut out = Vec::new();
     let mut errors = 0usize;
-    let mut warnings = 0usize;
+    let mut failures = 0usize;
     let mut diagnostics = Vec::new();
 
     let unit = config.unit(path, source);
 
     for diag in unit.diagnostics() {
-        match diag.severity() {
-            Severity::Error => errors += 1,
-            Severity::Warning => warnings += 1,
-            _ => (),
+        if diag.severity() == Severity::Error {
+            errors += 1;
         }
-        diagnostics.push(diag);
+        if thresholds.fails(diag.severity()) {
+            failures += 1;
+        }
+        if thresholds.shows(diag.severity()) {
+            diagnostics.push(diag);
+        }
         if errors > MAX_ERRORS {
             break;
         }
@@ -42,11 +45,12 @@ pub(crate) async fn compile_config<'v, 's>(
     if let Err(error) = result {
         return Err(Error::compile(strand, error));
     }
-    if warnings != 0 && strict {
-        Err(Error::compile(
-            strand,
-            "warnings treated as errors due to --strict flag",
-        ))
+    if failures != 0 {
+        let message = format!(
+            "diagnostics at or above {} treated as errors due to --fail flag",
+            thresholds.fail_level()
+        );
+        Err(Error::compile(strand, message))
     } else {
         Ok(out)
     }

@@ -2,7 +2,11 @@
 
 use std::{collections::BTreeMap, fs, io::Write, path::Path, path::PathBuf};
 
-use dolang_compile::{Config, Mode, diag::Severity, typeck};
+use dolang_compile::{
+    Config, Mode,
+    diag::{Severity, Thresholds},
+    typeck,
+};
 
 mod render;
 
@@ -57,6 +61,9 @@ pub struct Typelibs<'a> {
     /// must nominate the same.
     pub pipes: [(&'a str, &'a str); 2],
 }
+
+/// Bundled modules fail to build on warnings; lints are neither shown nor fatal
+const THRESHOLDS: Thresholds = Thresholds::new(Severity::Warning, Severity::Warning);
 
 fn walk_dol_files(dir: &Path, files: &mut Vec<PathBuf>) {
     println!("cargo::rerun-if-changed={}", dir.display());
@@ -188,22 +195,16 @@ pub fn bundle(spec: &Bundle<'_>) {
         config.typecheck(typelib_out.is_some());
         (root.configure)(&mut config);
 
-        let mut had_error = false;
-        let mut had_warning = false;
+        let mut failed = false;
         let unit = config.unit(Path::new(compiler_path), source.as_str());
         for diag in unit.diagnostics() {
-            match diag.severity() {
-                Severity::Error => had_error = true,
-                Severity::Warning => had_warning = true,
-                _ => {}
+            if THRESHOLDS.shows(diag.severity()) {
+                eprintln!("{}", render::render_diag(compiler_path, &unit, &diag));
             }
-            eprintln!("{}", render::render_diag(compiler_path, &unit, &diag));
+            failed |= THRESHOLDS.fails(diag.severity());
         }
-        if had_error {
-            panic!("compilation errors in {compiler_path}");
-        }
-        if had_warning {
-            panic!("compilation warnings in {compiler_path}");
+        if failed {
+            panic!("compilation errors or warnings in {compiler_path}");
         }
         units.push(unit);
     }
@@ -226,11 +227,13 @@ pub fn bundle(spec: &Bundle<'_>) {
                 .expect("checker diagnostics name their unit");
             let index = ids.iter().position(|&id| id == unit).unwrap();
             let (compiler_path, _) = &texts[index];
-            eprintln!(
-                "{}",
-                render::render_diag(compiler_path, &units[index], diag)
-            );
-            failed |= matches!(diag.severity(), Severity::Error | Severity::Warning);
+            if THRESHOLDS.shows(diag.severity()) {
+                eprintln!(
+                    "{}",
+                    render::render_diag(compiler_path, &units[index], diag)
+                );
+            }
+            failed |= THRESHOLDS.fails(diag.severity());
         }
         if failed {
             panic!("the bundled modules don't check");

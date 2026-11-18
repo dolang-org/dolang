@@ -125,7 +125,7 @@ def implicit_entrypoint_names_forward_all_arguments()
       fs.symlink_file $exe $link
       let out = BinBuf()
       env XDG_STATE_HOME: $dir do
-        run $link --help --strict stdin: ["echo hello\n"] stdout: $out stderr: :STDOUT: mode: :CHUNK:
+        run $link --help --fail warning stdin: ["echo hello\n"] stdout: $out stderr: :STDOUT: mode: :CHUNK:
       assert_eq (Str(out.freeze())) "hello\n"
 
 #[test]

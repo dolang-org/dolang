@@ -67,6 +67,7 @@ pub(crate) struct Syms<'v> {
     token_binder: Sym<'v, 'v>,
     error: Sym<'v, 'v>,
     warning: Sym<'v, 'v>,
+    lint: Sym<'v, 'v>,
     primary: Sym<'v, 'v>,
     context: Sym<'v, 'v>,
     info: Sym<'v, 'v>,
@@ -314,6 +315,7 @@ impl<'v> Global<'v> {
                 token_binder: builder.sym("BINDER"),
                 error: builder.sym("ERROR"),
                 warning: builder.sym("WARNING"),
+                lint: builder.sym("LINT"),
                 primary: builder.sym("PRIMARY"),
                 context: builder.sym("CONTEXT"),
                 info: builder.sym("INFO"),
@@ -550,7 +552,21 @@ fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> S
     match severity {
         compile::Severity::Error => global.syms.error,
         compile::Severity::Warning => global.syms.warning,
-        _ => global.syms.warning,
+        _ => global.syms.lint,
+    }
+}
+
+/// The severity a symbol names: `:LINT:`, `:WARNING:` or `:ERROR:`
+fn parse_severity<'v>(
+    global: State<'v, Global<'v>>,
+    sym: Option<Sym<'v, 'v>>,
+) -> Option<compile::Severity> {
+    let syms = &global.syms;
+    match sym? {
+        sym if sym == syms.error => Some(compile::Severity::Error),
+        sym if sym == syms.warning => Some(compile::Severity::Warning),
+        sym if sym == syms.lint => Some(compile::Severity::Lint),
+        _ => None,
     }
 }
 
@@ -2833,6 +2849,15 @@ impl<'v> Object<'v> for Diagnostic {
                     out,
                     severity(this.annex().global, this.annex().diag.severity()),
                 );
+                Ok(())
+            })
+            .method("at_least", async move |this, strand, args, out| {
+                unpack!(strand, args => level);
+                let level =
+                    parse_severity(this.annex().global, level.as_sym(strand)).ok_or_else(|| {
+                        Error::type_error(strand, "level must be :LINT:, :WARNING:, or :ERROR:")
+                    })?;
+                strand.store(out, this.annex().diag.severity() >= level);
                 Ok(())
             })
             .get("message", |this, strand, out| {

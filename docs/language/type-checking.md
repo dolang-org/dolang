@@ -316,5 +316,5 @@ def (get) self name @ Str -> std.Unknown
 ```
 
 `# dolang: nostrict` turns strict checking off. Strictness belongs to the file,
-so strict and non-strict modules can import each other; `--strict` is unrelated
-and only makes warnings fail the check.
+so strict and non-strict modules can import each other. The `--fail` option is
+unrelated, and only chooses which diagnostics fail a run or check.

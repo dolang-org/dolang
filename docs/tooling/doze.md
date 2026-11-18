@@ -11,7 +11,10 @@ or else on the current directory.
 
 `doze check` checks the types of every module under `lib/`, of `main.dol`, and
 of the tests, together. Imports resolve to the project's modules, then to the
-bundled modules. With `--strict`, warnings fail the check too.
+bundled modules. `--diagnose LEVEL` and `--fail LEVEL` choose which
+diagnostics are shown and which fail the check, as for
+[`dolang`](../shell/index.md#running-scripts). By default, warnings are shown
+and only errors fail.
 
 ```bash
 doze check
@@ -77,21 +80,21 @@ doze check --json build/report.json
 
 The report is an object:
 
-| Key           | Value                                                                 |
-| ------------- | --------------------------------------------------------------------- |
-| `sources`     | How many sources were compiled                                        |
-| `checked`     | Whether their types were checked                                      |
-| `errors`      | The number of errors                                                  |
-| `warnings`    | The number of warnings                                                |
-| `passed`      | Whether the report passed: no errors, and no warnings with `--strict` |
-| `diagnostics` | An array of diagnostics                                               |
+| Key           | Value                                                                   |
+| ------------- | ----------------------------------------------------------------------- |
+| `sources`     | How many sources were compiled                                          |
+| `checked`     | Whether their types were checked                                        |
+| `errors`      | The number of errors                                                    |
+| `warnings`    | The number of warnings                                                  |
+| `passed`      | Whether the report passed: no diagnostic at or above the `--fail` level |
+| `diagnostics` | An array of diagnostics                                                 |
 
 Each diagnostic has:
 
 | Key           | Value                                                                                            |
 | ------------- | ------------------------------------------------------------------------------------------------ |
 | `path`        | The path of the source                                                                           |
-| `severity`    | `error` or `warning`                                                                             |
+| `severity`    | `error`, `warning`, or `lint`                                                                    |
 | `message`     | The message                                                                                      |
 | `span`        | The span the message is about                                                                    |
 | `annotations` | Other highlighted spans, each with `kind` (`primary` or `context`), `message`, `path` and `span` |

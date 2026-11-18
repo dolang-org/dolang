@@ -47,7 +47,8 @@ def help()
           --import-item <MODULE.ITEM[=NAME]>  Add a module item to the prelude
           --no-cache                          Disable the bytecode cache
           --no-history                        Disable REPL history loading and saving
-          --strict                            Treat warnings as errors
+          --diagnose <LEVEL>                  Show diagnostics at or above LEVEL [default: warning]
+          --fail <LEVEL>                      Fail on diagnostics at or above LEVEL [default: error]
       -h, --help                              Print help
   shell.exit 0
 
@@ -57,7 +58,8 @@ let main = false
 let check = false
 let module_paths = []
 let prelude = {}
-let strict = false
+let diagnose = :WARNING:
+let fail = :ERROR:
 let cache = true
 let history = true
 let trailing = []
@@ -75,6 +77,14 @@ def value option
   if (result == nil)
     argument_error "a value is required for '$option' but none was supplied"
   result
+
+# A diagnostic severity level: lint, warning, or error.
+def level option
+  match value("$option <LEVEL>")
+    "lint" => :LINT:
+    "warning" => :WARNING:
+    "error" => :ERROR:
+    other => argument_error "invalid value '$other' for '$option <LEVEL>': expected lint, warning, or error"
 
 while true
   let arg = iter.next default: nil
@@ -129,8 +139,11 @@ while true
       "--no-cache"
         cache = false
         continue
-      "--strict"
-        strict = true
+      "--diagnose"
+        diagnose = level(arg)
+        continue
+      "--fail"
+        fail = level(arg)
         continue
     if (arg.starts_with("-") && arg != "-")
       argument_error "unexpected argument '$arg' found"
@@ -141,7 +154,7 @@ if (main && target == nil)
 
 # The snapshot is supplied through an ordinary import handler, without native
 # CLI state or a special REPL invocation protocol.
-let options = Struct {:prelude, :strict, :history, :cache}
+let options = Struct {:prelude, :diagnose, :fail, :history, :cache}
 let _options_handler = load.import_handler do |name|
   if (name == "_boot_options")
     options
@@ -167,7 +180,7 @@ def find_module name
     throw std.ImportError $name
 
 let _files = load.import_handler do |name|
-  _script.run_module (find_module name) $name :strict :cache
+  _script.run_module (find_module name) $name :diagnose :fail :cache
 let _bundled = load.import_handler $bundled_import
 
 let implicit_repl = (target == nil)
@@ -192,6 +205,6 @@ shell.with_override args: $trailing program: $identity do
     let path = fs.Path $selected
     if check
       import _compile
-      _compile.check_script $path prelude: $prelude strict: $strict paths: (search_paths())
+      _compile.check_script $path prelude: $prelude :diagnose :fail paths: (search_paths())
     else
-      _script.run $path prelude: $prelude strict: $strict cache: $cache
+      _script.run $path prelude: $prelude :diagnose :fail cache: $cache
