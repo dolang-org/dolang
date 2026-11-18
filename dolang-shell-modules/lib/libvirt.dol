@@ -704,21 +704,6 @@ def require_arch arch @ (sys.Arch | nil) -> sys.Arch
     throw std.ValueError "arch: must be the host architecture $host, got $arch"
   arch
 
-# qcow2 compression algorithms, spelled as `qemu-img`'s `compression_type`
-# spells them.
-#
-# `zstd` compresses an image about nine times faster than `zlib` for the same
-# size, and decompresses fast enough that a compressed image stays practical as
-# a backing file, where every guest read pays for it. It needs QEMU 5.1+ to
-# write *and to read*, so `zlib` remains available for an image destined for an
-# older reader — the same tradeoff `io:`'s `:IO_URING:` default already makes
-# for QEMU 6.0+.
-let DISK_COMPRESSION = Set $
-  - zstd
-  - zlib
-
-let DEFAULT_COMPRESSION @ Compress = :ZSTD:
-
 # Converting with several coroutines and unordered writes is what makes
 # compression bearable: it cuts a compressed conversion to a ninth of the time
 # a serial one takes, and the destination is always a file this module is
@@ -727,15 +712,20 @@ let CONVERT_PARALLEL = ["-m", "16", "-W"]
 
 # Normalizes a `compress:` option to a `qemu-img compression_type`, or `nil`
 # for an uncompressed conversion. `true` selects the default algorithm.
+#
+# `zstd` compresses an image about nine times faster than `zlib` for the same
+# size, and decompresses fast enough that a compressed image stays practical as
+# a backing file, where every guest read pays for it. It needs QEMU 5.1+ to
+# write *and to read*, so `zlib` remains available for an image destined for an
+# older reader — the same tradeoff `io:`'s `:IO_URING:` default already makes
+# for QEMU 6.0+.
 def require_compression compress @ Compress -> (Str | nil)
-  if (compress == nil || compress == false)
-    return nil
-  if (compress == true)
-    compress = DEFAULT_COMPRESSION
-  let text = str(compress).lower()
-  if !DISK_COMPRESSION.contains(text)
+  match compress
+    nil | false => nil
+    true | :ZSTD: => "zstd"
+    :ZLIB: => "zlib"
+  else
     throw std.ValueError "compress: unsupported value: $compress"
-  text
 
 # Normalizes a disk `cache:`/`io:` option to its libvirt attribute spelling.
 #

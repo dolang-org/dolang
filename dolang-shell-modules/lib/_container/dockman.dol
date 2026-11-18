@@ -385,13 +385,6 @@ let PROGRAMS @ Dict[(:DOCKER: | :PODMAN:), Str] = $
   DOCKER: docker
   PODMAN: podman
 
-let SAVE_FORMATS @ Dict[ArchiveFormat, Str] = $
-  DOCKER_ARCHIVE: docker-archive
-  OCI_ARCHIVE: oci-archive
-  OCI_DIR: oci-dir
-  DOCKER_DIR: docker-dir
-  DIR: dir
-
 let CONTAINER_STATES @ Dict[Str, ContainerStatus] = $
   "created": :CREATED:
   # Podman's own name for the state a container is in between `create` and
@@ -423,27 +416,10 @@ let CONTAINER_MOUNT_TYPES @ Set[Sym] = Set $
   - :VOLUME:
   - :TMPFS:
 
-let BUILD_MOUNT_TYPES @ Dict[Sym, Str] = $
-  CACHE: cache
-  BIND: bind
-  VOLUME: volume
-  TMPFS: tmpfs
-
 let CONTAINER_PORT_PROTOCOLS @ Dict[Sym, Str] = $
   TCP: tcp
   UDP: udp
   SCTP: sctp
-
-let RESTART_POLICIES @ Dict[Sym, Str] = $
-  NO: no
-  ON_FAILURE: on-failure
-  ALWAYS: always
-  UNLESS_STOPPED: unless-stopped
-
-let PULL_POLICIES @ Dict[Sym, Str] = $
-  MISSING: missing
-  ALWAYS: always
-  NEVER: never
 
 let INVALID_IMAGE_REFERENCE_ERRORS @ Array[Str] = $
   - INVALID REFERENCE FORMAT
@@ -590,18 +566,20 @@ def qualify_ref ref @ Str -> Str
 # failures (`NoImageError`, `RegistryAuthError`, etc.) via known error
 # patterns.
 def ensure_image runtime@Runtime img@Str policy@PullPolicy
-  let cli = PULL_POLICIES.get $policy else: do
-    throw ValueError "unsupported pull policy: $policy"
-  if (cli == "always")
-    let _ = runtime.pull $img
-  else if (cli == "missing")
-    let present = try
-      inspect_image $runtime $img
-      true
-    catch NoImageError: _
-      false
-    if !present
+  match policy
+    :ALWAYS:
       let _ = runtime.pull $img
+    :MISSING:
+      let present = try
+        inspect_image $runtime $img
+        true
+      catch NoImageError: _
+        false
+      if !present
+        let _ = runtime.pull $img
+    :NEVER: => nil
+  else
+    throw ValueError "unsupported pull policy: $policy"
 
 def normalize_known[K] mapping@Dict[Str, K] value@Str -> (K | Str)
   mapping.get $value default: $value
@@ -707,12 +685,16 @@ def container_restart_args restart @ (RestartSpec | nil) -> Array[Str]
   bind restart
     :policy
     :max_retries = nil
-  let cli = RESTART_POLICIES.get $policy else: do
-    throw ValueError "unsupported restart policy: $policy"
-  if (max_retries != nil)
-    if (cli != "on-failure")
+  let cli = match policy
+    :ON_FAILURE:
+      (max_retries == nil && "on-failure" || "on-failure:$max_retries")
+    _ if (max_retries != nil)
       throw ValueError "restart max_retries requires on-failure policy"
-    cli = "$cli:$max_retries"
+    :NO: => "no"
+    :ALWAYS: => "always"
+    :UNLESS_STOPPED: => "unless-stopped"
+  else
+    throw ValueError "unsupported restart policy: $policy"
   ["--restart", cli]
 
 def container_create_args
@@ -1266,12 +1248,21 @@ pub class Runtime
   do -> (Str | Path)
     if (images.len == 0)
       throw "save: expected at least one image"
-    let cli = SAVE_FORMATS.get $format else: do
+    let cli = match format
+      :DOCKER_ARCHIVE: => "docker-archive"
+      :OCI_ARCHIVE: => "oci-archive"
+      :OCI_DIR: => "oci-dir"
+      :DOCKER_DIR: => "docker-dir"
+      :DIR: => "dir"
+    else
       throw "unsupported save format: $format"
-    if (self.id == :DOCKER: && cli != "docker-archive")
+    if (self.id == :DOCKER: && format != :DOCKER_ARCHIVE:)
       throw "docker only supports docker_archive for save"
-    let file = (cli == "docker-archive" || cli == "oci-archive")
-    let multi = (cli == "docker-archive")
+    let file = match format
+      :DOCKER_ARCHIVE: | :OCI_ARCHIVE: => true
+    else
+      false
+    let multi = (format == :DOCKER_ARCHIVE:)
     if (!multi && images.len > 1)
       throw "save format does not support multiple images: $format"
     let platform = normalize_platform $platform
@@ -1384,43 +1375,43 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
       :size = nil
       :chown = false
       :selinux = nil
-    let kind = BUILD_MOUNT_TYPES.get $type else: do
-      throw ValueError "unsupported mount type: $type"
-    if (kind == "cache")
+    if (type == :CACHE:)
       # Emulate cache mount with bind mount for Docker
       source = cache_dir $(id || str(target))
-      kind = "bind"
     let label = match selinux
       :SHARED: => "z"
       :PRIVATE: => "Z"
-    if (kind == "bind")
-      let parts = $
-        if readonly
-          - ro
-        else
-          - rw
-        if chown
-          - U
-        if (label != nil)
-          - $label
-      args.push -v $source:$target:$(",".join parts)
+    match type
+      :CACHE: | :BIND:
+        let parts = $
+          if readonly
+            - ro
+          else
+            - rw
+          if chown
+            - U
+          if (label != nil)
+            - $label
+        args.push -v $source:$target:$(",".join parts)
+      :VOLUME: | :TMPFS:
+        let parts = $
+          - type=$(str(type).lower())
+          - target=$target
+          if (source != nil)
+            - source=$source
+          if readonly
+            - "readonly"
+          else
+            - rw
+          if (size != nil)
+            - size=$size
+          if chown
+            - chown=$chown
+          if (label != nil)
+            - $label
+        args.push --mount=$(",".join parts)
     else
-      let parts = $
-        - type=$kind
-        - target=$target
-        if (source != nil)
-          - source=$source
-        if readonly
-          - "readonly"
-        else
-          - rw
-        if (size != nil)
-          - size=$size
-        if chown
-          - chown=$chown
-        if (label != nil)
-          - $label
-      args.push --mount=$(",".join parts)
+      throw ValueError "unsupported mount type: $type"
   args
 
 def container_mount_args mounts @ Iterable[ContainerMount] -> Array[Str]
@@ -1488,13 +1479,10 @@ def patch_name p @ patch.Patch -> Str
   match kind
     :CREATE: => "create $(p.target)"
     :DELETE: => "delete $(p.source)"
+    :MODIFY: => "modify $(p.source)"
+    _ if (p.source == p.target) => "modify $(p.source)"
   else
-    let source = p.source
-    let target = p.target
-    if (kind == :MODIFY: || source == target)
-      "modify $source"
-    else
-      "$(str(kind).lower()): $source => $target"
+    "$(str(kind).lower()): $(p.source) => $(p.target)"
 
 pub class Builder
   field runtime @ Runtime
@@ -1697,15 +1685,15 @@ pub class Builder
 
   def apply_patch self p @ patch.Patch
     let kind = p.type
-    if (kind == :CREATE:)
-      self.#add_content $p.apply(b"") $p.target nil
-    else if (kind == :DELETE:)
-      let source = p.source
-      self.#live_agent().with do
-        let result = p.apply (source.read())
-        if (result.len != 0)
-          throw "delete patch did not produce empty output: $source"
-        source.remove()
+    match kind
+      :CREATE: => self.#add_content $p.apply(b"") $p.target nil
+      :DELETE:
+        let source = p.source
+        self.#live_agent().with do
+          let result = p.apply (source.read())
+          if (result.len != 0)
+            throw "delete patch did not produce empty output: $source"
+          source.remove()
     else
       self.#live_agent().with do
         let result = p.apply (p.source.read())

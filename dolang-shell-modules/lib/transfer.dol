@@ -85,13 +85,10 @@ class Partial: Struct[...Metadata, state: "partial", total: (Int | nil)]
 class Complete: Struct[...CompleteFields]
 
 def parse_location value @ (Str | Url | Path) -> (Url | Path)
-  if (type value Str)
-    if (value.starts_with "http://" || value.starts_with "https://")
-      Url $value
-    else
-      Path $value
-  else if (type value Url || type value Path)
-    value
+  match value
+    Url(_) | Path(_) => value
+    Str(s) if (s.starts_with "http://" || s.starts_with "https://") => Url $s
+    Str(s) => Path $s
   else
     throw std.TypeError "expected `Str`, `Url`, or `Path`"
 
