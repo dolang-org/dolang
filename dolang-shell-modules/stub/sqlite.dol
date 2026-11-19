@@ -539,7 +539,7 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
 # for column value = rest
 #   echo "$column = $(str value)"
 # ```
-pub class Row: @Index[Int | Str, Value] @Spread[{...}] @Unpack[{...}, Rest: BaseSeq[{...}]]
+pub class Row: @Index[Int | Str, Value] @Spread[{...}] @Unpack[{...}, Rest: MixedRest[{...}], Pos: SeqRest[{...}]]
   # Reads a column by position or by name.
   #
   # ## Errors
@@ -561,7 +561,7 @@ pub class Row: @Index[Int | Str, Value] @Spread[{...}] @Unpack[{...}, Rest: Base
     ...
 
   # Destructures the row by position or by column name.
-  pub def (unpack) self -> Unpack[{...}, Rest: BaseSeq[{...}]]
+  pub def (unpack) self -> Unpack[{...}, Rest: MixedRest[{...}], Pos: SeqRest[{...}]]
     ...
 
   # Spreads the columns, by name where keys are allowed and by position otherwise.

@@ -579,29 +579,78 @@ pub @class Unpack[S @ {...}, :Rest @ UnpackRest[S] = UnpackRest[S], :Pos @ Unpac
   pub def (unpack) self -> Unpack[S, :Rest, :Pos]
 
 
-# Iterates as the values in `S`, and spreads and destructures as `S`, leaving
-# rests of the same kind. The core of a [`Seq`](std.Seq), and what a pattern's
-# rest of an array, or the `*name` rest of a dictionary, supports.
+# The rest of a pattern that iterates as values: what an array's rest, or a
+# `*name` rest, captures. It iterates as the values in `S`, and spreads and
+# destructures as `S`, leaving rests of the same kind.
 #
 # Iterating, spreading or unpacking it does not consume it, though changes to
 # its source may show through or raise.
-pub @class BaseSeq[S @ {...}]: Iterable[Values[S]] Spread[S] Unpack[S, Rest: BaseSeq[S]]
+pub @class SeqRest[S @ {...}]: Iterable[Values[S]] Spread[S] Unpack[S, Rest: SeqRest[S]]
 
 
-# Iterates as the entries in `S`, and spreads and destructures as `S`, leaving
-# rests of the same kind and `*name` rests that are a [`BaseSeq`](std.BaseSeq).
-# The core of a [`Map`](std.Map), and what a pattern's rest of a dictionary
-# supports.
+# The rest of a pattern that iterates as entries: what the rest of a
+# dictionary, record or other keyed value captures. It iterates as the entries
+# in `S`, and spreads and destructures as `S`, leaving rests of the same kind
+# and `*name` rests that are a [`SeqRest`](std.SeqRest).
 #
 # Iterating, spreading or unpacking it does not consume it, though changes to
 # its source may show through or raise.
-pub @class BaseMap[S @ {...}]:
-  Iterable[Entries[S]] Spread[S] Unpack[S, Rest: BaseMap[S], Pos: BaseSeq[S]]
+pub @class MixedRest[S @ {...}]:
+  Iterable[Entries[S]] Spread[S] Unpack[S, Rest: MixedRest[S], Pos: SeqRest[S]]
 do
 
 
-# Reads dictionary-like entries, including multiple values for a key.
-pub @class Map[S @ {...}]: BaseMap[S] Index[S]
+# Reads a value with positional and keyed items, such as a record. It iterates
+# as its entries, and indexes, spreads, and destructures as `S`. A
+# [`Map`](std.Map) is a `Mixed` whose items are all keyed.
+pub @class Mixed[S @ {...}]:
+  Iterable[Entries[S]] Spread[S] Unpack[S, Rest: MixedRest[S], Pos: SeqRest[S]] Index[S]
+do
+
+
+# A [`Mixed`](std.Mixed) supporting assignment, which replaces every value of a
+# key. It need not support adding or removing items.
+pub @class AssignMixed[S @ {...}]: Mixed[S] Assign[S]
+
+
+# A [`Mixed`](std.Mixed) supporting assignment and removal.
+pub @class MutMixed[S @ {...}]: AssignMixed[S]
+  @def delete[K] self @ MutMixed[Deletable[S, K]] key @ K -> Bool
+
+  # Removes every value of a key, reporting whether any were present.
+  pub def delete self key @ Value -> Bool
+
+  @def pop[K, D = Never]
+    self @ MutMixed[Deletable[S, K]]
+    key @ K
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[S, K] | D)
+
+  # Removes one instance, defaulting to the first. Negative instances count backward.
+  #
+  # ## Errors
+  #
+  # [`IndexError`](std.IndexError) if the instance is missing and no fallback is supplied.
+  pub def pop[K, D = Never]
+    self
+    key @ K
+    instance @ Int = ...
+    :default @ D = ...
+    :else @ (() -> D) = ...
+  do -> (IndexItem[S, K] | D)
+
+  @def clear self @ MutMixed[Clearable[S]]
+
+  # Removes every pair.
+  pub def clear self
+
+
+# Reads dictionary-like entries, including multiple values for a key. Its items
+# are all keyed; a value that also has positional items is only a
+# [`Mixed`](std.Mixed).
+pub @class Map[S @ {*(Value): Value}]: Mixed[S]
   # The number of pairs, counting repeated keys separately.
   #[getter]
   pub def len self -> Int
@@ -634,60 +683,30 @@ pub @class Map[S @ {...}]: BaseMap[S] Index[S]
   pub def pairs self -> Iter[Entries[S]]
 
   # Destructures by key, leaving a rest that can also be destructured.
-  pub def (unpack) self -> BaseMap[S]
+  pub def (unpack) self -> MixedRest[S]
 
 
 # A [`fields`](std.fields) proxy, which reads the members in `S` and sets those
 # in `M`. A captured rest spreads and destructures the members left over.
 pub @class FieldProxy[S @ {...}, M @ {...}]:
-  Index[S] Assign[M] BaseMap[S]
+  Index[S] Assign[M] MixedRest[S]
 do
   # Returns a value that destructures the proxy by key.
-  pub def (unpack) self -> BaseMap[S]
+  pub def (unpack) self -> MixedRest[S]
 
 
 # A [`Map`](std.Map) supporting assignment, which replaces every value of a key.
 # It need not support adding or removing keys.
-pub @class AssignMap[S @ {...}]: Map[S] Assign[S]
+pub @class AssignMap[S @ {*(Value): Value}]: Map[S] AssignMixed[S]
 
 
 # A [`Map`](std.Map) supporting assignment and removal.
-pub @class MutMap[S @ {...}]: AssignMap[S]
-  @def delete[K] self @ MutMap[Deletable[S, K]] key @ K -> Bool
-
-  # Removes every value of a key, reporting whether any were present.
-  pub def delete self key @ Value -> Bool
-
-  @def pop[K, D = Never]
-    self @ MutMap[Deletable[S, K]]
-    key @ K
-    instance @ Int = ...
-    :default @ D = ...
-    :else @ (() -> D) = ...
-  do -> (IndexItem[S, K] | D)
-
-  # Removes one instance, defaulting to the first. Negative instances count backward.
-  #
-  # ## Errors
-  #
-  # [`IndexError`](std.IndexError) if the instance is missing and no fallback is supplied.
-  pub def pop[K, D = Never]
-    self
-    key @ K
-    instance @ Int = ...
-    :default @ D = ...
-    :else @ (() -> D) = ...
-  do -> (IndexItem[S, K] | D)
-
-  @def clear self @ MutMap[Clearable[S]]
-
-  # Removes every pair.
-  pub def clear self
+pub @class MutMap[S @ {*(Value): Value}]: AssignMap[S] MutMixed[S]
 
 
 # An iterable sequence of `T`, which integers index, slices, spreads, and
 # destructures.
-pub @class Seq[T]: BaseSeq[T] Index[T]
+pub @class Seq[T]: Iterable[T] Spread[T] Unpack[T, Rest: SeqRest[T]] Index[T]
   # The number of items.
   #[getter]
   pub def len self -> Int
@@ -1231,7 +1250,7 @@ pub class BaseArray[T]: Iterable[T] @Seq[T]
   # assert_eq $a 1
   # assert_eq $b 2
   # ```
-  pub def (unpack) self -> BaseSeq[T]
+  pub def (unpack) self -> SeqRest[T]
     ...
 
   # Spreads the items positionally.
@@ -2316,7 +2335,7 @@ do
   # ```
   # let :name age: years = {name: "Alice", age: 30}
   # ```
-  pub def (unpack) self -> BaseMap[S]
+  pub def (unpack) self -> MixedRest[S]
     ...
 
 
@@ -2464,8 +2483,7 @@ pub class Dict[S @ {*(Value): Value}]: BaseDict[S] @MutMap[S] @Assign[S]
 #
 # `BaseRecord` is `Record` at runtime, so only a record is a `BaseRecord`.
 pub class BaseRecord[...Ts @ {*Value, **Value}]:
-  @Map[Ts] @Index[Ts] @Spread[Ts]
-  Iterable[Entries[Ts]]
+  @Mixed[Ts] Iterable[Entries[Ts]]
 do
   # Returns the number of items, counting each value of a repeated key.
   #[getter]
@@ -2541,7 +2559,7 @@ do
 
   # Destructures the record: positional patterns take its positional items,
   # and key patterns its keys.
-  pub def (unpack) self -> BaseMap[Ts]
+  pub def (unpack) self -> MixedRest[Ts]
     ...
 
 
@@ -2583,7 +2601,7 @@ do
 # for each keyed item, in the order they were added. Spreading and unpacking
 # give positional items positionally and keyed items as keys. Equality and
 # hashing follow the same order.
-pub class Record[...Ts @ {*Value, **Value}]: BaseRecord[...Ts] @MutMap[Ts] @Assign[Ts]
+pub class Record[...Ts @ {*Value, **Value}]: BaseRecord[...Ts] @MutMixed[Ts] @Assign[Ts]
   # Builds a record by spreading one source, whose keys must be symbols.
   pub def (init) self source @ Spread[Ts]
     ...
@@ -3334,7 +3352,7 @@ pub @let FmtSegment[V] = (Str | FmtValue[V] | FmtParam)
 # assert_eq $segment.value $user
 # assert_eq $segment.width 8
 # ```
-pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: BaseSeq[FmtSegment[V]]]
+pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[FmtSegment[V]] @Unpack[FmtSegment[V], Rest: SeqRest[FmtSegment[V]]]
   field schema @ Phantom[((...S) -> nil)]
 
   # Builds a sequence from an iterable of segments.
@@ -3455,7 +3473,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
     ...
 
   # Destructures the segments positionally.
-  pub def (unpack) self -> Unpack[FmtSegment[V], Rest: BaseSeq[FmtSegment[V]]]
+  pub def (unpack) self -> Unpack[FmtSegment[V], Rest: SeqRest[FmtSegment[V]]]
     ...
 
 # A module object, produced by `import` or by loading a compiled module. Its
@@ -3946,7 +3964,7 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
 # let updated = old.with status: ready
 # ```
 pub class Pack[...Ts]:
-  Iterable[Entries[Ts]] @Index[Ts] @BaseMap[Ts]
+  Iterable[Entries[Ts]] @Mixed[Ts]
 do
   # Builds a `Pack` from one spreadable source of key-value pairs.
   #
@@ -4029,7 +4047,7 @@ do
     ...
 
   # Unpacks the items by position and symbol.
-  pub def (unpack) self -> BaseMap[Ts]
+  pub def (unpack) self -> MixedRest[Ts]
     ...
 
   # Returns the value at a position or key. Negative positions count from the
@@ -4987,7 +5005,7 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
 pub class BaseStruct[...Ts @ {*Value, **Value}]:
   @BaseIterable[Entries[Ts]] @Index[Ts] @Spread[Ts]
-  - @Unpack[Ts, Rest: BaseMap[Ts], Pos: BaseSeq[Ts]]
+  - @Unpack[Ts, Rest: MixedRest[Ts], Pos: SeqRest[Ts]]
 do
   # Gets the value for a symbol or position, with an optional default.
   #
@@ -5044,7 +5062,7 @@ do
     ...
 
   # Unpacks items by position and symbol, as a [`Pack`](std.Pack) does.
-  pub def (unpack) self -> Unpack[Ts, Rest: BaseMap[Ts], Pos: BaseSeq[Ts]]
+  pub def (unpack) self -> Unpack[Ts, Rest: MixedRest[Ts], Pos: SeqRest[Ts]]
     ...
 
 
@@ -5165,7 +5183,7 @@ pub class TimedOutError: RuntimeError
 # explicit import.
 pub class Tuple[*Ts]:
   - @Spread[Ts]
-  - @Unpack[Ts, Rest: BaseSeq[Ts]]
+  - @Unpack[Ts, Rest: SeqRest[Ts]]
   - Iterable[Union[...Ts]]
   - @Index[Ts]
   - @Seq[Union[...Ts]]
@@ -5270,7 +5288,7 @@ do
   # for k v = {name: "Alice", age: 30}
   #   echo "$k = $v"
   # ```
-  pub def (unpack) self -> Unpack[Ts, Rest: BaseSeq[Ts]]
+  pub def (unpack) self -> Unpack[Ts, Rest: SeqRest[Ts]]
     ...
 
   # Spreads the items.

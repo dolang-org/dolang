@@ -11,7 +11,7 @@ pub def tuple_rest()
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
+  #       ^: flow std.SeqRest[{std.Str, std.Bool}]
   let xs = [...r]
   let _ = xs
   #       ^~: flow std.Array[std.Bool | std.Str]
@@ -21,7 +21,7 @@ pub def array_rest xs @ Array[Int]
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.BaseSeq[std.Int]
+  #       ^: flow std.SeqRest[std.Int]
 
 pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
   let a b = source
@@ -41,14 +41,14 @@ pub def keyed()
   let _ = a
   #       ^: flow std.Int
   let _ = r
-  #       ^: flow std.BaseMap[{b: std.Str}]
+  #       ^: flow std.MixedRest[{b: std.Str}]
   let :b *p **k = (1, b: "x", c: true)
   let _ = b
   #       ^: flow std.Str
   let _ = p
-  #       ^: flow std.BaseSeq[{std.Int}]
+  #       ^: flow std.SeqRest[{std.Int}]
   let _ = k
-  #       ^: flow std.BaseMap[{c: std.Bool}]
+  #       ^: flow std.MixedRest[{c: std.Bool}]
 
 pub def const_keys d @ Dict[Str, Int]
   let "name": name = d
@@ -73,7 +73,7 @@ pub def unions c @ Bool
   let _ = x
   #       ^: flow std.Bool | std.Int
   let _ = r
-  #       ^: flow std.BaseSeq[{std.Str}] | std.BaseSeq[{}]
+  #       ^: flow std.SeqRest[{std.Str}] | std.SeqRest[{}]
 
 # An iterator's rest is an iterator of the same kind, and so is that rest's
 pub def iterators s @ Str
@@ -87,7 +87,7 @@ pub def iterators s @ Str
 pub def dict_rest d @ Dict[Str, Int]
   let "a": _a ...r = d
   let _ = r
-  #       ^: flow std.BaseMap[std.Str, std.Int]
+  #       ^: flow std.MixedRest[std.Str, std.Int]
 
 # Rests iterate: a keyed rest as its entries, an array rest as its elements.
 pub def iterated_rests d @ Dict[Str, Int] a @ Array[Int]
@@ -104,7 +104,7 @@ pub def iterated_rests d @ Dict[Str, Int] a @ Array[Int]
 pub def positional_rests d @ Record[Int, ...Str, a: Bool] ...cmd @ Str
   let _x *p ** = d
   let _ = p
-  #       ^: flow std.BaseSeq[std.Str]
+  #       ^: flow std.SeqRest[std.Str]
   for v = p
     let _ = v
     #       ^: flow std.Str
@@ -114,10 +114,10 @@ pub def positional_rests d @ Record[Int, ...Str, a: Bool] ...cmd @ Str
     #       ^~~: flow std.Str
   let _ *t = (1, "a", true)
   let _ = t
-  #       ^: flow std.BaseSeq[{std.Str, std.Bool}]
+  #       ^: flow std.SeqRest[{std.Str, std.Bool}]
 
-# Generic code can iterate a `Seq`'s or `Map`'s rests
-pub def protocol_rests s @ Seq[Int] m @ Map[{Int, a: Str}]
+# Generic code can iterate a `Seq`'s or `Mixed`'s rests
+pub def protocol_rests s @ Seq[Int] m @ Mixed[{Int, a: Str}]
   let _ ...sr = s
   for x = sr
     let _ = x
@@ -131,7 +131,7 @@ pub def protocol_rests s @ Seq[Int] m @ Map[{Int, a: Str}]
     #       ^: flow (:a:, std.Str)
   let _ ...mr = m
   let _ = mr
-  #       ^~: flow std.BaseMap[{a: std.Str}]
+  #       ^~: flow std.MixedRest[{a: std.Str}]
 
 pub def dynamic v
   let a ...r = v

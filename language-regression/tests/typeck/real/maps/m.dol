@@ -1,6 +1,6 @@
 # dolang: strict
 
-pub def read[S @ {...}] mapping @ Map[S] -> Int
+pub def read[S @ {*(Value): Value}] mapping @ Map[S] -> Int
   mapping.len
 
 pub def covariance mapping @ Dict[Str, Int] -> Int
@@ -71,11 +71,42 @@ pub def wrong_value mapping @ MutMap[Str, Int]
 # LL |   mapping["x"] = "wrong"
 #    |                  ^^^^^^^
 
-pub def positional mapping @ Map[{Int, Str}]
+pub def positional mapping @ Mixed[{Int, Str}]
   let _first @ Int = mapping[0]
   let _second @ Str = mapping[1]
   let first second = mapping
   let _check @ (Int, Str) = (first, second)
+
+pub def positional_map mapping @ Map[{Int, Str}] -> Int
+  # error: this does not satisfy `S @ {*(Value): Value}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def positional_map mapping @ Map[{Int, Str}] -> Int
+  #    |                                      ^^^^^^^^^^
+  mapping.len
+
+pub def record_mixed r @ Record[Int, name: Str]
+  let _mixed @ MutMixed[{Int, name: Str}] = r
+  let _map @ Map[{Int, name: Str}] = r
+# error: this does not satisfy `S @ {*(Value): Value}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _map @ Map[{Int, name: Str}] = r
+#    |                  ^^^^^^^^^^^^^^^^
+
+pub def mixed_required mapping @ MutMixed[{Int, name: Str}]
+  mapping.delete :name:
+  # error: this call removes the required item at `:name:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   mapping.delete :name:
+  #    |   ^^^^^^^^^^^^^^^^^^^^^
+  mapping.clear()
+# error: this call removes the required item at `0`
+#   --> m.dol:LL:LL
+#    |
+# LL |   mapping.clear()
+#    |   ^^^^^^^^^^^^^^^
 
 pub def optional mapping @ MutMap[{?name: Str}]
   let _deleted @ Bool = mapping.delete :name:

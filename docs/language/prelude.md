@@ -63,15 +63,17 @@ runtime values, including [`BaseArray`](std.BaseArray),
 runtime classes. Use a qualified name or
 an explicit runtime import to use those classes as values.
 
-| Names                                                                                                                          | Purpose                                            |
-| ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
-| [`Never`](std.Never), [`Union`](std.Union)                                                                                     | Empty type and unions, including expanded schemas  |
-| [`Seq`](std.Seq), [`AssignSeq`](std.AssignSeq), [`MutSeq`](std.MutSeq)                                                         | Sequences and their mutation capabilities          |
-| [`Map`](std.Map), [`AssignMap`](std.AssignMap), [`MutMap`](std.MutMap)                                                         | Dictionary-like reads, assignment, and removal     |
-| [`Index`](std.Index), [`Assign`](std.Assign), [`Spread`](std.Spread), [`Unpack`](std.Unpack)                                   | Indexing, assignment, spreading, and destructuring |
-| [`BaseIterable`](std.BaseIterable), [`BaseIter`](std.BaseIter), [`BaseSinkable`](std.BaseSinkable), [`BaseSink`](std.BaseSink) | Minimal iteration and sink protocols               |
-| [`UnpackIter`](std.UnpackIter), [`UnpackIterable`](std.UnpackIterable)                                                         | Iteration with read-only unpacking                 |
-| [`BaseArray`](std.BaseArray), [`BaseDict`](std.BaseDict), [`BaseRecord`](std.BaseRecord)                                       | Native container read-only interfaces              |
+| Names                                                                                                                          | Purpose                                             |
+| ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------- |
+| [`Never`](std.Never), [`Union`](std.Union)                                                                                     | Empty type and unions, including expanded schemas   |
+| [`Seq`](std.Seq), [`AssignSeq`](std.AssignSeq), [`MutSeq`](std.MutSeq)                                                         | Sequences and their mutation capabilities           |
+| [`Map`](std.Map), [`AssignMap`](std.AssignMap), [`MutMap`](std.MutMap)                                                         | Keyed reads, assignment, and removal                |
+| [`Mixed`](std.Mixed), [`AssignMixed`](std.AssignMixed), [`MutMixed`](std.MutMixed)                                             | Positional and keyed reads, assignment, and removal |
+| [`Index`](std.Index), [`Assign`](std.Assign), [`Spread`](std.Spread), [`Unpack`](std.Unpack)                                   | Indexing, assignment, spreading, and destructuring  |
+| [`BaseIterable`](std.BaseIterable), [`BaseIter`](std.BaseIter), [`BaseSinkable`](std.BaseSinkable), [`BaseSink`](std.BaseSink) | Minimal iteration and sink protocols                |
+| [`UnpackIter`](std.UnpackIter), [`UnpackIterable`](std.UnpackIterable)                                                         | Iteration with read-only unpacking                  |
+| [`SeqRest`](std.SeqRest), [`MixedRest`](std.MixedRest)                                                                         | Pattern rests of values and of entries              |
+| [`BaseArray`](std.BaseArray), [`BaseDict`](std.BaseDict), [`BaseRecord`](std.BaseRecord)                                       | Native container read-only interfaces               |
 
 ## `strand`
 
