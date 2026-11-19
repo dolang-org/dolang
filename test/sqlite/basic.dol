@@ -407,7 +407,9 @@ def constraint_violations()
   sqlite.open "test.db" do |conn|
     conn.execute t"PRAGMA foreign_keys = ON"
     conn.execute t"CREATE TABLE parent (id INTEGER PRIMARY KEY)"
-    conn.execute t"CREATE TABLE child (name TEXT UNIQUE NOT NULL, parent INTEGER REFERENCES parent (id))"
+    conn.execute t>-
+      CREATE TABLE child (name TEXT UNIQUE NOT NULL,
+      parent INTEGER REFERENCES parent (id))
     conn.execute t"INSERT INTO child (name) VALUES ('a')"
 
     def check kind code block
@@ -442,7 +444,9 @@ def missing_directory_raises_not_found()
     sqlite.open "missing/test.db" do |_| nil
 
 # A query that never finishes on its own.
-let endless = t"WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c"
+let endless = t>-
+  WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c)
+  SELECT count(*) FROM c
 
 #[test]
 #[vfs windows: false remote: false]

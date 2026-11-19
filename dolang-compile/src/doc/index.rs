@@ -1616,6 +1616,7 @@ impl Index<'_> {
                 }
             }
             Expr::Escape(..)
+            | Expr::Fold(..)
             | Expr::EscapeByte(..)
             | Expr::Stub(_)
             | Expr::Literal(_)

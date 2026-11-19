@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn here_strings_are_not_directives() {
-        for marker in ["|", "r|"] {
+        for marker in ["|", "r|", ">", "r>"] {
             let source = format!("let doc = {marker}\n  # dolang: strict, sloppy\ndoc\n");
             let (strict, diags) = scan_str(&source);
             assert!(!strict, "{marker}");

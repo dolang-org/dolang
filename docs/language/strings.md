@@ -257,6 +257,50 @@ let pattern = r|-
 
 All the same indentation rules apply as for regular here strings.
 
+### Folded Here Strings
+
+`>` and `>-` introduce a here string whose line breaks fold, as in YAML's folded
+style. They suit a long single-line string that reads better wrapped, such as a
+command line or a description. Indentation, termination, interpolation, escapes
+and chomping work as for `|` and `|-`.
+
+```
+let cmd = >-
+  rsync --archive --delete
+  --exclude .git
+  $src/ $host:$dest/
+# cmd == "rsync --archive --delete --exclude .git $src/ $host:$dest/"
+```
+
+Folding follows these rules:
+
+- A line break between two lines becomes a space.
+- A blank line becomes a newline, and the line break before it is dropped. Each
+  further blank line adds another newline.
+- Line breaks before, after and between lines indented beyond the baseline are
+  kept, along with the extra indentation. Folded text can carry an indented
+  block or list this way.
+- Blank lines before the first line are kept, as with `|`.
+- Only line breaks in the source fold. A newline from a `\n` escape or from an
+  interpolated value is kept.
+
+```
+let text = >
+  First paragraph, wrapped
+  over two lines.
+
+  Second paragraph:
+    - an indented line
+  Last line.
+# text == "First paragraph, wrapped over two lines.\nSecond paragraph:\n  - an indented line\nLast line.\n"
+```
+
+`r>` and `r>-` fold a raw here string, and `t>` and `t>-` a
+[formatted sequence](#formatted-sequences).
+
+Like `|`, the introducer counts only at the end of a line followed by an
+indented block. Elsewhere `>` is ordinary text.
+
 ## Binary Strings
 
 Binary strings hold arbitrary bytes and are written with a `b"..."` prefix:
@@ -353,7 +397,7 @@ here strings uses `str` conversion instead.
 ## Formatted Sequences
 
 Prefixing a quoted string or here string introducer with `t` — `t"..."`,
-`t|`, `t|-` — produces a [`Fmt`](std.Fmt) instead of a `Str`. The
+`t|`, `t|-`, `t>`, `t>-` — produces a [`Fmt`](std.Fmt) instead of a `Str`. The
 interpolation syntax is exactly the same; what differs is that the segments
 are kept apart rather than concatenated, so a consumer sees each interpolated
 value instead of only the text it produced.
@@ -383,8 +427,8 @@ flattening it, and expansion has to be asked for with
 [Trust](std.Fmt.trust) — the distinction between literal text and
 interpolated values is what a consumer such as a query builder acts on.
 
-The multi-line forms `t|` and `t|-` interpolate as an ordinary here string
-does:
+The multi-line forms `t|`, `t|-`, `t>` and `t>-` interpolate as an ordinary here
+string does:
 
 ```
 let name = "Alice"

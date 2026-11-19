@@ -464,7 +464,8 @@ args.with
     default: nil
     help: The project directory; by default, the current directory
   - cmd: check
-    help: Check the types of the project's modules under `lib/`, its `main.dol`, and its tests under `test/`.
+    help: Check the types of the project's modules under `lib/`, its `main.dol`,
+      and its tests under `test/`.
     - opt: diagnose
       parse: $parse_level
       default: :WARNING:
@@ -482,7 +483,8 @@ args.with
       let :diagnose :fail :json ... = p.check
       with_project $p.project $json $diagnose $fail do |it| it.check(:fail)
   - cmd: test
-    help: Run the project's tests under `test/` with `dolang -m test`, with `lib/` on the module path.
+    help: Run the project's tests under `test/` with `dolang -m test`, with
+      `lib/` on the module path.
     divider: true
     - arg: harness
       collect: true
@@ -491,7 +493,8 @@ args.with
       let :harness ... = p.test
       with_project $p.project nil :WARNING: :ERROR: do |it| it.test $harness
   - cmd: bundle
-    help: Check the project, then pack `main.dol` and every module under `lib/` into a bundle.
+    help: Check the project, then pack `main.dol` and every module under `lib/`
+      into a bundle.
     - opt: diagnose
       parse: $parse_level
       default: :WARNING:
@@ -510,10 +513,12 @@ args.with
     - opt: output
       short: o
       default: nil
-      help: File to write the bundle to; by default, `build/<name>.dolz` in the project, named after the project
+      help: File to write the bundle to; by default, `build/<name>.dolz` in the
+        project, named after the project
     - opt: shebang
       default: nil
-      help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
+      help: Interpreter command for a `#!` line, such as `/usr/bin/env dolang`;
+        the bundle is then made executable where the platform allows
     do |p|
       let :diagnose :fail :no_check :output :shebang :json ... = p.bundle
       if (shebang != nil && shebang.contains("\n"))

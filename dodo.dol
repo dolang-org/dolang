@@ -546,15 +546,18 @@ return $
       lsp_test (Spec args) $args.args
 
   typecheck:
-    help: type check sources, searching the repository's modules and stubs for their imports
+    help: type check sources, searching the repository's modules and stubs for
+      their imports
     - arg: args
-      help: "arguments to `dolang -m compile check`: sources, and more `--path` directories"
+      help: arguments to `dolang -m compile check`: sources, and more `--path`
+        directories
       collect: true
     do |args|
       typecheck (Spec args) $args.args
 
   "typecheck-test":
-    help: type check the provisioning script and shell entrypoints, which the build doesn't, with zero diagnostics
+    help: type check the provisioning script and shell entrypoints, which the
+      build doesn't, with zero diagnostics
     - opt: profile
       default: debug
       help: Cargo profile containing the compiler
@@ -723,14 +726,16 @@ return $
       run_cargo clippy -p dolang-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
 
   "syntax-test":
-    help: test TextMate/Vim highlighting and VS Code editing rules (requires npm dependencies and Vim or Neovim)
+    help: test TextMate/Vim highlighting and VS Code editing rules (requires npm
+      dependencies and Vim or Neovim)
     do |_|
       dodo.show npm --prefix dolang-code run test:syntax
       dodo.show npm --prefix dolang-code run test:language-config
       vim_test()
 
   "vscode-test":
-    help: run the VS Code extension's tests, including integration tests against debug builds of the tools, and package it (requires npm dependencies)
+    help: run the VS Code extension's tests, including integration tests against
+      debug builds of the tools, and package it (requires npm dependencies)
     do |args| vscode_test (Spec args)
 
   "vim-test":

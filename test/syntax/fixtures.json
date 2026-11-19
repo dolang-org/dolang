@@ -521,6 +521,73 @@
     ]
   },
   {
+    "name": "here string >-",
+    "lines": [
+      "def example()",
+      "  let text = >-",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolInterpMarker", "dolIdentifier"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["constant.character.escape.dol"],
+        "vim": ["dolEscape"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.dol"],
+        "vim": ["dolHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
     "name": "here string t|",
     "lines": [
       "def example()",
@@ -659,6 +726,73 @@
     "lines": [
       "def example()",
       "  let text = r|",
+      "    # content $name \\n",
+      "",
+      "      nested ${value:8}",
+      "    $(1 + 2)",
+      "  echo true",
+      "echo false"
+    ],
+    "checks": [
+      {
+        "line": 2,
+        "text": "let",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolKeyword"]
+      },
+      {
+        "line": 3,
+        "text": "# content",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"],
+        "notScopes": ["comment"],
+        "notVim": ["dolComment"]
+      },
+      {
+        "line": 3,
+        "text": "$name",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 3,
+        "text": "\\n",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 5,
+        "text": "nested",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 6,
+        "text": "+",
+        "scopes": ["string.unquoted.heredoc.raw.dol"],
+        "vim": ["dolRawHereString"]
+      },
+      {
+        "line": 7,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"],
+        "notScopes": ["string"],
+        "notVim": ["dolRawHereString"]
+      },
+      {
+        "line": 8,
+        "text": "false",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  },
+  {
+    "name": "here string r>",
+    "lines": [
+      "def example()",
+      "  let text = r>",
       "    # content $name \\n",
       "",
       "      nested ${value:8}",

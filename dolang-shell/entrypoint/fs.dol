@@ -578,7 +578,8 @@ args.with
       default: :TARGET:
       values: ["target", "link", "mount", "cross"]
       meta: MODE
-      help: "Open the path as itself at: link (symlinks), mount (also junctions and mounts), cross (also any reparse point or device change)"
+      help: Open the path as itself at: link (symlinks), mount (also junctions
+        and mounts), cross (also any reparse point or device change)
     - flag: link
       short: L
       help: Report on a symlink itself rather than its target (--resolve link)

@@ -89,7 +89,8 @@ args.with args: $shell.args
     parse: $parse_level
     default: :WARNING:
     meta: LEVEL
-    help: Show a module's compiler diagnostics at or above LEVEL (lint, warning, or error)
+    help: Show a module's compiler diagnostics at or above LEVEL (lint, warning,
+      or error)
   - opt: fail
     parse: $parse_level
     default: :WARNING:

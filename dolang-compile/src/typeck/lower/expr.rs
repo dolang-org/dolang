@@ -36,7 +36,7 @@ impl<'u> Scope<'_, '_, 'u> {
         let span = node.span();
         let kind = match node {
             ast::Expr::Literal(span) => str_literal(self.text(*span)),
-            ast::Expr::Escape(char, _) => str_literal(&char.to_string()),
+            ast::Expr::Escape(char, _) | ast::Expr::Fold(char, _) => str_literal(&char.to_string()),
             ast::Expr::Int(value, _) | ast::Expr::VerbatimInt(value, _) => {
                 ExprKind::Literal(Literal::Int(*value))
             }
@@ -180,7 +180,7 @@ impl<'u> Scope<'_, '_, 'u> {
         for node in nodes {
             match node {
                 ast::Expr::Literal(span) => text.push_str(self.text(*span)),
-                ast::Expr::Escape(char, _) => text.push(*char),
+                ast::Expr::Escape(char, _) | ast::Expr::Fold(char, _) => text.push(*char),
                 node => {
                     if !text.is_empty() {
                         parts.push(synthetic(
@@ -235,7 +235,10 @@ impl<'u> Scope<'_, '_, 'u> {
         let constant = |node: &ast::Expr| {
             matches!(
                 node,
-                ast::Expr::Literal(_) | ast::Expr::Escape(..) | ast::Expr::EscapeByte(..)
+                ast::Expr::Literal(_)
+                    | ast::Expr::Escape(..)
+                    | ast::Expr::Fold(..)
+                    | ast::Expr::EscapeByte(..)
             )
         };
         if nodes.iter().all(constant) {

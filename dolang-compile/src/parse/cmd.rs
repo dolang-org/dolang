@@ -168,9 +168,9 @@ impl Parser<'_> {
             .filter(|line| line.iter().all(|b| matches!(b, b' ' | b'\r')))
             .count();
         if blank == 0 {
-            exprs.push(Expr::Escape(' ', gap));
+            exprs.push(Expr::Fold(' ', gap));
         } else {
-            exprs.extend((0..blank).map(|_| Expr::Escape('\n', gap)));
+            exprs.extend((0..blank).map(|_| Expr::Fold('\n', gap)));
         }
     }
 
@@ -229,13 +229,16 @@ impl Parser<'_> {
             Some(token!(Keyword(Keyword::Do))) => {
                 Ok((self.parse_do_block(scope, ctx.nested())?, true))
             }
-            Some(token!(Op(Op::Bar) | RBar | TBar)) => {
-                let kind = self.heredoc_kind()?;
+            Some(token!(Op(Op::Bar | Op::Gt) | RBar | RGt | TBar | TGt)) => {
+                let (kind, fold) = self.heredoc_kind()?;
                 let open_span = self.advance();
                 let (intro_span, strip) = self.parse_heredoc_intro(open_span)?;
                 if let Some(token!(Indent)) = self.peek()? {
                     self.advance();
-                    return Ok((self.parse_heredoc(scope, intro_span, strip, kind)?, true));
+                    return Ok((
+                        self.parse_heredoc(scope, intro_span, strip, kind, fold)?,
+                        true,
+                    ));
                 }
                 Ok((
                     self.parse_implicit_concat(
@@ -380,14 +383,20 @@ impl Parser<'_> {
             Some(token!(TokenInfo::Keyword(Keyword::Do))) => {
                 return self.parse_do_block(scope, ctx);
             }
-            Some(token!(TokenInfo::Op(Op::Bar) | TokenInfo::RBar | TokenInfo::TBar))
-                if ctx.allows_trailing() =>
-            {
-                let kind = self.heredoc_kind()?;
+            Some(
+                token!(
+                    TokenInfo::Op(Op::Bar | Op::Gt)
+                        | TokenInfo::RBar
+                        | TokenInfo::RGt
+                        | TokenInfo::TBar
+                        | TokenInfo::TGt
+                ),
+            ) if ctx.allows_trailing() => {
+                let (kind, fold) = self.heredoc_kind()?;
                 let open_span = self.advance();
                 let (intro_span, strip) = self.parse_heredoc_intro(open_span)?;
                 self.expect(scope, &[ExpectKind::Indent])?;
-                return self.parse_heredoc(scope, intro_span, strip, kind);
+                return self.parse_heredoc(scope, intro_span, strip, kind, fold);
             }
             Some(token!(TokenInfo::Dollar)) if ctx.allows_trailing() => {
                 let dollar_span = self.advance();

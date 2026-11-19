@@ -1817,6 +1817,7 @@ impl<'u> Walk<'_, 'u> {
             }
             Expr::Ident(_)
             | Expr::Escape(..)
+            | Expr::Fold(..)
             | Expr::EscapeByte(..)
             | Expr::Stub(_)
             | Expr::Literal(_)

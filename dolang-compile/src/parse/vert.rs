@@ -207,13 +207,21 @@ impl Parser<'_> {
                     }
                 }
             }
-            Some(token!(TokenInfo::Op(Op::Bar) | TokenInfo::RBar | TokenInfo::TBar)) => {
-                let kind = self.heredoc_kind()?;
+            Some(
+                token!(
+                    TokenInfo::Op(Op::Bar | Op::Gt)
+                        | TokenInfo::RBar
+                        | TokenInfo::RGt
+                        | TokenInfo::TBar
+                        | TokenInfo::TGt
+                ),
+            ) => {
+                let (kind, fold) = self.heredoc_kind()?;
                 let open_span = self.advance();
                 let (intro_span, strip) = self.parse_heredoc_intro(open_span)?;
                 if let Some(token!(Indent)) = self.peek()? {
                     self.advance();
-                    self.parse_heredoc(scope, intro_span, strip, kind)
+                    self.parse_heredoc(scope, intro_span, strip, kind, fold)
                 } else {
                     self.parse_implicit_concat(
                         scope,

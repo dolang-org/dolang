@@ -595,7 +595,9 @@ def parse_input_format format @ (UnpackFormat | nil) -> (UnpackFormat | nil)
   if (format == nil)
     return nil
   if !(INPUT_FORMATS.contains format)
-    throw std.ValueError "format: expected :TAR:, :TAR_GZIP:, :TAR_ZSTD:, :ZIP:, :GZIP:, :ZSTD:, or :XZ:"
+    throw std.ValueError >-
+      format: expected :TAR:, :TAR_GZIP:, :TAR_ZSTD:, :ZIP:,
+      :GZIP:, :ZSTD:, or :XZ:
   format
 
 def parse_archive_format format @ (ArchiveFormat | nil) -> (ArchiveFormat | nil)
