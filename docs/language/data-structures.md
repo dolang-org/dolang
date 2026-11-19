@@ -132,7 +132,9 @@ specific cases:
 
 - **Plain indexing** (`d[key]`) returns only the last (most recently inserted)
   value for a key.
+
 - **Plain assignment** (`d[key] = value`) replaces all values for a key.
+
 - Methods like `insert`, `get`, and `pop` respect the multi-map nature of `dict`
 
 See the [Dict API](std.Dict) for details.

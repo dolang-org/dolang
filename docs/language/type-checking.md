@@ -280,6 +280,7 @@ takes its types from where it is passed. Omissions that remain have conservative
 types rather than unknown ones:
 
 - An omitted return type is `nil`
+
 - An omitted `<` or `>` is `Value` in the function's body, so it neither reads
     its input nor writes its output. A function that reads its input, or calls
     one that does, annotates `<`, and one that writes annotates `>`. So does a

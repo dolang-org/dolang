@@ -12,6 +12,7 @@ Modules are resolved in this order:
 
 1. Paths supplied with repeatable **`--module-path <path>`** options, in the
    order specified
+
 2. **Site directory**:
 
     | Platform | Location                                            |
