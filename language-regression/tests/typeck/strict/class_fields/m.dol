@@ -1,0 +1,31 @@
+# dolang: strict
+# A strict unit can't read a class-level field whose type needs its class's
+# binders through a class object, since nothing witnesses them.
+
+pub class Foo[T]
+  #[class]
+  pub field cache @ Array[T] = []
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   pub field cache @ Array[T] = []
+  #    |                                ^^
+  #    |
+  #    = note: it doesn't handle an empty collection nothing determines
+
+  #[class]
+  pub field count @ Int = 0
+
+pub def ints cls @ Type[Foo[Int]]
+  let _ = cls.cache
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = cls.cache
+  #    |           ^^^^^^^^^
+  #    |
+  #    = note: it doesn't handle a generic class's field through its class object
+  let count = cls.count
+  let _ = count
+  #       ^~~~~: flow std.Int
+  nil

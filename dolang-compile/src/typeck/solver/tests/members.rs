@@ -464,6 +464,9 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
     // #[class] pub field count @ Int; #[static] pub field zero @ T
     boxed.field(key(&db, "count"), int, Scope::Class);
     boxed.field(key(&db, "zero"), t, Scope::Static);
+    // #[class] pub field cache @ Array[T]
+    let array_t = apply(&db, array, &[t]);
+    boxed.field(key(&db, "cache"), array_t, Scope::Class);
     let boxed = boxed.finish(&mut db, vec![]);
     // class Sub[T]: Box[Array[T]]
     let sub = Class::new(&mut db, "Sub", vec![class.clone()]);
@@ -511,7 +514,6 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
     assert_eq!(signature(&s, found_map.clone()), expected);
     // An inherited method has the class's arguments in terms of its binders
     let inherited = found(s.member(s.closed(sub_object), key(&db, "get")));
-    let array_t = apply(&db, array, &[t]);
     assert_eq!(
         signature(&s, inherited),
         generic(vec![class.clone()], function(&db, &[box_array_t], array_t))
@@ -554,6 +556,38 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
         matches!(zero, Err(Issue::Residual(Residual::Unsupported(_)))),
         "{zero:?}"
     );
+    // Nor do a class object's arguments witness what a class-level field holds,
+    // since its one slot serves every instantiation: not a `Type[Box[Int]]`'s,
+    // a subclass's for its superclass, or a class method's receiver's
+    let array_unknown = apply(&db, array, &[db.unknown()]);
+    let &Type::Decl(box_decl) = db.ty(boxed) else {
+        unreachable!("a class")
+    };
+    let rigid_object = apply(&db, ty, &[apply(&db, boxed, &db.rigids(box_decl))]);
+    let sub_str = apply(&db, sub, &[str]);
+    for receiver in [
+        apply(&db, ty, &[apply(&db, boxed, &[int])]),
+        apply(&db, ty, &[sub_str]),
+        rigid_object,
+    ] {
+        let field =
+            |s: &Solver<'_>| match found(s.member(s.closed(receiver), key(&db, "cache"))).kind {
+                FoundKind::Field(ty) => s.reify(ty).expect("a closed field"),
+                _ => panic!("a field"),
+            };
+        assert_eq!(field(&gradual), array_unknown);
+        let cache = s.member(s.closed(receiver), key(&db, "cache"));
+        assert!(
+            matches!(cache, Err(Issue::Residual(Residual::Unsupported(_)))),
+            "{cache:?}"
+        );
+        // A field that doesn't need the binders is read as it's declared
+        let count = found(s.member(s.closed(receiver), key(&db, "count")));
+        let FoundKind::Field(count) = count.kind else {
+            panic!("a field")
+        };
+        assert_eq!(s.reify(count), Ok(int));
+    }
 
     // A call infers the class's binders from its arguments
     let r = s.infer();

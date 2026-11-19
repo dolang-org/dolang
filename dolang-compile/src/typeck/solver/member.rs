@@ -215,10 +215,14 @@ impl Solver<'_> {
                 .or_else(|| member(false)),
             (true, Access::Class) => member(false),
         };
-        Ok(match found {
+        let lookup = match found {
             Some(member) => Lookup::Found(self.found(&nominal, member)),
             None => Lookup::Missing,
-        })
+        };
+        match object {
+            true => self.object_field(lookup, key),
+            false => Ok(lookup),
+        }
     }
 
     /// The first member of `key` in `scope` along an instance's MRO, as a
@@ -479,22 +483,8 @@ impl Solver<'_> {
             })
         };
         let kind = match found.kind {
-            FoundKind::Field(ty) => {
-                let unknowns: Vec<_> = binders
-                    .iter()
-                    .map(|binder| db.unknown_of(binder.kind))
-                    .collect();
-                let abstracted = abstracted(ty)?;
-                let field = db.substitute(abstracted, &unknowns);
-                // Only a gradual unit's solver reads binders it can't name as `Unknown`
-                if !self.gradual
-                    && self.db.contains_unknown(field)
-                    && !self.db.contains_unknown(abstracted)
-                {
-                    return Err(Residual::Unsupported("a generic class object's field").into());
-                }
-                FoundKind::Field(self.closed(field))
-            }
+            // Erased as it's found through the class's object
+            FoundKind::Field(ty) => FoundKind::Field(self.closed(solver.reify(ty)?)),
             FoundKind::Method(method) => FoundKind::Method(signatures(method)?),
             FoundKind::Property { getter, setter } => FoundKind::Property {
                 getter: getter.map(signatures).transpose()?,
@@ -578,11 +568,52 @@ impl Solver<'_> {
         }
         // A static member belongs to its class alone
         let class = nominal.declaration;
-        self.search(nominal, key, |owner, member| match member.scope() {
+        let lookup = self.search(nominal, key, |owner, member| match member.scope() {
             Scope::Instance => false,
             Scope::Class => true,
             Scope::Static => exact && owner == class,
-        })
+        })?;
+        self.object_field(lookup, key)
+    }
+
+    /// A class or static field found through a class object, with its class's
+    /// binders erased. Its one slot serves every instantiation, so a class
+    /// object's arguments, or a subclass's for its superclass, don't witness what
+    /// it holds. A gradual unit reads the binders as `Unknown`, and a strict
+    /// unit's can't read a field whose type needs them.
+    fn object_field(&self, lookup: Lookup, key: MemberKey) -> Result<Lookup, Issue> {
+        let Lookup::Found(found) = lookup else {
+            return Ok(lookup);
+        };
+        let declaration = self.db.declaration(found.class);
+        let (FoundKind::Field(_), Type::Quantified { binders, .. }) =
+            (&found.kind, self.db.ty(declaration.ty))
+        else {
+            return Ok(Lookup::Found(found));
+        };
+        let Some(&Member::Field { ty, .. }) = declaration
+            .members
+            .iter()
+            .find(|(found, member)| *found == key && member.scope() != Scope::Instance)
+            .map(|(_, member)| member)
+        else {
+            unreachable!("a class-level field its class declares")
+        };
+        let unknowns: Vec<_> = binders
+            .iter()
+            .map(|binder| self.db.unknown_of(binder.kind))
+            .collect();
+        let field = self.db.substitute(ty, &unknowns);
+        // Only a gradual unit's solver reads binders it can't name as `Unknown`
+        if !self.gradual && self.db.contains_unknown(field) && !self.db.contains_unknown(ty) {
+            return Err(
+                Residual::Unsupported("a generic class's field through its class object").into(),
+            );
+        }
+        Ok(Lookup::Found(Found {
+            kind: FoundKind::Field(self.closed(field)),
+            ..found
+        }))
     }
 
     /// The first member of `key` in MRO order that `admits`
