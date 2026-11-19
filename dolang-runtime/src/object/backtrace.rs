@@ -6,15 +6,18 @@ use crate::{
     arg::Args,
     error::{BacktraceEntry, BacktraceIter, Error, Result, UnwindEntry},
     gc::{Collect, arena::Visit},
-    object::{iter, protocol::members},
+    object::{index, iter, protocol::members, range},
     strand::Strand,
     sym::{self, Sym},
     unpack,
     value::{Output, Slot, TypeObject, Value},
     vm::{AllocExt, Vm},
+    with_slots,
 };
 
-use super::protocol::{Inspect, Protocol, Recv, instance_get_fallback};
+use super::protocol::{
+    Inspect, Protocol, Recv, Spread, SpreadContext, Unpack, instance_get_fallback,
+};
 
 /// Creates a backtrace object of the entries `entries` returns.
 ///
@@ -74,6 +77,22 @@ impl<'v> crate::gc::Annex for Backtrace<'v> {
 }
 
 pub(crate) type BacktraceObj<'v> = crate::gc::Imm<Backtrace<'v>>;
+
+/// Stores a frame of the entry of `this` at `index`, which must be in range.
+fn store_frame<'v>(
+    strand: &mut Strand<'v, '_>,
+    this: &Recv<'v, '_, BacktraceObj<'v>>,
+    index: usize,
+    out: Slot<'v, '_>,
+) {
+    let embryo = strand.builtin_types().backtrace_frame.embryo(strand);
+    // SAFETY: the entry moves straight into the allocated frame
+    let entry = unsafe { this.get().entries[index].dup() };
+    let frame = Frame {
+        entry: Box::new(entry),
+    };
+    embryo.finish_imm(strand, frame, out);
+}
 
 impl<'v> Protocol<'v> for BacktraceObj<'v> {
     fn op_type<'a, 's>(
@@ -171,10 +190,72 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        _context: super::protocol::SpreadContext,
-        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        super::iter::spread_iter(strand, this.clone(), sink).await
+        let len = this.get().entries.len();
+        with_slots!(strand, |mut frame| {
+            for index in 0..len {
+                store_frame(strand, &this, index, Slot::reborrow(&mut frame));
+                sink.positional(strand, Slot::reborrow(&mut frame))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn op_index<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        index: &Value<'v>,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let len = this.get().entries.len();
+        if let Some(slice) = range::slice(index, strand, len)? {
+            let indices: Box<dyn Iterator<Item = usize>> = match slice {
+                range::Slice::Contiguous { start, end } => Box::new(start..end),
+                range::Slice::Stepped(indices) => Box::new(indices.into_iter()),
+            };
+            strand.new_array(&mut out);
+            let array = out.as_array(strand).unwrap();
+            return with_slots!(strand, |mut frame| {
+                for index in indices {
+                    store_frame(strand, &this, index, Slot::reborrow(&mut frame));
+                    array.push(strand, &frame)?;
+                }
+                Ok(())
+            });
+        }
+        let index = index.to_i64(strand).map_err(|_| Error::index(strand))?;
+        let index = index::element(len, index).ok_or_else(|| Error::index(strand))?;
+        store_frame(strand, &this, index, out);
+        Ok(())
+    }
+
+    /// Destructures the frames. A rest is a backtrace of the frames left.
+    async fn op_unpack<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        unpack: Unpack<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let len = this.get().entries.len();
+        unpack.sequence(
+            strand,
+            len,
+            |strand, index, slot| {
+                store_frame(strand, &this, index, slot);
+                Ok(())
+            },
+            |strand, consumed, slot| {
+                // SAFETY: `create` calls this after allocating the backtrace, which
+                // the entries move straight into
+                let entries = |_: &Strand<'v, 's>| {
+                    let entries = this.get().entries[consumed..].iter();
+                    entries.map(|e| unsafe { e.dup() }).collect()
+                };
+                create(strand, entries, slot);
+                Ok(())
+            },
+        )
     }
 }
 
@@ -259,8 +340,8 @@ impl<'v> Protocol<'v> for Iter<'v> {
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
-        _context: super::protocol::SpreadContext,
-        sink: &'a mut dyn super::protocol::Spread<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, this.clone(), sink).await
     }

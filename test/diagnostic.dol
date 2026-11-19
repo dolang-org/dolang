@@ -167,7 +167,7 @@ def backtrace_code_is_unique()
 
 #[test]
 def frame()
-  let first = strand.backtrace().iter().next()
+  let first = strand.backtrace()[0]
   let rendered = shell.render_frame $first
   assert_eq (type rendered) $term.Text
   let plain = str $rendered
@@ -189,7 +189,7 @@ def frame_of_snapshot()
   let kick = spawn do nil
   kick.wait()
   let info = strand.snapshot().filter(do |info| info.strand == task).next()
-  let line = str $shell.render_frame(info.backtrace.iter().next(), code: false)
+  let line = str $shell.render_frame(info.backtrace[0], code: false)
   assert (line.contains "waiter")
   send.put nil
   task.join()

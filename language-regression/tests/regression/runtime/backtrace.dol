@@ -1,6 +1,7 @@
 import inspect
 import
   std:
+    - IndexError
     - Iterable
     - SinkStop
     - StateError
@@ -66,6 +67,48 @@ assert_eq $live_info[0][1] "live_inner"
 assert_eq $live_info[0][2] nil
 assert $live_info[0][3]
 assert $live_info[0][4]
+
+# Backtraces index from the innermost frame, negative indexes from the outermost.
+assert_eq $live[0].receiver "live_inner"
+assert_eq $live[2].receiver "live_outer"
+let last_receiver = live_receivers[live_receivers.len - 1]
+assert_eq $live[-1].receiver $last_receiver
+assert_eq $live[-live.len].receiver "live_inner"
+assert_eq (type live[0]) $inspect.Frame
+let out_of_range = try
+  live[live.len]
+catch e
+  e
+assert_eq (type out_of_range) $IndexError
+
+# Slicing a backtrace gives an array of frames.
+let sliced = live[0..2]
+assert_eq (type sliced) $Array
+assert_eq (receivers sliced) ["live_inner", "live_middle"]
+assert_eq $live[1..].len (live.len - 1)
+assert_eq (receivers live[..]) $live_receivers
+
+# Destructuring takes frames in order, and a rest is a reusable backtrace.
+let first second ...rest = live
+assert_eq $first.receiver "live_inner"
+assert_eq $second.receiver "live_middle"
+assert_eq (type rest) $inspect.Backtrace
+assert_eq $rest.len (live.len - 2)
+assert_eq $rest[0].receiver "live_outer"
+assert_eq (receivers rest) $live_receivers[2..]
+assert_eq (receivers rest) $live_receivers[2..]
+let head *tail = live
+assert_eq $head.receiver "live_inner"
+assert_eq $tail.len (live.len - 1)
+let too_few = try
+  let _a _b = live
+  false
+catch _
+  true
+assert $too_few
+
+# Spreading passes each frame positionally.
+assert_eq (receivers [...live]) $live_receivers
 
 # error_backtrace() is only valid while handling an exception.
 let outside = try
