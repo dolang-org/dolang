@@ -1,0 +1,62 @@
+# A class-level field has one slot for every instantiation of its class, so a
+# class object's arguments don't witness what it holds. Read through any class
+# object, the field takes its class's binders as `Unknown`. A class method's
+# receiver still constrains its signature.
+
+pub class Foo[T]
+  #[class]
+  pub field cache @ Array[T] = []
+
+  #[class]
+  pub field count @ Int = 0
+
+  pub field item @ (T | nil) = nil
+
+  #[class]
+  pub def first cls -> T
+    let cache = cls.cache
+    let _ = cache
+    #       ^~~~~: flow std.Array[Unknown]
+    cache[0]
+
+  #[class]
+  pub def make cls x @ T -> Foo[T]
+    ...
+
+pub class Bar: Foo[Str]
+
+pub def ints cls @ Type[Foo[Int]]
+  let cache = cls.cache
+  let _ = cache
+  #       ^~~~~: flow std.Array[Unknown]
+  let count = cls.count
+  let _ = count
+  #       ^~~~~: flow std.Int
+  nil
+
+pub def named()
+  let cache = Foo.cache
+  let _ = cache
+  #       ^~~~~: flow std.Array[Unknown]
+  nil
+
+pub def sub()
+  let cache = Bar.cache
+  let _ = cache
+  #       ^~~~~: flow std.Array[Unknown]
+  nil
+
+pub def instance foo @ Foo[Int]
+  let item = foo.item
+  let _ = item
+  #       ^~~~: flow nil | std.Int
+  nil
+
+pub def receiver()
+  Bar.make 1
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   Bar.make 1
+  #    |            ^
+  nil
