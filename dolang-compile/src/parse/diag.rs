@@ -86,7 +86,7 @@ impl Patch for ImplicitDelimitedConcat {
     fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
-            "insert `$` if you intended for the entire argument to be an expression"
+            "insert `$` to concatenate text after the delimited expression"
         )
     }
 
