@@ -1051,7 +1051,8 @@ def build_bundle p
 args.with
   help: Describe a Do source file's compiler output as JSON.
   - cmd: extract
-    help: Dump raw compiler nodes and diagnostics, optionally with a cooked documentation projection.
+    help: Dump raw compiler nodes and diagnostics, optionally with a cooked
+      documentation projection.
     - flag: doc
       help: Also emit the cooked documentation projection (module doc + public entities)
     - flag: tokens
@@ -1072,19 +1073,22 @@ args.with
     do |p|
       extract $p
   - cmd: server
-    help: Serve newline-delimited JSON extraction requests from stdin until stdin closes.
+    help: Serve newline-delimited JSON extraction requests from stdin until
+      stdin closes.
     do |_p|
       serve()
   - cmd: check
     help: Check the types of sources and the modules they import.
     - opt: path
       collect: true
-      help: Directory to search for imported modules, as `a/b.dol` for module `a.b`, before the bundled typelibs
+      help: Directory to search for imported modules, as `a/b.dol` for module
+        `a.b`, before the bundled typelibs
     - opt: diagnose
       parse: $parse_level
       default: :WARNING:
       meta: LEVEL
-      help: Show compiler and type-checker diagnostics at or above LEVEL (lint, warning, or error)
+      help: Show compiler and type-checker diagnostics at or above LEVEL (lint,
+        warning, or error)
     - opt: fail
       parse: $parse_level
       default: :ERROR:
@@ -1093,31 +1097,40 @@ args.with
     - flag: no-bundled
       help: Disable bundled typelibs and fail if an imported module is missing
     - flag: undecided
-      help: List every check the checker couldn't decide, including those not reported, for developing the checker
+      help: List every check the checker couldn't decide, including those not
+        reported, for developing the checker
     - arg: entries
       collect: true
-      help: Sources or typelibs to check; a source under a search directory is checked as its module
+      help: Sources or typelibs to check; a source under a search directory is
+        checked as its module
     do |p|
       check $p
   - cmd: typelib
-    help: Write modules' typelibs, their declarations for checking without their sources.
+    help: Write modules' typelibs, their declarations for checking without their
+      sources.
     - opt: module
       default: nil
-      help: A lone source's module name; by default, from where each source is under a search directory
+      help: A lone source's module name; by default, from where each source is
+        under a search directory
     - opt: path
       collect: true
-      help: Directory to search for sources' modules and those they import, as `a/b.dol` for module `a.b`, before the bundled typelibs
+      help: Directory to search for sources' modules and those they import, as
+        `a/b.dol` for module `a.b`, before the bundled typelibs
     - flag: no-bundled
-      help: Disable bundled typelibs; an imported module must be found under a search directory
+      help: Disable bundled typelibs; an imported module must be found under a
+        search directory
     - opt: fail
       parse: $parse_level
       default: :ERROR:
       meta: LEVEL
-      help: Fail on a compiler or type-checker diagnostic at or above LEVEL (lint, warning, or error), rendering the diagnostics and writing nothing
+      help: Fail on a compiler or type-checker diagnostic at or above LEVEL
+        (lint, warning, or error), rendering the diagnostics and writing nothing
     - opt: output
       short: o
       default: nil
-      help: Directory to write each typelib into as `<module>.dolt`, or for a lone source, the file to write; by default, a lone source's path with the extension `.dolt`
+      help: Directory to write each typelib into as `<module>.dolt`, or for a
+        lone source, the file to write; by default, a lone source's path with
+        the extension `.dolt`
     - arg: sources
       collect: true
       help: The modules' sources
@@ -1137,7 +1150,8 @@ args.with
     do |p|
       emit_bytecode $p
   - cmd: bundle
-    help: Pack a main module and modules into a bundle, compiled with the compiler's defaults. Types aren't checked; run `check` first for that.
+    help: Pack a main module and modules into a bundle, compiled with the
+      compiler's defaults. Types aren't checked; run `check` first for that.
     - opt: module
       collect: true
       help: "A module of the bundle, as NAME=PATH, such as `a.b=src/a/b.dol`"
@@ -1147,7 +1161,8 @@ args.with
       help: File to write the bundle to
     - opt: shebang
       default: nil
-      help: "Interpreter command for a `#!` line, such as `/usr/bin/env dolang`; the bundle is then made executable where the platform allows"
+      help: Interpreter command for a `#!` line, such as `/usr/bin/env dolang`;
+        the bundle is then made executable where the platform allows
     - arg: main
       help: The main module's source
     do |p|
