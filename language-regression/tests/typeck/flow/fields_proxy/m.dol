@@ -86,7 +86,7 @@ pub def unpacks p @ Point
   let _ = y
   #   ^: flow std.Str
   let _ = rest
-  #       ^~~~: flow std.BaseMap[{y: std.Str, label: std.Str}]
+  #       ^~~~: flow std.MixedRest[{y: std.Str, label: std.Str}]
   let :x = fields(p)
   # error: `std.FieldProxy[{x: std.Int, y: std.Str, label: std.Str}, {?x: std.Int, ?y: std.Str}]` can never unpack as this pattern
   #   --> m.dol:LL:LL

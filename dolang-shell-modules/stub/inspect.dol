@@ -56,9 +56,9 @@ pub class Backtrace: std.Iterable[Frame] @std.Seq[Frame]
   pub def (index)[K] self key@K -> std.IndexItem[{*Frame}, K]
     ...
 
-  # Destructures the frames positionally. A rest is a backtrace of the frames
-  # left.
-  pub def (unpack) self -> Unpack[Frame, Rest: Backtrace]
+  # Destructures the frames positionally. A rest iterates, spreads, and
+  # destructures the frames left.
+  pub def (unpack) self -> SeqRest[Frame]
     ...
 
   # Spreads the frames positionally.

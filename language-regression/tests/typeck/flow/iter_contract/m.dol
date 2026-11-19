@@ -49,8 +49,8 @@ pub def unpack_only source @ Unpack[Int]
   # LL |   let _xs = [...source]
   #    |                 ^^^^^^
 
-# A `BaseSeq` spreads as well as unpacking
-pub def seq_spreads source @ BaseSeq[Int]
+# A `SeqRest` spreads as well as unpacking
+pub def seq_spreads source @ SeqRest[Int]
   let xs = [...source]
   let _ = xs
   #       ^~: flow std.Array[std.Int]

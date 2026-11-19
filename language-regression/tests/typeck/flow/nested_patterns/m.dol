@@ -21,7 +21,7 @@ pub def keyed()
   let _ = x
   #       ^: flow std.Int
   let _ = rest
-  #       ^~~~: flow std.BaseSeq[{std.Str}]
+  #       ^~~~: flow std.SeqRest[{std.Str}]
   let _ = n
   #       ^: flow std.Bool
   bind (k: (a: 1, b: "x"))

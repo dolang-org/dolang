@@ -93,7 +93,7 @@ pub @let ArgSpec = BaseDict $
 # symbol, such as `:deploy:` or `:build_docs:`, and its own fields are in a
 # nested [`Args`](args.Args) at `p[p.cmd]`. The result's `handler` field is the
 # matched handler.
-pub @let CmdSpec[R, I, O] = Map $
+pub @let CmdSpec[R, I, O] = Mixed $
   # Name
   cmd: Str
   # Description shown in `--help` output
@@ -129,7 +129,7 @@ pub @let Handler[R, I, O] = ((Args[R, I, O], <I, >O) -> R)
 # ```
 # let :format :file = p
 # ```
-pub class Args[R, I, O]: @Spread[Sym, Value] @Unpack[Sym, Value, Rest: BaseMap[Sym, Value], Pos: BaseSeq[Sym, Value]]
+pub class Args[R, I, O]: @Spread[Sym, Value] @Unpack[Sym, Value, Rest: MixedRest[Sym, Value], Pos: SeqRest[Sym, Value]]
   field values
 
   def (init) self values
