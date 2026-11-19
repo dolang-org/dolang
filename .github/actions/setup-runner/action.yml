@@ -118,7 +118,7 @@ runs:
     # Inputs arrive through the environment: on Windows the action path is a
     # backslash path, which would be mangled as a Do string literal
     - name: Set up runner
-      shell: dolang --strict --no-cache --module-path ${{ github.action_path }}/lib {0}
+      shell: dolang --fail warning --no-cache --module-path ${{ github.action_path }}/lib {0}
       env:
         CI_SHELL: ${{ github.action_path }}/lib/shell.dol
         CI_TARGET: ${{ inputs.target }}

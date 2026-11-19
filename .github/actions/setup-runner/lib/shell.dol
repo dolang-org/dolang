@@ -9,7 +9,7 @@ import args proc shell
 
 # Flags every step script is compiled with.
 let PRELUDE = $
-  --strict --no-cache
+  --fail warning --no-cache
   --import dodo
   --import sys
   --import fs

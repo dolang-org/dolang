@@ -130,7 +130,7 @@ jobs:
           always() && matrix.target == 'x86_64-freebsd' &&
           github.ref == 'refs/heads/master' &&
           steps.setup.outputs.vm-cache-hit != 'true'
-        shell: dolang --strict --no-cache --module-path .github/actions/setup-runner/lib {0}
+        shell: dolang --fail warning --no-cache --module-path .github/actions/setup-runner/lib {0}
         run: |
           import ci
           ci.save_cache()
