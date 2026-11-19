@@ -777,6 +777,10 @@ pub(crate) enum Expr {
         colon_span: Option<Span>,
     },
     Escape(char, Span),
+    /// Text standing in for a folded line break, as in a dash item or a `>`
+    /// here string. The span is the break it replaces, which holds none of
+    /// the text.
+    Fold(char, Span),
     /// A `t"..."` sequence: literal text and interpolations kept apart rather
     /// than concatenated. `close` is absent for the `t|` here-string form,
     /// which a dedent ends.
@@ -937,7 +941,7 @@ impl Expr {
                 Some(Const::Str(acc))
             }
             Expr::Fmt { .. } | Expr::FmtParam { .. } => None,
-            Expr::Escape(v, _) => Some(Const::Str(v.to_string())),
+            Expr::Escape(v, _) | Expr::Fold(v, _) => Some(Const::Str(v.to_string())),
             Expr::BinConcat { exprs, .. } => {
                 let mut acc = Vec::new();
                 for expr in exprs.iter() {
@@ -1071,6 +1075,7 @@ impl Expr {
             | Expr::Nil(_)
             | Expr::Sym(_)
             | Expr::Escape(_, _)
+            | Expr::Fold(_, _)
             | Expr::EscapeByte(_, _) => SideEffect::None,
 
             // Raises an error
@@ -1393,6 +1398,8 @@ impl Node for Expr {
                 }
             }
             Expr::Escape(_, span) => visit.token(Token::Escape, *span, None),
+            // No text of its own to report
+            Expr::Fold(_, _) => ControlFlow::Continue(()),
             Expr::FmtSeq { exprs, open, close } => {
                 visit.token(Token::StringDelim, *open, None)?;
                 exprs.accept(visit)?;
@@ -1564,6 +1571,7 @@ impl Node for Expr {
             Expr::Fmt { .. } => NodeKind::Fmt,
             Expr::FmtParam { .. } => NodeKind::FmtParam,
             Expr::Escape(_, _) => NodeKind::Escape,
+            Expr::Fold(_, _) => NodeKind::Fold,
             Expr::FmtSeq { .. } => NodeKind::FmtSeq,
             Expr::BinConcat { .. } => NodeKind::BinConcat,
             Expr::EscapeByte(_, _) => NodeKind::EscapeByte,

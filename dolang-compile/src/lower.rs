@@ -427,7 +427,7 @@ impl<'a, 'c> Scope<'a, 'c> {
                 Expr::Literal(span) => {
                     acc.push_str(self.file.str(*span));
                 }
-                Expr::Escape(char, _) => {
+                Expr::Escape(char, _) | Expr::Fold(char, _) => {
                     acc.push(*char);
                 }
                 other => {
@@ -480,7 +480,7 @@ impl<'a, 'c> Scope<'a, 'c> {
         for expr in exprs.iter() {
             match expr {
                 Expr::Literal(span) => acc.push_str(self.file.str(*span)),
-                Expr::Escape(char, _) => acc.push(*char),
+                Expr::Escape(char, _) | Expr::Fold(char, _) => acc.push(*char),
                 other => {
                     if !acc.is_empty() {
                         self.lower_fmt_seq_literal(&acc, span);
@@ -552,7 +552,7 @@ impl<'a, 'c> Scope<'a, 'c> {
                 Expr::EscapeByte(b, _) => {
                     acc.push(*b);
                 }
-                Expr::Escape(char, _) => {
+                Expr::Escape(char, _) | Expr::Fold(char, _) => {
                     let mut buf = [0; 4];
                     acc.extend_from_slice(char.encode_utf8(&mut buf).as_bytes());
                 }
@@ -601,7 +601,7 @@ impl<'a, 'c> Scope<'a, 'c> {
             } => self.lower_concat(exprs, *delim_span, *verbatim)?,
             Expr::Fmt { value, spec, .. } => self.lower_fmt(value, spec, expr.span())?,
             Expr::FmtParam { name, spec, .. } => self.lower_fmt_param(name, spec, expr.span())?,
-            Expr::Escape(char, span) => {
+            Expr::Escape(char, span) | Expr::Fold(char, span) => {
                 let cid = self.consttab.str(self.bintab.id_str(&format!("{char}")));
                 self.block.insts.push(Inst(InstInfo::LoadConst(cid), *span));
             }

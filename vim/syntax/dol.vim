@@ -45,8 +45,8 @@ syn match dolEscape +\\\%([0nrt"\\$]\|x[0-9A-Fa-f]\{2}\|u{[0-9A-Fa-f]\%(_\?[0-9A
 
 " Capture the first nonblank content line's indentation, not the introducer's.
 " The part after \ze looks ahead across lines without colouring preceding code.
-syn region dolHereString matchgroup=dolQuote start=+\%([A-Za-z0-9_|]\)\@<!t\?|\-\?\ze[ \t]*\%(#.*\)\?\n\%([ \t]*\n\)*\z([ \t]\+\)\S+ end=+^\%(\z1\)\@![ \t]*\ze\S+ contains=dolEscape,dolStringInterp,@Spell
-syn region dolRawHereString matchgroup=dolQuote start=+\%([A-Za-z0-9_|]\)\@<!r|\-\?\ze[ \t]*\%(#.*\)\?\n\%([ \t]*\n\)*\z([ \t]\+\)\S+ end=+^\%(\z1\)\@![ \t]*\ze\S+ contains=@Spell
+syn region dolHereString matchgroup=dolQuote start=+\%([A-Za-z0-9_|>=-]\)\@<!t\?[|>]\-\?\ze[ \t]*\%(#.*\)\?\n\%([ \t]*\n\)*\z([ \t]\+\)\S+ end=+^\%(\z1\)\@![ \t]*\ze\S+ contains=dolEscape,dolStringInterp,@Spell
+syn region dolRawHereString matchgroup=dolQuote start=+\%([A-Za-z0-9_|>=-]\)\@<!r[|>]\-\?\ze[ \t]*\%(#.*\)\?\n\%([ \t]*\n\)*\z([ \t]\+\)\S+ end=+^\%(\z1\)\@![ \t]*\ze\S+ contains=@Spell
 
 syn match dolNumber "\%(\%([A-Za-z0-9_.]\)\@<!\|\%(\.\.\)\@<=\)-\?\%(0[xX][0-9A-Fa-f]\%(_\?[0-9A-Fa-f]\)*\|0[oO][0-7]\%(_\?[0-7]\)*\|0[bB][01]\%(_\?[01]\)*\|\%([0-9]\%(_\?[0-9]\)*\%(\.\%([.A-DF-Za-df-z_(]\)\@!\%([0-9]\%(_\?[0-9]\)*\)\?\)\?\|\.[0-9]\%(_\?[0-9]\)*\)\%(e[+-]\?[0-9]\%(_\?[0-9]\)*\)\?\)\%([A-Za-z0-9_]\|\.[0-9]\)\@!"
 syn match dolKey "[A-Za-z_][A-Za-z0-9_]*:" contains=dolColon

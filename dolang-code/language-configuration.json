@@ -49,7 +49,7 @@
             "action": { "indent": "indent" }
         },
         {
-            "beforeText": "\\|-?(?:\\s+#.*)?$",
+            "beforeText": "(?:\\||(?<![-=<>])>)-?(?:\\s+#.*)?$",
             "action": { "indent": "indent" }
         },
         {

@@ -262,8 +262,10 @@ enum RawToken {
     RawQuote,
     BQuote,
     RBar,
+    RGt,
     TQuote,
     TBar,
+    TGt,
     Hash,
 }
 
@@ -936,6 +938,7 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             },
                             match Some(b'\r') => if self.keep_newlines
                                 || (self.state == Indent && self.mode == Mode::Shell)
+                                || matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc)
                             {
                                 self.trans(Cr)
                             } else {
@@ -1400,6 +1403,9 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             match Some(b'|') if matches!(self.mode, Mode::Shell) => {
                                 return self.token(RawToken::RBar, RawState::Empty);
                             },
+                            match Some(b'>') if matches!(self.mode, Mode::Shell) => {
+                                return self.token(RawToken::RGt, RawState::Empty);
+                            },
                         }, {
                             // Lower patterns - keyword continuation or identifier/literal fallback
                             match Some(b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_') => self.trans(Ident),
@@ -1433,6 +1439,9 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                             match Some(b':') => self.trans(Key),
                             match Some(b'|') if matches!(self.mode, Mode::Shell) => {
                                 return self.token(RawToken::TBar, RawState::Empty);
+                            },
+                            match Some(b'>') if matches!(self.mode, Mode::Shell) => {
+                                return self.token(RawToken::TGt, RawState::Empty);
                             },
                         }, {
                             match Some(b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_') => self.trans(Ident),
@@ -1634,9 +1643,15 @@ pub(crate) enum TokenInfo {
     RawQuote,
     BQuote,
     RBar,
+    RGt,
     TQuote,
     TBar,
+    TGt,
     Hash,
+    /// A source line break (`\n` or `\r\n`) in a here string
+    HeredocBreak,
+    /// Indentation beyond the baseline at the start of a here string line
+    HeredocIndent,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -1829,30 +1844,69 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    // Called for a newline + indent token within a here string. Whitespace
+    // trailing the line is a `Literal`; the line breaks and indentation that
+    // follow are drained by `check_indent` as `HeredocBreak` and
+    // `HeredocIndent` tokens, so the parser can fold them.
     fn heredoc_newline(&mut self, span: Span) -> Option<Result<Token, Error>> {
         let slice = self.file.slice(span);
         let first_nl = slice.iter().position(|&b| b == b'\n').unwrap() as Offset + span.start;
         let last_nl = slice.iter().rposition(|&b| b == b'\n').unwrap() as Offset + span.start;
-        if span.end - last_nl > self.heredoc_baseline {
-            self.heredoc_ws.start = first_nl;
-            self.heredoc_ws.end = span.end;
-            if span.start != first_nl {
-                Some(Ok(Token::new(
-                    TokenInfo::Literal,
-                    (span.start..first_nl).into(),
-                )))
+        // The break includes the `\r` of a CRLF
+        let break_start =
+            if first_nl > span.start && slice[(first_nl - span.start - 1) as usize] == b'\r' {
+                first_nl - 1
             } else {
-                self.check_indent()
-            }
+                first_nl
+            };
+        if span.end - last_nl > self.heredoc_baseline {
+            self.heredoc_ws = (break_start..span.end).into();
         } else {
+            // The here string ends: only the line's own break remains, and any
+            // blank lines before the dedent are dropped
+            self.heredoc_ws = (break_start..first_nl + 1).into();
             self.nl = last_nl;
             self.raw.set_mode(Mode::Shell);
             self.set_indent((last_nl + 1..span.end).into());
+        }
+        if span.start != break_start {
             Some(Ok(Token::new(
                 TokenInfo::Literal,
-                (span.start..first_nl + 1).into(),
+                (span.start..break_start).into(),
             )))
+        } else {
+            self.check_indent()
         }
+    }
+
+    // Emit the next pending here string line break or indentation token.
+    // `heredoc_ws` starts either at a line break or at the start of a line.
+    fn heredoc_drain(&mut self) -> Token {
+        let ws = self.heredoc_ws;
+        let slice = self.file.slice(ws);
+        let break_len = match slice {
+            [b'\n', ..] => 1,
+            [b'\r', b'\n', ..] => 2,
+            _ => 0,
+        };
+        if break_len == 0 {
+            // Line start: skip the baseline indentation and emit the rest,
+            // unless nothing is left before the line's break
+            let content_end = match slice.iter().position(|&b| b == b'\n') {
+                Some(i) if i > 0 && slice[i - 1] == b'\r' => ws.start + i as Offset - 1,
+                Some(i) => ws.start + i as Offset,
+                None => ws.end,
+            };
+            let start = (ws.start + self.heredoc_baseline).min(content_end);
+            self.heredoc_ws.start = content_end;
+            if start != content_end || content_end == ws.end {
+                return Token::new(TokenInfo::HeredocIndent, (start..content_end).into());
+            }
+            return self.heredoc_drain();
+        }
+        let end = ws.start + break_len;
+        self.heredoc_ws.start = end;
+        Token::new(TokenInfo::HeredocBreak, (ws.start..end).into())
     }
 
     // Called to emit an ordinary token; good place for debugging
@@ -1877,21 +1931,9 @@ impl<'a> Lexer<'a> {
 
     // Check if we need to emit indentation token, or drain pending heredoc content
     fn check_indent(&mut self) -> Option<Result<Token, Error>> {
-        // Drain pending heredoc content tokens first (one per call)
+        // Drain pending heredoc line breaks and indentation first (one per call)
         if self.heredoc_ws.start != self.heredoc_ws.end {
-            let remaining = self.file.slice(self.heredoc_ws);
-            let (start, end) = if let Some(i) = remaining.iter().position(|&b| b == b'\n') {
-                let end = self.heredoc_ws.start + i as Offset + 1;
-                let start = (self.heredoc_ws.start + self.heredoc_baseline).min(end - 1);
-                (start, end)
-            } else {
-                let end = self.heredoc_ws.end;
-                let start = (self.heredoc_ws.start + self.heredoc_baseline).min(end);
-                (start, end)
-            };
-            // Emit everything up to and including the \n; leave the rest for next iteration
-            self.heredoc_ws.start = end;
-            return Some(Ok(Token::new(TokenInfo::Literal, (start..end).into())));
+            return Some(Ok(self.heredoc_drain()));
         }
 
         // Suppress normal indent logic while inside an active heredoc
@@ -2065,8 +2107,10 @@ impl<'a> Iterator for Lexer<'a> {
                 Ok((RawQuote, span)) => self.token(TokenInfo::RawQuote, span),
                 Ok((BQuote, span)) => self.token(TokenInfo::BQuote, span),
                 Ok((RBar, span)) => self.token(TokenInfo::RBar, span),
+                Ok((RGt, span)) => self.token(TokenInfo::RGt, span),
                 Ok((TQuote, span)) => self.token(TokenInfo::TQuote, span),
                 Ok((TBar, span)) => self.token(TokenInfo::TBar, span),
+                Ok((TGt, span)) => self.token(TokenInfo::TGt, span),
                 Ok((Hash, span)) => self.token(TokenInfo::Hash, span),
             }));
         }

@@ -61,7 +61,9 @@ macro_rules! decay_shell {
             | TokenInfo::Keyword(_)
             | TokenInfo::Op(_)
             | TokenInfo::RBar
+            | TokenInfo::RGt
             | TokenInfo::TBar
+            | TokenInfo::TGt
             | TokenInfo::DecoratorOpen
             | TokenInfo::Arrow
             | TokenInfo::FatArrow
@@ -158,8 +160,12 @@ macro_rules! decay_string {
             | TokenInfo::BQuote
             | TokenInfo::TQuote
             | TokenInfo::RBar
+            | TokenInfo::RGt
             | TokenInfo::TBar
+            | TokenInfo::TGt
             | TokenInfo::ArgSep
+            | TokenInfo::HeredocBreak
+            | TokenInfo::HeredocIndent
             | TokenInfo::Hash
             | TokenInfo::DecoratorOpen
             | TokenInfo::Arrow

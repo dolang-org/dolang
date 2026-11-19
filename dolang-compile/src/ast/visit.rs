@@ -123,6 +123,7 @@ pub enum NodeKind {
     Fmt,
     FmtParam,
     Escape,
+    Fold,
     FmtSeq,
     BinConcat,
     EscapeByte,

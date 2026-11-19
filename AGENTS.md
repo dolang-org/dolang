@@ -495,6 +495,13 @@ let stripped = |-
 let raw = r|
   echo $HOME
 # raw == "echo $HOME\n" (no interpolation)
+
+let folded = >-
+  one long
+  line
+
+  next
+# folded == "one long line\nnext" (`>` folds breaks as in YAML; also r>, t>)
 ```
 
 ### Vertical Layout

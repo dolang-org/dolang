@@ -53,6 +53,9 @@ const onEnterCases = [
     ["let doc = |", "indent"],
     ["let doc = |-", "indent"],
     ["let raw = r|", "indent"],
+    ["let doc = >", "indent"],
+    ["let doc = >-", "indent"],
+    ["let raw = r>", "indent"],
     // Vertical data and key items
     ["let items = $", "indent"],
     ["return $", "indent"],
@@ -73,6 +76,7 @@ const onEnterCases = [
     ["let t = :ERROR:", "keep"],
     ["let f = do echo hi", "keep"],
     ['0 | 1 do "small"', "keep"],
+    ["echo a >>", "keep"],
     ["echo hello", "keep"],
     ["let total = (a + b)", "keep"],
     ["if_ready = (a == b)", "keep"],

@@ -1,0 +1,120 @@
+# A break between two lines becomes a space, and chomping follows `|`
+let doc = >
+  one
+  two
+assert_eq $doc "one two\n"
+doc = >-
+  one
+  two
+assert_eq $doc "one two"
+
+# Blank lines: the first break before them is dropped, each one is a newline
+doc = >-
+  one
+
+  two
+assert_eq $doc "one\ntwo"
+doc = >-
+  one
+
+
+  two
+assert_eq $doc "one\n\ntwo"
+
+# Blank lines before the first line are kept, and after the last are dropped
+doc = >
+
+  one
+  two
+
+assert_eq $doc "\none two\n"
+
+# Breaks around and between lines indented beyond the baseline are kept, with
+# the extra indentation
+doc = >-
+  intro
+    - one
+    - two
+  outro
+  end
+assert_eq $doc "intro\n  - one\n  - two\noutro end"
+doc = >-
+  intro
+
+    indented
+  outro
+assert_eq $doc "intro\n\n  indented\noutro"
+
+# Whitespace ending a line is kept
+doc = >-
+  one 
+  two
+assert_eq $doc "one  two"
+
+# Only source breaks fold: those from escapes and interpolation stay
+let nl = "x\ny"
+doc = >-
+  $nl
+  a\n
+  b
+assert_eq $doc "x\ny a\n b"
+
+# Interpolation chains up to the break as in `|`
+let host = "h"
+let dest = "d"
+doc = >-
+  rsync --archive
+  $host:$dest/
+  $(1 + 1)
+assert_eq $doc "rsync --archive h:d/ 2"
+
+# A line starting with `#` is text
+doc = >-
+  # one
+  two
+assert_eq $doc "# one two"
+
+# Raw folded here strings
+doc = r>-
+  $host \n
+  b
+assert_eq $doc r"$host \n b"
+doc = r>
+  a
+  b
+assert_eq $doc "a b\n"
+
+# Formatted folded here strings
+let seq = t>-
+  ${host}
+  b
+assert_eq $seq.format() "h b"
+
+# Other positions
+def id x
+  x
+def key_id :key
+  key
+doc = id >-
+  a
+  b
+assert_eq $doc "a b"
+doc = id
+  >-
+    a
+    b
+assert_eq $doc "a b"
+doc = key_id key: >-
+  a
+  b
+assert_eq $doc "a b"
+
+# Not at the end of a line, `>` is text
+doc = id a>b
+assert_eq $doc "a>b"
+doc = id r>b
+assert_eq $doc "r>b"
+doc = id t>-
+assert_eq $doc "t>-"
+doc = id >
+assert_eq $doc ">"

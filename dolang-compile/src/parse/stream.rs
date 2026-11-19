@@ -49,8 +49,10 @@ pub(crate) enum ExpectKind {
     RawQuote,
     BQuote,
     RBar,
+    RGt,
     TQuote,
     TBar,
+    TGt,
     Hash,
 }
 
@@ -102,8 +104,10 @@ impl Display for ExpectKind {
             RawQuote => &"<raw quote>",
             BQuote => &"<binary quote>",
             RBar => &"r|",
+            RGt => &"r>",
             TQuote => &"<formatted quote>",
             TBar => &"t|",
+            TGt => &"t>",
             Hash => &"#",
         }
         .fmt(f)
@@ -135,7 +139,7 @@ impl From<&TokenInfo> for ExpectKind {
             Key => ExpectKind::Key,
             Keyword(k) => ExpectKind::Keyword(*k),
             LeftParen => ExpectKind::LeftParen,
-            Literal => ExpectKind::Literal,
+            Literal | HeredocBreak | HeredocIndent => ExpectKind::Literal,
             RightParen => ExpectKind::RightParen,
             StmtSep => ExpectKind::StmtSep,
             Op(o) => ExpectKind::Op(*o),
@@ -152,8 +156,10 @@ impl From<&TokenInfo> for ExpectKind {
             RawQuote => ExpectKind::RawQuote,
             BQuote => ExpectKind::BQuote,
             RBar => ExpectKind::RBar,
+            RGt => ExpectKind::RGt,
             TQuote => ExpectKind::TQuote,
             TBar => ExpectKind::TBar,
+            TGt => ExpectKind::TGt,
             Hash => ExpectKind::Hash,
         }
     }
