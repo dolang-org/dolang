@@ -33,6 +33,78 @@ pub(crate) enum Target<'m> {
     Bundled(String, String),
 }
 
+/// A declaration other modules may name, by its module's name: an item the
+/// module declares, or a member of a class it declares.  It's found by name
+/// rather than by node, since checks may hold different revisions of its
+/// module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Name {
+    pub(crate) module: String,
+    /// The item, or the class declaring the member
+    pub(crate) item: String,
+    pub(crate) member: Option<String>,
+}
+
+impl Name {
+    /// What other modules name the declaration `id` of `unit`, the source of
+    /// `module`, if they may name it.  An `@def` overload is named as its
+    /// implementation is.
+    pub(crate) fn of(unit: &Unit<'_>, module: &str, id: NodeId) -> Option<Self> {
+        let node = unit.node(id)?;
+        let name = unit.text(node.definition()?).to_owned();
+        let parent = node.parent()?;
+        let top = Some(parent) == unit.root();
+        let (item, member) = match node.kind() {
+            Kind::Class { .. } | Kind::Bind { .. } | Kind::Alias { .. } | Kind::Function { .. }
+                if top =>
+            {
+                (name, None)
+            }
+            Kind::Method { .. } | Kind::SpecialMethod { .. } | Kind::Field { .. } => {
+                let class = unit.node(parent)?;
+                if !matches!(class.kind(), Kind::Class { .. }) || class.parent() != unit.root() {
+                    return None;
+                }
+                (unit.text(class.definition()?).to_owned(), Some(name))
+            }
+            _ => return None,
+        };
+        Some(Self {
+            module: module.to_owned(),
+            item,
+            member,
+        })
+    }
+
+    /// Where the declaration is among `modules`.
+    pub(crate) fn find<'m>(&self, modules: &'m Modules) -> Option<Target<'m>> {
+        match &self.member {
+            None => item(modules, &self.module, &self.item),
+            Some(name) => member(modules, &self.module, &self.item, name),
+        }
+    }
+}
+
+impl Target<'_> {
+    /// What other modules name the declaration found.
+    pub(crate) fn name(&self) -> Option<Name> {
+        match self {
+            Self::Source(module, id) => Name::of(&module.unit, &module.name, *id),
+            Self::Bundled(module, name) => {
+                let (item, member) = match name.split_once('.') {
+                    Some((class, member)) => (class.to_owned(), Some(member.to_owned())),
+                    None => (name.clone(), None),
+                };
+                Some(Name {
+                    module: module.clone(),
+                    item,
+                    member,
+                })
+            }
+        }
+    }
+}
+
 /// The item a module exports as `name`, following re-exports. An overloaded
 /// function is found as its implementation.
 pub(crate) fn item<'m>(modules: &'m Modules, module: &str, name: &str) -> Option<Target<'m>> {

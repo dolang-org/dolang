@@ -8,6 +8,7 @@
 //! module file must lie under its root's canonical path and be a regular file.
 
 use std::{
+    collections::HashSet,
     fs::{self, File, OpenOptions},
     io::{self, Read},
     path::{Component, Path, PathBuf},
@@ -18,6 +19,8 @@ use std::{
 const MAX_ROOTS: usize = 256;
 /// The largest module source read from a root
 const MAX_MODULE_BYTES: u64 = 4 << 20;
+/// The deepest directory below a root that a listing looks in
+const MAX_DEPTH: usize = 16;
 
 /// When a file was last modified, and its size: what tells a change to it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,20 +140,7 @@ impl ModulePath {
             return None;
         }
         let relative: PathBuf = parts.iter().collect();
-        for root in &self.roots {
-            // The root may have been replaced since the configuration loaded
-            let root = match dunce::canonicalize(root) {
-                Ok(canonical) if canonical.starts_with(&self.base) => canonical,
-                Ok(canonical) => {
-                    log::error!(
-                        "module root {} now resolves outside {}",
-                        canonical.display(),
-                        self.base.display()
-                    );
-                    continue;
-                }
-                Err(_) => continue,
-            };
+        for root in self.resolved() {
             let candidates = [
                 root.join(&relative).with_extension("dol"),
                 root.join(&relative).join("mod.dol"),
@@ -167,6 +157,103 @@ impl ModulePath {
         }
         None
     }
+
+    /// The roots as they resolve now, passing over those that are gone or
+    /// have been replaced by a link outside the base since the configuration
+    /// loaded.
+    fn resolved(&self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.roots
+            .iter()
+            .filter_map(|root| match dunce::canonicalize(root) {
+                Ok(canonical) if canonical.starts_with(&self.base) => Some(canonical),
+                Ok(canonical) => {
+                    log::error!(
+                        "module root {} now resolves outside {}",
+                        canonical.display(),
+                        self.base.display()
+                    );
+                    None
+                }
+                Err(_) => None,
+            })
+    }
+
+    /// The modules the roots have sources of, each once, in the order the
+    /// roots are searched and then by path, up to `limit` of them.
+    ///
+    /// Only the names are found: `open` still decides whether each source
+    /// may be read.  A listing passes over linked directories and those
+    /// deeper than `MAX_DEPTH`, so it never looks outside its root.
+    pub(crate) fn list(&self, limit: usize) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut names = Vec::new();
+        for root in self.resolved() {
+            let mut parts = Vec::new();
+            if !list_dir(&root, &mut parts, limit, &mut seen, &mut names) {
+                log::error!("the module path has more than {limit} modules");
+                break;
+            }
+        }
+        names
+    }
+}
+
+/// Adds the modules under `dir`, named `parts` below its root, to `names`,
+/// returning whether there was room for them all.
+fn list_dir(
+    dir: &Path,
+    parts: &mut Vec<String>,
+    limit: usize,
+    seen: &mut HashSet<String>,
+    names: &mut Vec<String>,
+) -> bool {
+    let Ok(listing) = fs::read_dir(dir) else {
+        return true;
+    };
+    let mut entries: Vec<_> = listing
+        .flatten()
+        .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry)))
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    for (name, entry) in entries {
+        // Doesn't follow a link, which `open` resolves and contains instead
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let module = match name.strip_suffix(".dol") {
+            _ if kind.is_dir() => {
+                if parts.len() < MAX_DEPTH && is_name(&name) {
+                    parts.push(name);
+                    let room = list_dir(&entry.path(), parts, limit, seen, names);
+                    parts.pop();
+                    if !room {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            Some("mod") if parts.is_empty() => continue,
+            Some("mod") => parts.join("."),
+            Some(stem) if is_name(stem) => {
+                let mut module = parts.join(".");
+                if !module.is_empty() {
+                    module.push('.');
+                }
+                module.push_str(stem);
+                module
+            }
+            _ => continue,
+        };
+        if seen.contains(&module) {
+            continue;
+        }
+        if names.len() == limit {
+            return false;
+        }
+        seen.insert(module.clone());
+        names.push(module);
+    }
+    true
 }
 
 /// Adds the canonical roots `entry` names under `base` to `roots`.
@@ -450,6 +537,24 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn listings_name_each_module_once_in_search_order() {
+        let tree = Directory::new();
+        tree.write("one/b.dol", "");
+        tree.write("one/a/x.dol", "");
+        tree.write("one/a/mod.dol", "");
+        tree.write("one/mod.dol", "");
+        tree.write("one/odd-name.dol", "");
+        tree.write("one/odd-dir/y.dol", "");
+        tree.write("one/notes.txt", "");
+        tree.write("two/b.dol", "");
+        tree.write("two/c/mod.dol", "");
+        tree.write("two/a.dol", "");
+        let path = load(&tree.0, &["one", "two"]);
+        assert_eq!(path.list(100), ["a", "a.x", "b", "c"]);
+        assert_eq!(path.list(2), ["a", "a.x"]);
+    }
+
+    #[test]
     fn absolute_and_parent_entries_are_rejected() {
         let tree = Directory::new();
         let inner = tree.dir("inner");
@@ -521,6 +626,17 @@ pub(crate) mod tests {
             symlink(&outside.0, tree.0.join("link")).unwrap();
             let path = load(&tree.0, &["link/*/stub"]);
             assert_eq!(path.roots, Vec::<PathBuf>::new());
+        }
+
+        #[test]
+        fn listings_do_not_follow_linked_directories() {
+            let outside = Directory::new();
+            outside.write("m.dol", "");
+            let tree = Directory::new();
+            tree.write("lib/a.dol", "");
+            symlink(&outside.0, tree.0.join("lib/out")).unwrap();
+            let path = load(&tree.0, &["lib"]);
+            assert_eq!(path.list(100), ["a"]);
         }
 
         #[test]

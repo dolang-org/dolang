@@ -114,6 +114,27 @@ earlier revision's check reached. A module only an edit imports may be dropped
 and loaded again, which costs only the read. A workspace is dropped once no open
 document is in it.
 
+The worker indexes each workspace's module path when it has nothing else to
+do, a batch of modules at a time. `ModulePath::list` names the modules under
+the roots without following linked directories, up to `MAX_INDEXED`, and the
+worker loads those the table lacks. A listed module stays loaded whether or
+not a check reaches it, but a check of the workspace checks only the members
+open documents reach. A change to the table lists the module path again.
+
+Find references answers from the declaration's identity by name: its module,
+and its item or its class and member (`lookup::Name`). Checks may hold
+different revisions of the module, so a node wouldn't identify it. A local
+declaration, or one in a script, keeps the document's own syntactic uses. For
+any other declaration the request goes to the worker. The worker finishes
+indexing, then checks the members that import the declaration's module,
+directly or transitively, whose checks aren't valid. It takes a batch at a
+time, as `prepare` would have checked them. It then scans each importer's
+analysis for member uses, paths and type names that the forward lookups
+resolve to the declaration, and for imports of it by name with the uses of the
+names they bind. The declaring module adds the syntactic uses of the
+declaration. A member use or a path is judged as a whole, so each is narrowed
+to the name it uses.
+
 When the client allows it, the server registers watchers for `.dol` sources
 and configuration files. A source event puts every live workspace's check off,
 and the check's look at the disk finds what changed. A module held by an open

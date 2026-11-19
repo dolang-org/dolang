@@ -50,6 +50,8 @@ use crate::{
 
 /// The most module sources one check reads
 const MAX_MODULES: usize = 512;
+/// The most modules a workspace's index lists
+const MAX_INDEXED: usize = 4096;
 
 /// The types `strand`'s pipe placeholders stand for: the shell's pipelines
 /// connect stages with `proc`'s pipes
@@ -153,6 +155,7 @@ impl Workspaces {
             preludes: Mutex::default(),
             bundled: self.bundled.clone(),
             members: Mutex::default(),
+            index: Mutex::default(),
         });
         self.table.retain(|_, live| live.strong_count() > 0);
         self.table.insert(root, Arc::downgrade(&workspace));
@@ -173,6 +176,7 @@ impl Workspaces {
             preludes: Mutex::default(),
             bundled: self.bundled.clone(),
             members: Mutex::default(),
+            index: Mutex::default(),
         });
         self.detached = Arc::downgrade(&workspace);
         workspace
@@ -234,6 +238,19 @@ pub(crate) struct Workspace {
     bundled: Arc<Bundled>,
     /// The current revision of each member
     members: Mutex<HashMap<Key, Arc<Member>>>,
+    index: Mutex<Index>,
+}
+
+/// The modules on a workspace's module path, as last listed, which stay
+/// loaded whether or not a check reaches them.
+#[derive(Default)]
+struct Index {
+    /// `None` until first listed
+    listed: Option<HashSet<String>>,
+    /// Whether a change may have added or removed a module since
+    stale: bool,
+    /// Those listed and not looked at since
+    pending: Vec<String>,
 }
 
 /// One revision of a document in a workspace.
@@ -648,7 +665,8 @@ impl Workspace {
 
     /// What a check of the workspace is to check now.
     ///
-    /// Loaded members no open document imports are dropped first.  Then the
+    /// Loaded members no open document imports are dropped first, unless the
+    /// index lists them; those are kept, but checked only when wanted.  Then the
     /// files of the modules the rest loaded or looked for are looked at; if
     /// any changed, the table does, and the check must wait.
     /// Otherwise the members whose checks aren't valid are checked together
@@ -657,19 +675,51 @@ impl Workspace {
     /// in for is checked on its own.
     pub(crate) fn prepare(&self) -> Round {
         let snapshot: Vec<_> = self.members().values().cloned().collect();
-        let snapshot = self.collect(snapshot);
+        let (snapshot, reached) = self.collect(snapshot);
         if self.disk(&snapshot) {
             return Round::Changed;
         }
-        let index = index(&snapshot);
+        let wanted = snapshot
+            .iter()
+            .filter(|member| reached.contains(&Arc::as_ptr(member)));
+        self.round(&snapshot, wanted.cloned().collect(), usize::MAX)
+    }
+
+    /// What a check of `wanted` is to check now: those of them whose checks
+    /// aren't valid, at most `limit` of them, as `prepare` checks the members
+    /// open documents reach.
+    ///
+    /// The files of the modules the table loaded or looked for are looked
+    /// at first; if any changed, the table does, and the check must wait.
+    pub(crate) fn prepare_for(&self, wanted: &[Arc<Member>], limit: usize) -> Round {
+        let snapshot: Vec<_> = self.members().values().cloned().collect();
+        if self.disk(&snapshot) {
+            return Round::Changed;
+        }
+        let wanted = {
+            let members = self.members();
+            (wanted.iter())
+                .filter(|member| current(&members, member))
+                .cloned()
+                .collect()
+        };
+        self.round(&snapshot, wanted, limit)
+    }
+
+    /// The checks of those of `wanted` whose checks aren't valid in
+    /// `snapshot`, at most `limit` of them.
+    fn round(&self, snapshot: &[Arc<Member>], wanted: Vec<Arc<Member>>, limit: usize) -> Round {
+        let index = index(snapshot);
         let mut roots = Vec::new();
         let mut shadowed = Vec::new();
-        for member in &snapshot {
-            if self.valid(member, &index) {
-                continue;
-            }
+        let unchecked = wanted.iter().filter(|member| !self.valid(member, &index));
+        for member in unchecked.take(limit) {
             match member.module.as_deref() {
-                Some(name) if !Arc::ptr_eq(index[name], member) => {
+                Some(name)
+                    if index
+                        .get(name)
+                        .is_some_and(|other| !Arc::ptr_eq(other, member)) =>
+                {
                     shadowed.push(vec![member.clone()]);
                 }
                 _ => roots.push(member.clone()),
@@ -698,14 +748,14 @@ impl Workspace {
 
     /// Drops the loaded members of `snapshot` that no member the client has
     /// open imports, directly or transitively, as its latest check found,
-    /// returning the rest.
+    /// and that aren't in the index, returning the rest and those reached.
     ///
     /// A revision not checked yet holds what its earlier revision's check
     /// found.  The modules a check found are looked up again by name, so a
     /// member that replaced one, or a file that appeared for one, is reached
     /// too.  A module only an edit imports may be dropped and loaded again;
     /// that costs only the read.
-    fn collect(&self, snapshot: Vec<Arc<Member>>) -> Vec<Arc<Member>> {
+    fn collect(&self, snapshot: Vec<Arc<Member>>) -> (Vec<Arc<Member>>, HashSet<*const Member>) {
         let index = index(&snapshot);
         let mut reached = HashSet::new();
         for member in snapshot.iter().filter(|member| member.uri().is_some()) {
@@ -714,9 +764,14 @@ impl Workspace {
                 reached.extend(index.get(name.as_str()).map(|member| Arc::as_ptr(member)));
             }
         }
-        let (kept, dropped): (Vec<_>, Vec<_>) = snapshot
-            .iter()
-            .partition(|member| reached.contains(&Arc::as_ptr(member)));
+        let listed = self.index().listed.clone().unwrap_or_default();
+        let (kept, dropped): (Vec<_>, Vec<_>) = snapshot.iter().partition(|member| {
+            reached.contains(&Arc::as_ptr(member))
+                || member
+                    .module
+                    .as_ref()
+                    .is_some_and(|name| listed.contains(name))
+        });
         if !dropped.is_empty() {
             let mut members = self.members();
             for member in dropped {
@@ -725,7 +780,7 @@ impl Workspace {
                 }
             }
         }
-        kept.into_iter().cloned().collect()
+        (kept.into_iter().cloned().collect(), reached)
     }
 
     /// Brings the loaded members up to their files, and loads the modules
@@ -1018,6 +1073,84 @@ impl Workspace {
 
     fn members(&self) -> MutexGuard<'_, HashMap<Key, Arc<Member>>> {
         self.members.lock().expect("workspace lock poisoned")
+    }
+
+    fn index(&self) -> MutexGuard<'_, Index> {
+        self.index.lock().expect("index lock poisoned")
+    }
+
+    /// Has the next step of indexing list the module path again, since a
+    /// change may have added or removed a module.
+    pub(crate) fn reindex(&self) {
+        self.index().stale = true;
+    }
+
+    /// Takes a step of indexing the module path: lists it, if it isn't
+    /// listed, then loads up to `batch` of the modules listed that the table
+    /// lacks.  Returns whether there is more to do.
+    ///
+    /// A loaded module stays in the table while it is listed, but only a
+    /// check that wants it checks it.
+    pub(crate) fn index_step(&self, batch: usize) -> bool {
+        let Some(modules) = self.modules() else {
+            return false;
+        };
+        let names = {
+            let mut index = self.index();
+            if index.listed.is_none() || index.stale {
+                index.stale = false;
+                let names = modules.list(MAX_INDEXED);
+                index.listed = Some(names.iter().cloned().collect());
+                index.pending = names;
+                // Loaded in listing order
+                index.pending.reverse();
+            }
+            let at = index.pending.len().saturating_sub(batch);
+            index.pending.split_off(at)
+        };
+        for name in names.into_iter().rev() {
+            let known =
+                (self.members().values()).any(|member| member.module.as_deref() == Some(&name));
+            if known {
+                continue;
+            }
+            if let Some(loaded) = self.load(modules, &name, None) {
+                admit(&mut self.members(), loaded, false);
+            }
+        }
+        !self.index().pending.is_empty()
+    }
+
+    /// The members that import `module`, directly or transitively, and the
+    /// members of the module itself, each compiled.
+    pub(crate) fn importers(&self, module: &str) -> Vec<Arc<Member>> {
+        let snapshot: Vec<_> = self.members().values().cloned().collect();
+        let mut importers = HashMap::<&str, Vec<&Arc<Member>>>::new();
+        for member in &snapshot {
+            self.unit(member);
+            for name in member.depends() {
+                importers.entry(name).or_default().push(member);
+            }
+        }
+        let mut found: Vec<&Arc<Member>> = (snapshot.iter())
+            .filter(|member| member.module.as_deref() == Some(module))
+            .collect();
+        let mut seen: HashSet<&str> = HashSet::from([module]);
+        let mut queue = vec![module];
+        while let Some(name) = queue.pop() {
+            for &member in importers.get(name).into_iter().flatten() {
+                if found.iter().any(|found| Arc::ptr_eq(found, member)) {
+                    continue;
+                }
+                found.push(member);
+                if let Some(name) = member.module.as_deref()
+                    && seen.insert(name)
+                {
+                    queue.push(name);
+                }
+            }
+        }
+        found.into_iter().cloned().collect()
     }
 }
 
@@ -1527,6 +1660,70 @@ mod tests {
         assert!(workspace.current(&loaded));
         assert_eq!(prepare(&workspace).unwrap().len(), 0);
         assert!(workspace.member(&a).is_none());
+    }
+
+    /// Indexes the workspace's module path to the end.
+    fn index_all(workspace: &Workspace) {
+        while workspace.index_step(1) {}
+    }
+
+    fn paths_of(members: Vec<Arc<Member>>) -> Vec<PathBuf> {
+        let mut paths: Vec<_> = members
+            .into_iter()
+            .map(|member| member.path.clone())
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    #[test]
+    fn indexed_modules_stay_loaded_but_unchecked() {
+        let tree = Directory::repo();
+        library(&tree);
+        let a = tree.write("lib/a.dol", "");
+        let b = tree.write("lib/b.dol", "import a\n");
+        let main = tree.0.join("main.dol");
+        let workspace = Workspaces::default().open(&main);
+        open(&workspace, &main, 1, "").unwrap();
+        index_all(&workspace);
+        assert!(workspace.member(&a).is_some() && workspace.member(&b).is_some());
+        assert_eq!(check_paths(&workspace), [main.as_path()]);
+        assert_eq!(prepare(&workspace).unwrap().len(), 0);
+        assert!(workspace.member(&a).is_some() && workspace.member(&b).is_some());
+
+        // A check that wants one checks it, with what it imports
+        let wanted = [workspace.member(&b).unwrap()];
+        let Round::Checks(checks) = workspace.prepare_for(&wanted, usize::MAX) else {
+            panic!("the table is settled");
+        };
+        let (members, targets) = paths(&checks[0]);
+        assert_eq!(members, [a.as_path(), b.as_path()]);
+        assert_eq!(targets, [a.as_path(), b.as_path()]);
+
+        // A module removed from disk leaves the index
+        fs::remove_file(&a).unwrap();
+        workspace.reindex();
+        assert!(prepare(&workspace).is_none());
+        index_all(&workspace);
+        assert!(workspace.member(&a).is_none());
+        assert!(workspace.member(&b).is_some());
+    }
+
+    #[test]
+    fn importers_are_transitive() {
+        let tree = Directory::repo();
+        library(&tree);
+        let a = tree.write("lib/a.dol", "pub def f\n  1\n");
+        let b = tree.write("lib/b.dol", "pub import a:\n  - f\n");
+        let c = tree.write("lib/c.dol", "import b\n");
+        tree.write("lib/d.dol", "");
+        let main = tree.0.join("main.dol");
+        let workspace = Workspaces::default().open(&main);
+        open(&workspace, &main, 1, "import c\n").unwrap();
+        index_all(&workspace);
+        let importers = paths_of(workspace.importers("a"));
+        assert_eq!(importers, [a.clone(), b.clone(), c.clone(), main.clone()]);
+        assert_eq!(paths_of(workspace.importers("c")), [c, main]);
     }
 
     #[test]

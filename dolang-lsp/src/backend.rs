@@ -29,7 +29,7 @@ use dolang_compile::{
 
 use crate::{
     doc_index,
-    lookup::{self, Modules, Target},
+    lookup::{self, Modules, Name, Target},
     settings::{CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     signature,
     workspace::{Check, Key, Member, PIPES, Round, Typelibs, Workspace, Workspaces},
@@ -1094,7 +1094,34 @@ enum Request {
     Compile(Job),
     /// A workspace whose table changed, to check once it settles
     Due(Arc<Workspace>),
+    References(Refs),
 }
+
+/// A request for the references to a declaration other modules may name, in
+/// a workspace.
+struct Refs {
+    workspace: Arc<Workspace>,
+    name: Name,
+    encoding: PositionEncodingKind,
+    /// Given where the declaration is named, and where it is declared
+    reply: oneshot::Sender<Found>,
+}
+
+/// Where a declaration is named, and where it is declared, if that is in the
+/// workspace.
+#[derive(Default)]
+struct Found {
+    uses: Vec<Location>,
+    declaration: Option<Location>,
+}
+
+/// The most modules one step of indexing loads, between requests
+const INDEX_BATCH: usize = 32;
+/// The most members a check for references checks from source at once
+const REFERENCES_BATCH: usize = 64;
+/// The most checks a search for references makes, which ends one that the
+/// table keeps changing under
+const REFERENCES_ROUNDS: usize = 256;
 
 enum Event {
     Projected {
@@ -1124,6 +1151,9 @@ struct Worker {
     check_delay: Option<Duration>,
     /// When each workspace whose table changed is due to be checked
     pending: Vec<(Weak<Workspace>, Instant)>,
+    /// The workspaces whose module paths are still to index, when nothing
+    /// else is to do
+    indexing: Vec<Weak<Workspace>>,
 }
 
 impl Worker {
@@ -1136,7 +1166,16 @@ impl Worker {
                 .enumerate()
                 .min_by_key(|(_, (_, deadline))| *deadline)
                 .map(|(at, (_, deadline))| (at, *deadline));
+            let idle = due.is_none_or(|(_, deadline)| deadline > Instant::now());
             let first = match due {
+                _ if idle && !self.indexing.is_empty() => match requests.try_recv() {
+                    Ok(first) => first,
+                    Err(mpsc::TryRecvError::Empty) => {
+                        self.index();
+                        continue;
+                    }
+                    Err(mpsc::TryRecvError::Disconnected) => break,
+                },
                 None => match requests.recv() {
                     Ok(first) => first,
                     Err(mpsc::RecvError) => break,
@@ -1162,9 +1201,9 @@ impl Worker {
                 .map(|i| match &batch[i] {
                     Request::Compile(job) => batch[i + 1..].iter().any(|later| match later {
                         Request::Compile(later) => later.uri == job.uri,
-                        Request::Due(_) => false,
+                        Request::Due(_) | Request::References(_) => false,
                     }),
-                    Request::Due(_) => false,
+                    Request::Due(_) | Request::References(_) => false,
                 })
                 .collect();
             for (request, superseded) in batch.into_iter().zip(superseded) {
@@ -1172,16 +1211,23 @@ impl Worker {
                     Request::Compile(job) if superseded => self.due(&job.workspace),
                     Request::Compile(job) => self.compile(job),
                     Request::Due(workspace) => self.due(&workspace),
+                    Request::References(refs) => self.references(refs),
                 }
             }
         }
     }
 
     /// Puts a workspace's check off until its table settles again.
+    /// A change may have added or removed a module, so the workspace's module
+    /// path is indexed again too.
     fn due(&mut self, workspace: &Arc<Workspace>) {
         let Some(delay) = self.check_delay else {
             return;
         };
+        workspace.reindex();
+        if !(self.indexing.iter()).any(|indexing| indexing.as_ptr() == Arc::as_ptr(workspace)) {
+            self.indexing.push(Arc::downgrade(workspace));
+        }
         let deadline = Instant::now() + delay;
         let pending = self
             .pending
@@ -1244,6 +1290,13 @@ impl Worker {
                 return;
             }
         };
+        self.run_checks(workspace, checks);
+        log::debug!("checked a workspace in {:?}", start.elapsed());
+    }
+
+    /// Makes `checks` of a workspace, storing what each made of its members
+    /// and publishing it for those the client has open.
+    fn run_checks(&mut self, workspace: &Workspace, checks: Vec<Check>) {
         if checks.is_empty() {
             return;
         }
@@ -1279,8 +1332,186 @@ impl Worker {
                 }
             }
         }
-        log::debug!("checked a workspace in {:?}", start.elapsed());
     }
+
+    /// Takes a step of indexing the first workspace still to index.
+    fn index(&mut self) {
+        let Some(workspace) = self.indexing[0].upgrade() else {
+            self.indexing.swap_remove(0);
+            return;
+        };
+        let more = panic::catch_unwind(AssertUnwindSafe(|| workspace.index_step(INDEX_BATCH)));
+        if !more.unwrap_or_else(|_| {
+            log::error!("failed to index {}", workspace.root().display());
+            false
+        }) {
+            self.indexing.swap_remove(0);
+        }
+    }
+
+    /// Answers a request for references, checking the members that import
+    /// the declaration's module, directly or transitively, whose checks
+    /// aren't valid.
+    fn references(&mut self, refs: Refs) {
+        let Refs {
+            workspace,
+            name,
+            encoding,
+            reply,
+        } = refs;
+        let found = panic::catch_unwind(AssertUnwindSafe(|| {
+            self.find_references(&workspace, &name, &encoding)
+        }));
+        let found = found.unwrap_or_else(|_| {
+            log::error!("failed to find references");
+            Found::default()
+        });
+        _ = reply.send(found);
+    }
+
+    fn find_references(
+        &mut self,
+        workspace: &Arc<Workspace>,
+        name: &Name,
+        encoding: &PositionEncodingKind,
+    ) -> Found {
+        while workspace.index_step(usize::MAX) {}
+        let mut importers = workspace.importers(&name.module);
+        for _ in 0..REFERENCES_ROUNDS {
+            match workspace.prepare_for(&importers, REFERENCES_BATCH) {
+                Round::Changed => {
+                    self.due(workspace);
+                    importers = workspace.importers(&name.module);
+                }
+                Round::Checks(checks) if checks.is_empty() => break,
+                Round::Checks(checks) => self.run_checks(workspace, checks),
+            }
+        }
+        let mut found = Found::default();
+        for member in &importers {
+            let unit = workspace.unit(member);
+            let Some(uri) = (member.uri().cloned()).or_else(|| Uri::from_file_path(member.path()))
+            else {
+                continue;
+            };
+            let index = DocumentIndex::new(unit.source(), encoding.clone());
+            let mut ranges = Vec::new();
+            if let Some(analyzed) = member.checked().and_then(|checked| checked.analyzed) {
+                ranges.extend(references_in(&analyzed, &unit, name));
+            }
+            // Its own module names it as it names its other declarations
+            if member.module() == Some(&*name.module) {
+                let own = Modules::from([(
+                    name.module.clone(),
+                    lookup::Module {
+                        uri: uri.clone(),
+                        name: name.module.clone(),
+                        unit: unit.clone(),
+                    },
+                )]);
+                if let Some(Target::Source(_, id)) = name.find(&own) {
+                    let uses = uses_of(&unit, |node| node == id);
+                    ranges.extend(uses.into_iter().map(|span| unit.byte_range(span)));
+                    let declared = unit.node(id).and_then(|node| node.definition());
+                    if let Some(span) = declared
+                        && found.declaration.is_none()
+                    {
+                        let range = index.range_from_span(&span);
+                        found.declaration = Some(Location::new(uri.clone(), range));
+                    }
+                }
+            }
+            for bytes in ranges {
+                let range = index.range_from_offsets(bytes.start, bytes.end);
+                let location = Location::new(uri.clone(), range);
+                if !found.uses.contains(&location) {
+                    found.uses.push(location);
+                }
+            }
+        }
+        found
+    }
+}
+
+/// Where `unit`, as `analyzed` checked it, names the declaration `name`, as
+/// byte ranges of its source: a member use reaching it, a path through a
+/// module to it, a type naming it, and an import of it by name with each use
+/// of the name it binds.
+///
+/// A member use and a path are judged as a whole, so each is narrowed to the
+/// name it uses: a member's after its receiver, and a path's at its end.
+fn references_in(analyzed: &Analyzed, unit: &Unit<'_>, name: &Name) -> Vec<ops::Range<usize>> {
+    let modules = &analyzed.modules;
+    let names = |target: &Target<'_>| target.name().as_ref() == Some(name);
+    let ident = name.member.as_deref().unwrap_or(&name.item);
+    let source = unit.source();
+    let nodes: Vec<_> = analyzed.analysis.nodes(analyzed.unit).collect();
+    let mut ranges = Vec::new();
+    for (at, node) in nodes.iter().enumerate() {
+        let typed = node.judgments().any(|judged| {
+            let declaration = judged
+                .declaration()
+                .filter(|_| judged.role() == Role::Reference);
+            declaration.is_some_and(|declaration| {
+                name.member.is_none()
+                    && declaration.module() == name.module
+                    && declaration.name() == name.item
+            })
+        });
+        if !typed && !node_targets(modules, *node).iter().any(names) {
+            continue;
+        }
+        let mut bytes = unit.byte_range(node.span());
+        let text = source.get(bytes.clone()).unwrap_or_default();
+        let member = node.judgments().any(|judged| judged.role() == Role::Member);
+        // Nodes are in source order, outer before inner, so the receiver is
+        // the next to start where the use does
+        let receiver = nodes.get(at + 1).map(|next| next.span());
+        let receiver = receiver.filter(|next| next.start() == node.span().start());
+        match receiver.map(|receiver| unit.byte_range(receiver).end) {
+            Some(end) if member => {
+                let after = source.get(end..bytes.end).unwrap_or_default();
+                if let Some(offset) = after.find(ident) {
+                    bytes = end + offset..end + offset + ident.len();
+                }
+            }
+            _ if text.len() > ident.len() && text.ends_with(ident) => {
+                bytes.start = bytes.end - ident.len();
+            }
+            _ => {}
+        }
+        ranges.push(bytes);
+    }
+    let imports: HashSet<NodeId> = unit
+        .nodes()
+        .filter_map(|(id, node)| {
+            let target = match node.kind() {
+                Kind::ImportItem { module, item, .. } => {
+                    lookup::item(modules, unit.text(module), unit.text(item))
+                }
+                Kind::PreludeItem { module, item, .. } => lookup::item(modules, module, item),
+                _ => None,
+            };
+            target.as_ref().is_some_and(names).then_some(id)
+        })
+        .collect();
+    let uses = uses_of(unit, |id| imports.contains(&id));
+    ranges.extend(uses.into_iter().map(|span| unit.byte_range(span)));
+    ranges
+}
+
+/// The spans of the tokens of `unit` that name a declaration `named` picks.
+fn uses_of(unit: &Unit<'_>, named: impl Fn(NodeId) -> bool) -> Vec<diag::Span> {
+    let mut spans = Vec::new();
+    unit.tokens(&mut |_, span: diag::Span, node: Option<NodeId>, _| {
+        if let Some(id) = node
+            && !span.is_empty()
+            && named(id)
+        {
+            spans.push(span);
+        }
+    });
+    spans
 }
 
 /// Publishes what the worker made of current revisions, in order.
@@ -1756,6 +1987,7 @@ impl Backend {
             documents: documents.clone(),
             check_delay,
             pending: Vec::new(),
+            indexing: Vec::new(),
         };
         // The thread exits once the backend drops its sender, and the applier
         // once the thread drops its own
@@ -1779,6 +2011,23 @@ impl Backend {
     ///
     /// A request's positions refer to the text the client last sent, so
     /// answering from an older projection would misplace them.
+    /// What other modules name the declaration at `pos`: the one a use there
+    /// names, else one declared there, if other modules may name it.
+    fn name_at(&self, document: &Document, pos: &Position) -> Option<Name> {
+        let reference = document.reference_at(pos);
+        let index = DocumentIndex::new(document.unit.source(), self.position_encoding());
+        if let (Some(analyzed), Some(offset)) =
+            (document.analyzed(), index.offset_from_position(pos))
+        {
+            let (targets, _) = document.targets(&analyzed, offset, reference.map(|(_, id, _)| id));
+            if let Some(name) = targets.iter().find_map(Target::name) {
+                return Some(name);
+            }
+        }
+        let (_, id, _) = reference?;
+        Name::of(&document.unit, document.member.module()?, id)
+    }
+
     async fn document(&self, uri: &Uri) -> Option<Arc<Document>> {
         let revision = self.documents().handles.get(uri)?.revision.clone();
         if let Ok(document) = revision.await {
@@ -2478,17 +2727,44 @@ impl LanguageServer for Backend {
         let Some(document) = self.document(uri).await else {
             return Ok(None);
         };
-        let Some(decl) = document.decl_at(&params.text_document_position.position) else {
-            return Ok(None);
-        };
+        let pos = &params.text_document_position.position;
         let include_declaration = params.context.include_declaration;
-        Ok(Some(
-            decl.uses
-                .iter()
+        let reference = document.reference_at(pos);
+        let local = reference.map(|(_, _, decl)| {
+            (decl.uses.iter())
                 .filter(|range| include_declaration || **range != decl.name_range)
                 .map(|range| Location::new(uri.clone(), *range))
-                .collect(),
-        ))
+                .collect::<Vec<_>>()
+        });
+        let workspace = self
+            .documents()
+            .handles
+            .get(uri)
+            .map(|handle| handle.workspace.clone());
+        let (Some(name), Some(workspace)) = (self.name_at(&document, pos), workspace) else {
+            return Ok(local);
+        };
+        let (reply, found) = oneshot::channel();
+        self.send(Request::References(Refs {
+            workspace,
+            name,
+            encoding: self.position_encoding(),
+            reply,
+        }));
+        let Ok(found) = found.await else {
+            return Ok(local);
+        };
+        let mut uses = found.uses;
+        if !include_declaration && let Some(declaration) = &found.declaration {
+            uses.retain(|location| location != declaration);
+        }
+        for location in local.into_iter().flatten() {
+            if !uses.contains(&location) {
+                uses.push(location);
+            }
+        }
+        uses.sort_by(|a, b| (a.uri.as_str(), a.range.start).cmp(&(b.uri.as_str(), b.range.start)));
+        Ok(Some(uses))
     }
 
     async fn document_highlight(
@@ -4316,6 +4592,109 @@ def uses b @ Box n @ Int
                 partial_result_params: Default::default(),
             })
             .await
+    }
+
+    async fn references(
+        harness: &mut Harness,
+        uri: &Uri,
+        line: u32,
+        character: u32,
+        include_declaration: bool,
+    ) -> Vec<Location> {
+        harness
+            .send_request::<request::References>(ReferenceParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: uri.clone() },
+                    position: Position::new(line, character),
+                },
+                context: ReferenceContext {
+                    include_declaration,
+                },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            })
+            .await
+            .unwrap_or_default()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn references_reach_every_module_on_the_module_path() {
+        // The modules import `std`, which only `dodo lsp-test` bundles
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let tree = Directory::repo();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let a_text = "\
+pub def f x
+  (x * 2)
+pub def g _x
+  f 1
+pub class B
+  pub def get _self
+    1
+  pub def twice self
+    (self.get() * 2)
+";
+        let a = Uri::from_file_path(tree.write("lib/a.dol", a_text)).unwrap();
+        let re = Uri::from_file_path(tree.write("lib/re.dol", "pub import a:\n  - f\n")).unwrap();
+        // No open document imports it
+        let user_text = "import a\npub def h b @ a.B\n  b.get()\n  a.f 1\n";
+        let user = Uri::from_file_path(tree.write("lib/user.dol", user_text)).unwrap();
+        tree.write("lib/other.dol", "pub def f\n  1\n");
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let text = "\
+import a
+import re
+import a:
+  - f
+a.f 1
+re.f 1
+f 1
+";
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness.open(main.clone(), text, 1).await;
+        let checked = harness.next_publish_for(&main).await;
+        assert_eq!(checked.diagnostics, []);
+
+        let at = |uri: &Uri, line, start, end| {
+            let range = Range::new(Position::new(line, start), Position::new(line, end));
+            Location::new(uri.clone(), range)
+        };
+        let declaration = at(&a, 0, 8, 9);
+        let uses = vec![
+            at(&a, 3, 2, 3),
+            at(&re, 1, 4, 5),
+            at(&user, 3, 4, 5),
+            at(&main, 3, 4, 5),
+            at(&main, 4, 2, 3),
+            at(&main, 5, 3, 4),
+            at(&main, 6, 0, 1),
+        ];
+        // From a path through the module, a re-export, an imported item's use
+        // and the import itself
+        for (line, character) in [(4, 2), (5, 3), (6, 0), (3, 4)] {
+            let found = references(&mut harness, &main, line, character, false).await;
+            assert_eq!(found, uses, "at {line}:{character}");
+        }
+        let found = references(&mut harness, &main, 4, 2, true).await;
+        assert_eq!(found, [&[declaration][..], &uses].concat());
+
+        // An edit's uses are found once its check is
+        let edited = format!("{text}f 2\n");
+        harness.open(main.clone(), &edited, 2).await;
+        harness.next_publish_for(&main).await;
+        let found = references(&mut harness, &main, 4, 2, false).await;
+        assert_eq!(found, [&uses[..], &[at(&main, 7, 0, 1)]].concat());
+
+        // A member, from its declaration, used through its class in another
+        // module and through `self` in its own
+        harness.open(a.clone(), a_text, 1).await;
+        harness.next_publish_for(&a).await;
+        let found = references(&mut harness, &a, 5, 10, true).await;
+        let get = [at(&a, 5, 10, 13), at(&a, 8, 10, 13), at(&user, 2, 4, 7)];
+        assert_eq!(found, get);
     }
 
     #[tokio::test(flavor = "current_thread")]
