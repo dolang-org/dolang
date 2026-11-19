@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     iter, mem, ops,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
@@ -214,6 +214,7 @@ fn symbol_kind(kind: &Kind<'_>, unit: &Unit<'_>) -> Option<SymbolKind> {
             }
         }
         Kind::Field { .. } => SymbolKind::FIELD,
+        Kind::Alias { .. } => SymbolKind::TYPE_PARAMETER,
         Kind::Bind { name, .. } if unit.text(*name) == "_" => return None,
         Kind::Bind { .. } => SymbolKind::VARIABLE,
         Kind::ImportModule { .. } | Kind::ImportItem { .. } => SymbolKind::NAMESPACE,
@@ -1095,6 +1096,7 @@ enum Request {
     /// A workspace whose table changed, to check once it settles
     Due(Arc<Workspace>),
     References(Refs),
+    Symbols(Symbols),
 }
 
 /// A request for the references to a declaration other modules may name, in
@@ -1115,6 +1117,16 @@ struct Found {
     declaration: Option<Location>,
 }
 
+/// A request for the declarations across the live workspaces whose names
+/// match a query.
+struct Symbols {
+    query: String,
+    encoding: PositionEncodingKind,
+    reply: oneshot::Sender<Vec<WorkspaceSymbol>>,
+}
+
+/// The most symbols a search for them gives, the best matches first
+const MAX_SYMBOLS: usize = 256;
 /// The most modules one step of indexing loads, between requests
 const INDEX_BATCH: usize = 32;
 /// The most members a check for references checks from source at once
@@ -1201,9 +1213,9 @@ impl Worker {
                 .map(|i| match &batch[i] {
                     Request::Compile(job) => batch[i + 1..].iter().any(|later| match later {
                         Request::Compile(later) => later.uri == job.uri,
-                        Request::Due(_) | Request::References(_) => false,
+                        Request::Due(_) | Request::References(_) | Request::Symbols(_) => false,
                     }),
-                    Request::Due(_) | Request::References(_) => false,
+                    Request::Due(_) | Request::References(_) | Request::Symbols(_) => false,
                 })
                 .collect();
             for (request, superseded) in batch.into_iter().zip(superseded) {
@@ -1212,6 +1224,7 @@ impl Worker {
                     Request::Compile(job) => self.compile(job),
                     Request::Due(workspace) => self.due(&workspace),
                     Request::References(refs) => self.references(refs),
+                    Request::Symbols(symbols) => self.symbols(symbols),
                 }
             }
         }
@@ -1431,6 +1444,173 @@ impl Worker {
         }
         found
     }
+
+    /// Answers a request for workspace symbols, once every live workspace's
+    /// module path is indexed.
+    fn symbols(&mut self, symbols: Symbols) {
+        let Symbols {
+            query,
+            encoding,
+            reply,
+        } = symbols;
+        let found = panic::catch_unwind(AssertUnwindSafe(|| self.find_symbols(&query, &encoding)));
+        let found = found.unwrap_or_else(|_| {
+            log::error!("failed to find symbols");
+            Vec::new()
+        });
+        _ = reply.send(found);
+    }
+
+    fn find_symbols(&self, query: &str, encoding: &PositionEncodingKind) -> Vec<WorkspaceSymbol> {
+        let workspaces: Vec<_> = {
+            let documents = self.documents.lock().expect("documents lock poisoned");
+            documents.workspaces.live().collect()
+        };
+        // A file under a nested root may be a member of both workspaces, and
+        // the client's buffer of it stands for it
+        let mut sources = HashMap::<Key, (Arc<Member>, Arc<Unit<'static>>)>::new();
+        for workspace in &workspaces {
+            while workspace.index_step(usize::MAX) {}
+            for (key, member, unit) in workspace.sources() {
+                match sources.entry(key) {
+                    Entry::Occupied(mut held)
+                        if held.get().0.version().is_none() && member.version().is_some() =>
+                    {
+                        held.insert((member, unit));
+                    }
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(slot) => {
+                        slot.insert((member, unit));
+                    }
+                }
+            }
+        }
+        let mut found = Vec::new();
+        for (member, unit) in sources.values() {
+            for declared in declarations_in(unit, member.module()) {
+                if let Some(tier) = rank(&declared.name, query) {
+                    found.push((tier, declared, member, unit));
+                }
+            }
+        }
+        found.sort_by(|(a_tier, a, a_member, _), (b_tier, b, b_member, _)| {
+            let key = |tier, declared: &Declared, member: &Member| {
+                let name = &declared.name;
+                (
+                    tier,
+                    name.len(),
+                    name.clone(),
+                    member.path().to_owned(),
+                    declared.span.start(),
+                )
+            };
+            key(*a_tier, a, a_member).cmp(&key(*b_tier, b, b_member))
+        });
+        found.truncate(MAX_SYMBOLS);
+        let mut indexes = HashMap::<*const Member, DocumentIndex<'_>>::new();
+        found
+            .into_iter()
+            .filter_map(|(_, declared, member, unit)| {
+                let uri = (member.uri().cloned()).or_else(|| Uri::from_file_path(member.path()))?;
+                let index = indexes
+                    .entry(Arc::as_ptr(member))
+                    .or_insert_with(|| DocumentIndex::new(unit.source(), encoding.clone()));
+                let range = index.range_from_span(&declared.span);
+                Some(WorkspaceSymbol {
+                    name: declared.name,
+                    kind: declared.kind,
+                    tags: None,
+                    container_name: declared.container,
+                    location: OneOf::Left(Location::new(uri, range)),
+                    data: None,
+                })
+            })
+            .collect()
+    }
+}
+
+/// A declaration as the workspace symbols list it.
+struct Declared {
+    name: String,
+    kind: SymbolKind,
+    /// Its class, qualified by its module, or its module alone
+    container: Option<String>,
+    /// Its name
+    span: diag::Span,
+}
+
+/// The declarations of `unit`, the source of `module` or of a script, that
+/// other documents may name: those at its top level and the members of its
+/// classes there.  Of the declarations of one name in one place, an
+/// overload's implementation stands for its signatures.
+fn declarations_in(unit: &Unit<'_>, module: Option<&str>) -> Vec<Declared> {
+    let mut declared: Vec<Declared> = Vec::new();
+    // Each entry's index, and whether it is only a signature
+    let mut at = HashMap::<(Option<String>, String), (usize, bool)>::new();
+    for (id, node) in unit.nodes() {
+        let node_kind = node.kind();
+        let (Some(kind), Some(span)) = (symbol_kind(&node_kind, unit), node.definition()) else {
+            continue;
+        };
+        let Some(name) = Name::of(unit, module.unwrap_or_default(), id) else {
+            continue;
+        };
+        let signature = matches!(
+            node_kind,
+            Kind::Function {
+                type_only: true,
+                ..
+            } | Kind::Method {
+                type_only: true,
+                ..
+            } | Kind::SpecialMethod {
+                type_only: true,
+                ..
+            }
+        );
+        let (class, name) = match name.member {
+            Some(member) => (Some(name.item), member),
+            None => (None, name.item),
+        };
+        let container = match (module, class) {
+            (Some(module), Some(class)) => Some(format!("{module}.{class}")),
+            (Some(module), None) => Some(module.to_owned()),
+            (None, class) => class,
+        };
+        let entry = Declared {
+            name,
+            kind,
+            container,
+            span,
+        };
+        match at.entry((entry.container.clone(), entry.name.clone())) {
+            Entry::Occupied(mut held) if held.get().1 && !signature => {
+                declared[held.get().0] = entry;
+                held.insert((held.get().0, false));
+            }
+            Entry::Occupied(_) => {}
+            Entry::Vacant(slot) => {
+                slot.insert((declared.len(), signature));
+                declared.push(entry);
+            }
+        }
+    }
+    declared
+}
+
+/// How well `name` matches a workspace symbol `query`, ignoring case, best
+/// first: exactly, as a prefix, or as a subsequence; or `None`.
+fn rank(name: &str, query: &str) -> Option<u8> {
+    let name = name.to_lowercase();
+    let query = query.to_lowercase();
+    if name == query {
+        return Some(0);
+    }
+    if name.starts_with(&query) {
+        return Some(1);
+    }
+    let mut chars = name.chars();
+    query.chars().all(|q| chars.any(|c| c == q)).then_some(2)
 }
 
 /// Where `unit`, as `analyzed` checked it, names the declaration `name`, as
@@ -2355,6 +2535,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                workspace_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
                 document_highlight_provider: Some(OneOf::Left(true)),
                 ..Default::default()
@@ -2720,6 +2901,22 @@ impl LanguageServer for Backend {
         };
         let symbols = document.symbols.clone();
         Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> Result<Option<WorkspaceSymbolResponse>> {
+        if params.query.is_empty() {
+            return Ok(Some(WorkspaceSymbolResponse::Nested(Vec::new())));
+        }
+        let (reply, found) = oneshot::channel();
+        self.send(Request::Symbols(Symbols {
+            query: params.query,
+            encoding: self.position_encoding(),
+            reply,
+        }));
+        Ok(found.await.ok().map(WorkspaceSymbolResponse::Nested))
     }
 
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -4695,6 +4892,119 @@ f 1
         let found = references(&mut harness, &a, 5, 10, true).await;
         let get = [at(&a, 5, 10, 13), at(&a, 8, 10, 13), at(&user, 2, 4, 7)];
         assert_eq!(found, get);
+    }
+
+    #[test]
+    fn symbols_rank_exact_then_prefix_then_subsequence() {
+        assert_eq!(rank("Pick", "pick"), Some(0));
+        assert_eq!(rank("picked", "PICK"), Some(1));
+        assert_eq!(rank("prick", "pick"), Some(2));
+        assert_eq!(rank("pi", "pick"), None);
+        assert_eq!(rank("kcip", "pick"), None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn workspace_symbols_cover_every_module_on_the_module_path() {
+        let tree = Directory::repo();
+        tree.write(CONFIG_FILE_NAME, "[prelude]\n[modules]\npath = [\"lib\"]\n");
+        let a_text = "\
+@def pick x@Int -> Int
+@def pick x@Str -> Str
+pub def pick x
+  let inner = x
+  inner
+pub class Box
+  pub field item = nil
+  def (init) self item
+    self.item = item
+  pub def picked self
+    self.item
+pub @let Pair = Tuple[Int, Int]
+";
+        let a = Uri::from_file_path(tree.write("lib/a.dol", a_text)).unwrap();
+        // No open document imports it
+        let other_text = "pub def pickle()\n  1\npub def prick()\n  1\n";
+        let other = Uri::from_file_path(tree.write("lib/other.dol", other_text)).unwrap();
+        let main = Uri::from_file_path(tree.0.join("main.dol")).unwrap();
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        harness
+            .open(main.clone(), "def pick_local()\n  1\n", 1)
+            .await;
+
+        let mut search = async |query: &str| {
+            let found = harness
+                .send_request::<request::WorkspaceSymbolRequest>(WorkspaceSymbolParams {
+                    query: query.to_owned(),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                })
+                .await;
+            let at = |location: Location| {
+                let start = location.range.start;
+                (location.uri, start.line, start.character)
+            };
+            // A symbol with a whole location reads back as the flat form,
+            // which has the same fields
+            match found.expect("workspace symbols") {
+                WorkspaceSymbolResponse::Flat(symbols) => (symbols.into_iter())
+                    .map(|symbol| {
+                        let location = at(symbol.location);
+                        (symbol.name, symbol.kind, symbol.container_name, location)
+                    })
+                    .collect::<Vec<_>>(),
+                WorkspaceSymbolResponse::Nested(symbols) => (symbols.into_iter())
+                    .map(|symbol| {
+                        let OneOf::Left(location) = symbol.location else {
+                            panic!("expected a location");
+                        };
+                        (
+                            symbol.name,
+                            symbol.kind,
+                            symbol.container_name,
+                            at(location),
+                        )
+                    })
+                    .collect(),
+            }
+        };
+        let named = |name: &str, kind, container: Option<&str>, uri: &Uri, line, character| {
+            let at = (uri.clone(), line, character);
+            (name.to_owned(), kind, container.map(str::to_owned), at)
+        };
+        // An overload once, as its implementation; a script's own item with no
+        // container
+        let pick = vec![
+            named("pick", SymbolKind::FUNCTION, Some("a"), &a, 2, 8),
+            named("picked", SymbolKind::METHOD, Some("a.Box"), &a, 9, 10),
+            named("pickle", SymbolKind::FUNCTION, Some("other"), &other, 0, 8),
+            named("pick_local", SymbolKind::FUNCTION, None, &main, 0, 4),
+            named("prick", SymbolKind::FUNCTION, Some("other"), &other, 2, 8),
+        ];
+        assert_eq!(search("pick").await, pick);
+        // Class members, an alias, and no locals or parameters
+        let item = vec![named("item", SymbolKind::FIELD, Some("a.Box"), &a, 6, 12)];
+        assert_eq!(search("item").await, item);
+        let init = vec![named(
+            "(init)",
+            SymbolKind::CONSTRUCTOR,
+            Some("a.Box"),
+            &a,
+            7,
+            6,
+        )];
+        assert_eq!(search("init").await, init);
+        let pair = vec![named(
+            "Pair",
+            SymbolKind::TYPE_PARAMETER,
+            Some("a"),
+            &a,
+            11,
+            9,
+        )];
+        assert_eq!(search("pair").await, pair);
+        assert_eq!(search("inner").await, []);
+        assert_eq!(search("").await, []);
     }
 
     #[tokio::test(flavor = "current_thread")]
