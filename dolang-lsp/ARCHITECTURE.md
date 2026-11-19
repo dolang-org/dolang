@@ -135,6 +135,18 @@ names they bind. The declaring module adds the syntactic uses of the
 declaration. A member use or a path is judged as a whole, so each is narrowed
 to the name it uses.
 
+Workspace symbols go to the worker too, which finishes indexing every live
+workspace, then searches their members, a file that two workspaces hold once.
+The symbols are the declarations other documents may name, as `lookup::Name`
+classifies them: a unit's top-level items and the members of its top-level
+classes, not locals, parameters or imports. Each is located at its name, with
+its class, qualified by its module, or its module as its container. Of one
+name in one place, an overload's implementation stands for its signatures.
+A name matches a query that is a subsequence of it, ignoring case; exact
+matches rank first, then prefixes, then shorter names, and the reply keeps the
+best `MAX_SYMBOLS`. A bundled module has no source to locate a symbol in, so
+none of its symbols are listed.
+
 When the client allows it, the server registers watchers for `.dol` sources
 and configuration files. A source event puts every live workspace's check off,
 and the check's look at the disk finds what changed. A module held by an open

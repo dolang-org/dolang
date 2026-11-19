@@ -1121,6 +1121,15 @@ impl Workspace {
         !self.index().pending.is_empty()
     }
 
+    /// Every current member, by what the table knows it as, with its unit,
+    /// compiling those not compiled yet.
+    pub(crate) fn sources(&self) -> Vec<(Key, Arc<Member>, Arc<Unit<'static>>)> {
+        let snapshot: Vec<_> = self.members().values().cloned().collect();
+        (snapshot.into_iter())
+            .map(|member| (member.key.clone(), member.clone(), self.unit(&member)))
+            .collect()
+    }
+
     /// The members that import `module`, directly or transitively, and the
     /// members of the module itself, each compiled.
     pub(crate) fn importers(&self, module: &str) -> Vec<Arc<Member>> {
