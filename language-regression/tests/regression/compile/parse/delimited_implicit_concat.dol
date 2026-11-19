@@ -5,7 +5,7 @@ echo [1, 2]bar
 # LL | echo [1, 2]bar
 #    |            ^^^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | echo $[1, 2]bar
 #    |      +
@@ -17,7 +17,7 @@ echo {a: 1}bar
 # LL | echo {a: 1}bar
 #    |            ^^^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | echo ${a: 1}bar
 #    |      +
@@ -32,7 +32,7 @@ capture key: (1 + 2)bar
 # LL | capture key: (1 + 2)bar
 #    |                     ^^^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | capture key: $(1 + 2)bar
 #    |              +
@@ -44,7 +44,7 @@ echo (1 + 2)bar
 # LL | echo (1 + 2)bar
 #    |             ^^^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | echo $(1 + 2)bar
 #    |      +
@@ -56,7 +56,7 @@ echo "x"bar
 # LL | echo "x"bar
 #    |         ^^^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | echo $"x"bar
 #    |      +

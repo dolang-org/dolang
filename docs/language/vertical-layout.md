@@ -40,10 +40,14 @@ let banner = $
 #            "First paragraph.\nSecond paragraph."]
 ```
 
-Folding applies when the item's value starts with text, a quoted string, a
-constant, a parenthesized expression, or a `$` expression. A sub-list, a `$`
-command, `$` data, a `do` block, or a here string doesn't fold. After `- `, a
-key item's value folds as a key item's does.
+Folding applies when the item's value starts with text, a constant, or a `$`
+expression. A sub-list, a `$` command, `$` data, a `do` block, or a here string
+doesn't fold. After `- `, a key item's value folds as a key item's does.
+
+A value that starts with a quoted string or a parenthesized, bracketed or braced
+expression is that expression alone. Anything after it, joined directly, after
+whitespace, or on a continuation line, is an error. Insert `$` before it to make
+the whole value text: `- $(count) files`.
 
 ## Key Items
 

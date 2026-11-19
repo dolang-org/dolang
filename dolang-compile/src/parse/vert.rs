@@ -2,11 +2,12 @@ use super::{
     ExprMode, Parser, Result, Scope,
     cmd::CmdContext,
     cmd::UnquotedMode,
+    diag::ImplicitDelimitedConcat,
     stmt::{BodyMode, arm_expected_inline},
     stream::ExpectKind,
 };
 use crate::{
-    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, If, Key, Pair, Single},
+    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, If, Key, Pair, Single, visit::Node},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
@@ -138,6 +139,12 @@ impl Parser<'_> {
         use TokenInfo::*;
         match self.peek()? {
             Some(token!(expr_start!())) => {
+                let delimited = matches!(
+                    self.peek()?,
+                    Some(token!(
+                        LeftParen | LeftBracket | LeftBrace | DQuote | RawQuote | BQuote | TQuote
+                    ))
+                );
                 let expr = self.parse_expr(scope, ExprMode::Shell)?;
                 if let UnquotedMode::DashData(column) = mode
                     && let Some(token!(Colon)) = self.peek()?
@@ -156,26 +163,46 @@ impl Parser<'_> {
                     // Parse any trailer
                     self.parse_data(scope, vec![arg], false)
                 } else {
-                    match self.peek()? {
-                        Some(token!(ArgSep)) => {
-                            // Consume trailing whitespace
-                            while let Some(token!(ArgSep)) = self.peek()? {
-                                self.advance();
-                            }
-                            if mode.folds_at(&self.peek()?) {
-                                self.parse_implicit_concat(scope, Some(expr), mode)
-                            } else {
-                                Ok(expr)
-                            }
-                        }
-                        token @ (None | Some(token!(StmtSep | Indent | Dedent))) => {
-                            if mode.folds_at(&token) {
-                                self.parse_implicit_concat(scope, Some(expr), mode)
-                            } else {
-                                Ok(expr)
-                            }
-                        }
-                        _ => self.parse_implicit_concat(scope, Some(expr), mode),
+                    // Whitespace, which ends the value or joins it to text
+                    let mut ws: Option<Span> = None;
+                    while let Some(token!(ArgSep, span)) = self.peek()? {
+                        self.advance();
+                        ws = Some(ws.map_or(span, |ws| ws | span));
+                    }
+                    let token = self.peek()?;
+                    let line_end = matches!(token, None | Some(token!(StmtSep | Indent | Dedent)));
+                    if line_end && !mode.folds_at(&token) {
+                        Ok(expr)
+                    } else if delimited {
+                        // A delimited value is the whole value: anything joined
+                        // to it, by whitespace or a fold, is an error. The
+                        // trailer is text, parsed only to recover.
+                        let trailer = self.parse_implicit_concat(scope, None, mode)?;
+                        let span = match &trailer {
+                            Expr::Concat { exprs, .. } => exprs
+                                .iter()
+                                .filter(|expr| !matches!(expr, Expr::Fold(..)))
+                                .map(Node::span)
+                                .reduce(|a, b| a | b),
+                            other => Some(other.span()),
+                        };
+                        self.fail = true;
+                        self.diags.push(ImplicitDelimitedConcat {
+                            span: span.unwrap_or_else(|| trailer.span()),
+                            insert: expr.span(),
+                        });
+                        Ok(expr)
+                    } else {
+                        // A constant starts text, keeping its verbatim spelling
+                        let head = match ws {
+                            Some(ws) if !line_end => Expr::Concat {
+                                exprs: vec![expr, Expr::Literal(ws)],
+                                delim_span: None,
+                                verbatim: true,
+                            },
+                            _ => expr,
+                        };
+                        self.parse_implicit_concat(scope, Some(head), mode)
                     }
                 }
             }

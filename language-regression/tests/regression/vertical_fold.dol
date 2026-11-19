@@ -55,9 +55,9 @@ let literal = $
 
 assert_eq $literal ["first - dash key: v"]
 
-# A value that starts with a quoted string, a number or `$` folds too.
+# A value that starts with a constant or `$` folds too.
 let values = $
-  - "quoted"
+  - $"quoted"
     more
   - 42
     x
@@ -65,6 +65,31 @@ let values = $
     after
 
 assert_eq $values ["quoted more", "42 x", "2 after"]
+
+# A constant or `$` starts text, which continues after whitespace. A constant
+# keeps its spelling.
+let joined = $
+  - 42 apples
+  - 0x10 x
+  - 1.50 x
+  - true x
+  - nil x
+  - :sym: x
+  - $(1 + 2)foo
+  - $(1 + 2) foo
+  - 42
+  - 42: v
+
+assert_eq $joined [
+  "42 apples", "0x10 x", "1.50 x", "true x", "nil x", ":sym: x", "3foo", "3 foo",
+  42, {42: "v"},
+]
+
+let keyed_joined = $
+  k: 42 x
+  j: 42
+
+assert_eq $keyed_joined {k: "42 x", j: 42}
 
 # The item ends where indentation drops below its content column.
 let nested = $

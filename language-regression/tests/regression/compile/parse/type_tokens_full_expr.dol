@@ -17,7 +17,7 @@ echo (r?)
 # LL | echo (r?)
 #    |         ^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | echo $(r?)
 #    |      +
@@ -34,7 +34,7 @@ echo (a->b)
 # LL | echo (a->b)
 #    |          ^
 #    |
-# help: insert `$` if you intended for the entire argument to be an expression
+# help: insert `$` to concatenate text after the delimited expression
 #    |
 # LL | echo $(a->b)
 #    |      +

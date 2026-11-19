@@ -1,0 +1,99 @@
+def show ...args
+  args
+
+show
+  - (1 + 2)foo
+  - after
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |   - (1 + 2)foo
+#    |            ^^^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   - $(1 + 2)foo
+#    |     +
+
+show
+  - "a"b
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |   - "a"b
+#    |        ^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   - $"a"b
+#    |     +
+
+show
+  - (1 + 2) foo
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |   - (1 + 2) foo
+#    |             ^^^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   - $(1 + 2) foo
+#    |     +
+
+show
+  - [1] x
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |   - [1] x
+#    |         ^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   - $[1] x
+#    |     +
+
+show
+  - "a"
+    b
+  - after
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |     b
+#    |     ^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   - $"a"
+#    |     +
+
+let d = $
+  k: (1 + 2) foo
+  j: after
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |   k: (1 + 2) foo
+#    |              ^^^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   k: $(1 + 2) foo
+#    |      +
+
+d = $
+  k: "a"
+    b
+  j: after
+# error: implicit concatenation not permitted after delimited expression
+#   --> vertical_item_delimited.dol:LL:LL
+#    |
+# LL |     b
+#    |     ^
+#    |
+# help: insert `$` to concatenate text after the delimited expression
+#    |
+# LL |   k: $"a"
+#    |      +
