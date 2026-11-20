@@ -409,9 +409,10 @@ fn declaration_label(unit: &Unit<'_>, id: NodeId) -> Option<String> {
                     )
                 });
             let at = type_only && !protocol;
-            // A getter or setter is used as a field, not called
+            // A getter or setter is used as a field, not called, and a class
+            // or static method lives on the type object
             let decorators = match kind {
-                Kind::Method { .. } => designated(&["getter", "setter"]),
+                Kind::Method { .. } => designated(&["getter", "setter", "class", "static"]),
                 _ => String::new(),
             };
             let prefix = format!(
@@ -3468,6 +3469,12 @@ mod tests {
             "  #[getter]\n",
             "  pub def area _self -> Int\n",
             "    1\n",
+            "  #[class]\n",
+            "  pub def origin cls\n",
+            "    1\n",
+            "  #[static]\n",
+            "  pub def unit()\n",
+            "    1\n",
         );
         harness.open(uri.clone(), source, 1).await;
 
@@ -3497,6 +3504,19 @@ mod tests {
             markdown(
                 "```dolang\nclass Shape\n  #[getter]\n  pub def area _self -> Int\n    ...\n```"
             )
+        );
+
+        // A class or static method says it lives on the type object, and one
+        // without parameters keeps its `()`
+        let class_method = hover_at(&mut harness, uri.clone(), 31, 11).await.unwrap();
+        assert_eq!(
+            class_method.contents,
+            markdown("```dolang\nclass Shape\n  #[class]\n  pub def origin cls\n    ...\n```")
+        );
+        let static_method = hover_at(&mut harness, uri.clone(), 34, 11).await.unwrap();
+        assert_eq!(
+            static_method.contents,
+            markdown("```dolang\nclass Shape\n  #[static]\n  pub def unit()\n    ...\n```")
         );
 
         let field_hover = hover_at(&mut harness, uri.clone(), 4, 13).await.unwrap();

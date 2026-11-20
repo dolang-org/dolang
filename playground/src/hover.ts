@@ -38,11 +38,12 @@ const paramBinding = (p: Param) => `${binding(`let ${p.head}`, p.type)} = ...`;
 // when too wide for one line, and a `...` body when it has a `body`
 function def(prefix: string, params: Param[], returns: string | undefined, body: boolean): string {
   const arrow = returns === undefined ? '' : ` -> ${returns}`;
-  const line = params.length === 0 ? `${prefix}${arrow}`
+  // A def without parameters needs its `()`
+  const line = params.length === 0 ? `${prefix}()${arrow}`
     : params.length === 1 ? `${prefix} ${alone(params[0])}${arrow}`
     : `${prefix} ${params.map(p => param(p, '@')).join(' ')}${arrow}`;
   // Decorators are lines of their own
-  const text = [...line.slice(line.lastIndexOf('\n') + 1)].length <= width ? line
+  const text = params.length === 0 || [...line.slice(line.lastIndexOf('\n') + 1)].length <= width ? line
     : `${prefix}${params.map(p => `\n  ${alone(p)}`).join('')}\ndo${arrow}`;
   return body ? `${text}\n  ...` : text;
 }

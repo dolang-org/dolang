@@ -35,7 +35,8 @@ pub(crate) struct DocEntry {
     pub(crate) doc: &'static str,
     /// Type binders as declared, with any `:` or `...` sigil, bound, and default.
     pub(crate) binders: &'static [&'static str],
-    /// A class's `final` and `mixable` decorators, by name
+    /// A class's `final` and `mixable` decorators, or a method's `class` or
+    /// `static`, by name
     pub(crate) decorators: &'static [&'static str],
     pub(crate) params: &'static [Param],
     /// The annotated type, as written: a function or method's return type, or a
@@ -111,15 +112,13 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
         _ => format!("{name}[{}]", binders.join(", ")),
     };
     let name = named(short_name, entry.binders);
+    let decorators: String = entry
+        .decorators
+        .iter()
+        .map(|decorator| format!("#[{decorator}]\n"))
+        .collect();
     let label = match entry.kind {
-        "class" => {
-            let decorators: String = entry
-                .decorators
-                .iter()
-                .map(|decorator| format!("#[{decorator}]\n"))
-                .collect();
-            format!("{decorators}class {name}")
-        }
+        "class" => format!("{decorators}class {name}"),
         "field" => signature::binding(&format!("field {short_name}"), entry.type_),
         "value" => signature::variable(&format!("let {short_name}"), None),
         "alias" => format!("@let {name} = {}", entry.type_.unwrap_or("...")),
@@ -137,7 +136,12 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
                     default: param.optional,
                 })
                 .collect();
-            signature::def(&format!("def {name}"), &params, entry.type_, true)
+            signature::def(
+                &format!("{decorators}def {name}"),
+                &params,
+                entry.type_,
+                true,
+            )
         }
     };
     // A class's header, with the binders its own entry gives
@@ -205,6 +209,24 @@ mod tests {
         };
         let text = signature(&field);
         assert_eq!(text, "# module m\nclass Point\n  field x @ Int");
+        signature::assert_parses(&text);
+        let method = DocEntry {
+            item: "Point.origin",
+            kind: "method",
+            decorators: &["class"],
+            params: &[Param {
+                name: "cls",
+                optional: false,
+                type_: None,
+            }],
+            type_: Some("Point"),
+            ..field
+        };
+        let text = signature(&method);
+        assert_eq!(
+            text,
+            "# module m\nclass Point\n  #[class]\n  def origin cls -> Point\n    ..."
+        );
         signature::assert_parses(&text);
 
         let class = DocEntry {

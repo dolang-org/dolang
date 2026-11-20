@@ -23,6 +23,8 @@ export interface Entity {
   /** A class's `final` and `mixable` decorators */
   decorators?: string[];
   params?: ParamJson[];
+  /** A member's scope: `instance`, `class` or `static` */
+  scope?: string;
   members?: Entity[];
   /** A re-export's source module and item */
   module?: string;
@@ -221,11 +223,19 @@ export function label(module: string, entity: Entity, owner?: Entity): string {
       case 'field': return signature({ form: 'field', pub: false, name: entity.name, type: typed });
       case 'alias': return `@let ${named(entity.name, binders)} = ${typed ?? '...'}`;
       case 'function':
-      case 'method':
+      case 'method': {
+        // `receiver` in `build.rs`: the extractor leaves out the receiver an
+        // instance or class method declares
+        const receiver: ParamJson[] = entity.kind === 'method' && entity.scope !== 'static'
+          ? [{ kind: 'pos', name: entity.scope === 'class' ? 'cls' : 'self' }] : [];
+        // `scope_decorator` in `build.rs`: a class or static method's decorator
+        const decorators = entity.kind === 'method' && (entity.scope === 'class' || entity.scope === 'static')
+          ? [entity.scope] : [];
         return signature({
-          form: 'def', ...common, decorators: [], params: (entity.params ?? []).map(param), body: true,
-          returns: typed,
+          form: 'def', ...common, decorators, params: [...receiver, ...(entity.params ?? [])].map(param),
+          body: true, returns: typed,
         });
+      }
       default: return signature({ form: 'let', pub: false, name: entity.name });
     }
   })();
