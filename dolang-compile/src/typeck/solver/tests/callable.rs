@@ -223,12 +223,8 @@ fn a_generic_class_object_infers_its_arguments() {
     boxed.method(special(&db, "init"), init, Scope::Instance);
     let boxed_id = boxed.id;
     let boxed = boxed.finish(&mut db, vec![]);
-    // `[T] <type Box[T]>`, as flow gives a generic class's object
-    let object = quantified(
-        &db,
-        vec![binder(Variance::Invariant)],
-        db.meta(boxed_id, vec![Argument::Positional(t)]),
-    );
+    // `<type Box[*]>`, as flow gives a generic class's object
+    let object = db.meta(boxed_id, vec![Argument::Positional(db.star(Kind::Type))]);
     let box_int = apply(&db, boxed, &[int]);
     let constructs = function(&db, &[int], box_int);
     db.seal();

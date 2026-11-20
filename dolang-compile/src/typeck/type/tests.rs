@@ -2350,7 +2350,19 @@ fn copies_remap_symbols_and_declarations() {
         ),
     );
     let meta = intern(&mut db, Type::Meta(a));
-    let result = union(&mut db, &[applied, quantified, overloaded, meta, sym]);
+    let star = intern(&mut db, Type::Star(Kind::Type));
+    let erased = intern(
+        &mut db,
+        Type::Apply {
+            base: a_ty,
+            args: vec![Argument::Positional(star)].into(),
+            kind: Kind::Type,
+        },
+    );
+    let result = union(
+        &mut db,
+        &[applied, quantified, overloaded, meta, erased, sym],
+    );
     let root = intern(
         &mut db,
         Type::Function(Function {

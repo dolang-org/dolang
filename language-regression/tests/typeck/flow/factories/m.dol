@@ -124,7 +124,7 @@ do
   # LL |   let _ = Type.(call) 1 2
   #    |                       ^
   let _ = Type.(call)()
-# error: `@[T1] <type std.Type[T1]>` has no member `(call)`
+# error: `<type std.Type[*]>` has no member `(call)`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _ = Type.(call)()

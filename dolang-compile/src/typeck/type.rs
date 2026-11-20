@@ -404,6 +404,11 @@ pub(crate) enum Type {
     /// `Type[C]`. It's applied to the class's arguments as the class is, and is
     /// invariant in them. Never written; a class's name has it.
     Meta(DeclId),
+    /// An erased argument, `*`: an application's whole positional argument the
+    /// type says nothing of, as a generic class's object has for each of its
+    /// class's binders. Never written. Only `*` and the dynamic type are known
+    /// to be below it, and it's below little else yet (#993).
+    Star(Kind),
     Bound {
         reference: BoundRef,
         kind: Kind,
@@ -479,6 +484,7 @@ impl Type {
             | Self::Fresh(_)
             | Self::Decl(_)
             | Self::Meta(_)
+            | Self::Star(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
@@ -656,6 +662,7 @@ impl Type {
             | Self::Fresh(_)
             | Self::Decl(_)
             | Self::Meta(_)
+            | Self::Star(_)
             | Self::Bound { .. }
             | Self::Rigid { .. } => {}
             Self::Apply { base, args, .. } => {
@@ -1566,6 +1573,38 @@ impl Database {
         }
     }
 
+    /// The erased argument `*` of `kind`
+    pub(crate) fn star(&self, kind: Kind) -> TypeId {
+        self.intern(Type::Star(kind))
+    }
+
+    /// Whether a type is an erased argument, `*`
+    pub(crate) fn is_star(&self, ty: TypeId) -> bool {
+        matches!(self.ty(ty), Type::Star(_))
+    }
+
+    /// A generic class's object as instantiated: `[T…] Meta(C)[T…]`,
+    /// quantified over the class's own binders, which a call or a function
+    /// type it's passed as solves. `None` if the class isn't generic.
+    pub(crate) fn generic_object(&self, class: DeclId) -> Option<TypeId> {
+        let Type::Quantified { binders, .. } = self.ty(self.declaration(class).ty) else {
+            return None;
+        };
+        let binders = binders.clone();
+        let args = binders
+            .iter()
+            .enumerate()
+            .map(|(slot, binder)| {
+                Argument::Positional(self.intern(Type::Bound {
+                    reference: BoundRef::new(0, slot),
+                    kind: binder.kind,
+                }))
+            })
+            .collect();
+        let body = self.meta(class, args);
+        Some(self.intern(Type::Quantified { binders, body }))
+    }
+
     /// The class whose metatype a type is, with its arguments
     pub(crate) fn meta_of(&self, ty: TypeId) -> Option<(DeclId, &[Argument])> {
         match self.ty(ty) {
@@ -1938,7 +1977,7 @@ impl Database {
                 .try_declaration(*id)
                 .map(|decl| decl.source.result_kind),
             Type::Quantified { body, .. } => self.known_kind(*body),
-            Type::Unknown(kind) | Type::Unsupported { kind, .. } => Some(*kind),
+            Type::Unknown(kind) | Type::Unsupported { kind, .. } | Type::Star(kind) => Some(*kind),
             _ => Some(Kind::Type),
         }
     }
@@ -2484,6 +2523,7 @@ impl Database {
             | Type::Unsupported { .. }
             | Type::Literal(_)
             | Type::Fresh(_)
+            | Type::Star(_)
             | Type::Bound { .. } => {}
             Type::Decl(id) | Type::Meta(id) | Type::Rigid { decl: id, .. } => {
                 self.try_declaration(*id);

@@ -112,6 +112,8 @@ pub(crate) enum Ty {
         implementation: Option<u32>,
         function: Option<Named>,
     },
+    /// An erased argument, last so earlier nodes keep their tags
+    Star(WireKind),
 }
 
 /// A declaration, by its module and the name the module exports it by, with what
@@ -267,6 +269,7 @@ impl Ty {
             | Ty::Fresh(_)
             | Ty::Decl(_)
             | Ty::Meta(_)
+            | Ty::Star(_)
             | Ty::Bound { .. } => {}
             Ty::Apply { base, args, .. } => {
                 visit(*base);
@@ -404,6 +407,7 @@ impl Table {
             let ty = match node {
                 Ty::Top => Type::Top,
                 Ty::Unknown(of) => Type::Unknown(unkind(*of)),
+                Ty::Star(of) => Type::Star(unkind(*of)),
                 Ty::Literal(lit) => Type::Literal(unliteral(db, lit, text)),
                 Ty::Fresh(lit) => Type::Fresh(unliteral(db, lit, text)),
                 Ty::Decl(named) => match found(named) {
@@ -571,6 +575,7 @@ impl<'a> Encode<'a> {
         let node = match db.ty(ty) {
             Type::Top => Ty::Top,
             Type::Unknown(of) => Ty::Unknown(kind(*of)),
+            Type::Star(of) => Ty::Star(kind(*of)),
             Type::Unsupported { .. } | Type::Rigid { .. } => {
                 unreachable!("a type a typelib can write has no rigid or stand-in")
             }
