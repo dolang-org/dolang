@@ -85,7 +85,7 @@ pub(super) enum Receiver {
         class: Nominal,
         exact: bool,
     },
-    /// A generic class's object, `[S] <type C[S]>`, with its class
+    /// A generic class's object, `<type C[*]>`, with its class
     Generic(DeclId),
     Missing,
     Dynamic,
@@ -284,8 +284,17 @@ impl Solver<'_> {
             self.spend()?;
             let view = match self.head(term)? {
                 Head::Infer(_) => return Err(Residual::Inference.into()),
-                Head::Meta(class) => return Ok(Receiver::Object { class, exact: true }),
+                Head::Meta(class) => {
+                    if self.erased_object(&class)?.is_some() {
+                        return Ok(Receiver::Generic(class.declaration));
+                    }
+                    return Ok(Receiver::Object { class, exact: true });
+                }
                 Head::Nominal(nominal) => {
+                    // What an erased argument stands for isn't known (#993)
+                    if self.partly_erased(&nominal)? {
+                        return Err(Residual::Unsupported("a member of an erased instance").into());
+                    }
                     if !self.is_intrinsic(nominal.declaration, Intrinsic::Type) {
                         return Ok(Receiver::Instance(nominal));
                     }
@@ -301,6 +310,9 @@ impl Solver<'_> {
                         }
                         Head::Meta(_) => {
                             Err(Residual::Unsupported("a type object of a metatype").into())
+                        }
+                        Head::Nominal(class) if self.partly_erased(&class)? => {
+                            Err(Residual::Unsupported("a type object of an erased instance").into())
                         }
                         Head::Nominal(class) => Ok(Receiver::Object {
                             class,
@@ -326,9 +338,6 @@ impl Solver<'_> {
                 }
                 Head::Structural(view) => view,
             };
-            if let Some(class) = self.generic_object(view.ty) {
-                return Ok(Receiver::Generic(class));
-            }
             let mut ty = view.ty;
             while let Type::Quantified { body, .. } = self.db.ty(ty) {
                 self.spend()?;
@@ -379,31 +388,6 @@ impl Solver<'_> {
             term = self.closed(backing);
         }
         unreachable!()
-    }
-
-    /// The class whose object a type is, if it's a generic class's object as flow
-    /// gives it: `[S] <type C[S]>`, quantified over `C`'s own binders and applying
-    /// `C`'s metatype to them in order
-    fn generic_object(&self, ty: TypeId) -> Option<DeclId> {
-        let Type::Quantified { binders, body } = self.db.ty(ty) else {
-            return None;
-        };
-        let (class, args) = self.db.meta_of(*body)?;
-        let declaration = self.db.declaration(class);
-        let Type::Quantified { binders: own, .. } = self.db.ty(declaration.ty) else {
-            return None;
-        };
-        let canonical = declaration.source.kind.nominal()
-            && own == binders
-            && args.len() == binders.len()
-            && args.iter().enumerate().all(|(slot, arg)| match arg {
-                Argument::Positional(arg) => matches!(
-                    *self.db.ty(*arg),
-                    Type::Bound { reference, .. } if reference == BoundRef::new(0, slot)
-                ),
-                _ => false,
-            });
-        canonical.then_some(class)
     }
 
     /// A member of a generic class's object, or a private member of `private`

@@ -170,7 +170,7 @@ pub def fields[T] value @ T -> FieldProxy[Fields[T], MutFields[T]]
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | `cls` isn't a class written in Do. |
 # | [`StateError`](std.StateError) | A class already inherits from `cls`. |
-pub def final[T] cls @ Type[T] -> Type[T]
+pub def final[T @ Type[Value]] cls @ T -> T
   ...
 
 # Decorator letting a class be combined with classes unrelated to it.
@@ -200,7 +200,7 @@ pub def final[T] cls @ Type[T] -> Type[T]
 # | --- | --- |
 # | [`TypeError`](std.TypeError) | `cls` isn't a class written in Do. |
 # | [`StateError`](std.StateError) | A class already inherits from `cls`. |
-pub def mixable[T] cls @ Type[T] -> Type[T]
+pub def mixable[T @ Type[Value]] cls @ T -> T
   ...
 
 # Coerces or parses a value as a [`Float`](std.Float).

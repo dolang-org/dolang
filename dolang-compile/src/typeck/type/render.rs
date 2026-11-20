@@ -318,6 +318,7 @@ impl Renderer<'_> {
             Type::Meta(id) => {
                 let _ = write!(out, "<type {}>", self.names.declaration(*id));
             }
+            Type::Star(_) => out.push('*'),
             Type::Rigid { decl, slot, .. } => self.rigid(*decl, *slot, out),
             Type::Bound { reference, .. } => match naming.name(*reference) {
                 Some(name) => out.push_str(name),

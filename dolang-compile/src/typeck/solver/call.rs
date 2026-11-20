@@ -30,8 +30,14 @@ impl Solver<'_> {
                     None => Err(Issue::Contradiction(Contradiction::Rigid)),
                 };
             }
-            // A metatype constructs, as only the class's own object does
+            // A metatype constructs, as only the class's own object does. A
+            // generic class's object is called as instantiated.
             head @ (Head::Nominal(_) | Head::Meta(_)) => {
+                if let Head::Meta(class) = &head
+                    && let Some(object) = self.erased_object(class)?
+                {
+                    return through(object, Step::Instantiation);
+                }
                 return self.call_nominal(obligation, call, head);
             }
             Head::Structural(view) => view,

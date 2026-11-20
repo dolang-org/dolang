@@ -1944,6 +1944,7 @@ impl<'db> Solver<'db> {
             | Type::Fresh(_)
             | Type::Decl(_)
             | Type::Meta(_)
+            | Type::Star(_)
             | Type::Rigid { .. } => Ok(()),
             // A metatype's arguments are invariant, as any whose binders aren't known
             Type::Apply { base, ref args, .. } => {
@@ -3138,6 +3139,38 @@ impl<'db> Solver<'db> {
     }
 
     /// Whether an exposed head is the dynamic type or schema
+    /// Whether a term is an erased argument, `*`
+    fn is_star(&self, term: Term) -> Result<bool, Issue> {
+        Ok(matches!(self.resolve(term)?, Term::View(view) if self.db.is_star(view.ty)))
+    }
+
+    /// The generic class's object a metatype is, `Meta(C)[*, …]` with every
+    /// argument erased, as its class's instantiable object `[T…] Meta(C)[T…]`
+    fn erased_object(&self, nominal: &Nominal) -> Result<Option<Term>, Issue> {
+        if nominal.arguments.is_empty() {
+            return Ok(None);
+        }
+        for &argument in &nominal.arguments {
+            if !self.is_star(argument)? {
+                return Ok(None);
+            }
+        }
+        Ok(self
+            .db
+            .generic_object(nominal.declaration)
+            .map(|object| self.closed(object)))
+    }
+
+    /// Whether any of a class's arguments is erased
+    fn partly_erased(&self, nominal: &Nominal) -> Result<bool, Issue> {
+        for &argument in &nominal.arguments {
+            if self.is_star(argument)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn is_unknown(&self, head: &Head) -> bool {
         matches!(head, Head::Structural(view) if matches!(self.db.ty(view.ty), Type::Unknown(_)))
     }

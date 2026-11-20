@@ -474,13 +474,13 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
     let sub = sub.finish(&mut db, vec![box_array_t]);
     db.seal();
 
-    // The class objects, as flow gives them
+    // The class objects, as flow gives them, with erased arguments
+    let star = db.star(Kind::Type);
     let object = |class_ty| {
         let &Type::Decl(decl) = db.ty(class_ty) else {
             unreachable!("a class")
         };
-        let meta = db.meta(decl, vec![Argument::Positional(t)]);
-        quantified(&db, vec![class.clone()], meta)
+        db.meta(decl, vec![Argument::Positional(star)])
     };
     let box_object = object(boxed);
     let sub_object = object(sub);
@@ -612,12 +612,28 @@ fn generic_class_objects_have_members_quantified_over_its_binders() {
     assert_eq!(s.solution(variable_id(r)), Some(str));
     assert_eq!(s.solution(variable_id(made)), Some(box_int));
 
-    // Any other quantified type object is undecided
+    // Any quantified type object is undecided
     let other = quantified(&db, vec![class], apply(&db, ty, &[box_array_t]));
     assert_eq!(
         s.member(s.closed(other), key(&db, "get")).err(),
         Some(Issue::Residual(Residual::Unsupported(
             "a member of a quantified type"
+        )))
+    );
+    // An instance with an erased argument, as a binder solved from a class
+    // object has, says nothing of what its members take (#993)
+    let box_star = apply(&db, boxed, &[star]);
+    assert_eq!(
+        s.member(s.closed(box_star), key(&db, "get")).err(),
+        Some(Issue::Residual(Residual::Unsupported(
+            "a member of an erased instance"
+        )))
+    );
+    let object_star = apply(&db, ty, &[box_star]);
+    assert_eq!(
+        s.member(s.closed(object_star), key(&db, "make")).err(),
+        Some(Issue::Residual(Residual::Unsupported(
+            "a type object of an erased instance"
         )))
     );
 }

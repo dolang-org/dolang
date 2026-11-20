@@ -52,8 +52,10 @@ pub class Box[T]
 pub def names()
   let _ = Shape
   #       ^~~~~: flow <type m.Shape>
+  # A generic class's one object is every application's, so its arguments
+  # are erased
   let _ = Box
-  #       ^~~: flow @[T1] <type m.Box[T1]>
+  #       ^~~: flow <type m.Box[*]>
   # A metatype doesn't decay where it's stored
   let a = [Shape]
   let _ = a
@@ -61,6 +63,42 @@ pub def names()
   let b = Box 1
   let _ = b
   #       ^: flow m.Box[std.Int]
+  nil
+
+# A decorator that returns the class it's given keeps a generic class's object,
+# which still constructs and reaches its members through its class's binders
+#[final]
+pub class Sealed[T]
+  def (init) _self _item @ T
+    nil
+
+pub def decorated()
+  let d = final $Box
+  let _ = d
+  #       ^: flow <type m.Box[*]>
+  let b = d 1
+  let _ = b
+  #       ^: flow m.Box[std.Int]
+  let t = d.tag()
+  let _ = t
+  #       ^: flow std.Int
+  let s = Sealed "a"
+  let _ = s
+  #       ^: flow m.Sealed[std.Str]
+  constructed $d
+  nil
+
+def constructed _make @ ((Int) -> Box[Int])
+  nil
+
+def instance[T] _cls @ Type[T] -> T
+  (nil !@ T)
+
+# A binder solved from a generic class's object has its erased arguments
+pub def solved()
+  let i = instance $Box
+  let _ = i
+  #       ^: flow m.Box[*]
   nil
 
 pub def made cls @ Type[Shape] -> Int

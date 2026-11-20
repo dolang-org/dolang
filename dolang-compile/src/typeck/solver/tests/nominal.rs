@@ -405,6 +405,68 @@ fn metatypes_reach_class_objects_and_relate_only_to_their_own() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn erased_metatypes_reach_what_needs_no_arguments() {
+    let mut db = Database::new();
+    let ty = nominal(&mut db, "Type", vec![binder(Variance::Covariant)], vec![]);
+    db.set_intrinsic(Intrinsic::Type, ty);
+    let value = nominal(&mut db, "Value", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![value]);
+    let boxed = nominal(
+        &mut db,
+        "Box",
+        vec![binder(Variance::Covariant)],
+        vec![value],
+    );
+    let other = nominal(
+        &mut db,
+        "Other",
+        vec![binder(Variance::Covariant)],
+        vec![value],
+    );
+    let star = db.star(Kind::Type);
+    let erased = |class| {
+        let &Type::Decl(decl) = db.ty(class) else {
+            unreachable!("a class")
+        };
+        db.meta(decl, vec![Argument::Positional(star)])
+    };
+    let box_object = erased(boxed);
+    let other_object = erased(other);
+    let value_object = apply(&db, ty, &[value]);
+    let box_int_object = apply(&db, ty, &[apply(&db, boxed, &[int])]);
+    // `[T @ Type[Value]] (T) -> T`, as an identity decorator is
+    let t = reference(&db, 0, 0);
+    let decorator = quantified(
+        &db,
+        vec![bounded(Kind::Type, Binding::Positional, Some(value_object))],
+        function(&db, &[t], t),
+    );
+    let decorated = function(&db, &[box_object], box_object);
+    db.seal();
+    // A generic class's object is its own, and a class object of what doesn't
+    // need the class's arguments, so an identity decorator takes and gives it
+    for (actual, expected) in [
+        (box_object, box_object),
+        (box_object, value_object),
+        (decorator, decorated),
+    ] {
+        assert_eq!(check(&db, actual, expected).status, Status::Proven);
+    }
+    assert_eq!(
+        check(&db, box_object, other_object).status,
+        Status::Contradicted
+    );
+    // What an erased argument stands for isn't known yet (#993)
+    let outcome = check(&db, box_object, box_int_object);
+    assert_eq!(outcome.status, Status::Unresolved);
+    assert!(has(
+        &outcome,
+        Residual::Unsupported("an erased argument").into()
+    ));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn unreached_generic_members_refute_any_class() {
     let mut db = Database::new();
     let int = int(&mut db);

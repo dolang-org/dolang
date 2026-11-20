@@ -13,8 +13,8 @@ use crate::typeck::{
     elab::{Designated, Referent, Tables, Target},
     solver::{NarrowTarget, Status},
     r#type::{
-        Argument, Binding, BoundRef, Database, DeclId, DeclKind, Intrinsic, SymbolId, Type, TypeId,
-        UnitId, UnitSpan,
+        Argument, Binding, Database, DeclId, DeclKind, Intrinsic, SymbolId, Type, TypeId, UnitId,
+        UnitSpan,
     },
 };
 
@@ -273,10 +273,7 @@ impl Flow<'_, '_> {
 
     /// The class `C` a class object's type gives, `Type[C]` or `C`'s metatype,
     /// and whether it's exactly `C`'s object: whether it's the metatype
-    pub(super) fn class_of(&self, mut ty: TypeId) -> Option<(DeclId, bool)> {
-        if let Type::Quantified { body, .. } = self.db.ty(ty) {
-            ty = *body;
-        }
+    pub(super) fn class_of(&self, ty: TypeId) -> Option<(DeclId, bool)> {
         if let Some((class, _)) = self.db.meta_of(ty) {
             return Some((class, true));
         }
@@ -440,9 +437,10 @@ pub(crate) fn function_value(db: &Database, tables: &Tables<'_>, decl: DeclId) -
     }
 }
 
-/// The value of a class object: its metatype, which reaches `Type[C]`, with a
-/// generic class's binders hoisted, so that `Array` is `[T] <type Array[T]>`.
-/// Without `Type`, it's dynamic.
+/// The value of a class object: its metatype, which reaches `Type[C]`. A
+/// generic class's is applied to erased arguments, since its one object is
+/// every application's: `Array` is `<type Array[*]>`. Without `Type`, it's
+/// dynamic.
 pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
     if db.intrinsic(Intrinsic::Type).is_none() {
         return db.unknown();
@@ -451,9 +449,6 @@ pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
     let Type::Quantified { binders, .. } = db.ty(ty) else {
         return db.meta(decl, Vec::new());
     };
-    if binders.is_empty() {
-        return db.meta(decl, Vec::new());
-    }
     // An application gives a keyword or rest binder's argument in its slot, as
     // a positional binder's, but nothing fills an implicit one
     if binders
@@ -464,16 +459,7 @@ pub(crate) fn class_object(db: &Database, decl: DeclId) -> TypeId {
     }
     let args = binders
         .iter()
-        .enumerate()
-        .map(|(slot, binder)| {
-            Argument::Positional(db.intern(Type::Bound {
-                reference: BoundRef::new(0, slot),
-                kind: binder.kind,
-            }))
-        })
+        .map(|binder| Argument::Positional(db.star(binder.kind)))
         .collect();
-    db.intern(Type::Quantified {
-        binders: binders.clone(),
-        body: db.meta(decl, args),
-    })
+    db.meta(decl, args)
 }

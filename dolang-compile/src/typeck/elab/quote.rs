@@ -154,6 +154,7 @@ impl Quote<'_> {
                 "an overloaded function inside another type",
             )),
             Type::Meta(_) => Err(Unquotable::Form("a class object inside another type")),
+            Type::Star(_) => Err(Unquotable::Form("an erased argument")),
             Type::Unsupported { .. } => Err(Unquotable::Form("a type the checker can't represent")),
             Type::Decl(decl) => match self.db.declaration(decl).source.kind {
                 DeclKind::Function => Err(Unquotable::Form(

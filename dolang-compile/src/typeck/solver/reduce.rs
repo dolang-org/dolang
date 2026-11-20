@@ -32,6 +32,11 @@ impl Solver<'_> {
             Relation::Call(call) => return self.call(obligation, call),
             Relation::Empty(schema) => return self.empty(obligation, schema),
         };
+        // An erased argument says nothing of what it stands for, so whatever's
+        // well-formed is below it
+        if self.is_star(expected)? {
+            return Ok(());
+        }
         self.record_bounds(obligation, actual, expected)?;
         // What a write must fit is each item its key selects
         if actual != expected
@@ -656,6 +661,10 @@ impl Solver<'_> {
         if matches!(&a, Head::Structural(view) if view.ty == self.db.top()) {
             return Err(Issue::Contradiction(Contradiction::Outside));
         }
+        // What an erased argument stands for isn't known (#993)
+        if matches!(&a, Head::Structural(view) if self.db.is_star(view.ty)) {
+            return Err(Residual::Unsupported("an erased argument").into());
+        }
         match (a, b) {
             (Head::Meta(a), Head::Meta(b)) => self.metatypes(a, b, obligation),
             (Head::Structural(view), Head::Meta(_)) => {
@@ -663,10 +672,15 @@ impl Solver<'_> {
             }
             // Only a class's own metatype is exactly its object
             (_, Head::Meta(_)) => Err(Issue::Contradiction(Contradiction::Outside)),
-            // Only the exact object constructs, so it's called as its own
+            // Only the exact object constructs, so it's called as its own. A
+            // generic class's is instantiated, as a call instantiates it.
             (Head::Meta(a), Head::Structural(view))
                 if self.db.literal(view.ty).is_none() && self.callee(view.ty) =>
             {
+                if let Some(object) = self.erased_object(&a)? {
+                    self.derive(obligation, object, expected, Step::Instantiation);
+                    return Ok(());
+                }
                 self.callable(Head::Meta(a), actual, view, expected, obligation)
             }
             (Head::Meta(a), _) => {
@@ -828,21 +842,6 @@ impl Solver<'_> {
         expected: Term,
         obligation: ObligationId,
     ) -> Result<(), Issue> {
-        // A generic class's object, `[S] <type C[S]>`, is its class's
-        // metatype applied to unknown arguments, as a type test narrows to:
-        // written alone, the class says nothing of them, so they aren't inferred
-        if let Type::Quantified { binders, body } = self.db.ty(view.ty)
-            && self.db.meta_of(*body).is_some()
-        {
-            let unknowns: Vec<TypeId> = binders
-                .iter()
-                .map(|binder| self.db.unknown_of(binder.kind))
-                .collect();
-            let applied = self.db.substitute(*body, &unknowns);
-            let applied = self.view(applied, view.environment);
-            self.derive(obligation, applied, expected, Step::Instantiation);
-            return Ok(());
-        }
         // A quantified function belongs to its body's class, `Func`, as an
         // unquantified one does
         let mut ty = view.ty;
