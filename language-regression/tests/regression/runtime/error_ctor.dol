@@ -127,7 +127,12 @@ assert_ctor_fail $ImportError type: $TypeError msg: "type error: expected `Str`"
 assert_ctor_fail $CompileError type: $TypeError msg: "type error: expected `Str`" 123
 assert_ctor_fail $RuntimeError type: $TypeError msg: "type error: expected `Str`" 123
 
-assert_ctor_fail $AbortError type: $TypeError msg: "type error: Abort is not instantiable" "stop"
-assert_throws $TypeError str: "type error: Shape is not instantiable" do ShapeError()
-assert_throws $TypeError str: "type error: MissingItem is not instantiable" do MissingItemError()
-assert_throws $TypeError str: "type error: UnexpectedItem is not instantiable" do UnexpectedItemError()
+assert_ctor_fail $AbortError type: $TypeError msg: "type error: std.AbortError is not instantiable" "stop"
+assert_throws $TypeError str: "type error: std.ShapeError is not instantiable" do ShapeError()
+assert_throws $TypeError str: "type error: std.MissingItemError is not instantiable" do MissingItemError()
+assert_throws $TypeError str: "type error: std.UnexpectedItemError is not instantiable" do UnexpectedItemError()
+
+# Error types render under their std names
+assert_eq (str ConcurrencyError) "<type std.ConcurrencyError>"
+assert_eq (str TimedOutError) "<type std.TimedOutError>"
+assert_eq (str SinkStop) "<type std.SinkStop>"

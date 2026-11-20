@@ -89,7 +89,7 @@ let sealed = try
   nil
 catch e
   str $e
-assert_eq $sealed "type error: Abort cannot be subclassed"
+assert_eq $sealed "type error: std.AbortError cannot be subclassed"
 
 # `DataError` is subclassable like `ValueError`, and is not a `ValueError`.
 class DocError: DataError
@@ -122,7 +122,7 @@ class SubShape: ShapeError
   def (init) self
     ShapeError.(init) $self
 
-assert_throws $TypeError str: "type error: Shape cannot be subclassed" do SubShape()
+assert_throws $TypeError str: "type error: std.ShapeError cannot be subclassed" do SubShape()
 
 # `ShapeError` covers arity mismatches from calls and destructuring.
 def two a b
