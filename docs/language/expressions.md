@@ -63,7 +63,7 @@ From lowest to highest:
 12. Unary `-`, `!`, `~`
 13. Call, index, field access
 
-A cast, `@` or `!@` followed by a type, comes last in its parentheses and
+A cast (`@` or `!@` followed by a type), comes last in its parentheses and
 applies to everything before it.
 
 ### Ternary-Style Expressions
@@ -128,7 +128,7 @@ echo $str(person[:age:])
 
 ### Implicit
 
-Some special statement forms expect compact expression without `$` to avoid
+Some special statement forms expect compact expressions without `$` to avoid
 needing to write it in those cases:
 
 - The right-hand side of a `let` or assignment

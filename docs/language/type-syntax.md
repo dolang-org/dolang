@@ -85,14 +85,21 @@ A value fits a union when it fits one of the members; see
 ## Schemas
 
 A schema is not itself a type, but a description of positional and keyed items
-and their types which can parameterize a `Dict`, a rest parameter, etc. Where a
-type is required, a schema is an error. Schemas are closed:
-they admit only the items they list, unless a [quantifier](#quantifiers) or an
-[open item](#open-items) admits more.
+and their types which can parameterize a `Dict`, a rest parameter, etc. Schemas
+are closed: they admit only the items they list, unless a
+[quantifier](#quantifiers) or an [open item](#open-items) admits more.
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
 ```
+
+A schema may appear:
+
+- As the argument for a schema parameter, as in `Dict[{name: Str}]`
+- [Expanded](#expanding-schemas) among type arguments, as in
+  `Record[...{Int, ?tag: Str}]`, or [included](#inclusions) in another schema
+- As a binder's bound, as in `S @ {...}`
+- As the body of a type alias, as in `@let Colors = {?fg: Color, ?bg: Color}`
 
 Each item is an element, optionally preceded by a quantifier saying how many of
 that element the schema admits:
@@ -177,9 +184,10 @@ let positional @ Tuple[...{Str, *}] = ("a", 1)
 
 ### Expanding Schemas
 
-`...S` among type arguments expands the schema `S` into further arguments. A
-schema is needed only for items that type arguments can't write directly, such
-as optional ones. Expanding a type `T` rather than a schema is shorthand for
+In a list of [type arguments](#type-arguments), `...S` expands the schema `S`
+into further arguments, as an [inclusion](#inclusions) does within a schema.
+This lets a type argument list hold items that need a quantifier, like
+`?port: Int` below. Expanding a type `T` rather than a schema is shorthand for
 `...{*T}`:
 
 ```
@@ -212,10 +220,10 @@ class Table[S @ {...}]
 Parenthesized forms write the types of the matching literals. Each stands for a
 standard class:
 
-| Syntax             | Stands for                  |
-| ------------------ | --------------------------- |
-| `(Int, Str)`       | `Tuple[Int, Str]`           |
-| `(name: Str, Int)` | `Pack[...{name: Str, Int}]` |
+| Syntax             | Stands for             |
+| ------------------ | ---------------------- |
+| `(Int, Str)`       | `Tuple[Int, Str]`      |
+| `(name: Str, Int)` | `Pack[name: Str, Int]` |
 
 Other collection types name their class. A parameter that only reads should name
 a less specific type than `Array[T]` or `Dict[S]`, such as `Seq[T]`,
@@ -247,19 +255,6 @@ An inclusion `...S` never makes a form a `Pack`. In a tuple, including a schema
 that may admit keyed items is an error; write `Pack[...S]` instead. For a
 tuple of any items, write `(*)` rather than `(...)`.
 
-### Schemas in Types
-
-A schema in `{}` or a [vertical](#vertical-layout) `$` schema is a schema
-wherever it appears. Only a class it's given to makes it a type:
-
-| Position                                                                   | A schema is      |
-| -------------------------------------------------------------------------- | ---------------- |
-| Argument for a schema binder, as in `Dict[{a: Int}]`                       | Its argument     |
-| Expansion among items, as in `Record[...{Int, ?tag: Str}]`                 | Its items        |
-| Binder bound, as in `S @ {...}`                                            | Its bound        |
-| Alias body, as in `@let Fields = {a: Int}`                                 | The alias's body |
-| Annotation, return type, cast, union member, or argument for a type binder | An error         |
-
 ## Functions
 
 `->` separates a function's parameters from its return type. Parameters are
@@ -285,45 +280,44 @@ let shout @ ((...) -> nil) = do |...args| nil
 
 ### Implicit Parameters
 
-Every function also takes the strand's ambient input and output, which nothing
-passes explicitly. `<T` gives the type a function reads from and `>T` the type
-it writes to. Both are items of the parameter list, so they may appear in any
-order among the others, but a list takes at most one of each:
+Every function also takes the strand's ambient input and output. `<T` gives the
+required type a function reads from and `>T` the required type it writes to.
+Both are items of the parameter list, so they may appear in any order among the
+others, but a list takes at most one of each:
 
 ```
-def collect count @ Int <Iter[Int] >Sink[Str] -> nil
-  for value = strand.input()
-    strand.put $ str $value
+def collect count@Int <Iter[Int] >Sink[Str] -> nil
+  for value
+    put $ str(value)
 let runner @ ((Int, <Iter[Int], >Sink[Str]) -> Int) = (do |n| n)
 ```
 
-In a declaration the type is compact, as an annotation's is.
+A def or method that omits one is generic over it, so it may be called with any
+input or output respectively. The body can't rely on an unspecified input or
+output being anything in particular: in a
+[strict](./type-checking.md#strict-checking) file it is effectively `Value`;
+in a gradually-checked file it's use is unchecked.
 
-A def or method that omits one takes its caller's, whatever they are. A
-function type in its signature that omits one takes the def's, so a block
-passed to it runs with the caller's channels:
+A function type in a signature that omits either gets the def's:
 
 ```
-def with[R] block @ (() -> R) -> R
+def with[R] block@(() -> R) -> R
+  # block may be called here because it shares `with`'s input and output
   block()
 ```
 
-The body can't rely on an omitted channel being anything in particular: in a
-[strict](./type-checking.md#strict-checking) file it is `Value` there, and
-otherwise it is unchecked.
-
-Anywhere else, such as a field, a `let`, a cast, an alias or a lambda's
-parameter, an omitted channel is `Value`, so a function of that type neither
-reads its input nor writes its output. A function that keeps a block to run
-after it returns says so with `<Value, >Value`:
+Anywhere else, an omitted implicit parameter defaults to `Value`, which
+effectively disallows performing strand input/output. For callback functions
+which will be run later in an arbitrary context, explicitly specify
+`<Value, >Value`.
 
 ```
 def on_click block @ ((<Value, >Value) -> nil)
   handlers.push $block
 ```
 
-A channel may be any type, but only what fits a use of it can be done with it. A
-`for` without an iteratee reads the input through its `(next)`, and
+An input or output may be any type, but only what fits a use of it can be done
+with it. A `for` without an iteratee reads the input through its `(next)`, and
 [`strand.put`](strand.put) requires a `Sink`.
 
 A lambda's parameter list is delimited by `|`, so its implicits go inside:
@@ -332,8 +326,8 @@ A lambda's parameter list is delimited by `|`, so its implicits go inside:
 let double = do |x <Iter[Int] >Sink[Int]| (x * 2)
 ```
 
-Schemas have no implicits, since an ambient channel is not data, and neither do
-`bind` arms or `let` patterns, which bind values.
+Schemas have no implicits, since the ambient input and output are not data, and
+neither do `bind` arms or `let` patterns, which bind values.
 
 ### Generic Function Types
 
@@ -353,9 +347,8 @@ both $id
 
 The binders and the function type are separated by whitespace, so the type is
 written in parentheses wherever a compact type is required. The function type
-may have parentheses of its own, as in `(@[T] ((T) -> T))`. An omitted channel
-is an implicit binder of the type, as it is of a `def`, so its function takes
-the caller's channels.
+may have parentheses of its own, as in `(@[T] ((T) -> T))`. An omitted input or
+output is an implicit binder of the type, as it is of a `def`.
 
 A generic function type may be the type of a parameter, a variable, a field or
 an alias, a function's parameter or result, or a union member. It cannot be a
