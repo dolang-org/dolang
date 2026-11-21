@@ -34,6 +34,9 @@ copy_file
 
 A key's colon must be followed by whitespace or an indented block.
 
+A key later on the same line is text in the value, not another key argument:
+`key: x other: y` passes `key: "x other: y"`. Put each key on its own line.
+
 ## Line Items
 
 Dash and key items are line items. A line item is parsed like an ordinary

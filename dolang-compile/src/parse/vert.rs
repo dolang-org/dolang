@@ -156,7 +156,10 @@ impl Parser<'_> {
                     self.add_indent(column);
                     let arg = Arg::DynamicKey(Pair {
                         key: expr,
-                        value: self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?,
+                        value: self.parse_cmd_vert_item_expr(
+                            scope,
+                            UnquotedMode::KeyData { bin_pack: false },
+                        )?,
                         colon_span: Some(colon_span),
                         delim_span: None,
                     });
@@ -310,6 +313,7 @@ impl Parser<'_> {
         scope: &mut Scope,
         args: &mut Vec<Arg>,
         key: Expr,
+        bin_pack: bool,
     ) -> Result<()> {
         if let Some(token!(TokenInfo::Colon)) = self.peek()? {
             let colon_span = self.advance();
@@ -318,7 +322,7 @@ impl Parser<'_> {
                 self.parse_data(scope, vec![], false)?
             } else {
                 self.expect(scope, &[ExpectKind::ArgSep])?;
-                self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?
+                self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData { bin_pack })?
             };
             args.push(Arg::DynamicKey(Pair {
                 key,
@@ -378,7 +382,10 @@ impl Parser<'_> {
                         let expr = if let Some(token!(Keyword(Keyword::Do))) = self.peek()? {
                             self.parse_do_block(scope, CmdContext::Stmt)?
                         } else {
-                            self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?
+                            self.parse_cmd_vert_item_expr(
+                                scope,
+                                UnquotedMode::KeyData { bin_pack },
+                            )?
                         };
                         args.push(Arg::Key(Key {
                             key_span: span,
@@ -439,7 +446,7 @@ impl Parser<'_> {
             }
             Some(token!(expr_start!())) => {
                 let key = self.parse_expr(scope, ExprMode::Shell)?;
-                self.parse_cmd_vert_dynamic_or_pos(scope, args, key)
+                self.parse_cmd_vert_dynamic_or_pos(scope, args, key, bin_pack)
             }
             Some(token!(Dollar)) => {
                 let span = self.advance();
@@ -460,7 +467,7 @@ impl Parser<'_> {
                 }
                 let expr = self.parse_expr(scope, ExprMode::Compact)?;
                 let key = Self::dollar_group(expr, span);
-                self.parse_cmd_vert_dynamic_or_pos(scope, args, key)
+                self.parse_cmd_vert_dynamic_or_pos(scope, args, key, bin_pack)
             }
             Some(token!(Keyword(Keyword::Do))) => {
                 let expr = self.parse_do_block(scope, CmdContext::Stmt)?;
@@ -536,7 +543,10 @@ impl Parser<'_> {
                         self.advance();
                         // Parse first item on this line
                         let arg = Arg::Key(Key {
-                            expr: self.parse_cmd_vert_item_expr(scope, UnquotedMode::KeyData)?,
+                            expr: self.parse_cmd_vert_item_expr(
+                                scope,
+                                UnquotedMode::KeyData { bin_pack: false },
+                            )?,
                             key_span: span,
                             colon_span: span.after_right_char(),
                             delim_span: None,

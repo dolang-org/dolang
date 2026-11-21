@@ -1,5 +1,7 @@
 use super::{
-    Error, ExprMode, Parser, Result, Scope, diag::ImplicitDelimitedConcat, stream::ExpectKind,
+    Error, ExprMode, Parser, Result, Scope,
+    diag::{ImplicitDelimitedConcat, KeyInKeyItem},
+    stream::ExpectKind,
     string::StrKind,
 };
 use crate::{
@@ -58,8 +60,10 @@ pub(super) enum UnquotedMode {
     /// lines at its content column, the offset given
     DashData(Offset),
     /// A key item's value, which keeps its whitespace and continues onto
-    /// lines indented past its key
-    KeyData,
+    /// lines indented past its key. `bin_pack` is whether the item sits in a
+    /// block that bin-packs, where a key later on its line reads like another
+    /// key argument.
+    KeyData { bin_pack: bool },
 }
 
 impl UnquotedMode {
@@ -68,7 +72,7 @@ impl UnquotedMode {
         matches!(
             (self, token),
             (Self::DashData(_), Some(token!(TokenInfo::StmtSep)))
-                | (Self::KeyData, Some(token!(TokenInfo::Indent)))
+                | (Self::KeyData { .. }, Some(token!(TokenInfo::Indent)))
         )
     }
 }
@@ -104,7 +108,7 @@ impl Parser<'_> {
                     self.push_fold(&mut exprs, span);
                     continue;
                 }
-                Some(token!(Indent, span)) if mode == UnquotedMode::KeyData => {
+                Some(token!(Indent, span)) if matches!(mode, UnquotedMode::KeyData { .. }) => {
                     self.advance();
                     self.push_fold(&mut exprs, span);
                     depth += 1;
@@ -133,7 +137,27 @@ impl Parser<'_> {
                 Some(token!(Dollar)) => self.parse_expr_primary(scope, ExprMode::Shell)?,
                 Some(_) => match decay_string!(self.next()?) {
                     Some(token!(Literal, span)) => Expr::Literal(span),
-                    Some(token!(Key, span)) => Expr::Literal(span | span.after_right_char()),
+                    Some(token!(Key, span)) => {
+                        let key = span | span.after_right_char();
+                        // A key after whitespace on the value's first line,
+                        // and not at its start, reads like another key
+                        // argument
+                        if mode == (UnquotedMode::KeyData { bin_pack: true })
+                            && depth == 0
+                            && !exprs.is_empty()
+                            && self.file.slice(Span {
+                                start: key.start - 1,
+                                end: key.start,
+                            }) == b" "
+                            && matches!(
+                                self.peek()?,
+                                None | Some(token!(ArgSep | StmtSep | Indent | Dedent))
+                            )
+                        {
+                            self.diags.push(KeyInKeyItem(key));
+                        }
+                        Expr::Literal(key)
+                    }
                     Some(token!(DittoKey, span)) => Expr::Literal(span.before_left_char() | span),
                     Some(token!(Sym, span)) => {
                         Expr::Literal(span.before_left_char() | span.after_right_char())

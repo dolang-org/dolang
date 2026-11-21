@@ -1,0 +1,116 @@
+def show ...args
+  args
+
+let v = "x"
+
+# A key later on a key item's line is text in its value
+let cmd = show
+  key: x other: y
+# lint: `other:` in a key item's value is text, not another key; put each key on its own line
+#   --> key_item_inline_key.dol:LL:LL
+#    |
+# LL |   key: x other: y
+#    |          ^^^^^^
+#    |
+# help: quote it to keep it as text
+#    |
+# LL -   key: x other: y
+# LL +   key: x $"other:" y
+#    |
+assert_eq $cmd[:key:] "x other: y"
+
+let data = $
+  key: x other: y
+# lint: `other:` in a key item's value is text, not another key; put each key on its own line
+#   --> key_item_inline_key.dol:LL:LL
+#    |
+# LL |   key: x other: y
+#    |          ^^^^^^
+#    |
+# help: quote it to keep it as text
+#    |
+# LL -   key: x other: y
+# LL +   key: x $"other:" y
+#    |
+assert_eq $data[:key:] "x other: y"
+
+let constant = show
+  key: 42 other: y
+# lint: `other:` in a key item's value is text, not another key; put each key on its own line
+#   --> key_item_inline_key.dol:LL:LL
+#    |
+# LL |   key: 42 other: y
+#    |           ^^^^^^
+#    |
+# help: quote it to keep it as text
+#    |
+# LL -   key: 42 other: y
+# LL +   key: 42 $"other:" y
+#    |
+assert_eq $constant[:key:] "42 other: y"
+
+let dollar = show
+  key: $v other: y
+# lint: `other:` in a key item's value is text, not another key; put each key on its own line
+#   --> key_item_inline_key.dol:LL:LL
+#    |
+# LL |   key: $v other: y
+#    |           ^^^^^^
+#    |
+# help: quote it to keep it as text
+#    |
+# LL -   key: $v other: y
+# LL +   key: $v $"other:" y
+#    |
+assert_eq $dollar[:key:] "x other: y"
+
+let folded = show
+  key: x other:
+    # lint: `other:` in a key item's value is text, not another key; put each key on its own line
+    #   --> key_item_inline_key.dol:LL:LL
+    #    |
+    # LL |   key: x other:
+    #    |          ^^^^^^
+    #    |
+    # help: quote it to keep it as text
+    #    |
+    # LL -   key: x other:
+    # LL +   key: x $"other:"
+    #    |
+    y
+assert_eq $folded[:key:] "x other: y"
+
+# The fix quotes the key and keeps the value
+let patched = show
+  key: x $"other:" y
+assert_eq $patched[:key:] "x other: y"
+
+# A key at the start of the value can only be text
+let start = show
+  msg: error: not found
+assert_eq $start[:msg:] "error: not found"
+
+# Continuation lines are text
+let continued = show
+  key: x
+    other: y
+assert_eq $continued[:key:] "x other: y"
+
+# Dash items' positional text
+let dash = show
+  - x other: y
+assert_eq $dash[0] "x other: y"
+
+# Nested data never bin-packs
+let nested = show
+  outer:
+    key: x other: y
+assert_eq $nested[:outer:][:key:] "x other: y"
+let dash_key = show
+  - key: x other: y
+assert_eq $dash_key[0][:key:] "x other: y"
+
+# A colon not followed by whitespace
+let url = show
+  key: see https://example.com
+assert_eq $url[:key:] "see https://example.com"
