@@ -116,6 +116,48 @@ impl Diagnose for ImplicitDelimitedConcat {
     }
 }
 
+/// A key, such as `other:` in `key: x other: y`, written later on the line of
+/// a key item in a block that bin-packs. It is text in the key item's value,
+/// though it reads like another key argument.
+#[derive(Clone, Copy)]
+pub(super) struct KeyInKeyItem(pub(super) Span);
+
+impl Patch for KeyInKeyItem {
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "quote it to keep it as text")
+    }
+
+    fn sub(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "$\"{}\"", file.str(self.0))
+    }
+}
+
+impl Diagnose for KeyInKeyItem {
+    fn message(&self, file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`{}` in a key item's value is text, not another key; put each key on its own line",
+            file.str(self.0)
+        )
+    }
+
+    fn severity(&self) -> Severity {
+        Severity::Lint
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+
+    fn patches(&self) -> Box<dyn Iterator<Item = Box<dyn Patch>>> {
+        Box::new([Box::new(*self) as Box<dyn Patch>].into_iter())
+    }
+}
+
 pub(super) struct AmbigIndex(pub(super) Span, pub(super) Span);
 
 enum AmbigIndexPatchKind {
