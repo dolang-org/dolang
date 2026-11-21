@@ -1,0 +1,7 @@
+if true => try echo x
+# error: a same-line body can't hold `if`, `match` or `try`, since the lines after it would be ambiguous; put the body in an indented block
+#   --> inline_try.dol:LL:LL
+#    |
+# LL | if true => try echo x
+#    |            ^^^
+catch _ => echo caught

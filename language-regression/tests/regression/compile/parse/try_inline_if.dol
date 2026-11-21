@@ -1,0 +1,8 @@
+try if true
+  # error: a same-line body can't hold `if`, `match` or `try`, since the lines after it would be ambiguous; put the body in an indented block
+  #   --> try_inline_if.dol:LL:LL
+  #    |
+  # LL | try if true
+  #    |     ^^
+  1
+catch _ => 0

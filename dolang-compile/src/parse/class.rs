@@ -1,6 +1,6 @@
 use super::{
     Parser, Result, Scope,
-    cmd::CmdContext,
+    cmd::StmtContext,
     diag::{ProtocolFieldDefault, RedundantTypeOnly},
     stream::ExpectKind,
 };
@@ -154,7 +154,7 @@ impl Parser<'_> {
                     }
                     Expr::Stub(span)
                 }
-                _ => self.parse_cmd_or_expr(scope, CmdContext::Stmt)?,
+                _ => self.parse_cmd_or_expr(scope, StmtContext::Block)?,
             };
             let init = if let Some(fold) = rhs.fold(self.file) {
                 FieldInit::Const(rhs, fold)

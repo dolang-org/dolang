@@ -1,0 +1,8 @@
+@def f x => 1
+# error: a type-only declaration has no body
+#   --> def_type_only_arrow.dol:LL:LL
+#    |
+# LL | @def f x => 1
+#    |          ^^
+def f x
+  x

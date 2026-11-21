@@ -2099,4 +2099,40 @@
       }
     ]
   }
+,
+  {
+    "name": "same-line bodies after def, for and catch",
+    "lines": [
+      "def show x => echo label: $x",
+      "for item = items => echo $item",
+      "catch e => echo $e"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 1,
+        "text": "label",
+        "scopes": ["meta.object-literal.key.dol"],
+        "notScopes": ["meta.declaration.dol", "meta.type"],
+        "vim": ["dolKey"]
+      },
+      {
+        "line": 2,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      }
+    ]
+  }
 ]

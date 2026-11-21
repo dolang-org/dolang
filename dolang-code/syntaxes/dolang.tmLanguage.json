@@ -416,7 +416,7 @@
                 },
                 {
                     "begin": "(?<![\\w.#])(@?)(def)[ \\t]+([A-Za-z_][A-Za-z0-9_]*|\\([A-Za-z_][A-Za-z0-9_]*\\))",
-                    "end": "(?=$)",
+                    "end": "(?=$|(?<=\\s)=>(?=\\s|$))",
                     "name": "meta.declaration.dol",
                     "patterns": [
                         { "include": "#parameter_rest" },

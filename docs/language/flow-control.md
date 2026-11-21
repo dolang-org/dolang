@@ -49,6 +49,16 @@ The body is a single statement. A separator is needed because the condition
 accepts command arguments, so `if func arg body` would pass `body` to `func`.
 Same-line and indented bodies can be mixed in one `if`.
 
+Where the lines after a same-line body continue its statement, as an `else`
+continues an `if` after a branch and a `catch` continues a `try`, the body can't
+hold an `if`, `match` or `try`, even as the value of `let` or an assignment.
+Those lines could belong to either statement. Use an indented block, or
+`else if` for a chain. A `let` or `bind` there leaves an `else` after it to the
+enclosing statement.
+
+A body that ends its statement, such as an `else` body or that of a `for`, has
+no such restriction, and neither does a [`match`](#match) arm.
+
 ### `if` in `let` and Assignments
 
 `if` statements can be the right-hand side of `let` bindings and assignments:
@@ -207,6 +217,12 @@ Dictionaries iterate as `(key, value)` tuples. Use a pattern to unpack them:
 ```
 for k v = {name: "Alice", age: 30}
   echo "$k: $v"
+```
+
+`=>` after the iteratee gives `for` a same-line body, as it does for `while`:
+
+```
+for item = items => echo $item
 ```
 
 See [Pattern Matching](patterns.md) for more on `for` unpacking.

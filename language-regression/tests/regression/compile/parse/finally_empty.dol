@@ -1,0 +1,8 @@
+try echo a
+finally
+# error: `finally` needs a body on the same line or in an indented block
+#   --> finally_empty.dol:LL:LL
+#    |
+# LL | finally
+#    | ^^^^^^^
+echo b

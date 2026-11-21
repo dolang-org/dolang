@@ -206,6 +206,8 @@ pub(crate) struct For<T> {
     pub(crate) iter: Option<Res>,
     pub(crate) for_span: Span,
     pub(crate) equal_span: Option<Span>,
+    /// The `=>` before a same-line body
+    pub(crate) arrow_span: Option<Span>,
 }
 
 impl<T> For<T> {
@@ -216,6 +218,7 @@ impl<T> For<T> {
             iter: self.iter,
             for_span: self.for_span,
             equal_span: self.equal_span,
+            arrow_span: self.arrow_span,
             bind: self.bind,
         }
     }
@@ -230,6 +233,9 @@ impl<T: Node> Node for For<T> {
                 visit.token(Token::Operator, *equal_span, None)?;
             }
             visit.node(expr)?;
+        }
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
         }
         self.body.trans(visit)
     }
@@ -2544,6 +2550,8 @@ pub(crate) struct CatchHandler {
     pub(crate) class_expr: Option<Expr>,
     pub(crate) func: Function,
     pub(crate) catch_span: Span,
+    /// The `=>` before a same-line body
+    pub(crate) arrow_span: Option<Span>,
 }
 
 pub(crate) struct Try {
@@ -2558,6 +2566,9 @@ impl Node for CatchHandler {
         visit.token(Token::Keyword, self.catch_span, None)?;
         if let Some(class_expr) = &self.class_expr {
             visit.node(class_expr)?;
+        }
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
         }
         visit.node(&self.func)
     }
@@ -2651,6 +2662,8 @@ pub(crate) struct Def {
     pub(crate) binders: Option<Box<Binders>>,
     // Function
     pub(crate) func: Function,
+    /// The `=>` before a same-line body
+    pub(crate) arrow_span: Option<Span>,
     pub(crate) pub_span: Option<Span>,
     /// The document node of a type-only def, which has no variable to carry it
     pub(crate) node: Option<doc::Id>,
@@ -2680,6 +2693,9 @@ impl Node for Def {
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
         }
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
+        }
         visit.node(&self.func)
     }
 
@@ -2703,6 +2719,8 @@ pub(crate) struct Method {
     pub(crate) private_sym: Option<sym::Id>,
     pub(crate) binders: Option<Box<Binders>>,
     pub(crate) func: Function,
+    /// The `=>` before a same-line body
+    pub(crate) arrow_span: Option<Span>,
     pub(crate) pub_span: Option<Span>,
 }
 
@@ -2719,6 +2737,9 @@ impl Node for Method {
         visit.token(Token::Method, self.name_span, self.node)?;
         if let Some(binders) = &self.binders {
             visit.node(&**binders)?;
+        }
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
         }
         visit.node(&self.func)
     }

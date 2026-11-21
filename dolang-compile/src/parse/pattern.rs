@@ -753,10 +753,17 @@ impl Parser<'_> {
                         default: None,
                     });
                 }
+                // A `=>` ends a `for` pattern or a `def`'s parameters before a
+                // same-line body
                 None
-                | Some(token!(TokenInfo::Indent | TokenInfo::Op(Op::Bar) | TokenInfo::Equal))
-                    if !mode.is_vertical() && !matches!(mode, PatMode::Nested) =>
-                {
+                | Some(
+                    token!(
+                        TokenInfo::Indent
+                            | TokenInfo::Op(Op::Bar)
+                            | TokenInfo::Equal
+                            | TokenInfo::FatArrow
+                    ),
+                ) if !mode.is_vertical() && !matches!(mode, PatMode::Nested) => {
                     if items.is_empty() && mode.is_pattern() {
                         let token = self.next().unwrap();
                         return Err(self.syntax_error(
@@ -789,9 +796,6 @@ impl Parser<'_> {
                         ));
                     }
                     self.advance();
-                    if matches!(mode, PatMode::VertFunc | PatMode::VertSig) {
-                        self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
-                    }
                     break Ok((items, implicits, dashed));
                 }
                 Some(token!(TokenInfo::ArgSep)) => {

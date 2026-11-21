@@ -1,0 +1,7 @@
+try
+# error: `try` needs a body on the same line or in an indented block
+#   --> try_empty.dol:LL:LL
+#    |
+# LL | try
+#    | ^^^
+echo x
