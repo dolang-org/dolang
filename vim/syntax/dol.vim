@@ -72,7 +72,7 @@ syn match dolTypeOnly "@\ze\%(def\|class\|let\|import\)\>" nextgroup=dolDeclarat
 syn match dolDeclaredType "\%(\<class\>\s\+\)\@<=[A-Za-z_][A-Za-z0-9_]*" nextgroup=dolBinders contained
 syn match dolDeclaredName "\%(\<def\>\s\+\)\@<=\%([A-Za-z_][A-Za-z0-9_]*\|([A-Za-z_][A-Za-z0-9_]*)\)" nextgroup=dolBinders contained
 syn match dolRest "\.\.\.\|\*\*\|\*" contained
-syn region dolDeclaration keepend matchgroup=dolKeyword start="\%([A-Za-z0-9_.#]\)\@<!\<\%(def\|class\)\>\%(:\)\@!" end="$" contains=dolKeyword,dolDeclaredName,dolDeclaredType,dolBinders,dolSupertype,dolAnnotation,dolReturnType,dolImplicit,dolRest,@dolStrings,dolNumber,dolConstant,dolFullExpr,dolDittoKey,dolComment
+syn region dolDeclaration keepend matchgroup=dolKeyword start="\%([A-Za-z0-9_.#]\)\@<!\<\%(def\|class\)\>\%(:\)\@!" end="\ze\s=>\%(\s\|$\)\|$" contains=dolKeyword,dolDeclaredName,dolDeclaredType,dolBinders,dolSupertype,dolAnnotation,dolReturnType,dolImplicit,dolRest,@dolStrings,dolNumber,dolConstant,dolFullExpr,dolDittoKey,dolComment
 syn region dolTypeAlias keepend start="@let\s\+" end="$" contains=dolKeyword,dolTypeOnly,@dolTypes
 syn match dolAliasKeyword "\<let\>" contained containedin=dolTypeAlias
 syn match dolImportType "\%(\<import\s\+\|^\s*\%(-\s\+\)\=\)\@<=@\%(\%(def\|class\|let\|import\)\>\)\@![A-Za-z_][A-Za-z0-9_]*\%([.][A-Za-z_][A-Za-z0-9_]*\)*" contains=dolTypeName,dolTypeMarker

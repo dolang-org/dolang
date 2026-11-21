@@ -1,0 +1,8 @@
+let d = $
+  items:
+    for x = [1] => $x
+# error: `=>` needs a context that allows bin-packing, or a `for` or `if` after it; drop it and put the items in an indented block
+#   --> for_vert_arrow_no_binpack.dol:LL:LL
+#    |
+# LL |     for x = [1] => $x
+#    |                 ^^

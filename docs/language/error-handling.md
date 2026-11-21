@@ -47,6 +47,22 @@ catch err
   default_value
 ```
 
+### Same-Line Bodies
+
+`try` and `finally` take a single-statement body on the same line directly.
+A `catch` handler takes one after `=>`, since a body there would run into its
+variable:
+
+```
+let result = try parse input
+catch _ => default_value
+
+try process $f
+finally f.close()
+```
+
+Same-line and indented bodies can be mixed in one `try`.
+
 ### Typed Catch Handlers
 
 Errors can be caught by type. Handlers are tried in order:

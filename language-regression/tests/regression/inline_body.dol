@@ -64,3 +64,144 @@ let flags2 = $
   else --c --d
   - --e
 assert_eq $flags2 ["--c", "--d", "--e"]
+
+# `try` and `finally` take a same-line body directly, and `catch` after `=>`
+let outcome = try throw (std.ValueError "bad")
+catch _ => "caught"
+assert_eq $outcome caught
+
+let cleanups = []
+let r = try 1
+catch _ => 2
+finally cleanups.push done
+assert_eq $r 1
+assert_eq $cleanups ["done"]
+
+def fail_with cls
+  throw (cls "bad")
+
+def classify cls
+  try fail_with $cls
+  catch std.ValueError: _e => "value"
+  catch _e => "other"
+assert_eq (classify std.ValueError) value
+assert_eq (classify std.TypeError) other
+
+# Same-line and block clauses mix
+let mixed = try
+  fail_with $std.ValueError
+catch std.TypeError: _e
+  "type"
+catch _ => "any"
+assert_eq $mixed any
+
+# `for` takes `=>` after its iteratee
+let doubled = []
+for x = [1, 2, 3] => doubled.push (x * 2)
+assert_eq $doubled [2, 4, 6]
+
+# `def` takes `=>` after horizontal parameters
+def double x@Int -> Int => (x * 2)
+assert_eq (double 4) 8
+
+def answer() => 42
+assert_eq (answer()) 42
+
+def greeting => "hi"
+assert_eq (greeting()) hi
+
+# After vertical parameters, the body follows `do` and any return type
+def tagged
+  :tag @ Str
+  ...args @ Str
+do -> Array[Str] [tag, ...args]
+assert_eq (tagged(tag: "a", "b")) ["a", "b"]
+
+def shout
+  word
+do word.upper()
+assert_eq (shout "hey") HEY
+
+class Box
+  pub field value = 0
+
+  def (init) self value => self.value = value
+
+  pub def get self => self.value
+let box = Box 3
+assert_eq $box.get() 3
+
+# A vertical `for` takes a line of bin-packed items after `=>`
+let squares = $
+  - 0
+  for i = [1, 2] => (i * i) (-i)
+assert_eq $squares [0, 1, -1, 4, -2]
+
+# A `match` arm's same-line body can hold a `match`, whose `else` stays inside
+# the arms
+def kind x y
+  match x
+    0 => match y
+      0 => "both"
+    else "x only"
+  else "neither"
+assert_eq (kind 0 0) both
+assert_eq (kind 0 1) "x only"
+assert_eq (kind 1 0) neither
+
+# A same-line `let` leaves an `else` on the next line to the construct holding
+# it
+def split_or a
+  if a => let _k _v = [1, 2]
+  else return "no"
+  "yes"
+assert_eq (split_or true) yes
+assert_eq (split_or false) no
+
+def bind_or a
+  if a => bind [1, 2] => _k _v
+  else return "no"
+  "yes"
+assert_eq (bind_or true) yes
+assert_eq (bind_or false) no
+
+# A body that ends its statement can hold an `if`, whose `else` has no other
+# owner
+let seen = []
+for i = [1, 2] => if (i == 1) => seen.push one
+else seen.push other
+assert_eq $seen ["one", "other"]
+
+# An `else` body ends its statement too
+let r2 = try
+  throw (std.ValueError "x")
+catch _
+  let _a _b = [1, 2]
+  else try
+    throw std.ValueError "inner"
+  catch _
+    nil
+  "caught"
+assert_eq $r2 caught
+
+# In vertical layout, `=>` can take a nested `for` or `if`, even where
+# bin-packing isn't allowed
+let xs = [1, 2]
+let products = $
+  for x = xs => for y = xs => (x * 10 + y)
+assert_eq $products [11, 12, 21, 22]
+
+let nested = $
+  items:
+    for x = xs => if (x > 1)
+      - $x
+  sums:
+    for x = xs => for y = xs
+      - (x + y)
+assert_eq $nested[:items:] [2]
+assert_eq $nested[:sums:] [2, 3, 3, 4]
+
+let signs = $
+  for x = [-1, 2] => if (x > 0) => $x
+  else none
+assert_eq $signs ["none", 2]

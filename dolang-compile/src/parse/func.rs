@@ -1,8 +1,9 @@
 use super::{
     ExprMode, Parser, Result, Scope,
-    cmd::CmdContext,
+    cmd::StmtContext,
     diag::{SpecialMethodOutsideClass, SyntaxDiag},
     pattern::PatMode,
+    stmt::StmtBody,
     stream::ExpectKind,
 };
 use crate::{
@@ -105,7 +106,7 @@ impl Parser<'_> {
         Ok((params, ret))
     }
 
-    pub(super) fn parse_do_block(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<Expr> {
+    pub(super) fn parse_do_block(&mut self, scope: &mut Scope, ctx: StmtContext) -> Result<Expr> {
         let do_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?;
         let (params, ret) = self.parse_do_params(scope)?;
         match self.peek()? {
@@ -135,7 +136,7 @@ impl Parser<'_> {
                     stub_span: None,
                     body: Block {
                         stmts: vec![if ctx.allows_trailing() {
-                            self.parse_stmt(scope)?
+                            self.parse_stmt(scope, ctx)?
                         } else {
                             Stmt::Prim(self.parse_cmd(scope, ctx)?)
                         }],
@@ -179,11 +180,14 @@ impl Parser<'_> {
 
     /// Parse a `def`, which has no body when it is type-only: marked with `@`, or a
     /// protocol member. In a protocol, `@` marks an overload of a member.
+    ///
+    /// A same-line body is in `ctx`, the context of the declaration.
     fn parse_def_common(
         &mut self,
         scope: &mut Scope,
         protocol: bool,
         at_span: Option<Span>,
+        ctx: StmtContext,
     ) -> Result<DefCommon> {
         let def_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Def)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
@@ -202,11 +206,19 @@ impl Parser<'_> {
             }
         };
         let binders = self.parse_binders(scope)?;
+        // The `do` ending vertical parameters
+        let mut do_span = None;
         let (params, implicits) = match self.peek()? {
-            Some(token!(TokenInfo::Indent)) if type_only => {
-                self.parse_pat_items(scope, PatMode::VertSig)?
+            Some(token!(TokenInfo::Indent)) => {
+                let mode = if type_only {
+                    PatMode::VertSig
+                } else {
+                    PatMode::VertFunc
+                };
+                let params = self.parse_pat_items(scope, mode)?;
+                do_span = Some(self.expect(scope, &[ExpectKind::Keyword(Keyword::Do)])?);
+                params
             }
-            Some(token!(TokenInfo::Indent)) => self.parse_pat_items(scope, PatMode::VertFunc)?,
             Some(token!(TokenInfo::LeftParen)) => {
                 let left = self.advance();
                 let _right = self.expect_matching(scope, ExpectKind::RightParen, left);
@@ -226,6 +238,7 @@ impl Parser<'_> {
         {
             self.advance();
         }
+        let mut arrow_span = None;
         let (stub_span, body) = if type_only {
             match self.peek()? {
                 None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => (
@@ -244,8 +257,9 @@ impl Parser<'_> {
                     ));
                 }
             }
+        } else if let Some(body) = self.parse_def_inline(scope, do_span, &mut arrow_span, ctx)? {
+            (None, body)
         } else {
-            self.expect(scope, &[ExpectKind::Indent])?;
             // A comment line before the body leaves only its newline
             while let Some(token!(TokenInfo::StmtSep)) = self.peek()? {
                 self.advance();
@@ -285,6 +299,7 @@ impl Parser<'_> {
             name_span,
             special,
             binders,
+            arrow_span,
             func: Function {
                 params,
                 input: implicits.input,
@@ -303,6 +318,7 @@ impl Parser<'_> {
         pub_span: Option<Span>,
         decorators: Vec<Decorator>,
         at_span: Option<Span>,
+        ctx: StmtContext,
     ) -> Result<Def> {
         let DefCommon {
             def_span,
@@ -310,8 +326,9 @@ impl Parser<'_> {
             name_span,
             special,
             binders,
+            arrow_span,
             func,
-        } = self.parse_def_common(scope, false, at_span)?;
+        } = self.parse_def_common(scope, false, at_span, ctx)?;
         self.overload_decorators(&decorators, at_span);
 
         if special.is_some() {
@@ -326,6 +343,7 @@ impl Parser<'_> {
             ident: Ident::new(name_span),
             binders,
             func,
+            arrow_span,
             pub_span,
             node: None,
         })
@@ -345,8 +363,9 @@ impl Parser<'_> {
             name_span,
             special,
             binders,
+            arrow_span,
             func,
-        } = self.parse_def_common(scope, protocol, at_span)?;
+        } = self.parse_def_common(scope, protocol, at_span, StmtContext::Block)?;
         self.overload_decorators(&decorators, at_span);
         Ok(Method {
             def_span,
@@ -360,8 +379,55 @@ impl Parser<'_> {
             private_sym: None,
             binders,
             func,
+            arrow_span,
             pub_span,
         })
+    }
+
+    /// Parse a `def`'s same-line body, if it has one: after `=>` following
+    /// horizontal parameters, or directly after `do_span`, the `do` ending
+    /// vertical ones. Otherwise, consume the `Indent` opening its block.
+    fn parse_def_inline(
+        &mut self,
+        scope: &mut Scope,
+        do_span: Option<Span>,
+        arrow_span: &mut Option<Span>,
+        ctx: StmtContext,
+    ) -> Result<Option<Block>> {
+        match (self.peek()?, do_span) {
+            (Some(token!(TokenInfo::Indent)), _) => {
+                self.advance();
+                Ok(None)
+            }
+            (Some(token!(TokenInfo::FatArrow)), None) => {
+                let arrow = self.consume();
+                *arrow_span = Some(arrow.span);
+                Ok(Some(self.parse_inline_body(scope, &StmtBody, &arrow, ctx)?))
+            }
+            (token @ Some(token!(TokenInfo::FatArrow)), Some(_)) => Err(self.syntax_error(
+                scope,
+                token,
+                "a body on the same line follows `do` directly, without `=>`",
+            )),
+            (None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)), Some(span)) => Err(self
+                .syntax_error(
+                    scope,
+                    Some(Token {
+                        info: TokenInfo::Keyword(Keyword::Do),
+                        span,
+                    }),
+                    "`do` needs a body on the same line or in an indented block",
+                )),
+            (_, Some(_)) => Ok(Some(Block {
+                stmts: vec![self.parse_stmt(scope, ctx)?],
+                vars: Default::default(),
+                repl: None,
+            })),
+            (_, None) => {
+                self.expect(scope, &[ExpectKind::Indent, ExpectKind::FatArrow])?;
+                Ok(None)
+            }
+        }
     }
 }
 
@@ -372,5 +438,6 @@ struct DefCommon {
     name_span: Span,
     special: Option<SpecialMethod>,
     binders: Option<Box<Binders>>,
+    arrow_span: Option<Span>,
     func: Function,
 }

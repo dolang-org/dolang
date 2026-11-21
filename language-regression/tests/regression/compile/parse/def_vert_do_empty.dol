@@ -1,0 +1,9 @@
+def f
+  x
+do
+# error: `do` needs a body on the same line or in an indented block
+#   --> def_vert_do_empty.dol:LL:LL
+#    |
+# LL | do
+#    | ^^
+echo hi

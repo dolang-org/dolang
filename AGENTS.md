@@ -75,8 +75,9 @@ Certain argument forms are automatically expressions without `$`:
 - `do` blocks: `func do |x| echo $x`
 
 **Indented blocks are only valid at statement level.** The body of `if`,
-`while`, `for`, `def`, `class`, `try`, etc. is always an indented block under
-the keyword, never an expression inside `()`.
+`while`, `for`, `def`, `class`, `try`, etc. is an indented block under the
+keyword (or, except for `class`, a statement on the same line), never an
+expression inside `()`.
 
 #### 2. Full Expression Level (C-Like) — inside `()`, `[]`, `{}`
 
@@ -340,6 +341,8 @@ def greet name
 def add a b
   (a + b)                 # implicit return (last expression)
 
+def double x => (x * 2)   # same-line body after `=>`
+
 pub def exported x        # public (module export)
   (x + 1)
 
@@ -363,6 +366,10 @@ pub def build
   ...args
 do
   echo "Building $tag from $from"
+
+def greet
+  :name
+do echo "Hello, $name"    # same-line body directly after `do`
 ```
 
 ### `do` Blocks (Anonymous Functions)
@@ -386,8 +393,8 @@ let evens = items.filter(do |x| x % 2 == 0)
 
 ### Control Flow
 
-`if`, `while`, `for` use indented block bodies. `if` and `while` also take a
-single statement on the same line after `=>`, and `else` takes one directly:
+`if`, `while`, `for` use indented block bodies. They also take a single
+statement on the same line after `=>`, and `else` takes one directly:
 
 ```
 if (score >= 70)
@@ -412,7 +419,13 @@ for i = 0..5                        # 0, 1, 2, 3, 4
 
 if (n < 0) => return "negative"
 else return "positive"
+
+for x = items => echo $x
 ```
+
+A same-line body whose statement continues after it (an `if` branch, a `try`
+body, a `catch`) can't hold `if`, `match` or `try`, even as a `let` RHS; use a
+block or `else if`. A `let`/`bind` there leaves a following `else` to the `if`.
 
 Range syntax is `start..end` (end exclusive), `start..`, `..end`, and `..`; a
 missing start counts from 0. It also slices: `$arr[1..]`, `(s[..n])`. Use
@@ -660,6 +673,9 @@ let result = try
   parse input
 catch _
   default_value
+
+let result = try parse input   # same-line bodies: `try`/`finally` directly,
+catch _ => default_value       # `catch` after `=>`
 ```
 
 ### Destructuring

@@ -1,8 +1,8 @@
 use super::{
     ExprMode, Parser, Result, Scope,
-    cmd::CmdContext,
+    cmd::StmtContext,
     cmd::UnquotedMode,
-    diag::ImplicitDelimitedConcat,
+    diag::{ImplicitDelimitedConcat, SyntaxDiag},
     stmt::{BodyMode, arm_expected_inline, lead_name},
     stream::ExpectKind,
 };
@@ -24,27 +24,53 @@ impl BodyMode for VertBody {
         parser.parse_cmd_vert_body(scope, self.bin_pack)
     }
 
-    fn check_inline(&self, parser: &mut Parser<'_>, scope: &mut Scope, lead: &Token) -> Result<()> {
-        if self.bin_pack {
-            return Ok(());
-        }
-        // Only a context that bin-packs items can take a line of them
-        let msg = if lead_name(lead) == "=>" {
-            "`=>` needs a context that allows bin-packing; drop it and put the items in an \
-             indented block"
-        } else {
-            "`else` takes same-line items only where bin-packing is allowed; put the items in an \
-             indented block under `else`"
-        };
-        Err(parser.syntax_error(scope, Some(lead.clone()), msg))
-    }
-
     fn parse_inline(
         &self,
         parser: &mut Parser<'_>,
         scope: &mut Scope,
         lead: &Token,
+        ctx: StmtContext,
     ) -> Result<ExprBody<Arg>> {
+        // A nested `for` or `if` after `=>` is a single element, so it needs
+        // no bin-packing
+        if lead.info == TokenInfo::FatArrow {
+            match parser.peek()? {
+                Some(token!(TokenInfo::Keyword(Keyword::For))) => {
+                    let node = parser.parse_for_with(scope, self, ctx)?;
+                    return Ok(ExprBody {
+                        elems: vec![Arg::For(node)],
+                        vars: Vec::new(),
+                    });
+                }
+                Some(token!(TokenInfo::Keyword(Keyword::If), span)) => {
+                    if !ctx.continues() {
+                        parser.fail = true;
+                        parser.diags.push(SyntaxDiag::new(
+                            span,
+                            "same-line items can't hold `if` here, since the lines after them \
+                             would be ambiguous; put the items in an indented block",
+                        ));
+                    }
+                    let node = parser.parse_if_with(scope, self, ctx)?;
+                    return Ok(ExprBody {
+                        elems: vec![Arg::If(node)],
+                        vars: Vec::new(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        if !self.bin_pack {
+            // Only a context that bin-packs items can take a line of them
+            let msg = if lead.info == TokenInfo::FatArrow {
+                "`=>` needs a context that allows bin-packing, or a `for` or `if` after it; drop \
+                 it and put the items in an indented block"
+            } else {
+                "`else` takes same-line items only where bin-packing is allowed; put the items in \
+                 an indented block under `else`"
+            };
+            return Err(parser.syntax_error(scope, Some(lead.clone()), msg));
+        }
         parser.parse_vert_inline(scope, lead)
     }
 
@@ -94,7 +120,7 @@ impl Parser<'_> {
                 delim_span: None,
             }));
         }
-        self.parse_cmd_args(scope, CmdContext::VertLine, &mut elems)?;
+        self.parse_vert_line_args(scope, &mut elems)?;
         if let Some(token!(Indent)) = self.peek()? {
             let name = lead_name(lead);
             return Err(self.syntax_error(
@@ -189,13 +215,13 @@ impl Parser<'_> {
                     }
                 }
             }
-            Some(token!(Keyword(Keyword::Do))) => self.parse_cmd_or_expr(scope, CmdContext::Stmt),
+            Some(token!(Keyword(Keyword::Do))) => self.parse_cmd_or_expr(scope, StmtContext::Block),
             Some(token!(Dollar)) => {
                 let span = self.advance();
                 match self.peek()? {
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        let expr = self.parse_cmd_or_expr(scope, CmdContext::Stmt)?;
+                        let expr = self.parse_cmd_or_expr(scope, StmtContext::Block)?;
                         Ok(Self::dollar_group(expr, span))
                     }
                     Some(token!(Indent)) => {
@@ -313,7 +339,7 @@ impl Parser<'_> {
         } else {
             let expr = self.parse_implicit_concat(scope, Some(key), UnquotedMode::Shell)?;
             args.push(Self::positional_arg(expr));
-            self.parse_cmd_args(scope, CmdContext::VertLine, args)?;
+            self.parse_vert_line_args(scope, args)?;
         }
         Ok(())
     }
@@ -341,7 +367,7 @@ impl Parser<'_> {
                         )?,
                         delim_span: None,
                     }));
-                    self.parse_cmd_args(scope, CmdContext::VertLine, args)?;
+                    self.parse_vert_line_args(scope, args)?;
                 }
                 Ok(())
             }
@@ -360,7 +386,7 @@ impl Parser<'_> {
                     Some(token!(ArgSep)) => {
                         self.advance();
                         let expr = if let Some(token!(Keyword(Keyword::Do))) = self.peek()? {
-                            self.parse_do_block(scope, CmdContext::Stmt)?
+                            self.parse_do_block(scope, StmtContext::Block)?
                         } else {
                             self.parse_cmd_vert_item_expr(
                                 scope,
@@ -392,7 +418,7 @@ impl Parser<'_> {
                             )?,
                             delim_span: None,
                         }));
-                        self.parse_cmd_args(scope, CmdContext::VertLine, args)?;
+                        self.parse_vert_line_args(scope, args)?;
                     }
                 }
                 Ok(())
@@ -409,19 +435,27 @@ impl Parser<'_> {
                 Ok(())
             }
             Some(token!(Keyword(Keyword::If))) => {
-                args.push(Arg::If(self.parse_if_with(scope, &VertBody { bin_pack })?));
+                args.push(Arg::If(self.parse_if_with(
+                    scope,
+                    &VertBody { bin_pack },
+                    StmtContext::Block,
+                )?));
                 Ok(())
             }
             Some(token!(Keyword(Keyword::For))) => {
-                args.push(Arg::For(
-                    self.parse_for_with(scope, &VertBody { bin_pack })?,
-                ));
+                args.push(Arg::For(self.parse_for_with(
+                    scope,
+                    &VertBody { bin_pack },
+                    StmtContext::Block,
+                )?));
                 Ok(())
             }
             Some(token!(Keyword(Keyword::Match))) => {
-                args.push(Arg::Match(
-                    self.parse_match_with(scope, &VertBody { bin_pack })?,
-                ));
+                args.push(Arg::Match(self.parse_match_with(
+                    scope,
+                    &VertBody { bin_pack },
+                    StmtContext::Block,
+                )?));
                 Ok(())
             }
             Some(token!(expr_start!())) => {
@@ -433,7 +467,7 @@ impl Parser<'_> {
                 match self.peek()? {
                     Some(token!(ArgSep)) => {
                         self.advance();
-                        let expr = self.parse_cmd_or_expr(scope, CmdContext::Stmt)?;
+                        let expr = self.parse_cmd_or_expr(scope, StmtContext::Block)?;
                         args.push(Self::positional_arg(Self::dollar_group(expr, span)));
                         return Ok(());
                     }
@@ -450,13 +484,13 @@ impl Parser<'_> {
                 self.parse_cmd_vert_dynamic_or_pos(scope, args, key, bin_pack)
             }
             Some(token!(Keyword(Keyword::Do))) => {
-                let expr = self.parse_do_block(scope, CmdContext::Stmt)?;
+                let expr = self.parse_do_block(scope, StmtContext::Block)?;
                 args.push(Self::positional_arg(expr));
                 Ok(())
             }
             other => {
                 if bin_pack {
-                    self.parse_cmd_args(scope, CmdContext::VertLine, args)
+                    self.parse_vert_line_args(scope, args)
                 } else {
                     Err(self.syntax_error(
                         scope,

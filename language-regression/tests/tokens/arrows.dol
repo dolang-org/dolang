@@ -14,3 +14,13 @@ dbg $a
 if bind [1] => b c = 2 => dbg $b $c
 #           ^~: operator
 #                      ^~: operator
+
+for x = [1] => dbg $x
+#           ^~: operator
+
+def double x => (x * 2)
+#            ^~: operator
+
+let r = try double 1
+catch e => dbg $e
+#       ^~: operator

@@ -1,0 +1,7 @@
+def f x =>
+  # error: `=>` takes its body on the same line
+  #   --> def_arrow_block.dol:LL:LL
+  #    |
+  # LL | def f x =>
+  #    |         ^^
+  echo $x

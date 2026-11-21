@@ -203,6 +203,30 @@ let doubled = $
     (i * 2)
 ```
 
+Where bin-packing is allowed, `=>` after the iteratee takes a line of bin-packed
+items, as it does [after an `if` condition](#if-in-vertical-layout):
+
+```playground
+#> import test:
+#>   - assert_eq
+let pairs = $
+  for i = [1, 2] => $i (i * 10)
+assert_eq $pairs [1, 10, 2, 20]
+```
+
+`=>` can also take a nested `for` or `if`, which holds a single element, so it
+is allowed even where bin-packing isn't:
+
+```playground
+#> import test:
+#>   - assert_eq
+let config = $
+  ports:
+    for host = [1, 2] => for offset = [0, 1]
+      - (8000 + host * 10 + offset)
+assert_eq $config[:ports:] [8010, 8011, 8020, 8021]
+```
+
 ## `if` in Vertical Layout
 
 `if` introduces conditional items or arguments in vertical layout:

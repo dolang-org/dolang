@@ -10,19 +10,55 @@ use crate::{
     source::{Offset, Span},
 };
 
-/// Where a command sits, which decides what its arguments may be and what ends
-/// them
+/// Where a statement, or a command in place of one, sits: whether the indented
+/// block after its line and the lines after that are spoken for by an
+/// enclosing construct
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum CmdContext {
-    /// A statement, whose arguments may be keys and may end in an indented
-    /// block, here string, `$` data or `do` block
-    Stmt,
-    /// A header ending where its construct's indented block begins, or at a
-    /// `=>` introducing same-line content, such as a condition or a scrutinee
+pub(super) enum StmtContext {
+    /// A statement in a block. Neither is spoken for: it may end in an
+    /// indented block, and lines such as `else` may continue it.
+    Block,
+    /// A same-line body, as after `=>`. It may end in an indented block, but
+    /// the lines after it belong to the construct holding it.
+    Inline,
+    /// A header, such as a condition or a scrutinee, ending where its
+    /// construct's indented block begins or at a `=>`. Both are spoken for.
+    Head,
+}
+
+impl StmtContext {
+    /// Whether the statement may end in an indented block
+    pub(super) fn allows_trailing(self) -> bool {
+        !matches!(self, Self::Head)
+    }
+
+    /// Whether lines after the statement, such as `else`, may continue it
+    pub(super) fn continues(self) -> bool {
+        matches!(self, Self::Block)
+    }
+}
+
+/// What a command's arguments may be and what ends them
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CmdContext {
+    /// A command in a statement's place, given as a `Block` or `Inline`
+    /// context, whose arguments may be keys and may end in an indented block,
+    /// here string, `$` data or `do` block
+    Stmt(StmtContext),
+    /// A command in a header
     Head,
     /// A bin-packed line of vertical arguments, where a key argument must head
     /// its own line
     VertLine,
+}
+
+impl From<StmtContext> for CmdContext {
+    fn from(ctx: StmtContext) -> Self {
+        match ctx {
+            StmtContext::Head => Self::Head,
+            other => Self::Stmt(other),
+        }
+    }
 }
 
 impl CmdContext {
@@ -30,8 +66,8 @@ impl CmdContext {
         !matches!(self, Self::VertLine)
     }
 
-    pub(super) fn allows_trailing(self) -> bool {
-        matches!(self, Self::Stmt)
+    fn allows_trailing(self) -> bool {
+        matches!(self, Self::Stmt(_))
     }
 
     fn ends_at_arrow(self) -> bool {
@@ -40,10 +76,10 @@ impl CmdContext {
 
     /// The context of a command nested in an argument, after `$` or `do`. It
     /// ends where this one does, but it heads its own line of arguments.
-    fn nested(self) -> Self {
+    fn nested(self) -> StmtContext {
         match self {
-            Self::VertLine => Self::Head,
-            other => other,
+            Self::Stmt(ctx) => ctx,
+            Self::Head | Self::VertLine => StmtContext::Head,
         }
     }
 }
@@ -381,7 +417,7 @@ impl Parser<'_> {
         }
     }
 
-    pub(super) fn parse_cmd_args(
+    fn parse_args(
         &mut self,
         scope: &mut Scope,
         ctx: CmdContext,
@@ -392,14 +428,37 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub(super) fn parse_cmd(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<PrimStmt> {
+    /// Parse a command's arguments after its receiver, in `ctx`
+    pub(super) fn parse_cmd_args(
+        &mut self,
+        scope: &mut Scope,
+        ctx: StmtContext,
+        args: &mut Vec<Arg>,
+    ) -> Result<()> {
+        self.parse_args(scope, ctx.into(), args)
+    }
+
+    /// Parse a bin-packed line of vertical arguments
+    pub(super) fn parse_vert_line_args(
+        &mut self,
+        scope: &mut Scope,
+        args: &mut Vec<Arg>,
+    ) -> Result<()> {
+        self.parse_args(scope, CmdContext::VertLine, args)
+    }
+
+    pub(super) fn parse_cmd(&mut self, scope: &mut Scope, ctx: StmtContext) -> Result<PrimStmt> {
         let arg0 = self.parse_cmd_arg0(scope)?;
         let mut args = vec![];
         self.parse_cmd_args(scope, ctx, &mut args)?;
         Ok(PrimStmt::Expr(Self::finish_call(arg0, args)))
     }
 
-    pub(super) fn parse_cmd_or_expr(&mut self, scope: &mut Scope, ctx: CmdContext) -> Result<Expr> {
+    pub(super) fn parse_cmd_or_expr(
+        &mut self,
+        scope: &mut Scope,
+        ctx: StmtContext,
+    ) -> Result<Expr> {
         use self::Op;
         match self.peek()? {
             Some(token!(TokenInfo::Keyword(Keyword::Do))) => {

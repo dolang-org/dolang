@@ -1,0 +1,8 @@
+let a = $
+  if true => if false => 1
+  # error: same-line items can't hold `if` here, since the lines after them would be ambiguous; put the items in an indented block
+  #   --> if_vert_nested_if.dol:LL:LL
+  #    |
+  # LL |   if true => if false => 1
+  #    |              ^^
+  else 2

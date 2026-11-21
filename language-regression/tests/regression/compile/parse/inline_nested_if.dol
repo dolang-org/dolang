@@ -1,0 +1,8 @@
+def f a b
+  if a => if b => return 1
+  # error: a same-line body can't hold `if`, `match` or `try`, since the lines after it would be ambiguous; put the body in an indented block
+  #   --> inline_nested_if.dol:LL:LL
+  #    |
+  # LL |   if a => if b => return 1
+  #    |           ^^
+  else return 2

@@ -1,0 +1,7 @@
+for x = [1] =>
+  # error: `=>` takes its body on the same line
+  #   --> for_arrow_block.dol:LL:LL
+  #    |
+  # LL | for x = [1] =>
+  #    |             ^^
+  echo $x

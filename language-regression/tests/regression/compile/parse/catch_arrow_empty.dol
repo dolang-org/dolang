@@ -1,0 +1,7 @@
+try echo x
+catch _e =>
+# error: `=>` needs a body on the same line
+#   --> catch_arrow_empty.dol:LL:LL
+#    |
+# LL | catch _e =>
+#    |          ^^

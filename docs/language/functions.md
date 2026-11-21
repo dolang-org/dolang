@@ -23,6 +23,16 @@ def hello()
   echo Hello, world!
 ```
 
+`=>` after the parameters, or after a [return type](type-syntax.md), puts a
+single-statement body on the same line:
+
+```
+def double x => (x * 2)
+def hello() => echo Hello, world!
+```
+
+A stub body, `...`, takes an indented block.
+
 ## Implicit Return
 
 A function returns the result of its final statement:
@@ -210,6 +220,16 @@ pub def build
   ...args
 do
   echo "Building $tag from $from"
+```
+
+As with a [`do` block](#do-blocks), a single-statement body can follow `do`
+and any return type on the same line:
+
+```
+def label
+  :name
+  :count = 1
+do -> Str "$name x$count"
 ```
 
 ## `do` Blocks
