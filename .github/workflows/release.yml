@@ -147,7 +147,7 @@ jobs:
           virt: true
 
       - name: Download x86-64 artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           pattern: dolang-x86_64-*
           path: artifacts
@@ -190,7 +190,7 @@ jobs:
           rust: false
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
@@ -202,7 +202,7 @@ jobs:
 
       - name: Create draft release
         if: startsWith(github.ref_name, 'v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Release ${{ env.VERSION }}
           prerelease: true
@@ -233,7 +233,7 @@ jobs:
 
       - name: Back up previous bootstrap release
         if: github.ref_name == 'bootstrap' && steps.previous-bootstrap.outputs.exists == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: bootstrap-prev
           name: Previous Bootstrap
@@ -245,7 +245,7 @@ jobs:
 
       - name: Create bootstrap release
         if: github.ref_name == 'bootstrap'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: Bootstrap
           prerelease: true
