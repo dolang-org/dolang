@@ -152,7 +152,6 @@ let log v = run true false true do |a b c|
       "first"
     _ if (a || c)
       "second"
-  else
-    "neither"
+    _ => "neither"
 assert_eq $log ["a", "b", "a"]
 assert_eq $v "second"

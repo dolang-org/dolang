@@ -3061,15 +3061,6 @@ impl<'a> Elaborater<'a> {
             visit_body(self, inner, &mut arm.body)?;
         }
 
-        if let Some((else_body, _)) = &mut node.else_branch {
-            let inner = if element {
-                scope.nested_element()
-            } else {
-                scope.nested()
-            };
-            visit_body(self, inner, else_body)?;
-        }
-
         Ok(())
     }
 

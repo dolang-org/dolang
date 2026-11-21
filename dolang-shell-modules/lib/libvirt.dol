@@ -726,8 +726,8 @@ def require_compression compress @ Compress -> (Str | nil)
     nil | false => nil
     true | :ZSTD: => "zstd"
     :ZLIB: => "zlib"
-  else
-    throw std.ValueError "compress: unsupported value: $compress"
+    _
+      throw std.ValueError "compress: unsupported value: $compress"
 
 # Normalizes a disk `cache:`/`io:` option to its libvirt attribute spelling.
 #
@@ -2482,8 +2482,8 @@ def parse_installer spec @ InstallerSpec -> Installer
     | :source
       :digest = nil
     => Installer :source :digest
-  else
-    throw std.ValueError "installer: edition: and index: are alternatives"
+    _
+      throw std.ValueError "installer: edition: and index: are alternatives"
 
 # Parses an `add:` step, mirroring `dockman`'s own `add:` build step. No VFS
 # access and no fetching — just shape checking, so it is safe to call eagerly at
@@ -2504,8 +2504,8 @@ def parse_add spec @ InitAddSpec name @ Str -> Add
     # `add:`-specific spelling.
     (:source ...) => parse_artifact $source
     (:content ...) => content
-  else
-    throw std.ValueError "$name: expected exactly one of source or content"
+    _
+      throw std.ValueError "$name: expected exactly one of source or content"
 
   let extra @ Dict[Sym, (Str | Bool)] = {}
   let owner = spec.get :owner:
@@ -2566,8 +2566,8 @@ def image_format image @ Path -> Str
   let output = cli qemu-img info --output json -- $image
   match json.decode(output)
     Dict("format": Str(format) ...) => format
-  else
-    throw std.ValueError "qemu-img did not report an image format"
+    _
+      throw std.ValueError "qemu-img did not report an image format"
 
 # One state member to pack into a bundle: its kind, the file holding it, what
 # it is called in the ZIP, and its format.
@@ -2816,8 +2816,8 @@ do -> (ManifestMember | nil)
       ?"format": Str(format = nil)
     do
       ManifestMember (kind: key, :name, :format, :size, hex: manifest_hex(spec, bundle))
-  else
-    throw std.ValueError "bundle manifest member $key is malformed: $bundle"
+    _
+      throw std.ValueError "bundle manifest member $key is malformed: $bundle"
 
 # Reads and validates a bundle's manifest.
 #
@@ -2873,8 +2873,8 @@ def read_manifest bundle @ Path -> Manifest
         tpm: $ manifest_optional_enum $tpm $MANIFEST_TPM "tpm" $bundle
         nvram: $ manifest_member $members nvram $bundle
         tpm_state: $ manifest_member $members "tpm" $bundle
-  else
-    throw std.ValueError "bundle manifest is malformed: $bundle"
+    _
+      throw std.ValueError "bundle manifest is malformed: $bundle"
 
 # Extracts one bundle member, verifying it against the manifest digest as it
 # streams.

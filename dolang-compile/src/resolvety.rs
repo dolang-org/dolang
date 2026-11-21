@@ -1039,9 +1039,6 @@ impl Check<'_> {
         for arm in &mut node.arms {
             self.arm(frame, arm);
         }
-        if let Some((body, _)) = &mut node.else_branch {
-            self.branch(frame, body, None);
-        }
     }
 
     /// A `match` arm, whose guard sees the names its pattern binds

@@ -641,26 +641,39 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
             },
         );
-        let item = self.item_branches(arms, node.else_branch.as_ref(), join, items);
+        let else_ = match &node.else_branch {
+            Some((body, _)) => {
+                let frame = self.body_frame(body);
+                let else_ = self.body_items(&frame, &body.elems, items);
+                self.end(Terminal::Branch {
+                    target: join,
+                    span: diag::INVALID_SPAN,
+                });
+                self.switch(join);
+                else_
+            }
+            None => Vec::new(),
+        };
+        let item = self.item_branches(arms, else_);
         self.ctx.hoist = hoist;
         item
     }
 
     /// A comprehension's `match`, lowered as [`Self::item_if`] lowers an `if`:
-    /// each arm's items are the `then` of a nested [`Item::If`]
+    /// each arm's items are the `then` of a nested [`Item::If`], except that
+    /// those of a last arm matching anything are the innermost `else_`
     fn item_match<T>(
         &mut self,
         node: &'u Match<ExprBody<T>>,
         items: fn(&mut Self, &'u [T]) -> Vec<Item>,
     ) -> Item {
         let hoist = mem::replace(&mut self.ctx.hoist, false);
-        let complete = node.else_branch.is_some();
         let join = self.block();
         let mut arms = Vec::new();
         self.match_arms(
             node,
             join,
-            complete,
+            false,
             Self::body_frame,
             |scope, arm, frame, then| {
                 scope.switch(then);
@@ -672,34 +685,19 @@ impl<'u> Scope<'_, '_, 'u> {
                 });
             },
         );
-        let item = self.item_branches(arms, node.else_branch.as_ref(), join, items);
+        let else_ = match arms.len() {
+            2.. if node.catch_all() => arms.pop().map(|(items, _)| items).unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let item = self.item_branches(arms, else_);
         self.ctx.hoist = hoist;
         item
     }
 
-    /// Finish a comprehension `if` or `match` after its tests: lower the `else`
-    /// body, if there is one, and nest the branches' items, each with the span
-    /// of its test, into one [`Item::If`]
-    fn item_branches<T>(
-        &mut self,
-        arms: Vec<(Vec<Item>, Span)>,
-        else_branch: Option<&'u (ExprBody<T>, Span)>,
-        join: BlockId,
-        items: fn(&mut Self, &'u [T]) -> Vec<Item>,
-    ) -> Item {
-        let mut else_ = match else_branch {
-            Some((body, _)) => {
-                let frame = self.body_frame(body);
-                let items = self.body_items(&frame, &body.elems, items);
-                self.end(Terminal::Branch {
-                    target: join,
-                    span: diag::INVALID_SPAN,
-                });
-                self.switch(join);
-                items
-            }
-            None => Vec::new(),
-        };
+    /// Finish a comprehension `if` or `match` after its tests: nest the
+    /// branches' items, each with the span of its test, into one [`Item::If`]
+    /// around the `else_` items
+    fn item_branches(&mut self, arms: Vec<(Vec<Item>, Span)>, mut else_: Vec<Item>) -> Item {
         for (then, span) in arms.into_iter().rev() {
             else_ = vec![Item::If {
                 then: then.into(),

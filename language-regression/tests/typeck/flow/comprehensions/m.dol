@@ -136,8 +136,8 @@ pub def matched v @ (Int | Str)
   one
     match v
       Int(n) => $n
-    else
-      - 1
+      _
+        - 1
   ints
     match v
       Int(n)

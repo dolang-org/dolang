@@ -19,7 +19,7 @@ let it = [1, 2, 3].filter(do |_x| true).buffer()
 let label = match it
   (_a _b) => "two"
   (a _b c) => "three $a $c"
-else "other"
+  _ => "other"
 assert_eq $label "three 1 3"
 
 # Unpacking doesn't advance the iterator, even after reading ahead.

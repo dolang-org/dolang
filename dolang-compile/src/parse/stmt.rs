@@ -53,9 +53,6 @@ pub(super) trait BodyMode {
 
     /// The error for a `match` arm with no body, after a `|` group if `group`
     fn arm_expected(&self, group: bool) -> &'static str;
-
-    /// The body holding the `if` of a `match`'s `else if`
-    fn wrap_if(&self, node: If<Self::Body>) -> Self::Body;
 }
 
 /// How errors name `lead`, the `=>` or keyword before a same-line body
@@ -108,14 +105,6 @@ impl BodyMode for StmtBody {
     fn arm_expected(&self, group: bool) -> &'static str {
         arm_expected_inline(group)
     }
-
-    fn wrap_if(&self, node: If<Block>) -> Block {
-        Block {
-            stmts: vec![Stmt::Prim(PrimStmt::If(node))],
-            vars: Vec::new(),
-            repl: None,
-        }
-    }
 }
 
 impl Parser<'_> {
@@ -133,7 +122,7 @@ impl Parser<'_> {
                 Ok(PrimStmt::If(self.parse_if(scope, ctx)?))
             }
             Some(token!(TokenInfo::Keyword(Keyword::Match))) => {
-                Ok(PrimStmt::Match(self.parse_match(scope, ctx)?))
+                Ok(PrimStmt::Match(self.parse_match(scope)?))
             }
             Some(token!(TokenInfo::Keyword(Keyword::Try))) => {
                 Ok(PrimStmt::Try(self.parse_try(scope, ctx)?))
@@ -148,17 +137,11 @@ impl Parser<'_> {
         if ctx.continues() {
             return Ok(());
         }
-        if let Some(
-            token!(
-                TokenInfo::Keyword(Keyword::If | Keyword::Match | Keyword::Try),
-                span
-            ),
-        ) = self.peek()?
-        {
+        if let Some(token!(TokenInfo::Keyword(Keyword::If | Keyword::Try), span)) = self.peek()? {
             self.fail = true;
             self.diags.push(SyntaxDiag::new(
                 span,
-                "a same-line body can't hold `if`, `match` or `try`, since the lines after it \
+                "a same-line body can't hold `if` or `try`, since the lines after it \
                  would be ambiguous; put the body in an indented block",
             ));
         }
@@ -221,10 +204,7 @@ impl Parser<'_> {
         let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let rhs_start = self.peek()?;
-        let rhs_owns_else = matches!(
-            rhs_start,
-            Some(token!(TokenInfo::Keyword(Keyword::If | Keyword::Match)))
-        );
+        let rhs_owns_else = matches!(rhs_start, Some(token!(TokenInfo::Keyword(Keyword::If))));
         let rhs = match rhs_start {
             Some(token!(TokenInfo::Ellipsis, span)) => {
                 self.advance();
@@ -250,7 +230,7 @@ impl Parser<'_> {
                 return Err(self.syntax_error(
                     scope,
                     token,
-                    "`else` belongs to the `if` or `match` RHS, not the `let`",
+                    "`else` belongs to the `if` RHS, not the `let`",
                 ));
             }
             None
@@ -667,16 +647,15 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_match(&mut self, scope: &mut Scope, ctx: StmtContext) -> Result<Match<Block>> {
-        self.parse_match_with(scope, &StmtBody, ctx)
+    fn parse_match(&mut self, scope: &mut Scope) -> Result<Match<Block>> {
+        self.parse_match_with(scope, &StmtBody)
     }
 
-    /// Parse a `match` in `ctx` whose arm and `else` bodies `mode` parses
+    /// Parse a `match` whose arm bodies `mode` parses
     pub(super) fn parse_match_with<M: BodyMode>(
         &mut self,
         scope: &mut Scope,
         mode: &M,
-        ctx: StmtContext,
     ) -> Result<Match<M::Body>> {
         use self::Keyword;
         use TokenInfo::*;
@@ -711,26 +690,10 @@ impl Parser<'_> {
             return Err(self.syntax_error(scope, token, "expected at least one arm"));
         }
 
-        let else_branch = match self.peek()? {
-            Some(token!(Keyword(Keyword::Else))) => {
-                let else_span = self.advance();
-                let body = match self.parse_else_body(scope, mode, else_span, ctx)? {
-                    Some(body) => body,
-                    None => {
-                        let node = self.parse_if_with(scope, mode, ctx)?;
-                        mode.wrap_if(node)
-                    }
-                };
-                Some((body, else_span))
-            }
-            _ => None,
-        };
-
         Ok(Match {
             match_span,
             scrutinee,
             arms,
-            else_branch,
             var: None,
         })
     }
@@ -750,9 +713,6 @@ impl Parser<'_> {
                 token,
                 "an arm needs a pattern before its guard or body; `_` matches anything",
             ));
-        }
-        if let token @ Some(token!(Keyword(Keyword::Else))) = self.peek()? {
-            return Err(self.syntax_error(scope, token, "`else` lines up with its `match`"));
         }
         let vertical = matches!(self.peek()?, Some(token!(TokenInfo::Op(Op::Bar))));
         let pattern = self.parse_arm_pattern(scope)?;
@@ -1115,7 +1075,7 @@ impl Parser<'_> {
             )),
             Some(token!(Keyword(If))) => Ok(Stmt::Prim(PrimStmt::If(self.parse_if(scope, ctx)?))),
             Some(token!(Keyword(Match))) => {
-                Ok(Stmt::Prim(PrimStmt::Match(self.parse_match(scope, ctx)?)))
+                Ok(Stmt::Prim(PrimStmt::Match(self.parse_match(scope)?)))
             }
             Some(token!(Keyword(Try))) => {
                 Ok(Stmt::Prim(PrimStmt::Try(self.parse_try(scope, ctx)?)))

@@ -145,8 +145,7 @@ def ansi_style value @ (Str | nil) -> (term.Style | nil)
         27 => style reverse: :INHERIT:
         28 => style hidden: :INHERIT:
         29 => style strikethrough: :INHERIT:
-      else
-        return nil
+        _ => return nil
   style
 
 def fancy_value value @ (Str | nil) -> (term.Text | nil)

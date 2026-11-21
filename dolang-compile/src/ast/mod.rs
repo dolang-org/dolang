@@ -450,8 +450,6 @@ pub(crate) struct Match<T> {
     pub(crate) match_span: Span,
     pub(crate) scrutinee: Expr,
     pub(crate) arms: Vec<Arm<T>>,
-    /// The `else` body, which for `else if` holds the `if` alone
-    pub(crate) else_branch: Option<(T, Span)>,
     /// The synthetic variable holding the scrutinee, filled in by elaboration
     pub(crate) var: Option<usize>,
 }
@@ -460,19 +458,23 @@ impl<T> Match<T> {
     pub(crate) fn map<R>(self, f: &mut impl FnMut(T) -> R) -> Match<R> {
         Match {
             arms: self.arms.into_iter().map(|arm| arm.map(f)).collect(),
-            else_branch: self.else_branch.map(|(v, s)| (f(v), s)),
             match_span: self.match_span,
             scrutinee: self.scrutinee,
             var: self.var,
         }
     }
 
-    /// The arm bodies, then the `else` body
+    /// The arm bodies
     pub(crate) fn branches(&self) -> impl Iterator<Item = &T> {
+        self.arms.iter().map(|arm| &arm.body)
+    }
+
+    /// Whether the last arm matches anything: a bare name, such as `_`, with
+    /// no guard
+    pub(crate) fn catch_all(&self) -> bool {
         self.arms
-            .iter()
-            .map(|arm| &arm.body)
-            .chain(self.else_branch.iter().map(|(body, _)| body))
+            .last()
+            .is_some_and(|arm| arm.guard.is_none() && matches!(arm.pattern, Pattern::Ident(_)))
     }
 }
 
@@ -482,10 +484,6 @@ impl<T: Node> Node for Match<T> {
         visit.node(&self.scrutinee)?;
         for arm in &self.arms {
             visit.node(arm)?;
-        }
-        if let Some((else_body, else_span)) = &self.else_branch {
-            visit.token(Token::Keyword, *else_span, None)?;
-            else_body.trans(visit)?
         }
         ControlFlow::Continue(())
     }

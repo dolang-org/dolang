@@ -1,8 +1,0 @@
-if true => let w = match 1
-  # error: a same-line body can't hold `if`, `match` or `try`, since the lines after it would be ambiguous; put the body in an indented block
-  #   --> inline_let_match.dol:LL:LL
-  #    |
-  # LL | if true => let w = match 1
-  #    |                    ^^^^^
-  1 => 1
-else 2

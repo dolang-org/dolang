@@ -89,8 +89,8 @@ def parse_location value @ (Str | Url | Path) -> (Url | Path)
     Url(_) | Path(_) => value
     Str(s) if (s.starts_with "http://" || s.starts_with "https://") => Url $s
     Str(s) => Path $s
-  else
-    throw std.TypeError "expected `Str`, `Url`, or `Path`"
+    _
+      throw std.TypeError "expected `Str`, `Url`, or `Path`"
 
 def require_http url @ Url -> Url
   if !(url.scheme == "http" || url.scheme == "https")

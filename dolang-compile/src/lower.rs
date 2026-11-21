@@ -1469,7 +1469,7 @@ impl<'a, 'c> Scope<'a, 'c> {
     }
 
     fn lower_match(&mut self, node: &'a Match<Block>, want_result: bool) -> Result<()> {
-        let nil_fallback = (want_result && node.else_branch.is_none()).then_some(node.match_span);
+        let nil_fallback = (want_result && !node.catch_all()).then_some(node.match_span);
         self.lower_match_chain(node, nil_fallback, |this, body| {
             this.lower_stmts(body, want_result)
         })
@@ -1512,19 +1512,7 @@ impl<'a, 'c> Scope<'a, 'c> {
         let start = self.bb;
         let mut fallback = next;
 
-        if let Some((else_body, _)) = &node.else_branch {
-            let fscope = self.graph.alloc_scope(
-                false,
-                false,
-                self.block.func,
-                Some(self.block.scope),
-                else_body.vars(),
-            );
-            fallback = self.graph.alloc_block(self.block.func, fscope);
-            self.lower_in(fallback, self.targets.branch(next), |this| {
-                this.lower_body(else_body, |_, _| Ok(()), &contents)
-            })?;
-        } else if let Some(span) = nil_fallback {
+        if let Some(span) = nil_fallback {
             fallback = self.graph.alloc_block(self.block.func, self.block.scope);
             self.switch(fallback);
             self.lower_load_nil(span);

@@ -180,8 +180,8 @@ def date_of value @ json.DecodeValue -> (Date | nil)
   match value
     nil => nil
     Str(text) => Date.parse_rfc(text)
-  else
-    throw ResponseError "expected a date or null"
+    _
+      throw ResponseError "expected a date or null"
 
 def product_of value @ json.DecodeValue -> Product
   bind value

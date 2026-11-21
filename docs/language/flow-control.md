@@ -51,10 +51,17 @@ Same-line and indented bodies can be mixed in one `if`.
 
 Where the lines after a same-line body continue its statement, as an `else`
 continues an `if` after a branch and a `catch` continues a `try`, the body can't
-hold an `if`, `match` or `try`, even as the value of `let` or an assignment.
+hold an `if` or `try`, even as the value of `let` or an assignment.
 Those lines could belong to either statement. Use an indented block, or
 `else if` for a chain. A `let` or `bind` there leaves an `else` after it to the
-enclosing statement.
+enclosing statement, as does a `match` after its arms:
+
+```
+if (n > 0) => match n
+  1 => echo one
+  _ => echo many
+else echo none
+```
 
 A body that ends its statement, such as an `else` body or that of a `for`, has
 no such restriction, and neither does a [`match`](#match) arm.
@@ -155,7 +162,8 @@ and matching rules.
 ### `match`
 
 `match` runs the body of the first arm whose pattern matches a value. `if`
-after an arm's pattern adds a guard, and `else` runs when no arm matches:
+after an arm's pattern adds a guard, and a bare name such as `_` matches
+anything:
 
 ```
 let label = match response
@@ -163,7 +171,7 @@ let label = match response
     "error $code"
   Int(_) => "ok"
   Dict(:status :body) => "$status: $body"
-else "unknown"
+  _ => "unknown"
 ```
 
 See [`match`](./patterns.md#match) for arms, guards, and alternatives.

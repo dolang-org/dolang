@@ -7,7 +7,7 @@ use super::{
     stream::ExpectKind,
 };
 use crate::{
-    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, If, Key, Pair, Single, visit::Node},
+    ast::{Arg, ArrayElem, DictElem, Expr, ExprBody, For, Key, Pair, Single, visit::Node},
     lex::{Keyword, Op, Token, TokenInfo},
     source::Span,
 };
@@ -31,14 +31,21 @@ impl BodyMode for VertBody {
         lead: &Token,
         ctx: StmtContext,
     ) -> Result<ExprBody<Arg>> {
-        // A nested `for` or `if` after `=>` is a single element, so it needs
-        // no bin-packing
+        // A nested `for`, `if` or `match` after `=>` is a single element, so
+        // it needs no bin-packing
         if lead.info == TokenInfo::FatArrow {
             match parser.peek()? {
                 Some(token!(TokenInfo::Keyword(Keyword::For))) => {
                     let node = parser.parse_for_with(scope, self, ctx)?;
                     return Ok(ExprBody {
                         elems: vec![Arg::For(node)],
+                        vars: Vec::new(),
+                    });
+                }
+                Some(token!(TokenInfo::Keyword(Keyword::Match))) => {
+                    let node = parser.parse_match_with(scope, self)?;
+                    return Ok(ExprBody {
+                        elems: vec![Arg::Match(node)],
                         vars: Vec::new(),
                     });
                 }
@@ -63,8 +70,8 @@ impl BodyMode for VertBody {
         if !self.bin_pack {
             // Only a context that bin-packs items can take a line of them
             let msg = if lead.info == TokenInfo::FatArrow {
-                "`=>` needs a context that allows bin-packing, or a `for` or `if` after it; drop \
-                 it and put the items in an indented block"
+                "`=>` needs a context that allows bin-packing, or a `for`, `if` or `match` after it; \
+                 drop it and put the items in an indented block"
             } else {
                 "`else` takes same-line items only where bin-packing is allowed; put the items in \
                  an indented block under `else`"
@@ -83,13 +90,6 @@ impl BodyMode for VertBody {
             (true, _) => arm_expected_inline(group),
             (false, true) => "expected `do` or `if` after an arm's `|` group",
             (false, false) => "expected `if` or an indented block after an arm's pattern",
-        }
-    }
-
-    fn wrap_if(&self, node: If<ExprBody<Arg>>) -> ExprBody<Arg> {
-        ExprBody {
-            elems: vec![Arg::If(node)],
-            vars: Vec::new(),
         }
     }
 }
@@ -451,11 +451,9 @@ impl Parser<'_> {
                 Ok(())
             }
             Some(token!(Keyword(Keyword::Match))) => {
-                args.push(Arg::Match(self.parse_match_with(
-                    scope,
-                    &VertBody { bin_pack },
-                    StmtContext::Block,
-                )?));
+                args.push(Arg::Match(
+                    self.parse_match_with(scope, &VertBody { bin_pack })?,
+                ));
                 Ok(())
             }
             Some(token!(expr_start!())) => {

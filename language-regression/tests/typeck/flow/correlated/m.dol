@@ -8,9 +8,9 @@ pub def keyed d @ Dict[{a: Int, b: Str}]
       :a:
         let _ = v
         #       ^: flow std.Int
-    else
-      let _ = v
-      #       ^: flow std.Str
+      _
+        let _ = v
+        #       ^: flow std.Str
 
 pub @let Opts = $
   ?tag: Str
@@ -38,9 +38,9 @@ pub def gradual p @ ((Int | Str, :x:) | (Int | Bool, :y:))
   match v
     Int(_) => nil
     Bool(_) => nil
-  else
-    let _ = w
-    #       ^: flow :x:
+    _
+      let _ = w
+      #       ^: flow :x:
 
 # A disjoint discriminator narrows items the solver can't tell apart by
 # themselves, as a function type and a class

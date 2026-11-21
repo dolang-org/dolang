@@ -1709,9 +1709,6 @@ impl<'u> Walk<'_, 'u> {
                 elem.walk(self, &inner);
             }
         }
-        if let Some((body, _)) = &node.else_branch {
-            self.branch(frame, body, None);
-        }
     }
 
     fn for_elem<T: Element>(&mut self, frame: &Frame<'_, 'u>, node: &'u For<ExprBody<T>>) {

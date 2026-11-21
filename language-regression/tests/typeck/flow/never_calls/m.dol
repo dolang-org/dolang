@@ -161,8 +161,8 @@ pub def item_match c @ Sym
     - a
     match c
       :X: => b
-    else
-      - $fail("no")
+      _
+        - $fail("no")
     - z
   y
 

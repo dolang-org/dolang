@@ -12,8 +12,8 @@ def describe v
       Str(s) => str $s
       | :name
       => named $name
-    else
-      - other
+      _
+        - other
     - end
 
 # Array literal: a guarded `=>` arm, a block arm, a `|` group with `=>`, and
@@ -74,8 +74,8 @@ def guarded v
       Int(n) if (n > 100)
         - huge
       Int(n) if let a b = [n, (n * 2)] => $a $b
-    else
-      - none
+      _
+        - none
 assert_eq $guarded(500) ["huge"]
 assert_eq $guarded(3) [3, 6]
 assert_eq $guarded("x") ["none"]
@@ -88,15 +88,15 @@ let scoped = $
   - $n
 assert_eq $scoped [1, "outer"]
 
-# `else if`
+# A guard on a fallback arm
 def chain v
   $
     match v
       0 => zero
-    else if (v == 1)
-      - one
-    else
-      - many
+      _ if (v == 1)
+        - one
+      _
+        - many
 assert_eq $chain(0) ["zero"]
 assert_eq $chain(1) ["one"]
 assert_eq $chain(2) ["many"]
