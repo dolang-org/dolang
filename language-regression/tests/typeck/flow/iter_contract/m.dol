@@ -40,6 +40,15 @@ pub def unpackable it @ UnpackIter[Int]
 # LL |   let _ _ = mapped
 #    |             ^^^^^^
 
+# Buffering makes any iterator unpackable
+pub def buffered it @ Iter[Int]
+  let buf = it.map(do |x| x).buffer()
+  let _ = buf
+  #       ^~~: flow std.UnpackIter[std.Int]
+  let a _ = buf
+  let _ = a
+  #       ^: flow std.Int
+
 # Unpacking doesn't promise spreading
 pub def unpack_only source @ Unpack[Int]
   let _xs = [...source]

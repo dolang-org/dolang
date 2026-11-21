@@ -184,6 +184,11 @@ impl<'v> Object<'v> for Widget {
 }
 ```
 
+An iterator (`.supertype(TypeObject::Iter)`) that implements `unpack` should
+also register a `buffer` method that returns `this`. Otherwise it inherits
+`Iter.buffer`, which wraps it in a redundant buffer. See `RegexSplit` in
+`dolang-ext-regex` for an example.
+
 Comparison methods (`eq`, `lt`, and so on) must decline an operand of a type
 they don't compare with by returning `Err(Error::unsupported(strand, "`==`"))`
 (with the matching operator), never `Ok(false)`. Declining lets the right

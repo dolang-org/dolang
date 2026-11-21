@@ -3653,6 +3653,36 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def any self pred @ ((T) -> Value) = ... -> Bool
     ...
 
+  # Returns an iterator over the same items that supports unpacking.
+  #
+  # Unpacking can't advance an iterator, so only iterators over fixed state,
+  # such as an array's, unpack directly. `buffer` keeps the items that patterns
+  # read ahead, so any iterator can be unpacked through it. An iterator that can
+  # already unpack, including a buffer, returns itself.
+  #
+  # The result and every rest captured from it share one buffer, which holds
+  # each item until every reachable cursor has passed it. Unpacking reads only
+  # as far as the pattern needs, but that still advances the source: `let a b =
+  # it` reads a third item to rule out extras. An error raised while reading
+  # propagates instead of failing the match. Spreading and `next` consume the
+  # buffer as usual, starting with the items it already holds.
+  #
+  # A class that implements [`(unpack)`](std.Unpack) and subclasses `Iter`
+  # should define `buffer` to return itself.
+  #
+  # ## Example
+  #
+  # ```
+  # let lines = [" a ", "b"].map(do |s| s.trim())
+  # let label = match lines.buffer()
+  #   (only) => "one: $only"
+  #   (first second) => "two: $first $second"
+  # else "more"
+  # assert_eq $label "two: a b"
+  # ```
+  pub def buffer self -> UnpackIter[T]
+    ...
+
   # Returns an iterator that yields this iterator's values followed by those of
   # each additional iterable.
   pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]

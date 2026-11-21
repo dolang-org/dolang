@@ -57,7 +57,8 @@ const ITERABLE_METHODS: &[sym::Tag] = &[
 ///   over `next` would spin on the first element forever.
 /// - `count` is `len` spelled expensively, and `Dict`/`dict_view`/`Pack`
 ///   already define `count` with unrelated semantics.
-const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::SPREAD_METHOD];
+/// - `buffer` would buffer a fresh iterator on every call.
+const ITER_ONLY_METHODS: &[sym::Tag] = &[sym::NEXT, sym::COUNT, sym::BUFFER, sym::SPREAD_METHOD];
 
 /// Methods of [`Sink`], all of which [`Sinkable`] forwards by materializing a
 /// sink from the receiver with `sink` and re-dispatching onto it.
@@ -98,6 +99,7 @@ fn iter_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
         Method(sym::ITER),
         Method(sym::ALL),
         Method(sym::ANY),
+        Method(sym::BUFFER),
         Method(sym::FOLD),
         Method(sym::MAP),
         Method(sym::FILTER),
@@ -468,6 +470,24 @@ pub(crate) async fn iter_mcall<'v, 'a, 's>(
                 .op_mcall(strand, method, args, out)
                 .await
         })
+    }
+}
+
+/// [`iter_mcall`] for an iterator that can already unpack: `buffer` returns the
+/// receiver instead of wrapping it.
+pub(crate) async fn unpack_iter_mcall<'v, 'a, 's>(
+    strand: &'a mut Strand<'v, 's>,
+    rcvr: impl Input<'v>,
+    method: Sym<'v, 'a>,
+    args: Args<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    if method.tag() == sym::BUFFER {
+        unpack!(strand, args =>);
+        strand.store(out, rcvr);
+        Ok(())
+    } else {
+        iter_mcall(strand, rcvr, method, args, out).await
     }
 }
 
@@ -1519,6 +1539,11 @@ impl<'v> Protocol<'v> for Iter {
             sym::NEXT => {
                 unpack!(strand, args => obj, ?:default, ?else_key: or_else);
                 iter_next(strand, &obj, default, or_else, out).await
+            }
+            sym::BUFFER => {
+                unpack!(strand, args => obj);
+                super::buffered::create(strand, &obj, out);
+                Ok(())
             }
             sym::ALL => {
                 unpack!(strand, args => obj, ?pred);
@@ -3210,7 +3235,7 @@ impl<'v> Protocol<'v> for Null {
             tag if classify(tag) == Some(Surface::Sinkable) => {
                 sink_mcall(strand, &this, method, args, out).await
             }
-            _ => iter_mcall(strand, &this, method, args, out).await,
+            _ => unpack_iter_mcall(strand, &this, method, args, out).await,
         }
     }
 

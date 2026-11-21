@@ -994,7 +994,7 @@ impl<'v> Protocol<'v> for Values<'v> {
         args: crate::arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 
@@ -1115,7 +1115,7 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
         args: crate::arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 
@@ -1240,7 +1240,7 @@ impl<'v> Protocol<'v> for Keys<'v> {
         args: crate::arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 

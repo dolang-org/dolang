@@ -1062,7 +1062,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::iter::iter_mcall(strand, &this, method, args, out).await
+        super::iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

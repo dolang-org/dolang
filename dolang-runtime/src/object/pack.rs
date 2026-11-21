@@ -645,7 +645,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         args: arg::Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 

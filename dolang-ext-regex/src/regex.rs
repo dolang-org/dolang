@@ -1220,7 +1220,14 @@ impl<'v> Object<'v> for RegexSplit<'v> {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
+        builder
+            .supertype(TypeObject::Iter)
+            // Already unpackable, so buffering would only add a wrapper.
+            .method("buffer", async |this, strand, args, out| {
+                unpack!(strand, args =>);
+                strand.store(out, this);
+                Ok(())
+            })
     }
 
     async fn iter<'a, 's>(
