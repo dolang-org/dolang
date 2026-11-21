@@ -30,10 +30,8 @@ pub class NotFound: RuntimeError
   pub field release @ (Str | nil)
 
   def (init) self product@Str release@(Str | nil) = nil
-    let what = if (release == nil)
-      "product $product"
-    else
-      "release $release of $product"
+    let what = if (release == nil) => "product $product"
+    else "release $release of $product"
     self.product = product
     self.release = release
     RuntimeError.(init) $self "not found: $what"
@@ -138,9 +136,7 @@ pub class Client
   pub def products self -> Array[Product]
     let Array(items) = self.#get "products"
     else throw ResponseError "product list is not an array"
-    $
-      for item = items
-        - (product_of item)
+    [for item = items => product_of(item)]
 
   # Gets a product and its release cycles.
   pub def product self name @ Str -> Product
@@ -160,73 +156,58 @@ pub class Client
     *segments @ Str
   do -> json.DecodeValue
     let target = self.#api
-    for segment = segments
-      target = (target / segment)
-    let body = try
-      timeout $self.#timeout do
-        let response = http.get $target headers: {accept: "application/json"}
-        response.json()
+    for segment = segments => target = (target / segment)
+    let body = try timeout $self.#timeout do
+      let response = http.get $target headers: {accept: "application/json"}
+      response.json()
     catch http.StatusError: err
-      if (err.status == 404 && missing != nil)
-        throw missing
+      if (err.status == 404 && missing != nil) => throw missing
       throw err
     let Dict("schema_version": Str(version) "result": result ...) = body
     else throw ResponseError "no result envelope"
-    if !version.starts_with("1.")
-      throw ResponseError "unsupported schema version $version"
+    if !version.starts_with("1.") => throw ResponseError "unsupported schema version $version"
     result
 
 def date_of value @ json.DecodeValue -> (Date | nil)
   match value
     nil => nil
     Str(text) => Date.parse_rfc(text)
-    _
-      throw ResponseError "expected a date or null"
+    _ => throw ResponseError "expected a date or null"
 
 def product_of value @ json.DecodeValue -> Product
-  bind value
-    Dict $
-      "name": Str(name)
-      "label": Str(label)
-      "category": Str(category)
-      ?"releases": Array(items = [])
-      ...
+  bind value => Dict $
+    "name": Str(name)
+    "label": Str(label)
+    "category": Str(category)
+    ?"releases": Array(items = [])
+    ...
   else throw ResponseError "malformed product"
-  let releases = $
-    for item = items
-      - (release_of item)
-  Product :name :label :category :releases
+  Product :name :label :category releases: [for item = items => release_of item]
 
 def release_of value @ json.DecodeValue -> Release
-  bind value
-    Dict $
-      "name": Str(name)
-      "label": (Str(label) | Nil(label))
-      "releaseDate": released
-      "isLts": Bool(lts)
-      "isEol": Bool(is_eol)
-      "eolFrom": eol
-      "latest": latest
-      ...
+  bind value => Dict $
+    "name": Str(name)
+    "label": (Str(label) | Nil(label))
+    "releaseDate": released
+    "isLts": Bool(lts)
+    "isEol": Bool(is_eol)
+    "eolFrom": eol
+    "latest": latest
+    ...
   else throw ResponseError "malformed release"
   let released_date = date_of $released
   else throw ResponseError "release $name has no release date"
-  Release
-    :name
+  Release :name :lts :is_eol
     label: (label || name)
     released: $released_date
-    :lts
     eol: (date_of eol)
-    :is_eol
     latest: (latest_of latest)
 
 def latest_of value @ json.DecodeValue -> (Latest | nil)
-  if (value == nil)
-    return nil
-  bind value
-    Dict $
-      "name": Str(name)
-      "date": date = nil
-      ...
+  if (value == nil) => return nil
+  bind value => Dict $
+    "name": Str(name)
+    "date": date = nil
+    ...
   else throw ResponseError "malformed latest version"
   Latest $name (date_of date)
