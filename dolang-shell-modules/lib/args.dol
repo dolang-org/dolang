@@ -385,13 +385,12 @@ class Parser
             self.#sub_cmds[cmd] = Parser(name: cmd, ...rest)
           Dict(_) | Record(_)
             throw Error "spec item must have exactly one of opt:, flag:, arg:, or cmd:" nil
-        else
-          self.handler = v
+          _ => self.handler = v
         :help: => self.help = v
         :usage: => self.#usage_override = v
         :divider: => self.#divider = v
-      else
-        throw Error "unknown spec key: $k" nil
+        _
+          throw Error "unknown spec key: $k" nil
 
   def err self msg
     Error $msg "Try '$(self.name) --help' for more information."

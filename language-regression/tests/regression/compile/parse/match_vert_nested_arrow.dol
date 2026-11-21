@@ -2,7 +2,7 @@ let d = $
   items:
     match 1
       x => $x
-# error: `=>` needs a context that allows bin-packing, or a `for` or `if` after it; drop it and put the items in an indented block
+# error: `=>` needs a context that allows bin-packing, or a `for`, `if` or `match` after it; drop it and put the items in an indented block
 #   --> match_vert_nested_arrow.dol:LL:LL
 #    |
 # LL |       x => $x

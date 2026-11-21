@@ -1505,10 +1505,6 @@ impl Index<'_> {
             }
             visit(self, &inner, elems);
         }
-        if let Some((body, span)) = &mut node.else_branch {
-            let span = *span | body.span();
-            self.branch(scope, body, None, Kind::Else, span, visit);
-        }
     }
 
     fn for_elem<T: Element>(&mut self, scope: &Scope<'_>, node: &mut For<ExprBody<T>>) {

@@ -79,8 +79,8 @@ def scalar value @ Leaf -> term.Text
     Sym(_) | Bool(_) => constant_style (str value)
     Int(_) | Float(_) => number_style (str value)
     Str(s) => literal_style $s
-  else
-    term.text $value
+    _
+      term.text $value
 
 # Renders the one-line form of `node`, which for an empty block is the marker
 # it reads as in place.
@@ -88,16 +88,16 @@ def inline node @ Node -> term.Text
   match node
     std.BaseDict(_) => absent_style "{}"
     std.BaseArray(_) | Tuple(_) => absent_style "[]"
-  else
-    scalar $node
+    _
+      scalar $node
 
 # Renders the block `node` opens, its lines starting at `indent`.
 def rows node @ Node indent @ Int -> Array[Row]
   match node
     std.BaseDict(d) => entry_rows $d $indent
     std.BaseArray(a) | Tuple(a) => item_rows $a $indent
-  else
-    [(indent, scalar(node))]
+    _
+      [(indent, scalar(node))]
 
 def entry_rows entries @ BaseDict[Str | Sym, Node] indent @ Int -> Array[Row]
   # A key that leads into a block is on a line of its own, so it takes no part

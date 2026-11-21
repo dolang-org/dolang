@@ -428,8 +428,8 @@ for x = items => echo $x
 ```
 
 A same-line body whose statement continues after it (an `if` branch, a `try`
-body, a `catch`) can't hold `if`, `match` or `try`, even as a `let` RHS; use a
-block or `else if`. A `let`/`bind` there leaves a following `else` to the `if`.
+body, a `catch`) can't hold `if` or `try`, even as a `let` RHS; use a block or
+`else if`. A `let`/`bind`/`match` there leaves a following `else` to the `if`.
 
 Range syntax is `start..end` (end exclusive), `start..`, `..end`, and `..`; a
 missing start counts from 0. It also slices: `$arr[1..]`, `(s[..n])`. Use
@@ -447,10 +447,10 @@ else
 
 `match` runs the first arm whose pattern (and optional `if` guard) matches. A
 body on the same line follows `=>`; an indented block follows the pattern or
-guard directly, with no `do`. A bare name matches anything, `else` lines up with
-`match`, and no match without `else` gives `nil`. Unpacking a value that isn't a
-sequence or keyed value raises rather than trying the next arm, so type-test
-first:
+guard directly, with no `do`. A bare name matches anything, so `_` is the
+fallback arm (`match` has no `else`), and no match gives `nil`. Unpacking a
+value that isn't a sequence or keyed value raises rather than trying the next
+arm, so type-test first:
 
 ```
 let label = match value
@@ -721,8 +721,8 @@ else
 `else` starts a new line at the statement's indentation and takes an inline
 statement or an indented block. Falling through raises `std.RuntimeError`;
 the checker warns when it finds a path to that end. `else if` is not allowed.
-For a `let` RHS beginning with `if` or `match`, `else` belongs to the RHS;
-a subsequent `else` cannot attach to the `let`.
+For a `let` RHS beginning with `if`, `else` belongs to the RHS; a subsequent
+`else` cannot attach to the `let`.
 
 ### Type Annotations
 

@@ -578,8 +578,8 @@ def ensure_image runtime@Runtime img@Str policy@PullPolicy
       if !present
         let _ = runtime.pull $img
     :NEVER: => nil
-  else
-    throw ValueError "unsupported pull policy: $policy"
+    _
+      throw ValueError "unsupported pull policy: $policy"
 
 def normalize_known[K] mapping@Dict[Str, K] value@Str -> (K | Str)
   mapping.get $value default: $value
@@ -593,8 +593,8 @@ def optional_str what@Str value@DecodeValue -> (Str | nil)
   match value
     Str(s) => s
     nil => nil
-  else
-    malformed $what
+    _
+      malformed $what
 
 # An array of strings in inspect output
 def strings what@Str value@DecodeValue -> Array[Str]
@@ -632,8 +632,8 @@ def normalize_argv what@Str value@DecodeValue -> (Array[Str] | nil)
   match value
     Str(s) => [...shlex.split(s)]
     nil => nil
-  else
-    strings $what $value
+    _
+      strings $what $value
 
 def container_env_args env @ Env -> Array[Str]
   let args @ Array[Str] = []
@@ -693,8 +693,7 @@ def container_restart_args restart @ (RestartSpec | nil) -> Array[Str]
     :NO: => "no"
     :ALWAYS: => "always"
     :UNLESS_STOPPED: => "unless-stopped"
-  else
-    throw ValueError "unsupported restart policy: $policy"
+    _ => throw ValueError "unsupported restart policy: $policy"
   ["--restart", cli]
 
 def container_create_args
@@ -753,15 +752,15 @@ def normalize_platform platform @ (Platform | nil) -> (Str | nil)
   match platform
     nil => nil
     Str(s) => s
-  else
-    bind platform
-      :os
-      :arch
-      :variant = nil
-    if variant
-      "$os/$arch/$variant"
-    else
-      "$os/$arch"
+    _
+      bind platform
+        :os
+        :arch
+        :variant = nil
+      if variant
+        "$os/$arch/$variant"
+      else
+        "$os/$arch"
 
 def output_lines output@Str stderr@Iterable[Str] -> Array[Str]
   let lines @ Array[Str] = []
@@ -868,8 +867,7 @@ def parse_container_ports ports @ DecodeValue -> Array[PortBinding]
             :container_port
             host_ip: $optional_str("HostIp", host_ip)
             host_port: $(host_port != nil && int(host_port) || nil)
-    else
-      malformed "port $key"
+      _ => malformed "port $key"
   mapped
 
 def parse_container_mounts mounts @ DecodeValue -> Array[MountInfo]
@@ -1254,14 +1252,12 @@ pub class Runtime
       :OCI_DIR: => "oci-dir"
       :DOCKER_DIR: => "docker-dir"
       :DIR: => "dir"
-    else
-      throw "unsupported save format: $format"
+      _ => throw "unsupported save format: $format"
     if (self.id == :DOCKER: && format != :DOCKER_ARCHIVE:)
       throw "docker only supports docker_archive for save"
     let file = match format
       :DOCKER_ARCHIVE: | :OCI_ARCHIVE: => true
-    else
-      false
+      _ => false
     let multi = (format == :DOCKER_ARCHIVE:)
     if (!multi && images.len > 1)
       throw "save format does not support multiple images: $format"
@@ -1410,8 +1406,7 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
           if (label != nil)
             - $label
         args.push --mount=$(",".join parts)
-    else
-      throw ValueError "unsupported mount type: $type"
+      _ => throw ValueError "unsupported mount type: $type"
   args
 
 def container_mount_args mounts @ Iterable[ContainerMount] -> Array[Str]
@@ -1447,8 +1442,8 @@ def parse_source source @ (Str | Path | Url) -> (Path | Url)
         Url $s
       else
         Path $s
-  else
-    source
+    _
+      source
 
 class Cache
   field paths @ Dict[Str, Path] = {}
@@ -1481,8 +1476,8 @@ def patch_name p @ patch.Patch -> Str
     :DELETE: => "delete $(p.source)"
     :MODIFY: => "modify $(p.source)"
     _ if (p.source == p.target) => "modify $(p.source)"
-  else
-    "$(str(kind).lower()): $(p.source) => $(p.target)"
+    _
+      "$(str(kind).lower()): $(p.source) => $(p.target)"
 
 pub class Builder
   field runtime @ Runtime
@@ -1694,12 +1689,12 @@ pub class Builder
           if (result.len != 0)
             throw "delete patch did not produce empty output: $source"
           source.remove()
-    else
-      self.#live_agent().with do
-        let result = p.apply (p.source.read())
-        self.#add_content $result $p.target nil
-        if (kind == :MOVE: && p.source != p.target)
-          p.source.remove()
+      _
+        self.#live_agent().with do
+          let result = p.apply (p.source.read())
+          self.#add_content $result $p.target nil
+          if (kind == :MOVE: && p.source != p.target)
+            p.source.remove()
 
   def step_commit self msg @ Str
     progress.show message: commit do |_|

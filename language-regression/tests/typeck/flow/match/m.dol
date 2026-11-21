@@ -15,8 +15,7 @@ pub def complete value @ (Int | Str | Bool)
   let result = match value
     Int(_n) => 1
     Str(_s) => 2
-  else
-    value
+    _ => value
   let _ = result
   #       ^~~~~~: flow std.Bool | std.Int
 

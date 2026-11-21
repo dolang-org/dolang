@@ -343,15 +343,15 @@ def print_failure failure @ Failure diagnose @ compile.Severity fail @ compile.S
       print (err_style "failed") ": " (name_style "$module")
         " (" (note_style "compilation failed") ")\n"
       print_diagnostics $ c.output.diagnostics.filter do |diag| shown $diag $diagnose $fail
-  else
-    if test
-      print (err_style "failed") ": " (name_style "$module/$test") ": "
-    else
-      print (err_style "failed") ": " (name_style "$module") ": "
-    echo $ shell.render_error $e backtrace: $failure.backtrace
-    let output = failure.output
-    if output
-      print "  ──\n" $term.preformat(output).indent(2)
+    _
+      if test
+        print (err_style "failed") ": " (name_style "$module/$test") ": "
+      else
+        print (err_style "failed") ": " (name_style "$module") ": "
+      echo $ shell.render_error $e backtrace: $failure.backtrace
+      let output = failure.output
+      if output
+        print "  ──\n" $term.preformat(output).indent(2)
 
 # Loads modules and runs their tests. With `redirect`, strand output goes to
 # the capture buffer as well, so none of it reaches stdout. With `plain`,
@@ -451,8 +451,7 @@ class Harness
       outcome = match e
         Skip(_) => :skipped:
         Ignore(_) => :ignored:
-      else
-        :failed:
+        _ => :failed:
     let duration = (DateTime.now() - start).secs
     self.#counts[outcome] = (self.#counts[outcome] + 1)
     let captured = (self.#capture && output.freeze_str() || nil)
@@ -497,8 +496,7 @@ class Harness
       let status @ ModuleStatus = match e
         Skip(_) => :SKIPPED:
         Ignore(_) => :IGNORED:
-      else
-        :FAILED:
+        _ => :FAILED:
       let result = ModuleResult $path $status
       result.error = e
       result.backtrace = strand.error_backtrace()
@@ -611,28 +609,28 @@ do -> Json
     return record
   match error
     Skip(e) | Ignore(e) => record[:message:] = e.message
-  else
-    record[:message:] = str $error
-    let frames @ Array[Json] = []
-    if (backtrace != nil)
-      for frame = backtrace
-        frames.push $(frame_record frame)
-    # A type's string form is `<type module.Name>`.
-    let type_name = str (type error)
-    if (type_name.starts_with "<type " && type_name.ends_with ">")
-      type_name = type_name[6..type_name.len - 1]
-    let details @ Json = $
-      type: $type_name
-      rendered: $(str (shell.render_error error backtrace: backtrace))
-      backtrace: $frames
-    if (type error Assert)
-      let expected = error.expected
-      let actual = error.actual
-      if (expected != nil)
-        details[:expected:] = expected
-      if (actual != nil)
-        details[:actual:] = actual
-    record[:error:] = details
+    _
+      record[:message:] = str $error
+      let frames @ Array[Json] = []
+      if (backtrace != nil)
+        for frame = backtrace
+          frames.push $(frame_record frame)
+      # A type's string form is `<type module.Name>`.
+      let type_name = str (type error)
+      if (type_name.starts_with "<type " && type_name.ends_with ">")
+        type_name = type_name[6..type_name.len - 1]
+      let details @ Json = $
+        type: $type_name
+        rendered: $(str (shell.render_error error backtrace: backtrace))
+        backtrace: $frames
+      if (type error Assert)
+        let expected = error.expected
+        let actual = error.actual
+        if (expected != nil)
+          details[:expected:] = expected
+        if (actual != nil)
+          details[:actual:] = actual
+      record[:error:] = details
   let source = str $case.info.module
   let failure_location @ (Json | nil) = nil
   if (backtrace != nil)
@@ -677,10 +675,10 @@ def module_record result @ ModuleResult -> Json
         error[:kind:] = "compile"
         error[:message:] = str $c
         error[:diagnostics:] = [...c.output.diagnostics.map(do |d| diagnostic_record d result.path)]
-    else
-      error[:kind:] = "load"
-      error[:message:] = str $e
-      error[:rendered:] = str $ shell.render_error $e backtrace: $result.backtrace
+      _
+        error[:kind:] = "load"
+        error[:message:] = str $e
+        error[:rendered:] = str $ shell.render_error $e backtrace: $result.backtrace
     let output = result.output
     if output
       error[:output:] = output
@@ -689,8 +687,7 @@ def module_record result @ ModuleResult -> Json
     record[:status:] = (result.status == :SKIPPED: && "skipped" || "ignored")
     record[:message:] = match e
       Skip(s) | Ignore(s) => s.message
-    else
-      nil
+      _ => nil
   record
 
 def print_listing results @ Array[ModuleResult] diagnose @ compile.Severity fail @ compile.Severity

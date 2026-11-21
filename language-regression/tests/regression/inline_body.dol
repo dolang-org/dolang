@@ -38,16 +38,41 @@ let i = 0
 while (i < 3) => i = (i + 1)
 assert_eq $i 3
 
-# `match` takes a same-line `else`, or a same-line `else if`
+# A `match` arm takes a same-line body, as does its fallback, a bare name
 let m = match 5
   1 => "one"
-else "other"
+  _ => "other"
 assert_eq $m other
 
-let m2 = match 1
-  2 => "two"
-else if true => "yes"
-assert_eq $m2 yes
+# A same-line body can hold a `match`, after which an `else` belongs to the
+# enclosing `if`
+def size x
+  if (x > 0) => match x
+    1 => "one"
+    _ => "many"
+  else "none"
+assert_eq (size 1) one
+assert_eq (size 2) many
+assert_eq (size 0) none
+
+def size_of x
+  if (x > 0) => let _s = match x
+    1 => "one"
+    _ => "many"
+  else return "none"
+  "some"
+assert_eq (size_of 2) some
+assert_eq (size_of 0) none
+
+# A `match` RHS leaves a following `else` to the `let`
+def first_some v
+  let found = match v
+    Int(n) if (n > 0) => n
+    _ => nil
+  else return 0
+  found
+assert_eq (first_some 3) 3
+assert_eq (first_some -1) 0
 
 # In vertical layout, same-line bodies hold bin-packed items
 let level = :LOUD:
@@ -55,7 +80,7 @@ let flags = $
   - --color
   match level
     :QUIET: => --quiet --no-progress
-  else --verbose
+    _ => --verbose
 assert_eq $flags ["--color", "--verbose"]
 
 let flags2 = $
@@ -137,14 +162,24 @@ let squares = $
   for i = [1, 2] => (i * i) (-i)
 assert_eq $squares [0, 1, -1, 4, -2]
 
-# A `match` arm's same-line body can hold a `match`, whose `else` stays inside
-# the arms
+# `=>` can take a `match`, which holds a single element, so it is allowed even
+# where bin-packing isn't
+let config = $
+  ports:
+    for x = [1, "a"] => match x
+      Int(n)
+        - $n
+      _
+        - 0
+assert_eq $config[:ports:] [1, 0]
+
+# A `match` arm's same-line body can hold a `match`
 def kind x y
   match x
     0 => match y
       0 => "both"
-    else "x only"
-  else "neither"
+      _ => "x only"
+    _ => "neither"
 assert_eq (kind 0 0) both
 assert_eq (kind 0 1) "x only"
 assert_eq (kind 1 0) neither

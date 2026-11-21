@@ -1317,12 +1317,13 @@ impl<'u> Scope<'_, '_, 'u> {
     }
 
     fn match_(&mut self, node: &'u Match<Block>, dest: Option<VarId>) {
-        let complete = node.else_branch.is_some();
+        // With no arm matching anything, the result may be `nil`
+        let nil_fallback = dest.is_some() && !node.catch_all();
         let join = self.block();
         self.match_arms(
             node,
             join,
-            complete || dest.is_some(),
+            nil_fallback,
             Self::block_frame,
             |scope, arm, frame, body| {
                 let ctx = Ctx {
@@ -1332,14 +1333,7 @@ impl<'u> Scope<'_, '_, 'u> {
                 scope.queue_block(body, ctx, &arm.body, dest, join);
             },
         );
-        if let Some((block, _)) = &node.else_branch {
-            let ctx = Ctx {
-                frame: self.block_frame(block),
-                ..self.ctx.clone()
-            };
-            self.queue_block(self.bb, ctx, block, dest, join);
-        }
-        if !complete && dest.is_some() {
+        if nil_fallback {
             self.value_nil(dest, self.locate(node.match_span));
             self.end(Terminal::Branch {
                 target: join,

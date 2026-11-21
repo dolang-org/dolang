@@ -384,8 +384,8 @@ end.
 Write `else` on its own line at the statement's indentation, followed by an
 indented block or a single statement on the same line. `else if` is not accepted
 here; put an `if` inside an indented body instead. When the RHS of `let` is an
-`if` or `match`, its `else` belongs to that construct, and an additional `else`
-cannot be attached to the `let`.
+`if`, its `else` belongs to the `if`, and an additional `else` cannot be
+attached to the `let`.
 
 ## Constant Patterns
 
@@ -723,11 +723,11 @@ pattern, `=>` may take the place of `do`, as after a `|` group. With the
 pattern after `=>`, a second `=>` introduces the body:
 `h if bind rest => a b = 0 => [h, a, b]`.
 
-### `else` and the Result
+### Fallback and the Result
 
-`else`, lined up with `match`, runs when no arm matches. Its body is an indented
-block or a statement on the same line, and `else if` continues as it does after
-`if`:
+A last arm whose pattern is a bare name, such as `_`, runs when no other arm
+matches. A guard on such an arm continues a chain of tests, as `else if` does
+after `if`:
 
 ```playground
 #> import test:
@@ -736,15 +736,17 @@ def lookup table key
   match key
     Str(k) if let value = table.get(k)
       "$k is $value"
-  else "not found"
+    _ if (type key Int) => "index $key"
+    _ => "not found"
 
 assert_eq (lookup {"a": 1} "a") "a is 1"
-assert_eq (lookup {"a": 1} 4) "not found"
+assert_eq (lookup {"a": 1} 4) "index 4"
+assert_eq (lookup {"a": 1} "b") "not found"
 ```
 
 Like `if`, `match` can be the right-hand side of `let` or an assignment, and
-gives the result of the body that runs. Without `else`, it gives `nil` when no
-arm matches. The value being matched is evaluated once, before the first arm. In
+gives the result of the body that runs, or `nil` when no arm matches. The value
+being matched is evaluated once, before the first arm. In
 [vertical layout](./vertical-layout.md#match-in-vertical-layout), the bodies
 hold items instead.
 

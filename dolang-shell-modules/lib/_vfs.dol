@@ -41,8 +41,8 @@ pub def parse_mode value @ (Int | unix_fs.Mode | nil) -> (Int | nil)
     nil => nil
     Int(n) => n
     unix_fs.Mode(m) => (m.int & 0o7777)
-  else
-    throw std.TypeError "mode: expected Int or fs.unix.Mode"
+    _
+      throw std.TypeError "mode: expected Int or fs.unix.Mode"
 
 pub def bin exe @ Path = nil -> Path
   let vfs_exe = shell.vfs_exe()

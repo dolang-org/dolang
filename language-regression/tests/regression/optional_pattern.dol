@@ -223,8 +223,7 @@ assert_eq (g(3, [4])) 12
 def describe value
   match value
     ?k: Int(n = 0) => n
-  else
-    :other:
+    _ => :other:
 assert_eq (describe ({})) 0
 assert_eq (describe ({k: 3})) 3
 assert_eq (describe ({k: "x"})) :other:

@@ -1,5 +1,5 @@
 if true => for x = [1] => if false => echo $x
-# error: a same-line body can't hold `if`, `match` or `try`, since the lines after it would be ambiguous; put the body in an indented block
+# error: a same-line body can't hold `if` or `try`, since the lines after it would be ambiguous; put the body in an indented block
 #   --> inline_nested_for_if.dol:LL:LL
 #    |
 # LL | if true => for x = [1] => if false => echo $x

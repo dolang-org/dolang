@@ -14,8 +14,7 @@ def classify value
     | x _ _
     do
       [:small:, x]
-  else
-    :none:
+    _ => :none:
 assert_eq (classify 5) [:int:, 5]
 assert_eq (classify "y") :xy:
 assert_eq (classify "z") :str:
@@ -118,14 +117,12 @@ def unwrap value
 assert_eq (unwrap ([[5]])) 5
 assert_eq (unwrap ([5])) [5]
 
-# `else if` continues as it does after `if`.
+# A guard on a fallback arm continues a chain of tests.
 def grade score
   match score
     100 => :perfect:
-  else if (score >= 70)
-    :pass:
-  else
-    :fail:
+    _ if (score >= 70) => :pass:
+    _ => :fail:
 assert_eq (grade 100) :perfect:
 assert_eq (grade 80) :pass:
 assert_eq (grade 10) :fail:

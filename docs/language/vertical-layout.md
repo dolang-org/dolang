@@ -217,8 +217,8 @@ let pairs = $
 assert_eq $pairs [1, 10, 2, 20]
 ```
 
-`=>` can also take a nested `for` or `if`, which holds a single element, so it
-is allowed even where bin-packing isn't:
+`=>` can also take a nested `for`, `if` or `match`, which holds a single
+element, so it is allowed even where bin-packing isn't:
 
 ```playground
 #> import test:
@@ -285,10 +285,9 @@ assert_eq $args ["--quiet"]
 ## `match` in Vertical Layout
 
 A [`match`](./patterns.md#match) passes the items of the first arm that
-matches, or of `else`. An arm's bindings are in scope for its items. Where
-bin-packing is allowed, an arm can give a line of bin-packed items after `=>`,
-and `else` can give one directly; inside [nested items](#nested-data), its items
-go in an indented block.
+matches, or none. An arm's bindings are in scope for its items. Where
+bin-packing is allowed, an arm can give a line of bin-packed items after `=>`;
+inside [nested items](#nested-data), its items go in an indented block.
 
 ```playground
 #> import test:
@@ -299,7 +298,7 @@ def flags level
     match level
       Int(n) if (n > 1) => --jobs $n
       :quiet: => --quiet --no-progress
-    else --verbose
+      _ => --verbose
 
 assert_eq $flags(4) ["--color", "--jobs", 4]
 assert_eq $flags(:quiet:) ["--color", "--quiet", "--no-progress"]

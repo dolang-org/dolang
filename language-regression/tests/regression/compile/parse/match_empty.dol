@@ -1,10 +1,9 @@
 match [1]
-else
-  # error: got <new statement>, expected: <indent>
-  #   --> match_empty.dol:LL:LL
-  #    |
-  # LL |   match [1]
-  #    |  __________^
-  # LL | | else
-  #    | |_^
-  1
+echo after
+# error: got <new statement>, expected: <indent>
+#   --> match_empty.dol:LL:LL
+#    |
+# LL |   match [1]
+#    |  __________^
+# LL | | echo after
+#    | |_^
