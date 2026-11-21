@@ -386,7 +386,8 @@ let evens = items.filter(do |x| x % 2 == 0)
 
 ### Control Flow
 
-`if`, `while`, `for` always use indented block bodies:
+`if`, `while`, `for` use indented block bodies. `if` and `while` also take a
+single statement on the same line after `=>`, and `else` takes one directly:
 
 ```
 if (score >= 70)
@@ -408,6 +409,9 @@ for k v = {name: "Alice", age: 30}   # dicts iterate as (key, value) tuples
 
 for i = 0..5                        # 0, 1, 2, 3, 4
   echo $i
+
+if (n < 0) => return "negative"
+else return "positive"
 ```
 
 Range syntax is `start..end` (end exclusive), `start..`, `..end`, and `..`; a
@@ -670,6 +674,8 @@ bind args
   - x
   - y = 0
   :verbose = false
+
+bind opts => :host :port = 80   # pattern on the header line, with defaults
 ```
 
 Rests are iterable without copying: a `*` rest (or rest of a sequence) yields

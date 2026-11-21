@@ -13,6 +13,8 @@ syn match dolOperator "[-+/*<>=!%&|^~$]" contained
 syn match dolOperator "\.\.\%([.]\)\@!" contained
 syn match dolOperator "\s\zs=\ze\s"
 syn match dolOperator "\s\zs\$\ze\(\s\|$\)"
+" `=>` before a same-line body, as after `if cond`
+syn match dolOperator "\s\zs=>\ze\%(\s\|$\)"
 syn match dolEllipsis "\.\.\." contained
 syn match dolDelimiter "[,|]"
 syn match dolColon ":"
@@ -85,8 +87,10 @@ syn region dolBinding matchgroup=dolKeyword start="\%([A-Za-z0-9_.#]\)\@<!\<\%(l
 syn match dolRest "^[ \t]*\zs\*\*\?\ze[A-Za-z_]"
 syn region dolVerticalImplicit matchgroup=dolTypeMarker start="^[ \t]*\zs[<>]\ze\S" end="\ze[ \t|]\|$" contains=@dolTypes
 syn region dolLambda matchgroup=dolDelimiter start="\%(\<do\s\+\)\@<=|" end="|" contains=@dolPatterns,dolImplicit
-syn region dolVerticalPattern matchgroup=dolKeyword start="^\z([ \t]*\)bind\>\%(:\)\@!" end="^\%(\z1[ \t]\+\)\@![ \t]*\ze\S" contains=@dolPatterns,dolPatternScrutinee
-syn region dolPatternScrutinee start="\%(\<bind\>\)\@<=[ \t]\+" end="$" contains=@dolExprList contained
+syn region dolVerticalPattern matchgroup=dolKeyword start="^\z([ \t]*\)bind\>\%(:\)\@!" end="^\%(\z1[ \t]\+\)\@![ \t]*\ze\S" contains=@dolPatterns,dolPatternScrutinee,dolArrowPattern
+syn region dolPatternScrutinee start="\%(\<bind\>\)\@<=[ \t]\+" end="\ze\s=>\%(\s\|$\)\|$" contains=@dolExprList contained
+" `bind SCRUTINEE => PATTERN` puts the pattern on the header line
+syn region dolArrowPattern matchgroup=dolOperator start="\s\zs=>\ze\%(\s\|$\)" end="$" contains=@dolPatterns contained
 
 " A match arm owns its indented code body, keeping type tests out of calls.
 syn region dolMatchBlock keepend start="\%(^[ \t]*\|=[ \t]*\)\@<=match\>\%(:\)\@!.*\ze\n\%([ \t]*\n\)*\z([ \t]\+\)\S" end="^\%(\z1\)\@![ \t]*\ze\S" contains=dolConditional,dolMatchArm

@@ -34,6 +34,21 @@ else
   echo F
 ```
 
+### Same-Line Bodies
+
+`=>` after a condition puts the body on the same line, as in a `match` arm.
+`else` takes a body on its own line directly:
+
+```
+if (n < 0) => return "negative"
+else if (n == 0) => return "zero"
+else return "positive"
+```
+
+The body is a single statement. A separator is needed because the condition
+accepts command arguments, so `if func arg body` would pass `body` to `func`.
+Same-line and indented bodies can be mixed in one `if`.
+
 ### `if` in `let` and Assignments
 
 `if` statements can be the right-hand side of `let` bindings and assignments:
@@ -94,6 +109,16 @@ do
   echo "$status $body"
 ```
 
+After `=>`, the pattern goes on the header line instead, and still accepts
+defaults. The body follows as an indented block, or after a second `=>`:
+
+```
+if bind response => :status :body = ""
+  echo "$status $body"
+
+if bind entry => key value = "" => echo "$key=$value"
+```
+
 Both forms are also available where `if` appears in
 [vertical layout](./vertical-layout.md).
 
@@ -128,8 +153,7 @@ let label = match response
     "error $code"
   Int(_) => "ok"
   Dict(:status :body) => "$status: $body"
-else
-  "unknown"
+else "unknown"
 ```
 
 See [`match`](./patterns.md#match) for arms, guards, and alternatives.
@@ -143,6 +167,12 @@ let count = 0
 while (count < 5)
   echo $count
   count = (count + 1)
+```
+
+`=>` gives `while` a same-line body, as it does for `if`:
+
+```
+while (count < 10) => count = (count + 1)
 ```
 
 ### `while let` / `while bind`

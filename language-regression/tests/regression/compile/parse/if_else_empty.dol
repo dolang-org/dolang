@@ -1,0 +1,8 @@
+if true
+  echo x
+else
+# error: `else` needs a body on the same line or in an indented block
+#   --> if_else_empty.dol:LL:LL
+#    |
+# LL | else
+#    | ^^^^

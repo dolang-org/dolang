@@ -43,6 +43,7 @@
                 { "include": "#alternative" },
                 { "include": "#colon" },
                 { "include": "#delimiter" },
+                { "include": "#arrow" },
                 { "include": "#assignment" },
                 { "include": "#dollar_operator" }
             ]
@@ -264,6 +265,7 @@
         },
         "identifier": { "match": "[A-Za-z_][A-Za-z0-9_]*", "name": "variable.other.dol" },
         "assignment": { "match": "(?<=\\s)=(?=\\s)", "name": "keyword.operator.assignment.dol" },
+        "arrow": { "match": "(?<=\\s)=>(?=\\s|$)", "name": "keyword.operator.dol" },
         "raw_string": {
             "begin": "(?<!\\w)r(\\#*)\"",
             "end": "\"\\1",
@@ -552,7 +554,7 @@
             }
         },
         "vertical_pattern": {
-            "begin": "^([ \\t]*)(bind)\\b(?!:)(.*)$",
+            "begin": "^([ \\t]*)(bind)\\b(?!:)(.*?)(?:(?<=\\s)(=>)(?=\\s|$)(.*))?$",
             "end": "^(?!\\1[ \\t]+)(?=[ \\t]*\\S)",
             "name": "meta.pattern.vertical.dol",
             "patterns": [
@@ -562,7 +564,9 @@
             ],
             "beginCaptures": {
                 "2": { "name": "keyword.control.dol" },
-                "3": { "patterns": [{ "include": "#expr" }] }
+                "3": { "patterns": [{ "include": "#expr" }] },
+                "4": { "name": "keyword.operator.dol" },
+                "5": { "patterns": [{ "include": "#pattern" }] }
             }
         },
         "parameter_rest": {

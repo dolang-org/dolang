@@ -1,0 +1,7 @@
+if true =>
+  # error: `=>` takes its body on the same line
+  #   --> if_arrow_block.dol:LL:LL
+  #    |
+  # LL | if true =>
+  #    |         ^^
+  echo x

@@ -86,6 +86,9 @@ pub(super) enum PatMode {
     /// The horizontal pattern of a `match` arm, which ends at `if`, `=>` or an
     /// indented block
     Arm,
+    /// The pattern after `bind SCRUTINEE =>`, which ends with its line, at a
+    /// `=>`, or with the block of a `C $` type test
+    ArrowBind,
     /// The items of a horizontal sub-pattern, within `()`
     Nested,
     /// Parameters of a lambda, within `||`
@@ -105,12 +108,17 @@ impl PatMode {
     fn is_pattern(&self) -> bool {
         matches!(
             self,
-            Self::HorizBind | Self::VertBind | Self::Nested | Self::Arm
+            Self::HorizBind | Self::VertBind | Self::Nested | Self::Arm | Self::ArrowBind
         )
     }
 
     fn is_vertical(&self) -> bool {
         matches!(self, Self::VertFunc | Self::VertSig | Self::VertBind)
+    }
+
+    /// Whether `C $` can introduce a type test's pattern as an indented block
+    fn allows_type_block(&self) -> bool {
+        self.is_vertical() || matches!(self, Self::ArrowBind)
     }
 
     /// Whether the items are a `def`'s parameters, which must be names its
@@ -373,6 +381,14 @@ impl Parser<'_> {
         })))
     }
 
+    /// Parse the pattern after `bind SCRUTINEE =>`, which may end with a `C $`
+    /// type test's indented block.
+    pub(super) fn parse_arrow_pattern(&mut self, scope: &mut Scope) -> Result<Pattern> {
+        Ok(self
+            .parse_horiz_alts(scope, PatMode::ArrowBind)?
+            .into_pattern(true))
+    }
+
     /// Parse the pattern of a `match` arm: lines of `|` alternatives, or a
     /// horizontal pattern ending at the arm's `if`, `=>` or indented block.
     pub(super) fn parse_arm_pattern(&mut self, scope: &mut Scope) -> Result<Pattern> {
@@ -511,11 +527,11 @@ impl Parser<'_> {
             next = self.peek()?;
         }
         let horizontal = matches!(next, Some(token!(TokenInfo::LeftParen)));
-        if mode.is_vertical() && matches!(next, Some(token!(TokenInfo::ArgSep))) {
+        if mode.allows_type_block() && matches!(next, Some(token!(TokenInfo::ArgSep))) {
             self.advance();
             next = self.peek()?;
         }
-        let vertical = matches!(next, Some(token!(TokenInfo::Dollar))) && mode.is_vertical();
+        let vertical = matches!(next, Some(token!(TokenInfo::Dollar))) && mode.allows_type_block();
         if !horizontal && !vertical && fields.is_empty() {
             return Ok(PatBind::Ident(Ident::new(span)));
         }
@@ -662,6 +678,12 @@ impl Parser<'_> {
                 question = None;
                 self.apply_optional(items.last_mut().unwrap(), span);
             }
+            // A `C $` type test's block ends a pattern after `bind … =>`
+            if matches!(mode, PatMode::ArrowBind)
+                && items.last().is_some_and(PatItem::ends_in_block)
+            {
+                break Ok((items, implicits, dashed));
+            }
             let at_line_start = mem::replace(&mut line_start, false);
             match self.peek()? {
                 // `()` is valid, matching an empty value; `|` ends an alternative
@@ -692,10 +714,26 @@ impl Parser<'_> {
                 ) if matches!(mode, PatMode::Arm) => {
                     break Ok((items, implicits, dashed));
                 }
+                // A pattern after `bind … =>` ends with its line or at a `=>`
+                token @ Some(
+                    token!(TokenInfo::FatArrow | TokenInfo::StmtSep | TokenInfo::Dedent),
+                ) if matches!(mode, PatMode::ArrowBind) => {
+                    if items.is_empty() {
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "expected at least one item in pattern",
+                        ));
+                    }
+                    break Ok((items, implicits, dashed));
+                }
                 // In shell mode, `r|` and `t|` start here strings, but in a
                 // pattern or lambda parameter list they are a name followed by `|`
                 Some(token @ token!(TokenInfo::RBar | TokenInfo::TBar))
-                    if matches!(mode, PatMode::HorizBind | PatMode::Arm | PatMode::Lambda) =>
+                    if matches!(
+                        mode,
+                        PatMode::HorizBind | PatMode::Arm | PatMode::ArrowBind | PatMode::Lambda
+                    ) =>
                 {
                     self.advance();
                     let name = token.span.left_char();

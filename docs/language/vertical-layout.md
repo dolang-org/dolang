@@ -242,12 +242,26 @@ assert_eq $items [1, 2]
 
 See [Conditional Matching](./patterns.md#conditional-matching).
 
+Where bin-packing is allowed, `=>` after a condition and `else` each take a
+line of bin-packed items, as a [`match`](#match-in-vertical-layout) arm does:
+
+```playground
+#> import test:
+#>   - assert_eq
+let verbose = false
+let args = $
+  if verbose => --verbose --trace
+  else --quiet
+assert_eq $args ["--quiet"]
+```
+
 ## `match` in Vertical Layout
 
 A [`match`](./patterns.md#match) passes the items of the first arm that
 matches, or of `else`. An arm's bindings are in scope for its items. Where
-bin-packing is allowed, an arm can give a line of bin-packed items after `=>`;
-inside [nested items](#nested-data), its items go in an indented block.
+bin-packing is allowed, an arm can give a line of bin-packed items after `=>`,
+and `else` can give one directly; inside [nested items](#nested-data), its items
+go in an indented block.
 
 ```playground
 #> import test:
@@ -258,8 +272,7 @@ def flags level
     match level
       Int(n) if (n > 1) => --jobs $n
       :quiet: => --quiet --no-progress
-    else
-      --verbose
+    else --verbose
 
 assert_eq $flags(4) ["--color", "--jobs", 4]
 assert_eq $flags(:quiet:) ["--color", "--quiet", "--no-progress"]

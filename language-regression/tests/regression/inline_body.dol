@@ -1,0 +1,66 @@
+# `=>` introduces a same-line body after a condition, and `else` takes one
+# directly
+def sign n
+  if (n < 0) => return "negative"
+  else if (n == 0) => return "zero"
+  else return "positive"
+assert_eq (sign -1) negative
+assert_eq (sign 0) zero
+assert_eq (sign 3) positive
+
+# Same-line and block branches mix
+def describe n
+  if (n == 0)
+    return "zero"
+  else if (n == 1) => return "one"
+  else
+    return "many"
+assert_eq (describe 0) zero
+assert_eq (describe 1) one
+assert_eq (describe 2) many
+
+# A same-line `if` as a `let` RHS still owns the `else`
+let x = if false => 1
+else 2
+assert_eq $x 2
+
+let y = if true => 1
+assert_eq $y 1
+
+# A same-line branch without `else` is followed by the next statement
+let hits = 0
+if true => hits = (hits + 1)
+hits = (hits + 10)
+assert_eq $hits 11
+
+# `while` takes one too
+let i = 0
+while (i < 3) => i = (i + 1)
+assert_eq $i 3
+
+# `match` takes a same-line `else`, or a same-line `else if`
+let m = match 5
+  1 => "one"
+else "other"
+assert_eq $m other
+
+let m2 = match 1
+  2 => "two"
+else if true => "yes"
+assert_eq $m2 yes
+
+# In vertical layout, same-line bodies hold bin-packed items
+let level = :LOUD:
+let flags = $
+  - --color
+  match level
+    :QUIET: => --quiet --no-progress
+  else --verbose
+assert_eq $flags ["--color", "--verbose"]
+
+let flags2 = $
+  if false => --a
+  else if false => --b
+  else --c --d
+  - --e
+assert_eq $flags2 ["--c", "--d", "--e"]

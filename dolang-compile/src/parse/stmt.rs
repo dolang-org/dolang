@@ -7,7 +7,7 @@ use super::{
 use crate::{
     ast::{
         AliasBody, Arm, Assign, Bind, Block, CatchHandler, CondPattern, CondPatternKind, Expr, For,
-        Function, Guard, Ident, If, IfBranch, ImportElement, Let, Match, PatBind, PatItem,
+        Function, Guard, Ident, If, IfBranch, ImportElement, Let, Match, PatBind, PatItem, Pattern,
         PrimStmt, Return, Stmt, Throw, Try, TypeAlias, While, visit::Node,
     },
     lex::{Keyword, Op, Token, TokenInfo},
@@ -22,19 +22,43 @@ pub(super) trait BodyMode {
 
     fn parse_body(&self, parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self::Body>;
 
-    /// Parse a `match` arm's same-line body, after its `=>` at `arrow_span`
+    /// Reject a same-line body after `lead`, a `=>` or `else`, where the
+    /// context doesn't allow one
+    fn check_inline(
+        &self,
+        _parser: &mut Parser<'_>,
+        _scope: &mut Scope,
+        _lead: &Token,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    /// Parse a same-line body after `lead`, a `=>` or `else`, once the
+    /// separator following it has been consumed
     fn parse_inline(
         &self,
         parser: &mut Parser<'_>,
         scope: &mut Scope,
-        arrow_span: Span,
+        lead: &Token,
     ) -> Result<Self::Body>;
+
+    /// What a same-line body holds, for errors: as possessed by its lead, and
+    /// as needed after it
+    fn inline_noun(&self) -> (&'static str, &'static str);
 
     /// The error for a `match` arm with no body, after a `|` group if `group`
     fn arm_expected(&self, group: bool) -> &'static str;
 
     /// The body holding the `if` of a `match`'s `else if`
     fn wrap_if(&self, node: If<Self::Body>) -> Self::Body;
+}
+
+/// How errors name `lead`, the `=>` or `else` before a same-line body
+pub(super) fn lead_name(lead: &Token) -> &'static str {
+    match lead.info {
+        TokenInfo::FatArrow => "=>",
+        _ => "else",
+    }
 }
 
 /// [`BodyMode::arm_expected`] where an arm can take `=>`
@@ -60,9 +84,17 @@ impl BodyMode for StmtBody {
         &self,
         parser: &mut Parser<'_>,
         scope: &mut Scope,
-        arrow_span: Span,
+        _lead: &Token,
     ) -> Result<Block> {
-        parser.parse_arm_inline(scope, arrow_span)
+        Ok(Block {
+            stmts: vec![parser.parse_stmt(scope)?],
+            vars: Vec::new(),
+            repl: None,
+        })
+    }
+
+    fn inline_noun(&self) -> (&'static str, &'static str) {
+        ("its body", "a body")
     }
 
     fn arm_expected(&self, group: bool) -> &'static str {
@@ -207,14 +239,62 @@ impl Parser<'_> {
         let bind_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Bind)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
-        let bind = self.parse_pattern(scope, true)?;
+        let (bind, arrow_span) = if let Some(token!(TokenInfo::FatArrow)) = self.peek()? {
+            let arrow = self.consume();
+            let bind = self.parse_arrow_bind_pattern(scope, &arrow)?;
+            // A `C $` type test's block ends the statement with its `Dedent`
+            match self.peek()? {
+                _ if bind.ends_in_block() => {}
+                None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => {}
+                Some(token!(TokenInfo::Indent)) => {
+                    return Err(self.syntax_error(
+                        scope,
+                        Some(arrow.clone()),
+                        "a pattern after `=>` ends with its line; put a vertical pattern under \
+                         `bind`, or end the line with a `C $` type test",
+                    ));
+                }
+                token => {
+                    return Err(self.syntax_error(
+                        scope,
+                        token,
+                        "expected end of statement after `bind` pattern",
+                    ));
+                }
+            }
+            (bind, Some(arrow.span))
+        } else {
+            (self.parse_pattern(scope, true)?, None)
+        };
         let else_branch = self.parse_binding_else(scope)?;
         Ok(Bind {
             else_branch,
             bind,
             expr,
             bind_span,
+            arrow_span,
         })
+    }
+
+    /// Parse the pattern after `bind SCRUTINEE` and its `=>`, `arrow`
+    fn parse_arrow_bind_pattern(&mut self, scope: &mut Scope, arrow: &Token) -> Result<Pattern> {
+        match self.peek()? {
+            Some(token!(TokenInfo::ArgSep)) => {
+                self.advance();
+            }
+            None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent | TokenInfo::Indent)) => {
+                return Err(self.syntax_error(
+                    scope,
+                    Some(arrow.clone()),
+                    "`=>` needs a pattern on the same line; for a vertical pattern, omit `=>`, \
+                     or end the line with a `C $` type test",
+                ));
+            }
+            _ => {
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+            }
+        }
+        self.parse_arrow_pattern(scope)
     }
 
     /// A binding's failure body, after its value or vertical pattern.
@@ -229,61 +309,133 @@ impl Parser<'_> {
             }
         }
         let span = self.advance();
-        let body = if let Some(token!(TokenInfo::Indent)) = self.peek()? {
-            self.advance();
-            self.parse_block_through_dedent(scope)?
-        } else {
-            self.expect(scope, &[ExpectKind::ArgSep])?;
-            if let token @ Some(token!(TokenInfo::Keyword(Keyword::If))) = self.peek()? {
-                return Err(self.syntax_error(
-                    scope,
-                    token,
-                    "`else if` is not allowed after `let` or `bind`",
-                ));
-            }
-            Block {
-                stmts: vec![self.parse_stmt(scope)?],
-                vars: Vec::new(),
-                repl: None,
-            }
+        let Some(body) = self.parse_else_body(scope, &StmtBody, span)? else {
+            let token = self.peek()?;
+            return Err(self.syntax_error(
+                scope,
+                token,
+                "`else if` is not allowed after `let` or `bind`",
+            ));
         };
         Ok(Some((Box::new(body), span)))
     }
 
-    /// Parse the condition of an `if` or `while`, along with the conditional
-    /// pattern bind introduced by `let` or `bind` if there is one, consuming the
-    /// `Indent` that opens the branch body.
-    ///
-    /// The three forms differ only in layout: `let` puts the pattern before the
-    /// scrutinee and separates them with `=`, `bind` puts it after in an indented
-    /// block terminated by `do`, and the plain form has no pattern at all.
-    pub(super) fn parse_cond(&mut self, scope: &mut Scope) -> Result<(Expr, Option<CondPattern>)> {
-        let (expr, bind, _) = self.parse_cond_with(scope, false)?;
-        Ok((expr, bind))
-    }
-
-    /// Parse a condition as [`Self::parse_cond`] does. For a `match` arm's
-    /// `guard`, the condition can end at a `=>` instead of the body's `Indent`,
-    /// and its span is returned.
-    fn parse_cond_with(
+    /// Parse the body after `else` at `else_span`: an indented block or a
+    /// same-line body. Returns `None`, with the separator consumed, if `if`
+    /// follows instead.
+    fn parse_else_body<M: BodyMode>(
         &mut self,
         scope: &mut Scope,
-        guard: bool,
+        mode: &M,
+        else_span: Span,
+    ) -> Result<Option<M::Body>> {
+        if let Some(token!(TokenInfo::Indent)) = self.peek()? {
+            self.advance();
+            return Ok(Some(mode.parse_body(self, scope)?));
+        }
+        let lead = Token {
+            info: TokenInfo::Keyword(Keyword::Else),
+            span: else_span,
+        };
+        self.expect_inline_sep(scope, mode, &lead)?;
+        if let Some(token!(TokenInfo::Keyword(Keyword::If))) = self.peek()? {
+            return Ok(None);
+        }
+        mode.check_inline(self, scope, &lead)?;
+        Ok(Some(mode.parse_inline(self, scope, &lead)?))
+    }
+
+    /// Consume the separator between `lead`, a `=>` or `else`, and a body on
+    /// the same line
+    fn expect_inline_sep<M: BodyMode>(
+        &mut self,
+        scope: &mut Scope,
+        mode: &M,
+        lead: &Token,
+    ) -> Result<()> {
+        let (its, needs) = mode.inline_noun();
+        let name = lead_name(lead);
+        let block = if name == "else" {
+            " or in an indented block"
+        } else {
+            ""
+        };
+        match self.peek()? {
+            Some(token!(TokenInfo::ArgSep)) => {
+                self.advance();
+                Ok(())
+            }
+            Some(token!(TokenInfo::Indent)) => Err(self.syntax_error(
+                scope,
+                Some(lead.clone()),
+                format!("`{name}` takes {its} on the same line"),
+            )),
+            None | Some(token!(TokenInfo::StmtSep | TokenInfo::Dedent)) => Err(self.syntax_error(
+                scope,
+                Some(lead.clone()),
+                format!("`{name}` needs {needs} on the same line{block}"),
+            )),
+            _ => {
+                self.expect(scope, &[ExpectKind::ArgSep])?;
+                Ok(())
+            }
+        }
+    }
+
+    /// Parse a same-line body after `lead`, a `=>`
+    pub(super) fn parse_inline_body<M: BodyMode>(
+        &mut self,
+        scope: &mut Scope,
+        mode: &M,
+        lead: &Token,
+    ) -> Result<M::Body> {
+        mode.check_inline(self, scope, lead)?;
+        self.expect_inline_sep(scope, mode, lead)?;
+        mode.parse_inline(self, scope, lead)
+    }
+
+    /// Parse a branch body: a same-line body after the `=>` at `arrow_span`,
+    /// or else an indented block whose `Indent` has been consumed
+    fn parse_branch_body<M: BodyMode>(
+        &mut self,
+        scope: &mut Scope,
+        mode: &M,
+        arrow_span: Option<Span>,
+    ) -> Result<M::Body> {
+        match arrow_span {
+            Some(span) => {
+                let lead = Token {
+                    info: TokenInfo::FatArrow,
+                    span,
+                };
+                self.parse_inline_body(scope, mode, &lead)
+            }
+            None => mode.parse_body(self, scope),
+        }
+    }
+
+    /// Parse the condition of an `if`, `while` or guard, along with the
+    /// conditional pattern bind introduced by `let` or `bind` if there is one.
+    /// The condition ends at the `Indent` opening the body, which is consumed,
+    /// or at a `=>` introducing a same-line body, whose span is returned.
+    ///
+    /// The forms differ only in layout: `let` puts the pattern before the
+    /// scrutinee and separates them with `=`, and `bind` puts it after, either
+    /// in an indented block terminated by `do` or on the header line after
+    /// `=>`. The plain form has no pattern at all.
+    pub(super) fn parse_cond(
+        &mut self,
+        scope: &mut Scope,
     ) -> Result<(Expr, Option<CondPattern>, Option<Span>)> {
         use self::Keyword;
         use TokenInfo::*;
 
-        let ctx = if guard {
-            CmdContext::Guard
-        } else {
-            CmdContext::Head
-        };
         let (keyword_span, is_let) = match self.peek()? {
             Some(token!(Keyword(Keyword::Let))) => (self.advance(), true),
             Some(token!(Keyword(Keyword::Bind))) => (self.advance(), false),
             _ => {
-                let expr = self.parse_cmd_or_expr(scope, ctx)?;
-                let arrow_span = self.expect_cond_end(scope, guard)?;
+                let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
+                let arrow_span = self.expect_cond_end(scope)?;
                 return Ok((expr, None, arrow_span));
             }
         };
@@ -293,8 +445,8 @@ impl Parser<'_> {
             let pattern = self.parse_pattern(scope, false)?;
             let equal_span = self.expect(scope, &[ExpectKind::Equal])?;
             self.expect(scope, &[ExpectKind::ArgSep])?;
-            let expr = self.parse_cmd_or_expr(scope, ctx)?;
-            let arrow_span = self.expect_cond_end(scope, guard)?;
+            let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
+            let arrow_span = self.expect_cond_end(scope)?;
             (
                 expr,
                 pattern,
@@ -303,37 +455,46 @@ impl Parser<'_> {
             )
         } else {
             let expr = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
-            // The vertical pattern consumes its own indented block through the
-            // closing `Dedent`, leaving `do` (or a guard's `=>`) as the next token
-            let pattern = self.parse_pattern(scope, true)?;
-            match self.peek()? {
-                Some(token!(FatArrow)) if guard => {
-                    let arrow_span = self.advance();
-                    (
-                        expr,
-                        pattern,
-                        CondPatternKind::Bind { do_span: None },
-                        Some(arrow_span),
-                    )
+            let (pattern, pattern_arrow) = if let Some(token!(FatArrow)) = self.peek()? {
+                let arrow = self.consume();
+                (
+                    self.parse_arrow_bind_pattern(scope, &arrow)?,
+                    Some(arrow.span),
+                )
+            } else {
+                // The vertical pattern consumes its own indented block through
+                // the closing `Dedent`, leaving `do` or `=>` as the next token
+                (self.parse_pattern(scope, true)?, None)
+            };
+            // A horizontal pattern after `=>` is followed directly by the
+            // body's `Indent`; a pattern block, by `do`
+            let block = pattern_arrow.is_none() || pattern.ends_in_block();
+            let (do_span, arrow_span) = match self.peek()? {
+                Some(token!(FatArrow)) => (None, Some(self.advance())),
+                Some(token!(Indent)) if !block => {
+                    self.advance();
+                    (None, None)
                 }
                 _ => {
-                    let kinds: &[ExpectKind] = if guard {
+                    let kinds: &[ExpectKind] = if block {
                         &[ExpectKind::Keyword(Keyword::Do), ExpectKind::FatArrow]
                     } else {
-                        &[ExpectKind::Keyword(Keyword::Do)]
+                        &[ExpectKind::Indent, ExpectKind::FatArrow]
                     };
                     let do_span = self.expect(scope, kinds)?;
                     self.expect(scope, &[ExpectKind::Indent])?;
-                    (
-                        expr,
-                        pattern,
-                        CondPatternKind::Bind {
-                            do_span: Some(do_span),
-                        },
-                        None,
-                    )
+                    (Some(do_span), None)
                 }
-            }
+            };
+            (
+                expr,
+                pattern,
+                CondPatternKind::Bind {
+                    arrow_span: pattern_arrow,
+                    do_span,
+                },
+                arrow_span,
+            )
         };
 
         Ok((
@@ -347,17 +508,13 @@ impl Parser<'_> {
         ))
     }
 
-    /// Consume the end of a horizontal condition: the `Indent` opening its body,
-    /// or in a guard, a `=>` introducing a same-line body.
-    fn expect_cond_end(&mut self, scope: &mut Scope, guard: bool) -> Result<Option<Span>> {
-        if guard {
-            if let Some(token!(TokenInfo::FatArrow)) = self.peek()? {
-                return Ok(Some(self.advance()));
-            }
-            self.expect(scope, &[ExpectKind::Indent, ExpectKind::FatArrow])?;
-        } else {
-            self.expect(scope, &[ExpectKind::Indent])?;
+    /// Consume the end of a horizontal condition: the `Indent` opening its
+    /// body, or a `=>` introducing a same-line body, whose span is returned.
+    fn expect_cond_end(&mut self, scope: &mut Scope) -> Result<Option<Span>> {
+        if let Some(token!(TokenInfo::FatArrow)) = self.peek()? {
+            return Ok(Some(self.advance()));
         }
+        self.expect(scope, &[ExpectKind::Indent, ExpectKind::FatArrow])?;
         Ok(None)
     }
 
@@ -377,40 +534,46 @@ impl Parser<'_> {
 
         let if_span = self.expect(scope, &[ExpectKind::Keyword(If)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let (cond, bind) = self.parse_cond(scope)?;
-        let tbranch = mode.parse_body(self, scope)?;
+        let (cond, bind, arrow_span) = self.parse_cond(scope)?;
+        let tbranch = self.parse_branch_body(scope, mode, arrow_span)?;
+        let mut inline = arrow_span.is_some();
 
         let mut elif_branches = Vec::new();
         let mut else_branch = None;
 
-        while let Some(token!(Keyword(Else))) = self.peek()? {
+        loop {
+            // A same-line body leaves the separator ending its line, which a
+            // block's `Dedent` takes the place of
+            if inline {
+                while let Some(token!(StmtSep)) = self.peek()? {
+                    self.advance();
+                }
+            }
+            let Some(token!(Keyword(Else))) = self.peek()? else {
+                break;
+            };
             let else_span = self.advance();
-
-            if let Some(token!(ArgSep)) = self.peek()? {
-                // This is "else if"
-                self.advance();
-                let elif_if_span = self.expect(scope, &[ExpectKind::Keyword(If)])?;
-                self.expect(scope, &[ExpectKind::ArgSep])?;
-                let (elif_cond, elif_bind) = self.parse_cond(scope)?;
-                let elif_body = mode.parse_body(self, scope)?;
-
-                elif_branches.push((
-                    IfBranch {
-                        span: elif_if_span,
-                        expr: elif_cond,
-                        bind: elif_bind,
-                        body: elif_body,
-                    },
-                    else_span,
-                ));
-            } else {
-                // This is final "else"
-                self.expect(scope, &[ExpectKind::Indent])?;
-                let else_body = mode.parse_body(self, scope)?;
-
+            if let Some(else_body) = self.parse_else_body(scope, mode, else_span)? {
                 else_branch = Some((else_body, else_span));
                 break;
             }
+            // This is "else if"
+            let elif_if_span = self.expect(scope, &[ExpectKind::Keyword(If)])?;
+            self.expect(scope, &[ExpectKind::ArgSep])?;
+            let (elif_cond, elif_bind, elif_arrow) = self.parse_cond(scope)?;
+            let elif_body = self.parse_branch_body(scope, mode, elif_arrow)?;
+            inline = elif_arrow.is_some();
+
+            elif_branches.push((
+                IfBranch {
+                    span: elif_if_span,
+                    expr: elif_cond,
+                    bind: elif_bind,
+                    arrow_span: elif_arrow,
+                    body: elif_body,
+                },
+                else_span,
+            ));
         }
 
         Ok(If {
@@ -418,6 +581,7 @@ impl Parser<'_> {
                 span: if_span,
                 expr: cond,
                 bind,
+                arrow_span,
                 body: tbranch,
             },
             elif_branches,
@@ -441,6 +605,13 @@ impl Parser<'_> {
         let match_span = self.expect(scope, &[ExpectKind::Keyword(Keyword::Match)])?;
         self.expect(scope, &[ExpectKind::ArgSep])?;
         let scrutinee = self.parse_cmd_or_expr(scope, CmdContext::Head)?;
+        if let token @ Some(token!(FatArrow)) = self.peek()? {
+            return Err(self.syntax_error(
+                scope,
+                token,
+                "`match` takes its arms in an indented block; `=>` follows an arm's pattern",
+            ));
+        }
         self.expect(scope, &[ExpectKind::Indent])?;
 
         let mut arms = Vec::new();
@@ -464,13 +635,12 @@ impl Parser<'_> {
         let else_branch = match self.peek()? {
             Some(token!(Keyword(Keyword::Else))) => {
                 let else_span = self.advance();
-                let body = if let Some(token!(ArgSep)) = self.peek()? {
-                    self.advance();
-                    let node = self.parse_if_with(scope, mode)?;
-                    mode.wrap_if(node)
-                } else {
-                    self.expect(scope, &[ExpectKind::Indent])?;
-                    mode.parse_body(self, scope)?
+                let body = match self.parse_else_body(scope, mode, else_span)? {
+                    Some(body) => body,
+                    None => {
+                        let node = self.parse_if_with(scope, mode)?;
+                        mode.wrap_if(node)
+                    }
                 };
                 Some((body, else_span))
             }
@@ -517,22 +687,19 @@ impl Parser<'_> {
             Some(token!(Keyword(Keyword::If))) => {
                 let if_span = self.advance();
                 self.expect(scope, &[ExpectKind::ArgSep])?;
-                let (expr, bind, arrow) = self.parse_cond_with(scope, true)?;
+                let (expr, bind, arrow) = self.parse_cond(scope)?;
                 guard = Some(Guard {
                     if_span,
                     expr,
                     bind,
                 });
                 arrow_span = arrow;
-                match arrow {
-                    Some(arrow) => mode.parse_inline(self, scope, arrow)?,
-                    None => mode.parse_body(self, scope)?,
-                }
+                self.parse_branch_body(scope, mode, arrow)?
             }
             Some(token!(FatArrow)) => {
-                let arrow = self.advance();
-                arrow_span = Some(arrow);
-                mode.parse_inline(self, scope, arrow)?
+                let arrow = self.consume();
+                arrow_span = Some(arrow.span);
+                self.parse_inline_body(scope, mode, &arrow)?
             }
             Some(token!(Indent)) if !vertical => {
                 self.advance();
@@ -578,27 +745,6 @@ impl Parser<'_> {
             do_span,
             arrow_span,
             body,
-        })
-    }
-
-    /// Parse an arm's same-line body, after its `=>` at `arrow_span`
-    fn parse_arm_inline(&mut self, scope: &mut Scope, arrow_span: Span) -> Result<Block> {
-        if let Some(token!(TokenInfo::Indent)) = self.peek()? {
-            let token = Token {
-                info: TokenInfo::FatArrow,
-                span: arrow_span,
-            };
-            return Err(self.syntax_error(
-                scope,
-                Some(token),
-                "`=>` takes its body on the same line",
-            ));
-        }
-        self.expect(scope, &[ExpectKind::ArgSep])?;
-        Ok(Block {
-            stmts: vec![self.parse_stmt(scope)?],
-            vars: Vec::new(),
-            repl: None,
         })
     }
 
@@ -733,11 +879,12 @@ impl Parser<'_> {
     fn parse_while(&mut self, scope: &mut Scope) -> Result<Stmt> {
         let while_span = self.advance();
         self.expect(scope, &[ExpectKind::ArgSep])?;
-        let (cond, bind) = self.parse_cond(scope)?;
-        let body = self.parse_block_through_dedent(scope)?;
+        let (cond, bind, arrow_span) = self.parse_cond(scope)?;
+        let body = self.parse_branch_body(scope, &StmtBody, arrow_span)?;
         Ok(Stmt::While(While {
             expr: cond,
             bind,
+            arrow_span,
             body,
             while_span,
         }))
