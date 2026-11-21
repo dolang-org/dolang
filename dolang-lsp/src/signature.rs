@@ -60,7 +60,8 @@ impl Param {
 pub(crate) fn def(prefix: &str, params: &[Param], returns: Option<&str>, body: bool) -> String {
     let arrow = returns.map(|ty| format!(" -> {ty}")).unwrap_or_default();
     let line = match params {
-        [] => format!("{prefix}{arrow}"),
+        // A def without parameters needs its `()`
+        [] => format!("{prefix}(){arrow}"),
         [param] => format!("{prefix} {}{arrow}", param.alone()),
         _ => {
             let params: Vec<_> = params.iter().map(|param| param.render("@")).collect();
@@ -69,7 +70,7 @@ pub(crate) fn def(prefix: &str, params: &[Param], returns: Option<&str>, body: b
     };
     // Decorators are lines of their own
     let last = line.rsplit('\n').next().unwrap_or(&line);
-    let mut text = if last.chars().count() <= WIDTH {
+    let mut text = if params.is_empty() || last.chars().count() <= WIDTH {
         line
     } else {
         let mut text = prefix.to_owned();
@@ -163,8 +164,14 @@ mod tests {
 
     #[test]
     fn one_line() {
-        assert_eq!(def("def f", &[], Some("Int"), false), "def f -> Int");
-        assert_eq!(def("def f", &[], None, true), "def f\n  ...");
+        assert_eq!(def("def f", &[], Some("Int"), false), "def f() -> Int");
+        let bare = def("def f", &[], None, true);
+        assert_eq!(bare, "def f()\n  ...");
+        assert_parses(&bare);
+        assert_parses(&def("@def f", &[], Some("Int"), false));
+        // Without parameters it stays on one line, however wide
+        let wide = format!("def {}", "f".repeat(WIDTH));
+        assert_eq!(def(&wide, &[], None, false), format!("{wide}()"));
         // A binding alone on its line has a spaced `@`
         let x = param("x", Some("Int"), true);
         assert_eq!(

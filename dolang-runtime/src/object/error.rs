@@ -308,7 +308,7 @@ impl<'v> Protocol<'v> for VariantTypeObj {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.{}>", variant_name(this.get().0))
+        crate::fmt!(strand, w, "<type std.{}>", type_name(this.get().0))
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -354,7 +354,7 @@ impl<'v> Protocol<'v> for VariantTypeObj {
                 if !is_constructible(kind) {
                     return Err(Error::type_error(
                         strand,
-                        format!("{} cannot be subclassed", variant_name(kind)),
+                        format!("std.{} cannot be subclassed", type_name(kind)),
                     ));
                 }
                 unpack!(strand, args => self_val, ...rest);
@@ -491,7 +491,7 @@ fn construct<'v, 's>(
         | ErrorKind::UnexpectedItem => {
             return Err(Error::type_error(
                 strand,
-                format!("{} is not instantiable", variant_name(kind)),
+                format!("std.{} is not instantiable", type_name(kind)),
             ));
         }
         ErrorKind::Runtime => {
@@ -556,35 +556,35 @@ fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<
     }
 }
 
-fn variant_name(kind: ErrorKind) -> &'static str {
+fn type_name(kind: ErrorKind) -> &'static str {
     match kind {
-        ErrorKind::Unsupported => "Unsupported",
-        ErrorKind::Immutable => "Immutable",
-        ErrorKind::Concurrency => "Concurrency",
-        ErrorKind::Type => "Type",
-        ErrorKind::Value => "Value",
-        ErrorKind::Data => "Data",
-        ErrorKind::Shape => "Shape",
-        ErrorKind::MissingItem => "MissingItem",
-        ErrorKind::UnexpectedItem => "UnexpectedItem",
-        ErrorKind::State => "State",
-        ErrorKind::Index => "Index",
-        ErrorKind::Field => "Field",
-        ErrorKind::UnexpectedPos => "UnexpectedPos",
-        ErrorKind::UnexpectedKey => "UnexpectedKey",
-        ErrorKind::MissingPos => "MissingPos",
-        ErrorKind::MissingKey => "MissingKey",
-        ErrorKind::Overflow => "Overflow",
-        ErrorKind::ZeroDiv => "ZeroDiv",
+        ErrorKind::Unsupported => "UnsupportedError",
+        ErrorKind::Immutable => "ImmutableError",
+        ErrorKind::Concurrency => "ConcurrencyError",
+        ErrorKind::Type => "TypeError",
+        ErrorKind::Value => "ValueError",
+        ErrorKind::Data => "DataError",
+        ErrorKind::Shape => "ShapeError",
+        ErrorKind::MissingItem => "MissingItemError",
+        ErrorKind::UnexpectedItem => "UnexpectedItemError",
+        ErrorKind::State => "StateError",
+        ErrorKind::Index => "IndexError",
+        ErrorKind::Field => "FieldError",
+        ErrorKind::UnexpectedPos => "UnexpectedPosError",
+        ErrorKind::UnexpectedKey => "UnexpectedKeyError",
+        ErrorKind::MissingPos => "MissingPosError",
+        ErrorKind::MissingKey => "MissingKeyError",
+        ErrorKind::Overflow => "OverflowError",
+        ErrorKind::ZeroDiv => "ZeroDivError",
         ErrorKind::SinkStop => "SinkStop",
         ErrorKind::IterStop => "IterStop",
-        ErrorKind::CyclicImport => "CyclicImport",
-        ErrorKind::Import => "Import",
-        ErrorKind::Compile => "Compile",
-        ErrorKind::Runtime => "Runtime",
-        ErrorKind::Abort => "Abort",
-        ErrorKind::Canceled => "Canceled",
-        ErrorKind::TimedOut => "TimedOut",
+        ErrorKind::CyclicImport => "CyclicImportError",
+        ErrorKind::Import => "ImportError",
+        ErrorKind::Compile => "CompileError",
+        ErrorKind::Runtime => "RuntimeError",
+        ErrorKind::Abort => "AbortError",
+        ErrorKind::Canceled => "CanceledError",
+        ErrorKind::TimedOut => "TimedOutError",
     }
 }
 

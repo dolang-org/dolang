@@ -18,9 +18,8 @@ assert_eq $b 2
 
 By default, the pattern must exhaustively match the entire structure or an
 error will result. Use `...` to capture surplus items instead. The rest can be
-unpacked or spread again. Unpacking an iterator doesn't advance it, so only
-in-memory iterators such as array, tuple, pair, view, split, and dict key/value
-iterators can be unpacked; `map` and `filter` iterators cannot.
+unpacked. Unpacking an iterator doesn't advance it, so only iterators over
+fixed collections can be unpacked.
 
 ```
 let first ...rest = [1, 2, 3, 4]
@@ -51,22 +50,15 @@ assert_eq $first "ultramarine"
 assert_eq $foo 42
 ```
 
-A dictionary has no positional items, so a positional pattern finds nothing
-there. Match its integer keys with key patterns:
-
-```
-let 0: first 1: second = {0: "a", 1: "b"}
-assert_eq $second "b"
-```
-
 A pattern binds each name at most once, so `let a a = [1, 2]` is an error. `_`
 is exempt and may appear any number of times.
 
 ### Positional and Key Rests
 
 `*` captures only surplus positional items, and `**` only surplus key items.
-Either or both may end a pattern, `*` first, in place of `...`. Surplus items
-of a kind that neither takes are an error, as without a rest:
+Either or both may end a pattern, `*` first. Usage of either is mutually
+exclusive with `...`. Surplus items of a kind that neither takes are an error,
+as without a rest:
 
 ```
 let first *others **options = {1, 2, 3, color: "red"}
@@ -91,14 +83,12 @@ for key value = options
   assert_eq (key, value) (:color:, "red")
 ```
 
-`(...rest)` makes a tuple unless the parentheses also hold a static key, as in
-`(...rest, extra: 1)`, which makes a `Pack`.
+For most containers, a bound rest may be spread, unpacked, or iterated repeadly.
+The rest of an iterator is the exception: it is typically itself an iterator,
+so subsequent iteration or spreading consumes it.
 
-Iterating, spreading or unpacking a rest does not consume it, so it can be read
-repeatedly. The rest of an iterator is the exception: it is what is left of that
-iterator, and reading it consumes it. A rest reads its source rather than a
-copy, so changing the source afterwards can change the rest or make reading it
-raise an error.
+Rests may be views into the original container and thus observe subsequent
+mutation or even encounter `ConcurrenyError`s in certain circumstances.
 
 ## `bind`
 
@@ -272,12 +262,11 @@ argument lists:
 
 ```
 let parts = $
-  - always
+  always
   if let a b = pair
-    - $a
-    - $b
+    $a $b
   else
-    - "no pair"
+    "no pair"
 ```
 
 ### What Counts as a Match

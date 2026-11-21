@@ -47,6 +47,9 @@ struct Entity {
     decorators: Vec<String>,
     #[serde(default)]
     params: Vec<ParamJson>,
+    /// A member's scope: `instance`, `class` or `static`
+    #[serde(default)]
+    scope: String,
     #[serde(default)]
     members: Vec<Entity>,
     #[serde(default)]
@@ -495,6 +498,33 @@ fn resolve_entity(
     result
 }
 
+/// The receiver an instance or class method declares, which the extractor
+/// leaves out of its parameters: `self`, or `cls` for a class method. A static
+/// method has none.
+fn receiver(entity: &Entity) -> Option<ParamJson> {
+    (entity.kind == "method" && entity.scope != "static").then(|| ParamJson {
+        type_spread: false,
+        kind: "pos".to_owned(),
+        name: Some(
+            if entity.scope == "class" {
+                "cls"
+            } else {
+                "self"
+            }
+            .to_owned(),
+        ),
+        optional: false,
+        type_: None,
+    })
+}
+
+/// The `class` or `static` decorator that puts a method on the type object,
+/// which the extractor gives as its scope
+fn scope_decorator(entity: &Entity) -> Option<String> {
+    (entity.kind == "method" && matches!(entity.scope.as_str(), "class" | "static"))
+        .then(|| entity.scope.clone())
+}
+
 /// A class's own entry uses its bare name as `item`; its members are dotted
 /// onto that (`Class.method`, `Class.(init)`) -- the same qualified-name
 /// convention the mkdocs-autorefs cross-references in docs/ use.
@@ -517,8 +547,14 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
         },
         doc: hover_doc(entity.doc.as_deref()),
         binders: entity.binders.iter().map(BinderJson::render).collect(),
-        decorators: entity.decorators.clone(),
-        params: entity.params.clone(),
+        decorators: scope_decorator(entity)
+            .into_iter()
+            .chain(entity.decorators.iter().cloned())
+            .collect(),
+        params: receiver(entity)
+            .into_iter()
+            .chain(entity.params.clone())
+            .collect(),
         type_: entity
             .returns
             .as_ref()
@@ -596,5 +632,41 @@ mod tests {
         )
         .unwrap();
         assert!(!old.type_spread);
+    }
+
+    #[test]
+    fn methods_declare_receivers_unless_static() {
+        let module: ModuleJson = serde_json::from_str(
+            r#"{
+            "module": "m", "entities": [{
+                "kind": "class", "name": "Box", "pub": true, "members": [
+                    {"kind": "method", "name": "count", "pub": true, "scope": "instance", "params": []},
+                    {"kind": "method", "name": "new", "pub": true, "scope": "class", "params": []},
+                    {"kind": "method", "name": "make", "pub": true, "scope": "static",
+                        "params": [{"kind": "pos", "name": "x"}]}
+                ]
+            }]
+        }"#,
+        )
+        .unwrap();
+        let mut rows = Vec::new();
+        add_module(&mut rows, &HashMap::new(), &module);
+        let params = |item: &str| -> Vec<String> {
+            let row = rows.iter().find(|row| row.item == item).unwrap();
+            row.params.iter().map(ParamJson::written).collect()
+        };
+        assert_eq!(params("Box.count"), ["self"]);
+        assert_eq!(params("Box.new"), ["cls"]);
+        assert_eq!(params("Box.make"), ["x"]);
+        let decorators = |item: &str| {
+            rows.iter()
+                .find(|row| row.item == item)
+                .unwrap()
+                .decorators
+                .clone()
+        };
+        assert!(decorators("Box.count").is_empty());
+        assert_eq!(decorators("Box.new"), ["class"]);
+        assert_eq!(decorators("Box.make"), ["static"]);
     }
 }

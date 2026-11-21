@@ -823,9 +823,10 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
                     )
                 });
             let type_only = bodiless && !protocol;
-            // A getter or setter is used as a field, not called
+            // A getter or setter is used as a field, not called, and a class
+            // or static method lives on the type object
             let decorators = match kind {
-                Kind::Method { .. } => designated(&["getter", "setter"]),
+                Kind::Method { .. } => designated(&["getter", "setter", "class", "static"]),
                 _ => Vec::new(),
             };
             Signature::Def {
