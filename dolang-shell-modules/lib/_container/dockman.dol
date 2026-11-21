@@ -567,8 +567,8 @@ def qualify_ref ref @ Str -> Str
 # patterns.
 def ensure_image runtime@Runtime img@Str policy@PullPolicy
   match policy
-    :ALWAYS:
-      let _ = runtime.pull $img
+    :ALWAYS: => let _ = runtime.pull $img
+    :NEVER: => nil
     :MISSING:
       let present = try
         inspect_image $runtime $img
@@ -577,9 +577,7 @@ def ensure_image runtime@Runtime img@Str policy@PullPolicy
         false
       if !present
         let _ = runtime.pull $img
-    :NEVER: => nil
-    _
-      throw ValueError "unsupported pull policy: $policy"
+    _ => throw ValueError "unsupported pull policy: $policy"
 
 def normalize_known[K] mapping@Dict[Str, K] value@Str -> (K | Str)
   mapping.get $value default: $value
@@ -593,8 +591,7 @@ def optional_str what@Str value@DecodeValue -> (Str | nil)
   match value
     Str(s) => s
     nil => nil
-    _
-      malformed $what
+    _ => malformed $what
 
 # An array of strings in inspect output
 def strings what@Str value@DecodeValue -> Array[Str]
@@ -632,8 +629,7 @@ def normalize_argv what@Str value@DecodeValue -> (Array[Str] | nil)
   match value
     Str(s) => [...shlex.split(s)]
     nil => nil
-    _
-      strings $what $value
+    _ => strings $what $value
 
 def container_env_args env @ Env -> Array[Str]
   let args @ Array[Str] = []
@@ -647,19 +643,13 @@ def container_env_args env @ Env -> Array[Str]
   args
 
 def container_label_args labels @ BaseDict[Str | Sym, Value] -> Array[Str]
-  let args @ Array[Str] = []
-  for key value = labels
-    args.push --label "$key=$value"
-  args
+  $
+    for key value = labels => --label "$key=$value"
 
 def container_port_args ports @ Iterable[PortSpec] -> Array[Str]
   let args @ Array[Str] = []
   for port = ports
-    bind port
-      :container_port
-      :host_port = nil
-      :host_ip = nil
-      :protocol = :TCP:
+    bind port => :container_port :host_port = nil :host_ip = nil :protocol = :TCP:
     let protocol = CONTAINER_PORT_PROTOCOLS.get $protocol else: do
       throw ValueError "unsupported port protocol: $protocol"
     let spec = "$container_port/$protocol"
@@ -674,20 +664,15 @@ def container_port_args ports @ Iterable[PortSpec] -> Array[Str]
   args
 
 def container_network_args networks @ Iterable[Str] -> Array[Str]
-  let args @ Array[Str] = []
-  for network = networks
-    args.push --network $network
-  args
+  $
+    for network = networks => --network $network
 
 def container_restart_args restart @ (RestartSpec | nil) -> Array[Str]
   if (restart == nil)
     return []
-  bind restart
-    :policy
-    :max_retries = nil
+  bind restart => :policy :max_retries = nil
   let cli = match policy
-    :ON_FAILURE:
-      (max_retries == nil && "on-failure" || "on-failure:$max_retries")
+    :ON_FAILURE: => (max_retries == nil && "on-failure" || "on-failure:$max_retries")
     _ if (max_retries != nil)
       throw ValueError "restart max_retries requires on-failure policy"
     :NO: => "no"
@@ -709,22 +694,17 @@ def container_create_args
   :entrypoint @ (Str | nil)
   :restart @ (RestartSpec | nil)
 do -> Array[Value]
-  return $
-    if (name != nil)
-      --name $name
+  $
+    if (name != nil) => --name $name
     ...(container_env_args env)
     ...(container_mount_args mounts)
     ...(container_label_args labels)
     ...(container_port_args ports)
     ...(container_network_args networks)
-    if (user != nil)
-      --user $user
-    if init
-      --init
-    if (cd != nil)
-      --workdir $cd
-    if (entrypoint != nil)
-      --entrypoint $entrypoint
+    if (user != nil) => --user $user
+    if init => --init
+    if (cd != nil) => --workdir $cd
+    if (entrypoint != nil) => --entrypoint $entrypoint
     ...(container_restart_args restart)
 
 def container_run_args
@@ -736,31 +716,23 @@ def container_run_args
   :user @ (Str | nil)
   :init @ Bool
 do -> Array[Value]
-  return $
-    if (name != nil)
-      --name $name
+  $
+    if (name != nil) => --name $name
     ...(container_mount_args mounts)
     ...(container_label_args labels)
     ...(container_port_args ports)
     ...(container_network_args networks)
-    if (user != nil)
-      --user $user
-    if init
-      --init
+    if (user != nil) => --user $user
+    if init => --init
 
 def normalize_platform platform @ (Platform | nil) -> (Str | nil)
   match platform
     nil => nil
     Str(s) => s
-    _
-      bind platform
-        :os
-        :arch
-        :variant = nil
-      if variant
-        "$os/$arch/$variant"
-      else
-        "$os/$arch"
+    (:os :arch :variant = nil) => if variant
+      "$os/$arch/$variant"
+    else
+      "$os/$arch"
 
 def output_lines output@Str stderr@Iterable[Str] -> Array[Str]
   let lines @ Array[Str] = []
@@ -847,26 +819,23 @@ def parse_container_ports ports @ DecodeValue -> Array[PortBinding]
     let protocol = normalize_known $PORT_PROTOCOLS $proto
     let container_port = int $port
     match bindings
-      nil
+      nil => mapped.push $ PortBinding
+        :protocol
+        :container_port
+        host_ip: nil
+        host_port: nil
+      Array(items) => for binding = items
+        bind binding => Dict $
+          "HostIp": host_ip = nil
+          "HostPort": host_port = nil
+          ...
+        else malformed "port $key"
+        let host_port = optional_str HostPort $host_port
         mapped.push $ PortBinding
           :protocol
           :container_port
-          host_ip: nil
-          host_port: nil
-      Array(items)
-        for binding = items
-          bind binding
-            Dict $
-              "HostIp": host_ip = nil
-              "HostPort": host_port = nil
-              ...
-          else malformed "port $key"
-          let host_port = optional_str HostPort $host_port
-          mapped.push $ PortBinding
-            :protocol
-            :container_port
-            host_ip: $optional_str("HostIp", host_ip)
-            host_port: $(host_port != nil && int(host_port) || nil)
+          host_ip: $optional_str("HostIp", host_ip)
+          host_port: $(host_port != nil && int(host_port) || nil)
       _ => malformed "port $key"
   mapped
 
@@ -875,16 +844,15 @@ def parse_container_mounts mounts @ DecodeValue -> Array[MountInfo]
   else malformed Mounts
   let mapped @ Array[MountInfo] = []
   for mount = items
-    bind mount
-      Dict $
-        "Type": type = nil
-        "Source": source = nil
-        "Destination": target = nil
-        "Mode": mode = nil
-        "RW": rw = true
-        "Propagation": propagation = nil
-        "Name": name = nil
-        ...
+    bind mount => Dict $
+      "Type": type = nil
+      "Source": source = nil
+      "Destination": target = nil
+      "Mode": mode = nil
+      "RW": rw = true
+      "Propagation": propagation = nil
+      "Name": name = nil
+      ...
     else malformed Mounts
     let Bool(writable) = rw
     else malformed RW
@@ -918,9 +886,7 @@ def parse_image_tags runtime@Runtime repo_tags@Array[Str] -> Array[ImageTag]
 
 # The first object in what `inspect` printed
 def inspected output @ Str -> Dict[Str, DecodeValue]
-  let Array(items) = json.decode $output
-  else malformed "output"
-  let Dict(data) = items[0]
+  let Array(Dict(data) ...) = json.decode $output
   else malformed "output"
   data
 
@@ -1047,10 +1013,8 @@ pub class Runtime
       throw e
 
   pub def mount_uopt self -> Str
-    if (self.id == :PODMAN:)
-      ",U"
-    else
-      ""
+    if (self.id == :PODMAN:) => ",U"
+    else ""
 
   pub def with[R]
     self
@@ -1081,22 +1045,21 @@ pub class Runtime
       # user command output, so capturing its stderr for classification
       # (rather than the pull chatter leaking to the real terminal) is safe.
       let lines @ Array[Str] = []
-      try
-        pipeline
-          do self.cli run --rm -i --pull=never
-            --entrypoint $ctr_agent
-            -v $subdir:$ctr_subdir:rw,z$uopt
-            -v $agent_bin:$ctr_agent:ro,z$uopt
-            $ctr ...(_vfs.vfs_args cd env) --key-stdin --accept $ctr_socket
-            stdin: (_vfs.key_input key)
-            stderr: $lines.prechomp()
-          do
-            strand.next()
-            let agent = Vfs.unix_socket $socket :key
-            try
-              return strand.with_io input: $input do agent.with $thunk
-            finally
-              time.timeout 30 do agent.stop()
+      try pipeline
+        do self.cli run --rm -i --pull=never
+          --entrypoint $ctr_agent
+          -v $subdir:$ctr_subdir:rw,z$uopt
+          -v $agent_bin:$ctr_agent:ro,z$uopt
+          $ctr ...(_vfs.vfs_args cd env) --key-stdin --accept $ctr_socket
+          stdin: (_vfs.key_input key)
+          stderr: $lines.prechomp()
+        do
+          strand.next()
+          let agent = Vfs.unix_socket $socket :key
+          try
+            return strand.with_io input: $input do agent.with $thunk
+          finally
+            time.timeout 30 do agent.stop()
       catch proc.Error: e
         classify_image_error $ctr $lines
         report_unknown $lines
@@ -1216,8 +1179,7 @@ pub class Runtime
           --filter $filter
         if all
           --all
-      do each do |id|
-        self.image $id.trim()
+      do each do |id| self.image $id.trim()
 
   pub def containers self :all@Bool = false :filter@Str = nil -> Iterable[Container]
     stream do pipeline
@@ -1226,8 +1188,7 @@ pub class Runtime
           --all
         if (filter != nil)
           --filter $filter
-      do each do |id|
-        self.container $id.trim()
+      do each do |id| self.container $id.trim()
 
   pub def image self ref @ Str -> Image
     let data = inspect_image $self $ref
@@ -1270,17 +1231,11 @@ pub class Runtime
       target
     else
       lines.prechomp()
-    try
-      self.cli save
-        if (self.id == :PODMAN:)
-          --format $cli
-        if !file
-          --output $Path(target)
-        if (platform != nil)
-          --platform $platform
-        ...refs
-        stdout: $out
-        stderr: $lines.prechomp()
+    try self.cli save stdout: $out stderr: $lines.prechomp()
+      if (self.id == :PODMAN:) => --format $cli
+      if !file => --output $Path(target)
+      if (platform != nil) => --platform $platform
+      ...refs
     catch proc.Error: e
       classify_image_error $refs[0] $lines
       classify_archive_error $(file && target || Path(target)) $lines
@@ -1296,12 +1251,10 @@ pub class Runtime
     let source = Path $source
     let platform = normalize_platform $platform
     let lines @ Array[Str] = []
-    let output = try
-      sub do self.cli load
-        --input $source
-        if (platform != nil)
-          --platform $platform
-        stderr: $lines.prechomp()
+    let output = try sub do self.cli load
+      --input $source
+      if (platform != nil) => --platform $platform
+      stderr: $lines.prechomp()
     catch proc.Error: e
       classify_archive_error $source $lines
       report_unknown $lines
@@ -1324,13 +1277,11 @@ pub class Runtime
     let platform = normalize_platform $platform
     let out @ Array[Str] = []
     let lines @ Array[Str] = []
-    try
-      self.cli pull --quiet
-        if (platform != nil)
-          --platform $platform
-        $ref
-        stdout: $out.prechomp()
-        stderr: $lines.prechomp()
+    try self.cli pull --quiet
+      if (platform != nil) => --platform $platform
+      $ref
+      stdout: $out.prechomp()
+      stderr: $lines.prechomp()
     catch proc.Error: e
       # Capture both streams rather than `sub`bing stdout: on failure `sub`'s
       # value never materializes, so anything the CLI said there would be lost.
@@ -1346,12 +1297,10 @@ pub class Runtime
   pub def push self ref@Str :platform@Platform = nil -> PushResult
     let platform = normalize_platform $platform
     let lines @ Array[Str] = []
-    let output = try
-      sub do self.cli push
-        if (platform != nil)
-          --platform $platform
-        $ref
-        stderr: $lines.prechomp()
+    let output = try sub do self.cli push
+      if (platform != nil) => --platform $platform
+      $ref
+      stderr: $lines.prechomp()
     catch proc.Error: e
       classify_push_error $ref $lines
       report_unknown $lines
@@ -1363,8 +1312,7 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
   let args @ Array[Str] = []
   for m = mounts
     bind m
-      :type
-      :target
+      :type :target
       :id = nil
       :source = nil
       :readonly = false
@@ -1380,31 +1328,21 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
     match type
       :CACHE: | :BIND:
         let parts = $
-          if readonly
-            - ro
-          else
-            - rw
-          if chown
-            - U
-          if (label != nil)
-            - $label
+          if readonly => ro
+          else rw
+          if chown => U
+          if (label != nil) => $label
         args.push -v $source:$target:$(",".join parts)
       :VOLUME: | :TMPFS:
         let parts = $
-          - type=$(str(type).lower())
-          - target=$target
-          if (source != nil)
-            - source=$source
-          if readonly
-            - "readonly"
-          else
-            - rw
-          if (size != nil)
-            - size=$size
-          if chown
-            - chown=$chown
-          if (label != nil)
-            - $label
+          type=$str(type).lower()
+          target=$target
+          if (source != nil) => source=$source
+          if readonly => "readonly"
+          else rw
+          if (size != nil) => size=$size
+          if chown => chown=$chown
+          if (label != nil) => $label
         args.push --mount=$(",".join parts)
       _ => throw ValueError "unsupported mount type: $type"
   args
@@ -1412,10 +1350,7 @@ def mount_args mounts @ Iterable[BuildMount] -> Array[Str]
 def container_mount_args mounts @ Iterable[ContainerMount] -> Array[Str]
   let checked @ Array[ContainerMount] = []
   for mount = mounts
-    bind mount
-      :type
-      :source = nil
-      ...
+    bind mount => :type :source = nil ...
     if !(CONTAINER_MOUNT_TYPES.contains type)
       throw ValueError "unsupported container mount type: $type"
     if (type == :BIND: && source == nil)
@@ -1425,25 +1360,22 @@ def container_mount_args mounts @ Iterable[ContainerMount] -> Array[Str]
 
 def path_leaf path @ Path -> Str
   let name = path.name
-  if !name
-    throw "path has no filename: $path"
+  else throw "path has no filename: $path"
   name
 
 def url_leaf url @ Url -> Str
   let name = url.name
-  if !name
-    throw "source URL has no filename: $url"
+  else throw "source URL has no filename: $url"
   name
 
 def parse_source source @ (Str | Path | Url) -> (Path | Url)
-  match source
-    Str(s)
-      if (s.starts_with "http://" || s.starts_with "https://")
-        Url $s
-      else
-        Path $s
-    _
-      source
+  if let Str(s) = source
+    if (s.starts_with "http://" || s.starts_with "https://")
+      Url $s
+    else
+      Path $s
+  else
+    source
 
 class Cache
   field paths @ Dict[Str, Path] = {}
@@ -1459,14 +1391,10 @@ let cache = Cache()
 
 def prefetch_add_urls adds @ Array[AddSpec]
   let urls @ Set[Url] = Set()
-  for add = adds
-    bind add
-      :source = nil
-      ...
-    if (source != nil)
-      let Url(url) = parse_source $source
-      else continue
-      urls.add $url
+  for (:source = nil ...) = adds => if (source != nil)
+    let Url(url) = parse_source $source
+    else continue
+    urls.add $url
   strand.pool 4 $urls do |url| cache.ensure $url
 
 def patch_name p @ patch.Patch -> Str
@@ -1475,18 +1403,14 @@ def patch_name p @ patch.Patch -> Str
     :CREATE: => "create $(p.target)"
     :DELETE: => "delete $(p.source)"
     :MODIFY: => "modify $(p.source)"
-    _ if (p.source == p.target) => "modify $(p.source)"
-    _
+    _ => if (p.source == p.target)
+      "modify $(p.source)"
+    else
       "$(str(kind).lower()): $(p.source) => $(p.target)"
 
 pub class Builder
   field runtime @ Runtime
-  field subdir @ Path
-  field socket @ Path
-  field ctr_subdir @ Path
-  field ctr_socket @ Path
-  field ctr_agent @ Path
-  field bin @ Path
+  field subdir socket ctr_subdir ctr_socket ctr_agent bin @ Path
   field mounts @ Iterable[BuildMount]
   field cd @ (Str | Path | nil)
   field env @ Env
@@ -1518,15 +1442,13 @@ pub class Builder
   # The connected agent
   def live_agent self -> Vfs
     let agent = self.#agent
-    if (agent == nil)
-      throw RuntimeError "build container is not connected"
+    else throw RuntimeError "build container is not connected"
     agent
 
   # The running container's name
   def live_ctr_name self -> Str
     let name = self.#ctr_name
-    if (name == nil)
-      throw RuntimeError "build container is not running"
+    else throw RuntimeError "build container is not running"
     name
 
   # Runs the container in the foreground under a background strand. The name
@@ -1548,7 +1470,8 @@ pub class Builder
     let lines @ Array[Str] = []
     let runtime = self.#runtime
     let uopt = runtime.mount_uopt()
-    let handle = stream do runtime.cli run -i --rm --name $name --pull=never
+    let handle = stream do runtime.cli run
+      -i --rm --name $name --pull=never
       ...mount_args(self.#mounts)
       --entrypoint env
       -v $self.#subdir:$self.#ctr_subdir:rw,z$uopt
@@ -1568,8 +1491,7 @@ pub class Builder
       # and as a nonzero exit instead. A failed `run` surfaces here: the output
       # channel re-raises the strand's error once it is exhausted, so
       # `default:` only covers a clean exit that said nothing.
-      let line = handle.iter().next default: nil
-      if (line == nil)
+      handle.iter().next else: do
         handle.join()
         throw RuntimeError "container agent exited before reporting ready"
     catch proc.Error: e
@@ -1597,10 +1519,8 @@ pub class Builder
       self.#handle = nil
       # This runs from `build`'s `finally`; a nonzero exit (which a forced
       # removal produces) must not displace the error being unwound.
-      try
-        handle.join()
-      catch proc.Error: _
-        nil
+      try handle.join()
+      catch proc.Error: _ => nil
     self.#ctr_name = nil
 
   def resolve_target self target@(Str | Path) leaf@Str -> Path
@@ -1627,24 +1547,19 @@ pub class Builder
         target.update_metadata mode: $mode
 
   def add_file self path@Path target@Path chmod@(Int | Mode | nil)
-    path.open do |src|
-      self.#copy_to_target $target $chmod do |dest|
-        while true
-          let chunk = src.read $COPY_BLOCK_SIZE
-          if (chunk.len == 0)
-            break
-          let _ = dest.write $chunk
+    path.open do |src| self.#copy_to_target $target $chmod do |dest|
+      while true
+        let chunk = src.read $COPY_BLOCK_SIZE
+        if (chunk.len == 0)
+          break
+        let _ = dest.write $chunk
 
   def add_content self content@(Str | Bin) target@Path chmod@(Int | Mode | nil)
     self.#copy_to_target $target $chmod do |dest|
       let _ = dest.write $content
 
   def step_add self spec @ AddSpec
-    bind spec
-      :target
-      :source = nil
-      :content = nil
-      :chmod = nil
+    bind spec => :target :source = nil :content = nil :chmod = nil
     if (source != nil && content != nil)
       throw "add: expected exactly one of source or content"
     if (content != nil)
@@ -1661,9 +1576,7 @@ pub class Builder
       throw "add: expected exactly one of source or content"
 
   def step_patch self spec @ PatchSpec
-    bind spec
-      :source = nil
-      :content = nil
+    bind spec => :source = nil :content = nil
     if (source != nil && content != nil)
       throw "patch: expected exactly one of source or content"
     let patch_data = if (content != nil)
@@ -1682,25 +1595,22 @@ pub class Builder
     let kind = p.type
     match kind
       :CREATE: => self.#add_content $p.apply(b"") $p.target nil
-      :DELETE:
+      :DELETE: => self.#live_agent().with do
         let source = p.source
-        self.#live_agent().with do
-          let result = p.apply (source.read())
-          if (result.len != 0)
-            throw "delete patch did not produce empty output: $source"
-          source.remove()
-      _
-        self.#live_agent().with do
-          let result = p.apply (p.source.read())
-          self.#add_content $result $p.target nil
-          if (kind == :MOVE: && p.source != p.target)
-            p.source.remove()
+        let result = p.apply (source.read())
+        if (result.len != 0)
+          throw "delete patch did not produce empty output: $source"
+        source.remove()
+      _ => self.#live_agent().with do
+        let result = p.apply (p.source.read())
+        self.#add_content $result $p.target nil
+        if (kind == :MOVE: && p.source != p.target)
+          p.source.remove()
 
   def step_commit self msg @ Str
     progress.show message: commit do |_|
       let img_id = sub do self.#runtime.cli commit
-        if msg
-          --message $msg
+        if msg => --message $msg
         $self.#live_ctr_name()
       self.#cleanup()
       self.#connect $img_id
@@ -1733,10 +1643,9 @@ pub class Builder
   do -> Image
     let tags @ Array[Str] = []
     let adds @ Array[AddSpec] = []
-    for entry = steps
-      match entry
-        (:tag: tag) => tags.push $tag
-        (:add: spec) => adds.push $spec
+    for entry = steps => match entry
+      (:tag: tag) => tags.push $tag
+      (:add: spec) => adds.push $spec
     let message = if tags.len
       tags[0]
     else
@@ -1808,13 +1717,12 @@ pub class Image
     else
       "sha256:$id"
 
+    bind root_fs => "Layers": layers = [] ...
+
     self.created = created
     self.size = size
     self.architecture = arch
     self.os = os
-    bind root_fs
-      "Layers": layers = []
-      ...
     self.layers = strings Layers $layers
 
     bind config
@@ -1844,9 +1752,7 @@ pub class Image
 
   # Returns the current tags, which are empty for an untagged image.
   pub def tags self -> Array[ImageTag]
-    bind inspect_image(self.#runtime, self.id)
-      "RepoTags": tags = []
-      ...
+    bind inspect_image(self.#runtime, self.id) => "RepoTags": tags = [] ...
     parse_image_tags $self.#runtime $strings("RepoTags", tags)
 
   # Tags the image with a new name.
@@ -1885,8 +1791,7 @@ pub class Image
       let lines @ Array[Str] = []
       try
         self.#runtime.cli rmi
-          if force
-            --force
+          if force => --force
           $self.id
           stdout: $out.prechomp()
           stderr: $lines.prechomp()
@@ -1913,8 +1818,7 @@ pub class Image
     :platform @ Platform = nil
   do -> (Str | Path)
     self.#runtime.save $target :format $self.id
-      if (platform != nil)
-        platform: $platform
+      if (platform != nil) => :platform
 
 # A running or stopped container.
 pub class Container
@@ -1963,8 +1867,7 @@ pub class Container
     self.entrypoint = normalize_argv Entrypoint $entrypoint
     self.labels = string_dict Labels $labels
 
-  pub def (str) self -> Str
-    self.id
+  pub def (str) self -> Str => self.id
 
   # Runs `func` in this running container through a VFS context.
   #
@@ -2013,9 +1916,7 @@ pub class Container
     else malformed State
     let Dict(network) = network
     else malformed NetworkSettings
-    bind network
-      "Ports": ports = {}
-      ...
+    bind network => "Ports": ports = {} ...
     let status = optional_str Status $state.get("Status", default: nil)
     let name = optional_str Name $name
     let live_name = if (name == nil)
@@ -2039,8 +1940,7 @@ pub class Container
     :timeout @ Int = nil
   do
     self.#runtime.quiet_cli stop
-      if (timeout != nil)
-        --time $timeout
+      if (timeout != nil) => --time $timeout
       $self.id
 
   # Starts the container.
@@ -2076,8 +1976,7 @@ pub class Container
     :timeout @ Int = nil
   do
     self.#runtime.quiet_cli restart
-      if (timeout != nil)
-        --time $timeout
+      if (timeout != nil) => --time $timeout
       $self.id
 
   # Removes the container.
@@ -2089,14 +1988,11 @@ pub class Container
     :volumes @ Bool = false
   do
     let lines @ Array[Str] = []
-    try
-      let _ = sub do self.#runtime.cli rm
-        if force
-          --force
-        if volumes
-          --volumes
-        $self.id
-        stderr: $lines.prechomp()
+    try let _ = sub do self.#runtime.cli rm
+      if force => --force
+      if volumes => --volumes
+      $self.id
+      stderr: $lines.prechomp()
     catch proc.Error: e
       classify_container_error $self.id $lines
       report_unknown $lines
