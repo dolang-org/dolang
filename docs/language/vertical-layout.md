@@ -203,6 +203,9 @@ let doubled = $
     (i * 2)
 ```
 
+Literals take the same elements on one line, as in `[for i = xs => i * 2]`;
+see [Comprehensions](data-structures.md#comprehensions).
+
 Where bin-packing is allowed, `=>` after the iteratee takes a line of bin-packed
 items, as it does [after an `if` condition](#if-in-vertical-layout):
 

@@ -2135,4 +2135,29 @@
       }
     ]
   }
+,
+  {
+    "name": "for and if elements in a list",
+    "lines": ["let ys = [for x = xs => if (x > 0) => x]"],
+    "checks": [
+      {
+        "line": 1,
+        "text": "for",
+        "scopes": ["keyword.control.dol"],
+        "vim": ["dolRepeat"]
+      },
+      {
+        "line": 1,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 1,
+        "text": "if",
+        "scopes": ["keyword.control.conditional.dol"],
+        "vim": ["dolConditional"]
+      }
+    ]
+  }
 ]

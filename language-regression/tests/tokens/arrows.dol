@@ -24,3 +24,8 @@ def double x => (x * 2)
 let r = try double 1
 catch e => dbg $e
 #       ^~: operator
+
+let ys = [for x = [1] => if (x > 0) => x]
+#                     ^~: operator
+#                                   ^~: operator
+dbg $ys

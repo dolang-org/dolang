@@ -18,7 +18,9 @@ syn match dolOperator "\s\zs=>\ze\%(\s\|$\)"
 syn match dolEllipsis "\.\.\." contained
 syn match dolDelimiter "[,|]"
 syn match dolColon ":"
-syn match dolIdentifier "\<\%(true\>\|false\>\|nil\>\|do\>\)\@![A-Za-z_][A-Za-z0-9_]*" contained
+" A list's `for` and `if` elements, and the `let`/`bind` tests of `if`, stay
+" keywords unless decayed
+syn match dolIdentifier "\<\%(true\>\|false\>\|nil\>\|do\>\)\@!\%(\%([.#]\)\@<!\<\%(for\|if\|else\|let\|bind\)\>\%(:\)\@!\)\@![A-Za-z_][A-Za-z0-9_]*" contained
 
 syn cluster dolStrings contains=dolString,dolRawString,dolHereString,dolRawHereString
 syn cluster dolExprList contains=dolOperator,dolNumber,dolConstant,dolIdentifier,@dolStrings,dolDelimiter,dolKeyword,dolConditional,dolRepeat,dolInclude,dolFullExpr,dolSymbol,dolDittoKey,dolKey,dolEllipsis,dolAnnotation,dolReturnType,dolLambda
