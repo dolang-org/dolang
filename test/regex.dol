@@ -5,6 +5,7 @@ import std
 import std:
   - Iter
 import test:
+  - assert
   - assert_eq
   - assert_throws
   - assert_type
@@ -201,6 +202,9 @@ def split_iter_unpack()
   let first ...rest = re.split "a b c d"
   assert_eq $first "a"
   assert_eq ([...rest]) ["b", "c", "d"]
+
+  let parts = re.split "x y"
+  assert ((parts.buffer()) == parts)
 
   let a b c = re.split "x y z"
   assert_eq $a "x"

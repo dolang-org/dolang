@@ -850,6 +850,10 @@ An iterator should conventionally implement `(iter)` by returning `self`. A
 class that subclasses [`Iter`](std.Iter) inherits that `(iter)`, along with
 `Iter`'s methods.
 
+An iterator that also implements `(unpack)` should define
+[`buffer`](std.Iter.buffer) to return `self`. The inherited `buffer` wraps the
+iterator so it can be unpacked, which such an iterator doesn't need.
+
 ### `(sink)`: Obtain Sink
 
 Invoked to obtain a sink object, such as by [`strand.put`](strand.put) or

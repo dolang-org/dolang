@@ -84,6 +84,13 @@ def unpack_readonly()
   assert_throws $std.ConcurrencyError do
     [...stale]
 
+#[test]
+#[vfs]
+#[populate]
+def buffer_returns_self()
+  let paths = glob "src/*.rs"
+  assert ((paths.buffer()) == paths)
+
 # `src` holds a link back out to `outside`.
 #[fixture]
 def with_link block ...rest

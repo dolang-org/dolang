@@ -871,7 +871,7 @@ impl<'v> Protocol<'v> for IterObj<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

@@ -199,7 +199,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 
@@ -551,7 +551,7 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 

@@ -4,6 +4,7 @@ pub mod array_view;
 pub(crate) mod backtrace;
 pub(crate) mod bin;
 pub(crate) mod binbuf;
+pub(crate) mod buffered;
 pub(crate) mod channel;
 pub(crate) mod class;
 pub(crate) mod dict;
@@ -197,6 +198,8 @@ pub(crate) struct BuiltinTypes<'v> {
     pub(crate) chain_iter: TypeHandle<'v, iter::Chain<'v>>,
     pub(crate) zip_iter: TypeHandle<'v, iter::Zip<'v>>,
     pub(crate) take_iter: TypeHandle<'v, iter::Take<'v>>,
+    pub(crate) buffered_iter: TypeHandle<'v, buffered::CursorObj<'v>>,
+    pub(crate) buffer_state: TypeHandle<'v, buffered::BufferState<'v>>,
     pub(crate) skip_iter: TypeHandle<'v, iter::Skip<'v>>,
     pub(crate) enumerate_iter: TypeHandle<'v, iter::Enumerate<'v>>,
     pub(crate) kv_iter: TypeHandle<'v, iter::Kv<'v>>,
@@ -357,6 +360,8 @@ impl<'v> BuiltinTypes<'v> {
             chain_iter: types.register_type_handle(),
             zip_iter: types.register_type_handle(),
             take_iter: types.register_type_handle(),
+            buffered_iter: types.register_type_handle(),
+            buffer_state: types.register_type_handle(),
             skip_iter: types.register_type_handle(),
             enumerate_iter: types.register_type_handle(),
             kv_iter: types.register_type_handle(),

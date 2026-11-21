@@ -181,6 +181,7 @@ well_known_symbols! {
     (Trim, "trim", TRIM),
     (Truncate, "truncate", TRUNCATE),
     (Take, "take", TAKE),
+    (Buffer, "buffer", BUFFER),
     (Filter, "filter", FILTER),
     (Field, "field", FIELD),
     (FieldThunk, "field_thunk", FIELD_THUNK),

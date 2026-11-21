@@ -2073,7 +2073,6 @@ fn op_unpack_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 
 pub(crate) type GcObj<'v, T> = gc::Box<'v, Header, T>;
 pub(crate) type GcObjPin<'v, 'p, T> = gc::Pin<'v, 'p, Header, T>;
-#[expect(dead_code)]
 pub(crate) type WeakObj<'v, T> = gc::BoxWeak<'v, Header, T>;
 
 impl<'v, T: Upcast<Header>> gc::Base<'v, T> {

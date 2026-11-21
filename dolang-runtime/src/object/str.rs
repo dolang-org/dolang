@@ -709,7 +709,7 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 
     async fn op_unpack<'a, 's>(
@@ -937,7 +937,7 @@ impl<'v> Protocol<'v> for Split<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        iter::iter_mcall(strand, &this, method, args, out).await
+        iter::unpack_iter_mcall(strand, &this, method, args, out).await
     }
 }
 

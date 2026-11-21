@@ -19,7 +19,14 @@ assert_eq $b 2
 By default, the pattern must exhaustively match the entire structure or an
 error will result. Use `...` to capture surplus items instead. The rest can be
 unpacked. Unpacking an iterator doesn't advance it, so only iterators over
-fixed collections can be unpacked.
+fixed collections can be unpacked. Call [`buffer`](std.Iter.buffer) to make any
+other iterator unpackable, such as one from `map`:
+
+```
+let a ...rest = [1, 2, 3].map(do |x| x * 10).buffer()
+assert_eq $a 10
+assert_eq [...rest] [20, 30]
+```
 
 ```
 let first ...rest = [1, 2, 3, 4]

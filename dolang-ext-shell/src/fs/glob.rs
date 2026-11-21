@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use dolang::runtime::{
     AllocExt, Instance, Object, Result, Slot, State, Strand,
     object::{ArrayLike, ArrayView, TypeBuilder, Unpack},
+    unpack,
     value::TypeObject,
 };
 
@@ -32,7 +33,14 @@ impl<'v> Object<'v> for GlobIter {
     type TypeAnnex = ();
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
-        builder.supertype(TypeObject::Iter)
+        builder
+            .supertype(TypeObject::Iter)
+            // Already unpackable, so buffering would only add a wrapper.
+            .method("buffer", async |this, strand, args, out| {
+                unpack!(strand, args =>);
+                strand.store(out, this);
+                Ok(())
+            })
     }
 
     /// Returns this iterator.
