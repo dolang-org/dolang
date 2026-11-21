@@ -136,6 +136,29 @@ bind {foo: nil}
 assert_eq $foo nil
 ```
 
+### Patterns on the Header Line
+
+After `=>`, the pattern goes on the same line as `bind` and reads like a
+parameter list, so its items take defaults without the parentheses a `let`
+pattern would need:
+
+```playground
+#> import test:
+#>   - assert_eq
+bind {host: "example.com"} => :host :port = 80
+assert_eq $host "example.com"
+assert_eq $port 80
+```
+
+A [`C $` type test](#type-test-patterns) can end the line, with its pattern in
+an indented block:
+
+```
+bind point => Point $
+  x: px
+  y: py
+```
+
 ## Patterns in `for`
 
 `for` matches each element against its pattern:
@@ -246,6 +269,18 @@ else
   echo "unexpected shape"
 ```
 
+With the pattern on the header line after `=>`, the body follows directly as
+an indented block, or after a second `=>` on the same line. After a `C $` type
+test's block, `do` or `=>` introduces the body as it does after a vertical
+pattern:
+
+```
+if bind response => :status :body = ""
+  echo "$status $body"
+
+if bind entry => key value = "" => echo "$key=$value"
+```
+
 Both forms work with `while`, in which case the loop ends the first time the
 pattern fails to match:
 
@@ -340,9 +375,9 @@ that does not return. Reaching its end raises `std.RuntimeError`, naming the
 end.
 
 Write `else` on its own line at the statement's indentation, followed by an
-indented block or a single inline statement. `else if` is not accepted here;
-put an `if` inside an indented body instead. When the RHS of `let` is an `if`
-or `match`, its `else` belongs to that construct, and an additional `else`
+indented block or a single statement on the same line. `else if` is not accepted
+here; put an `if` inside an indented body instead. When the RHS of `let` is an
+`if` or `match`, its `else` belongs to that construct, and an additional `else`
 cannot be attached to the `let`.
 
 ## Constant Patterns
@@ -411,10 +446,11 @@ bind point
     y: py
 ```
 
-This form works in `bind` and nested vertical patterns. Use `C(pattern)` in
-horizontal bindings. Both forms accept annotations and defaults on inner
-bindings, but neither accepts an annotation or default on the whole type-test
-pattern. `def` parameters accept neither form.
+This form works in `bind`, at the end of a pattern after `bind … =>`, and in
+nested vertical patterns. Use `C(pattern)` in other horizontal bindings. Both
+forms accept annotations and defaults on inner bindings, but neither accepts an
+annotation or default on the whole type-test pattern. `def` parameters accept
+neither form.
 
 A failed class test raises `TypeError` in an ordinary binding or lambda
 parameter. In a conditional binding it takes the failure branch. A successful
@@ -676,12 +712,15 @@ assert_eq (sign 500) :large:
 A guard may be `if let` or `if bind`, which matches a pattern of its own, as in
 [Conditional Matching](./patterns.md#conditional-matching). Its names are in
 scope in the body along with the arm's. After an `if bind` guard's vertical
-pattern, `=>` may take the place of `do`, as after a `|` group.
+pattern, `=>` may take the place of `do`, as after a `|` group. With the
+pattern after `=>`, a second `=>` introduces the body:
+`h if bind rest => a b = 0 => [h, a, b]`.
 
 ### `else` and the Result
 
-`else`, lined up with `match`, runs when no arm matches. `else if` continues as
-it does after `if`:
+`else`, lined up with `match`, runs when no arm matches. Its body is an indented
+block or a statement on the same line, and `else if` continues as it does after
+`if`:
 
 ```playground
 #> import test:
@@ -690,8 +729,7 @@ def lookup table key
   match key
     Str(k) if let value = table.get(k)
       "$k is $value"
-  else
-    "not found"
+  else "not found"
 
 assert_eq (lookup {"a": 1} "a") "a is 1"
 assert_eq (lookup {"a": 1} 4) "not found"

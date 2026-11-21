@@ -1,0 +1,6 @@
+match 1 => 2
+# error: `match` takes its arms in an indented block; `=>` follows an arm's pattern
+#   --> match_scrutinee_arrow.dol:LL:LL
+#    |
+# LL | match 1 => 2
+#    |         ^^

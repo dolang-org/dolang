@@ -1,0 +1,10 @@
+let d = $
+  items:
+    if true
+      - 1
+    else 2
+# error: `else` takes same-line items only where bin-packing is allowed; put the items in an indented block under `else`
+#   --> if_vert_nested_else.dol:LL:LL
+#    |
+# LL |     else 2
+#    |     ^^^^

@@ -247,9 +247,13 @@ pub(crate) enum CondPatternKind {
     /// `if let PATTERN = SCRUTINEE`
     Let { equal_span: Span },
     /// `if bind SCRUTINEE`, with the pattern laid out vertically and the body
-    /// introduced by `do`. In a `match` arm's guard, a `=>` can take the place
-    /// of `do`, and then the arm records it.
-    Bind { do_span: Option<Span> },
+    /// introduced by `do`, or `if bind SCRUTINEE => PATTERN` with the pattern
+    /// on the header line after `arrow_span`. A `=>` can take the place of
+    /// `do`, and then the branch or arm records it.
+    Bind {
+        arrow_span: Option<Span>,
+        do_span: Option<Span>,
+    },
 }
 
 /// A pattern matched against the condition of an `if` or `while`, binding its
@@ -279,8 +283,14 @@ fn accept_cond<'a, V: Visit>(
             visit.token(Token::Operator, equal_span, None)?;
             visit.node(cond)
         }
-        CondPatternKind::Bind { do_span } => {
+        CondPatternKind::Bind {
+            arrow_span,
+            do_span,
+        } => {
             visit.node(cond)?;
+            if let Some(arrow_span) = arrow_span {
+                visit.token(Token::Operator, arrow_span, None)?;
+            }
             visit.node(&bind.pattern)?;
             match do_span {
                 Some(do_span) => visit.token(Token::Keyword, do_span, None),
@@ -295,6 +305,8 @@ pub(crate) struct IfBranch<T> {
     pub(crate) expr: Expr,
     /// Conditional pattern bind, for `if let` / `if bind`
     pub(crate) bind: Option<CondPattern>,
+    /// The `=>` before a same-line body
+    pub(crate) arrow_span: Option<Span>,
     pub(crate) body: T,
 }
 
@@ -305,6 +317,7 @@ impl<T> IfBranch<T> {
             span: self.span,
             expr: self.expr,
             bind: self.bind,
+            arrow_span: self.arrow_span,
         }
     }
 }
@@ -333,6 +346,9 @@ impl<T: Node> Node for IfBranch<T> {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.token(Token::Keyword, self.span, None)?;
         accept_cond(self.bind.as_ref(), &self.expr, visit)?;
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
+        }
         self.body.trans(visit)
     }
 
@@ -1845,6 +1861,25 @@ pub(crate) enum PatItem {
     },
 }
 
+impl PatItem {
+    /// Whether the item ends with the indented block of a `C $` type test
+    pub(crate) fn ends_in_block(&self) -> bool {
+        match self {
+            PatItem::Pos { bind, .. }
+            | PatItem::Key { bind, .. }
+            | PatItem::ConstKey { bind, .. } => match bind {
+                PatBind::Nested {
+                    pattern,
+                    parens: None,
+                    ..
+                } => pattern.ends_in_block(),
+                _ => false,
+            },
+            PatItem::Rest { .. } => false,
+        }
+    }
+}
+
 impl Node for PatItem {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         if let PatItem::Pos { bind, .. }
@@ -1993,6 +2028,19 @@ pub(crate) enum Pattern {
     Alt(Box<Alternation>),
 }
 
+impl Pattern {
+    /// Whether a horizontal pattern ends with the indented block of a `C $`
+    /// type test
+    pub(crate) fn ends_in_block(&self) -> bool {
+        match self {
+            Pattern::TypeTest(test) => test.close.is_none(),
+            Pattern::Unpack(items) => items.last().is_some_and(PatItem::ends_in_block),
+            Pattern::Alt(alt) => alt.alts.last().is_some_and(Pattern::ends_in_block),
+            Pattern::Constant { .. } | Pattern::Ident(_) => false,
+        }
+    }
+}
+
 impl Node for Pattern {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         match self {
@@ -2125,12 +2173,17 @@ pub(crate) struct Bind {
     pub(crate) bind: Pattern,
     pub(crate) expr: Expr,
     pub(crate) bind_span: Span,
+    /// The `=>` before a pattern on the header line
+    pub(crate) arrow_span: Option<Span>,
 }
 
 impl Node for Bind {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.token(Token::Keyword, self.bind_span, None)?;
         visit.node(&self.expr)?;
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
+        }
         visit.node(&self.bind)?;
         if let Some((body, span)) = &self.else_branch {
             visit.token(Token::Keyword, *span, None)?;
@@ -2166,6 +2219,8 @@ pub(crate) struct While {
     pub(crate) expr: Expr,
     /// Conditional pattern bind, for `while let` / `while bind`
     pub(crate) bind: Option<CondPattern>,
+    /// The `=>` before a same-line body
+    pub(crate) arrow_span: Option<Span>,
     pub(crate) body: Block,
     pub(crate) while_span: Span,
 }
@@ -2174,6 +2229,9 @@ impl Node for While {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         visit.token(Token::Keyword, self.while_span, None)?;
         accept_cond(self.bind.as_ref(), &self.expr, visit)?;
+        if let Some(arrow_span) = self.arrow_span {
+            visit.token(Token::Operator, arrow_span, None)?;
+        }
         visit.node(&self.body)
     }
 

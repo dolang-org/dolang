@@ -1,0 +1,7 @@
+bind [1] => a
+  # error: a pattern after `=>` ends with its line; put a vertical pattern under `bind`, or end the line with a `C $` type test
+  #   --> bind_arrow_block.dol:LL:LL
+  #    |
+  # LL | bind [1] => a
+  #    |          ^^
+  b

@@ -17,11 +17,9 @@ pub(super) enum CmdContext {
     /// A statement, whose arguments may be keys and may end in an indented
     /// block, here string, `$` data or `do` block
     Stmt,
-    /// A header ending where its construct's indented block begins, such as a
-    /// condition or a scrutinee
+    /// A header ending where its construct's indented block begins, or at a
+    /// `=>` introducing same-line content, such as a condition or a scrutinee
     Head,
-    /// A `match` arm's guard: a header that also ends at `=>`
-    Guard,
     /// A bin-packed line of vertical arguments, where a key argument must head
     /// its own line
     VertLine,
@@ -37,7 +35,7 @@ impl CmdContext {
     }
 
     fn ends_at_arrow(self) -> bool {
-        matches!(self, Self::Guard)
+        matches!(self, Self::Head)
     }
 
     /// The context of a command nested in an argument, after `$` or `do`. It

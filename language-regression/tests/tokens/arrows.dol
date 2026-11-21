@@ -1,0 +1,16 @@
+# `=>` before a same-line body or a pattern on the header line is an operator.
+
+if true => dbg 1
+#       ^~: operator
+
+let i = 0
+while (i < 1) => i = (i + 1)
+#             ^~: operator
+
+bind [1] => a
+#        ^~: operator
+dbg $a
+
+if bind [1] => b c = 2 => dbg $b $c
+#           ^~: operator
+#                      ^~: operator

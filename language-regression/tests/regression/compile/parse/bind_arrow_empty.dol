@@ -1,0 +1,6 @@
+bind [1] =>
+# error: `=>` needs a pattern on the same line; for a vertical pattern, omit `=>`, or end the line with a `C $` type test
+#   --> bind_arrow_empty.dol:LL:LL
+#    |
+# LL | bind [1] =>
+#    |          ^^

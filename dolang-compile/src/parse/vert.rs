@@ -3,7 +3,7 @@ use super::{
     cmd::CmdContext,
     cmd::UnquotedMode,
     diag::ImplicitDelimitedConcat,
-    stmt::{BodyMode, arm_expected_inline},
+    stmt::{BodyMode, arm_expected_inline, lead_name},
     stream::ExpectKind,
 };
 use crate::{
@@ -24,13 +24,32 @@ impl BodyMode for VertBody {
         parser.parse_cmd_vert_body(scope, self.bin_pack)
     }
 
+    fn check_inline(&self, parser: &mut Parser<'_>, scope: &mut Scope, lead: &Token) -> Result<()> {
+        if self.bin_pack {
+            return Ok(());
+        }
+        // Only a context that bin-packs items can take a line of them
+        let msg = if lead_name(lead) == "=>" {
+            "`=>` needs a context that allows bin-packing; drop it and put the items in an \
+             indented block"
+        } else {
+            "`else` takes same-line items only where bin-packing is allowed; put the items in an \
+             indented block under `else`"
+        };
+        Err(parser.syntax_error(scope, Some(lead.clone()), msg))
+    }
+
     fn parse_inline(
         &self,
         parser: &mut Parser<'_>,
         scope: &mut Scope,
-        arrow_span: Span,
+        lead: &Token,
     ) -> Result<ExprBody<Arg>> {
-        parser.parse_vert_arm_inline(scope, arrow_span, self.bin_pack)
+        parser.parse_vert_inline(scope, lead)
+    }
+
+    fn inline_noun(&self) -> (&'static str, &'static str) {
+        ("its items", "items")
     }
 
     fn arm_expected(&self, group: bool) -> &'static str {
@@ -50,52 +69,12 @@ impl BodyMode for VertBody {
 }
 
 impl Parser<'_> {
-    /// Parse a vertical `match` arm's same-line items, after its `=>` at
-    /// `arrow_span`: one line of bin-packed positional items, where the
-    /// context allows bin-packing
-    fn parse_vert_arm_inline(
-        &mut self,
-        scope: &mut Scope,
-        arrow_span: Span,
-        bin_pack: bool,
-    ) -> Result<ExprBody<Arg>> {
+    /// Parse same-line items after `lead`, a `=>` or `else`, and its
+    /// separator: one line of bin-packed positional items
+    fn parse_vert_inline(&mut self, scope: &mut Scope, lead: &Token) -> Result<ExprBody<Arg>> {
         use self::Op;
         use TokenInfo::*;
 
-        let arrow = Token {
-            info: FatArrow,
-            span: arrow_span,
-        };
-        if !bin_pack {
-            return Err(self.syntax_error(
-                scope,
-                Some(arrow),
-                "a nested `match` arm's items go in an indented block, or in a block introduced \
-                 with `$`",
-            ));
-        }
-        match self.peek()? {
-            Some(token!(ArgSep)) => {
-                self.advance();
-            }
-            None | Some(token!(StmtSep | Dedent)) => {
-                return Err(self.syntax_error(
-                    scope,
-                    Some(arrow),
-                    "`=>` needs items on the same line",
-                ));
-            }
-            Some(token!(Indent)) => {
-                return Err(self.syntax_error(
-                    scope,
-                    Some(arrow),
-                    "`=>` takes its items on the same line",
-                ));
-            }
-            _ => {
-                self.expect(scope, &[ExpectKind::ArgSep])?;
-            }
-        }
         let mut elems = Vec::new();
         if let Some(token!(Op(Op::Minus))) = self.peek()? {
             let minus_span = self.advance();
@@ -117,10 +96,11 @@ impl Parser<'_> {
         }
         self.parse_cmd_args(scope, CmdContext::VertLine, &mut elems)?;
         if let Some(token!(Indent)) = self.peek()? {
+            let name = lead_name(lead);
             return Err(self.syntax_error(
                 scope,
-                Some(arrow),
-                "`=>` takes its items on the same line",
+                Some(lead.clone()),
+                format!("`{name}` takes its items on the same line"),
             ));
         }
         Ok(ExprBody {

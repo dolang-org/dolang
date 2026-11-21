@@ -2057,4 +2057,46 @@
       }
     ]
   }
+,
+  {
+    "name": "same-line bodies and bind patterns after =>",
+    "lines": [
+      "if ready => echo go",
+      "else echo wait",
+      "bind opts => :host Int(port)",
+      "echo true"
+    ],
+    "checks": [
+      {
+        "line": 1,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": "=>",
+        "scopes": ["keyword.operator.dol"],
+        "vim": ["dolOperator"]
+      },
+      {
+        "line": 3,
+        "text": "Int",
+        "scopes": ["storage.type.pattern.dol"],
+        "vim": ["dolPatternType"]
+      },
+      {
+        "line": 3,
+        "text": "opts",
+        "notScopes": ["storage.type.pattern"],
+        "notVim": ["dolPatternType"]
+      },
+      {
+        "line": 4,
+        "text": "true",
+        "scopes": ["constant.language.dol"],
+        "vim": ["dolConstant"]
+      }
+    ]
+  }
 ]

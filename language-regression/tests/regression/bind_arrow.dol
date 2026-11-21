@@ -1,0 +1,73 @@
+# `bind SCRUTINEE => PATTERN` puts the pattern on the header line, where it
+# reads as a parameter list, so its items can have defaults
+bind [1] => a b = 2
+assert_eq [a, b] [1, 2]
+
+bind {host: "example.com"} => :host :port = 80
+assert_eq [host, port] ["example.com", 80]
+
+# A lone name binds the whole value
+bind [1, 2] => whole
+assert_eq $whole [1, 2]
+
+# A `C $` type test at the end of the line takes its pattern as a block
+bind {x: 3, y: 4} => Dict $
+  x: px
+  y: py
+assert_eq [px, py] [3, 4]
+
+# `else` handles a mismatch
+def int_of v
+  bind v => Int(n)
+  else return nil
+  n
+assert_eq (int_of 3) 3
+assert_eq (int_of "s") nil
+
+def first_of v
+  bind v => Array $
+    - first
+    ...
+  else
+    return nil
+  first
+assert_eq (first_of [5, 6]) 5
+assert_eq (first_of 5) nil
+
+# In a condition, a block body follows the pattern directly, or `=>` gives a
+# same-line one
+let r = if bind [7] => c d = 0
+  [c, d]
+else
+  nil
+assert_eq $r [7, 0]
+
+let r2 = if bind [1] => e f = 5 => [e, f]
+assert_eq $r2 [1, 5]
+
+let r3 = if bind "s" => Int(g) => g
+else "none"
+assert_eq $r3 none
+
+# After a `C $` type test's block, `do` or `=>` introduces the body
+let r4 = if bind {x: 1} => Dict $
+  x: qx
+do
+  qx
+assert_eq $r4 1
+
+let r5 = if bind {x: 2} => Dict $
+  x: sx
+=> sx
+assert_eq $r5 2
+
+# `while bind` and guards take the same form
+let queue = [[1], [1], []]
+let i = 0
+while bind queue[i] => n ... => i = (i + n)
+assert_eq $i 2
+
+let r6 = match [1]
+  h if bind [2] => k l = 3 => [h, k, l]
+  _ => nil
+assert_eq $r6 [[1], 2, 3]
