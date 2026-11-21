@@ -25,21 +25,16 @@ pub def classify
   :warn @ Int = 90
 do -> Status
   let eol = release.eol
-  if (eol == nil)
-    return (release.is_eol && :EOL: || :SUPPORTED:)
-  if (eol <= today)
-    :EOL:
-  else if (eol <= today.add_days(warn))
-    :ENDING:
-  else
-    :SUPPORTED:
+  else return (release.is_eol && :EOL: || :SUPPORTED:)
+  if (eol <= today) => :EOL:
+  else if (eol <= today.add_days(warn)) => :ENDING:
+  else :SUPPORTED:
 
 # Days from `today` until `release` reaches end-of-life: negative once it has,
 # and `nil` with no announced date.
 pub def days_left release@Release :today@Date -> (Int | nil)
   let eol = release.eol
-  if (eol == nil)
-    return nil
+  else return nil
   ((eol - today).nanos // 86_400_000_000_000)
 
 # Finds the release cycle a version belongs to.
@@ -51,8 +46,6 @@ pub def find_release releases@Array[Release] version@Str -> (Release | nil)
   let best = nil
   for release = releases
     let name = release.name
-    if (version != name && !version.starts_with("$name."))
-      continue
-    if (best == nil || name.len > best.name.len)
-      best = release
+    if (version != name && !version.starts_with("$name.")) => continue
+    if (best == nil || name.len > best.name.len) => best = release
   best

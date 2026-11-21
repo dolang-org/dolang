@@ -45,8 +45,7 @@ def eol *args
         let rc = try
           run $exe --module-path lib main.dol --base-url $server.url ...args stdout: $out stderr: $std.null
           0
-        catch proc.Error: error
-          error.rc
+        catch proc.Error: error => error.rc
         (Str(out.freeze()), rc)
 
 # The first item of `check --format json`'s output.

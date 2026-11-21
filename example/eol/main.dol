@@ -15,24 +15,16 @@ import time:
 
 def print_table headers rows
   let all = [headers, ...rows]
-  let widths = $
-    for header = headers
-      - $header.len
-  for row = rows
-    for i cell = row.iter().enumerate()
-      if (cell.len > widths[i])
-        widths[i] = cell.len
+  let widths = [for header = headers => header.len]
+  for row = rows => for i cell = row.iter().enumerate()
+    if (cell.len > widths[i]) => widths[i] = cell.len
   for row = all
-    let cells = $
-      for cell width = row.iter().zip(widths)
-        - (FmtSpec(width: width).pad(cell))
+    let cells = [for cell width = row.iter().zip(widths) => FmtSpec(:width).pad(cell)]
     shell.stdout.write ("  ".join(cells).trim_end()) "\n"
 
 def report format headers rows records
-  if (format == "json")
-    shell.stdout.write (json.encode records indent: 2) "\n"
-  else
-    print_table $headers $rows
+  if (format == "json") => shell.stdout.write (json.encode records indent: 2) "\n"
+  else print_table $headers $rows
 
 def date_text date
   (date == nil && "-" || str(date))
@@ -40,14 +32,10 @@ def date_text date
 def products client format category
   let products = $
     for product = client.products()
-      if (category == nil || product.category == category)
-        - $product
-  let rows = $
-    for p = products
-      - [p.name, p.label, p.category]
+      if (category == nil || product.category == category) => $product
+  let rows = [for p = products => [p.name, p.label, p.category]]
   let records = $
-    for p = products
-      - {name: p.name, label: p.label, category: p.category}
+    for p = products => {name: p.name, label: p.label, category: p.category}
   report $format ["product", "label", "category"] $rows $records
 
 def releases client format name
@@ -66,14 +54,12 @@ def releases client format name
 
 def latest client format name
   let product = client.product $name
-  if (product.releases.len == 0)
-    throw eol.NotFound $name
-  let release = product.releases[0]
+  let Array(release ...) = product.releases
+  else throw eol.NotFound $name
   let version = (release.latest && release.latest.name || release.name)
   if (format == "json")
     shell.stdout.write (json.encode {product: name, release: release.name, latest: version}) "\n"
-  else
-    shell.stdout.write $version "\n"
+  else shell.stdout.write $version "\n"
 
 # Reads `product = "version"` pairs from a TOML file.
 def pinned_versions path
@@ -117,8 +103,7 @@ def check client format pins warn
     for :product :version :release :eol :status = results
       - [product, version, (release || "-"), (eol || "-"), status]
   report $format ["product", "version", "release", "eol", "status"] $rows $results
-  if failed
-    exit 1
+  if failed => exit 1
 
 try
   args.with
@@ -137,20 +122,17 @@ try
       - opt: category
         default: nil
         help: Only list products in this category, such as `os` or `lang`
-      do |p|
-        products $eol.Client(base_url: p.base_url) $p.format $p.products.category
+      do |p| products $eol.Client(base_url: p.base_url) $p.format $p.products.category
     - cmd: releases
       help: List a product's release cycles
       - arg: product
         help: The product, such as `python`
-      do |p|
-        releases $eol.Client(base_url: p.base_url) $p.format $p.releases.product
+      do |p| releases $eol.Client(base_url: p.base_url) $p.format $p.releases.product
     - cmd: latest
       help: Show a product's newest version
       - arg: product
         help: The product, such as `python`
-      do |p|
-        latest $eol.Client(base_url: p.base_url) $p.format $p.latest.product
+      do |p| latest $eol.Client(base_url: p.base_url) $p.format $p.latest.product
     - cmd: check
       help: Check whether versions are still supported
       - opt: from
@@ -170,12 +152,10 @@ try
       do |p|
         let :from :warn :product :version ... = p.check
         let pins = if (from != nil)
-          if (product != nil)
-            throw args.Error "give either --from or a product and version"
+          if (product != nil) => throw args.Error "give either --from or a product and version"
           pinned_versions $from
         else
-          if (version == nil)
-            throw args.Error "give a product and version, or --from"
+          if (version == nil) => throw args.Error "give a product and version, or --from"
           [(product, version)]
         check $eol.Client(base_url: p.base_url) $p.format $pins $warn
 catch eol.NotFound: err

@@ -13,14 +13,9 @@ import test:
 let TODAY = Date.from_ymd 2026 1 1
 
 def cycle name :eol = nil :is_eol = false :label = name
-  Release
-    :name
-    :label
+  Release :name :label :is_eol lts: false latest: nil
     released: $Date.from_ymd(2020, 1, 1)
-    lts: false
     eol: (eol && Date.parse_rfc(eol))
-    :is_eol
-    latest: nil
 
 # With the default 90-day warning, releases ending by 2026-04-01 are ending.
 let CLASSIFIED = $
