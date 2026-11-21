@@ -1,0 +1,6 @@
+let a = [for x = [1] 1]
+# error: got ], expected: =>
+#   --> horiz_for_no_arrow.dol:LL:LL
+#    |
+# LL | let a = [for x = [1] 1]
+#    |                       ^

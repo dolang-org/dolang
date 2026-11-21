@@ -1,0 +1,6 @@
+let a = [if true => 1 else 2]
+# error: an `if` element takes no `else`; for a conditional value, use `&&` and `||`
+#   --> horiz_if_else.dol:LL:LL
+#    |
+# LL | let a = [if true => 1 else 2]
+#    |                       ^^^^

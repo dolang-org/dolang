@@ -330,6 +330,52 @@ does not move it to the end.
 See the [Set API](std.Set) for methods such as `add`, `contains`,
 `union`, and `diff`.
 
+## Comprehensions
+
+In an array, tuple, dictionary, record or pack literal, or in a call's
+parenthesized arguments, `for` and `if` elements generate items, as they do in
+[vertical layout](vertical-layout.md#for-in-vertical-layout):
+
+```playground
+#> import test:
+#>   - assert_eq
+let xs = [1, -2, 3]
+assert_eq [for x = xs => x * 2] [2, -4, 6]
+assert_eq [for x = xs => if x > 0 => x] [1, 3]
+assert_eq [for x = [1, "a"] => if let Int(n) = x => n] [1]
+```
+
+`=>` is followed by exactly one element, which can be another `for` or `if`, a
+spread, or a key item. The element ends at the next `,`, so later items are
+outside it:
+
+```playground
+#> import test:
+#>   - assert_eq
+let verbose = true
+assert_eq [for x = [1, 2] => for y = [10] => x + y, 0] [11, 12, 0]
+assert_eq [for d = [[1, 2], [3]] => ...d] [1, 2, 3]
+assert_eq ["build", if verbose => "-v", "src"] ["build", "-v", "src"]
+```
+
+Without an iteratee, `for x => ...` iterates over the strand's input.
+
+The literal's kind looks through `for` and `if` to the items they generate:
+parentheses make a tuple, or a `Pack` if a static key appears among the items,
+and braces with a positional item make a record. A key item is a symbol, so a
+dictionary comprehension uses a computed key:
+
+```playground
+#> import test:
+#>   - assert_eq
+let src = {a: 1, b: 2}
+assert_eq {for k v = src => (k): v * 10} {a: 10, b: 20}
+assert_eq (type((for x = [1, 2] => x))) $Tuple
+```
+
+An `if` element takes no `else`: in `if a => if b => x else y`, the `else`
+could belong to either `if`. Use `&&` and `||` for a conditional value.
+
 ## Spreading
 
 `...` spreads a value into an array, tuple, dictionary, record, or pack literal,

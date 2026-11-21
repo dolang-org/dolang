@@ -1,0 +1,23 @@
+# `for` and `if` elements in a list type as vertical comprehensions do
+pub def ints *xs @ Int -> nil
+  ...
+
+pub def collected xs @ Array[Int] vs @ Array[Int | Str]
+  let ys = [for x = xs => if x > 0 => x, "a"]
+  let _ = ys
+  #       ^~: flow std.Array[std.Int | std.Str]
+  let ns = [for v = vs => if let Int(n) = v => n]
+  let _ = ns
+  #       ^~: flow std.Array[std.Int]
+  let d = {for x = xs => "k": x}
+  let _ = d
+  #       ^: flow std.Dict[std.Str, std.Int]
+  ints(1, for x = xs => x)
+
+pub def wrong xs @ Array[Int]
+  ints(for _x = xs => "a")
+# error: expected `std.Int`, found `"a"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   ints(for _x = xs => "a")
+#    |        ^^^

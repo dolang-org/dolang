@@ -99,8 +99,9 @@ let v = (
 ```
 
 **No indented blocks inside `()`.** You cannot write `if`/`for`/`while` with
-bodies inside parentheses. Use `do` for inline lambdas, and `&&`/`||` for
-conditional expressions:
+bodies inside parentheses; a literal's `for`/`if` elements
+(`[for x = xs => x * 2]`) take a single element instead. Use `do` for inline
+lambdas, and `&&`/`||` for conditional expressions:
 
 ```
 # WRONG — indented block inside ()
@@ -303,6 +304,9 @@ are a statement-level construct. They cannot appear inside `()`, `[]`, or `{}`.
 let result = $
   for x = items
     - (x * 2)
+
+# RIGHT — for/if elements in a literal (one element after `=>`, no `else`)
+let doubled = [for x = items => if x > 0 => x * 2]
 
 # RIGHT — do lambda in expression context (single expression body)
 let doubled = items.map(do |x| x * 2)

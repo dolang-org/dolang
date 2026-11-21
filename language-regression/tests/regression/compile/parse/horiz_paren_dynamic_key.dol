@@ -1,0 +1,7 @@
+# `()` takes no computed key, even under an element
+let a = (for k = [:a:] => (k): 1)
+# error: got :, expected: )
+#   --> horiz_paren_dynamic_key.dol:LL:LL
+#    |
+# LL | let a = (for k = [:a:] => (k): 1)
+#    |                              ^

@@ -11,8 +11,8 @@ use super::{
 };
 use crate::{
     ast::{
-        Arg, ArrayElem, Const, DictElem, Expand, Expr, GetVariant, GroupDelim, Ident, Key, Pair,
-        Single, visit::Node,
+        Arg, ArrayElem, CondPattern, CondPatternKind, Const, DictElem, Expand, Expr, ExprBody, For,
+        GetVariant, GroupDelim, Ident, If, IfBranch, Key, Pair, Pattern, Single, visit::Node,
     },
     lex::{self, Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -116,58 +116,199 @@ impl Parser<'_> {
     /// These become the arguments of a C-style call, or a group, tuple, or
     /// `Pack` via [`Self::paren_expr`].
     fn parse_arg_pack(&mut self, scope: &mut Scope) -> Result<Vec<Arg>> {
-        use self::Key;
-        use TokenInfo::*;
-
         let mut args: Vec<Arg> = Vec::new();
         loop {
             let fail = self.fail;
-            let separated = match args.last() {
-                None => true,
-                Some(Arg::Pos(Single { delim_span, .. }))
-                | Some(Arg::Key(Key { delim_span, .. }))
-                | Some(Arg::Expand(Expand { delim_span, .. })) => delim_span.is_some(),
-                Some(_) => unreachable!(),
-            };
-            let arg = match self.peek()? {
-                Some(token!(RightParen)) => break,
+            let separated = args.last().is_none_or(|arg| arg_delim(arg).is_some());
+            match self.peek()? {
+                Some(token!(TokenInfo::RightParen)) => break,
                 // Items must be separated by commas; leave anything else for the
                 // caller's check for `)`
                 _ if !separated => break,
-                Some(token!(DittoKey, span)) => {
-                    self.advance();
-                    Arg::Key(Self::ditto_key(span, self.consume_comma()?))
-                }
-                Some(token!(Key, span)) => {
-                    self.advance();
-                    Arg::Key(Key {
-                        key_span: span,
-                        colon_span: span.after_right_char(),
-                        expr: self.parse_expr(scope, ExprMode::Full)?,
-                        delim_span: self.consume_comma()?,
-                    })
-                }
-                Some(token!(Ellipsis, span)) => {
-                    self.advance();
-                    let expr = self.parse_expr(scope, ExprMode::Full)?;
-                    let delim_span = self.consume_comma()?;
-                    Arg::Expand(Self::expansion(expr, span, delim_span))
-                }
                 None if fail => break,
-                _ => Arg::Pos(Single {
-                    expr: self.parse_expr(scope, ExprMode::Full)?,
-                    delim_span: self.consume_comma()?,
-                }),
-            };
-            args.push(arg)
+                _ => args.push(self.parse_horiz_elem(scope)?),
+            }
         }
         Ok(args)
+    }
+
+    /// Parse an element of a comma-delimited list: a `for` or `if` element, or
+    /// else an item of the list's kind
+    fn parse_horiz_elem<T: HorizElem>(&mut self, scope: &mut Scope) -> Result<T> {
+        use self::Keyword;
+        match self.peek()? {
+            Some(token!(TokenInfo::Keyword(Keyword::For))) => {
+                Ok(T::from_for(self.parse_horiz_for(scope)?))
+            }
+            Some(token!(TokenInfo::Keyword(Keyword::If))) => {
+                Ok(T::from_if(self.parse_horiz_if(scope)?))
+            }
+            _ => T::parse_item(self, scope),
+        }
+    }
+
+    /// The element after a `for` or `if` element's `=>`
+    fn parse_horiz_body<T: HorizElem>(&mut self, scope: &mut Scope) -> Result<ExprBody<T>> {
+        Ok(ExprBody {
+            elems: vec![self.parse_horiz_elem(scope)?],
+            vars: Vec::new(),
+        })
+    }
+
+    /// Parse a horizontal pattern ending at one of `ends`, which is consumed
+    /// and returned, switching to inline shell mode as lambda parameters do
+    fn parse_horiz_pattern(
+        &mut self,
+        scope: &mut Scope,
+        arrow: bool,
+        ends: &[ExpectKind],
+    ) -> Result<(Pattern, Token)> {
+        self.with_inline_shell(|this| {
+            if let Some(token!(TokenInfo::ArgSep)) = this.peek()? {
+                this.advance();
+            }
+            let pattern = if arrow {
+                this.parse_arrow_pattern(scope)?
+            } else {
+                this.parse_pattern(scope, false)?
+            };
+            let info = this.peek()?.map(|token| token.info);
+            let span = this.expect(scope, ends)?;
+            let end = Token {
+                info: info.expect("an expected token"),
+                span,
+            };
+            Ok((pattern, end))
+        })
+    }
+
+    /// Parse a `for` element: `for PATTERN = EXPR => ELEM`, or `for PATTERN =>
+    /// ELEM` over the strand's input
+    fn parse_horiz_for<T: HorizElem>(&mut self, scope: &mut Scope) -> Result<For<ExprBody<T>>> {
+        let for_span = self.advance();
+        let (bind, end) =
+            self.parse_horiz_pattern(scope, false, &[ExpectKind::Equal, ExpectKind::FatArrow])?;
+        let (equal_span, expr, arrow_span) = if end.info == TokenInfo::Equal {
+            let expr = self.parse_expr(scope, ExprMode::Full)?;
+            let arrow_span = self.expect(scope, &[ExpectKind::FatArrow])?;
+            (Some(end.span), Some(expr), arrow_span)
+        } else {
+            (None, None, end.span)
+        };
+        let body = self.parse_horiz_body(scope)?;
+        Ok(For {
+            bind,
+            expr,
+            body,
+            iter: None,
+            for_span,
+            equal_span,
+            arrow_span: Some(arrow_span),
+        })
+    }
+
+    /// Parse an `if` element: `if COND => ELEM`, where `COND` may be a `let` or
+    /// `bind` test. It takes no `else`, which a nested element would make
+    /// ambiguous.
+    fn parse_horiz_if<T: HorizElem>(&mut self, scope: &mut Scope) -> Result<If<ExprBody<T>>> {
+        use self::Keyword;
+        let if_span = self.advance();
+        let (expr, bind, arrow_span) = match self.peek()? {
+            Some(token!(TokenInfo::Keyword(Keyword::Let))) => {
+                let keyword_span = self.advance();
+                let (pattern, equal) =
+                    self.parse_horiz_pattern(scope, false, &[ExpectKind::Equal])?;
+                let equal_span = equal.span;
+                let expr = self.parse_expr(scope, ExprMode::Full)?;
+                let arrow_span = self.expect(scope, &[ExpectKind::FatArrow])?;
+                let bind = CondPattern {
+                    keyword_span,
+                    kind: CondPatternKind::Let { equal_span },
+                    pattern,
+                };
+                (expr, Some(bind), arrow_span)
+            }
+            Some(token!(TokenInfo::Keyword(Keyword::Bind))) => {
+                let keyword_span = self.advance();
+                let expr = self.parse_expr(scope, ExprMode::Full)?;
+                let pattern_arrow = self.expect(scope, &[ExpectKind::FatArrow])?;
+                let (pattern, arrow) =
+                    self.parse_horiz_pattern(scope, true, &[ExpectKind::FatArrow])?;
+                let arrow_span = arrow.span;
+                let bind = CondPattern {
+                    keyword_span,
+                    kind: CondPatternKind::Bind {
+                        arrow_span: Some(pattern_arrow),
+                        do_span: None,
+                    },
+                    pattern,
+                };
+                (expr, Some(bind), arrow_span)
+            }
+            _ => {
+                let expr = self.parse_expr(scope, ExprMode::Full)?;
+                let arrow_span = self.expect(scope, &[ExpectKind::FatArrow])?;
+                (expr, None, arrow_span)
+            }
+        };
+        let body = self.parse_horiz_body(scope)?;
+        if let Some(token @ token!(TokenInfo::Keyword(Keyword::Else))) = self.peek()? {
+            return Err(self.syntax_error(
+                scope,
+                Some(token),
+                "an `if` element takes no `else`; for a conditional value, use `&&` and `||`",
+            ));
+        }
+        Ok(If {
+            tbranch: IfBranch {
+                span: if_span,
+                expr,
+                bind,
+                arrow_span: Some(arrow_span),
+                body,
+            },
+            elif_branches: Vec::new(),
+            else_branch: None,
+        })
+    }
+
+    /// Parse an item between parentheses
+    fn parse_paren_item(&mut self, scope: &mut Scope) -> Result<Arg> {
+        use self::Key;
+        use TokenInfo::*;
+
+        Ok(match self.peek()? {
+            Some(token!(DittoKey, span)) => {
+                self.advance();
+                Arg::Key(Self::ditto_key(span, self.consume_comma()?))
+            }
+            Some(token!(Key, span)) => {
+                self.advance();
+                Arg::Key(Key {
+                    key_span: span,
+                    colon_span: span.after_right_char(),
+                    expr: self.parse_expr(scope, ExprMode::Full)?,
+                    delim_span: self.consume_comma()?,
+                })
+            }
+            Some(token!(Ellipsis, span)) => {
+                self.advance();
+                let expr = self.parse_expr(scope, ExprMode::Full)?;
+                let delim_span = self.consume_comma()?;
+                Arg::Expand(Self::expansion(expr, span, delim_span))
+            }
+            _ => Arg::Pos(Single {
+                expr: self.parse_expr(scope, ExprMode::Full)?,
+                delim_span: self.consume_comma()?,
+            }),
+        })
     }
 
     /// Classify parenthesized items.
     ///
     /// A lone positional item without a trailing comma is a group. Otherwise,
-    /// any static key makes a `Pack`, and anything else is a tuple.
+    /// any static key, including one under a `for` or `if` element, makes a
+    /// `Pack`, and anything else is a tuple.
     fn paren_kind(args: &[Arg]) -> ParenKind {
         if let [
             Arg::Pos(Single {
@@ -176,7 +317,7 @@ impl Parser<'_> {
         ] = args
         {
             ParenKind::Group
-        } else if args.iter().any(|arg| matches!(arg, Arg::Key(_))) {
+        } else if Self::args_have_key(args) {
             ParenKind::Pack
         } else {
             ParenKind::Tuple
@@ -230,14 +371,7 @@ impl Parser<'_> {
             ParenKind::Pack => return Expr::Pack { paren_span, args },
             ParenKind::Tuple => (),
         }
-        let elems = args
-            .into_iter()
-            .map(|arg| match arg {
-                Arg::Pos(single) => ArrayElem::Single(single),
-                Arg::Expand(expand) => ArrayElem::Expand(expand),
-                _ => unreachable!(),
-            })
-            .collect();
+        let elems = args.into_iter().map(Self::arg_to_array_elem).collect();
         Expr::Tuple { paren_span, elems }
     }
 
@@ -357,107 +491,103 @@ impl Parser<'_> {
     }
 
     fn parse_dict_literal(&mut self, scope: &mut Scope<'_>, left: Span) -> Result<Expr> {
-        use self::{Ident, Key};
-        use TokenInfo::*;
         self.with_mode(lex::Mode::FullExpr, |this| {
             let mut elems = Vec::new();
             let right = loop {
-                let (key, colon_span) = match this.peek()? {
-                    Some(token!(RightBrace)) => break this.advance(),
-                    Some(token!(Key, key_span)) => {
-                        this.advance();
-                        elems.push(DictElem::Key(Key {
-                            key_span,
-                            colon_span: key_span.after_right_char(),
-                            expr: this.parse_expr(scope, ExprMode::Full)?,
-                            delim_span: this.consume_comma()?,
-                        }));
-                        continue;
-                    }
-                    Some(token!(Dollar)) => {
-                        let dollar_span = this.advance();
-                        if let Some(token!(Key)) = this.peek()? {
-                            let span = this.advance();
-                            (
-                                Self::dollar_group(Expr::Ident(Ident::new(span)), dollar_span),
-                                span.after_right_char(),
-                            )
-                        } else {
-                            let key = this.parse_expr(scope, ExprMode::Full)?;
-                            let span = this.expect(scope, &[ExpectKind::Colon])?;
-                            (key, span)
-                        }
-                    }
-                    Some(token!(Ellipsis)) => {
-                        let ellipsis_span = this.advance();
-                        let expr = this.parse_expr(scope, ExprMode::Full)?;
-                        let comma_span = this.consume_comma()?;
-                        elems.push(DictElem::Expand(Self::expansion(
-                            expr,
-                            ellipsis_span,
-                            comma_span,
-                        )));
-                        continue;
-                    }
-                    Some(token!(DittoKey)) => {
-                        let key_span = this.advance();
-                        let delim_span = this.consume_comma()?;
-                        elems.push(DictElem::Key(Self::ditto_key(key_span, delim_span)));
-                        continue;
-                    }
+                match this.peek()? {
+                    Some(token!(TokenInfo::RightBrace)) => break this.advance(),
                     None => break this.expect_matching(scope, ExpectKind::RightBrace, left),
-                    _ => {
-                        let key = this.parse_expr(scope, ExprMode::Full)?;
-                        let span = match this.peek()? {
-                            Some(token!(Comma)) => {
-                                let delim_span = Some(this.advance());
-                                elems.push(DictElem::Single(Single {
-                                    expr: key,
-                                    delim_span,
-                                }));
-                                continue;
-                            }
-                            Some(token!(RightBrace)) => {
-                                elems.push(DictElem::Single(Single {
-                                    expr: key,
-                                    delim_span: None,
-                                }));
-                                break this.advance();
-                            }
-                            Some(token!(Colon)) => this.advance(),
-                            None => {
-                                elems.push(DictElem::Single(Single {
-                                    expr: key,
-                                    delim_span: None,
-                                }));
-                                break this.expect_matching(scope, ExpectKind::RightBrace, left);
-                            }
-                            _ => {
-                                let token = this.next().unwrap();
-                                return Err(this.syntax_error(
-                                    scope,
-                                    token,
-                                    "invalid expression in dict literal",
-                                ));
-                            }
-                        };
-                        (key, span)
-                    }
-                };
-                let value = this.parse_expr(scope, ExprMode::Full)?;
-                let comma_span = this.consume_comma()?;
-                elems.push(DictElem::Pair(Pair {
-                    key,
-                    value,
-                    colon_span: Some(colon_span),
-                    delim_span: comma_span,
-                }));
+                    _ => elems.push(this.parse_horiz_elem(scope)?),
+                }
             };
             Ok(Expr::Dict {
                 elems,
                 brace_span: Some(left | right),
             })
         })
+    }
+
+    /// Parse an item between braces
+    fn parse_dict_item(&mut self, scope: &mut Scope) -> Result<DictElem> {
+        use self::{Ident, Key, Keyword};
+        use TokenInfo::*;
+
+        let (key, colon_span) = match self.peek()? {
+            Some(token!(Key, key_span)) => {
+                self.advance();
+                return Ok(DictElem::Key(Key {
+                    key_span,
+                    colon_span: key_span.after_right_char(),
+                    expr: self.parse_expr(scope, ExprMode::Full)?,
+                    delim_span: self.consume_comma()?,
+                }));
+            }
+            Some(token!(Dollar)) => {
+                let dollar_span = self.advance();
+                if let Some(token!(Key)) = self.peek()? {
+                    let span = self.advance();
+                    (
+                        Self::dollar_group(Expr::Ident(Ident::new(span)), dollar_span),
+                        span.after_right_char(),
+                    )
+                } else {
+                    let key = self.parse_expr(scope, ExprMode::Full)?;
+                    let span = self.expect(scope, &[ExpectKind::Colon])?;
+                    (key, span)
+                }
+            }
+            Some(token!(Ellipsis)) => {
+                let ellipsis_span = self.advance();
+                let expr = self.parse_expr(scope, ExprMode::Full)?;
+                let comma_span = self.consume_comma()?;
+                return Ok(DictElem::Expand(Self::expansion(
+                    expr,
+                    ellipsis_span,
+                    comma_span,
+                )));
+            }
+            Some(token!(DittoKey)) => {
+                let key_span = self.advance();
+                let delim_span = self.consume_comma()?;
+                return Ok(DictElem::Key(Self::ditto_key(key_span, delim_span)));
+            }
+            _ => {
+                let key = self.parse_expr(scope, ExprMode::Full)?;
+                match self.peek()? {
+                    Some(token!(Comma)) => {
+                        return Ok(DictElem::Single(Single {
+                            expr: key,
+                            delim_span: Some(self.advance()),
+                        }));
+                    }
+                    // The caller checks what ends the item: the closing brace,
+                    // or the `else` an `if` element can't take
+                    None | Some(token!(RightBrace | Keyword(Keyword::Else))) => {
+                        return Ok(DictElem::Single(Single {
+                            expr: key,
+                            delim_span: None,
+                        }));
+                    }
+                    Some(token!(Colon)) => (key, self.advance()),
+                    _ => {
+                        let token = self.next().unwrap();
+                        return Err(self.syntax_error(
+                            scope,
+                            token,
+                            "invalid expression in dict literal",
+                        ));
+                    }
+                }
+            }
+        };
+        let value = self.parse_expr(scope, ExprMode::Full)?;
+        let comma_span = self.consume_comma()?;
+        Ok(DictElem::Pair(Pair {
+            key,
+            value,
+            colon_span: Some(colon_span),
+            delim_span: comma_span,
+        }))
     }
 
     fn parse_array_literal(
@@ -477,25 +607,8 @@ impl Parser<'_> {
             let right = loop {
                 match this.peek()? {
                     Some(token!(TokenInfo::RightBracket)) => break this.advance(),
-                    Some(token!(TokenInfo::Ellipsis)) => {
-                        let ellipsis_span = this.advance();
-                        let expr = this.parse_expr(scope, ExprMode::Full)?;
-                        let comma = this.consume_comma()?;
-                        elems.push(ArrayElem::Expand(Self::expansion(
-                            expr,
-                            ellipsis_span,
-                            comma,
-                        )));
-                    }
                     None => break this.expect_matching(scope, ExpectKind::RightBracket, left),
-                    _ => {
-                        let expr = this.parse_expr(scope, ExprMode::Full)?;
-                        let comma = this.consume_comma()?;
-                        elems.push(ArrayElem::Single(Single {
-                            expr,
-                            delim_span: comma,
-                        }));
-                    }
+                    _ => elems.push(this.parse_horiz_elem(scope)?),
                 }
             };
             Ok(Expr::Array {
@@ -504,6 +617,26 @@ impl Parser<'_> {
             })
         })?;
         Ok(expr)
+    }
+
+    /// Parse an item between brackets
+    fn parse_array_item(&mut self, scope: &mut Scope) -> Result<ArrayElem> {
+        if let Some(token!(TokenInfo::Ellipsis)) = self.peek()? {
+            let ellipsis_span = self.advance();
+            let expr = self.parse_expr(scope, ExprMode::Full)?;
+            let comma = self.consume_comma()?;
+            return Ok(ArrayElem::Expand(Self::expansion(
+                expr,
+                ellipsis_span,
+                comma,
+            )));
+        }
+        let expr = self.parse_expr(scope, ExprMode::Full)?;
+        let comma = self.consume_comma()?;
+        Ok(ArrayElem::Single(Single {
+            expr,
+            delim_span: comma,
+        }))
     }
 
     /// Parse an expression using Pratt's precedence climbing algorithm.
@@ -588,6 +721,11 @@ impl Parser<'_> {
         let mut spaced_call: Option<MisleadingCall> = None;
 
         loop {
+            // An `else` ends an `if` element's item, for the error that it takes
+            // no `else`, rather than decaying to an identifier argument
+            if let Some(token!(TokenInfo::Keyword(Keyword::Else))) = self.peek()? {
+                break;
+            }
             match decay_ident!(self.peek()?) {
                 Some(token!(TokenInfo::DotDot, span)) if !matches!(mode, ExprMode::Shell) => {
                     let prec = Prec::RANGE;
@@ -747,9 +885,15 @@ impl Parser<'_> {
                             }
                             continue;
                         }
-                        Some(token!(TokenInfo::Ellipsis)) => {
+                        Some(
+                            token!(
+                                TokenInfo::Ellipsis
+                                    | TokenInfo::Keyword(Keyword::For | Keyword::If)
+                            ),
+                        ) => {
                             // Ellipsis `...` inside brackets - array literal with spread
-                            // Example: `f[...a]` should be `f([...a])` not indexing
+                            // Example: `f[...a]` should be `f([...a])` not indexing.
+                            // Likewise a `for` or `if` element: `f[for x = xs => x]`
                             let rhs = self.parse_array_literal(scope, left, None)?;
                             match lhs {
                                 Expr::Call {
@@ -983,5 +1127,71 @@ impl Parser<'_> {
             ExprMode::Shell => self.parse_expr_primary(scope, mode),
             ExprMode::Compact | ExprMode::Full => self.parse_expr_prec(scope, mode, None),
         }
+    }
+}
+
+/// An element of a comma-delimited list, which a `for` or `if` element can
+/// stand in for
+trait HorizElem: Sized {
+    /// Parse an item other than a `for` or `if` element, along with its comma
+    fn parse_item(parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self>;
+
+    fn from_for(node: For<ExprBody<Self>>) -> Self;
+
+    fn from_if(node: If<ExprBody<Self>>) -> Self;
+}
+
+impl HorizElem for ArrayElem {
+    fn parse_item(parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self> {
+        parser.parse_array_item(scope)
+    }
+
+    fn from_for(node: For<ExprBody<Self>>) -> Self {
+        Self::For(node)
+    }
+
+    fn from_if(node: If<ExprBody<Self>>) -> Self {
+        Self::If(node)
+    }
+}
+
+impl HorizElem for DictElem {
+    fn parse_item(parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self> {
+        parser.parse_dict_item(scope)
+    }
+
+    fn from_for(node: For<ExprBody<Self>>) -> Self {
+        Self::For(node)
+    }
+
+    fn from_if(node: If<ExprBody<Self>>) -> Self {
+        Self::If(node)
+    }
+}
+
+impl HorizElem for Arg {
+    fn parse_item(parser: &mut Parser<'_>, scope: &mut Scope) -> Result<Self> {
+        parser.parse_paren_item(scope)
+    }
+
+    fn from_for(node: For<ExprBody<Self>>) -> Self {
+        Self::For(node)
+    }
+
+    fn from_if(node: If<ExprBody<Self>>) -> Self {
+        Self::If(node)
+    }
+}
+
+/// The comma after a parenthesized item, which for a `for` or `if` element is
+/// the one after the item it ends in
+fn arg_delim(arg: &Arg) -> Option<Span> {
+    match arg {
+        Arg::Pos(Single { delim_span, .. })
+        | Arg::Key(Key { delim_span, .. })
+        | Arg::Expand(Expand { delim_span, .. }) => *delim_span,
+        Arg::For(node) => node.body.elems.last().and_then(arg_delim),
+        Arg::If(node) => node.tbranch.body.elems.last().and_then(arg_delim),
+        Arg::DynamicKey(_) | Arg::Match(_) => unreachable!("not parsed in parentheses"),
     }
 }

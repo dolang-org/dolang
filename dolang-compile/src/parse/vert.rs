@@ -642,7 +642,7 @@ impl Parser<'_> {
         self.parse_cmd_vert_args(scope, &mut args, bin_pack)?;
 
         // Decide what to emit by recursively analyzing the args
-        if self.args_have_key(&args) {
+        if Self::args_have_key(&args) {
             // Has keys somewhere, build a dict
             Ok(Expr::Dict {
                 elems: args.into_iter().map(Self::arg_to_dict_elem).collect(),
@@ -657,39 +657,40 @@ impl Parser<'_> {
         }
     }
 
-    fn args_have_key(&self, args: &[Arg]) -> bool {
+    /// Whether `args` have a key, looking through `for`, `if` and `match`
+    pub(super) fn args_have_key(args: &[Arg]) -> bool {
         for arg in args {
             match arg {
                 Arg::Pos(..) | Arg::Expand { .. } => continue, // array elements
                 Arg::Key(Key { .. }) | Arg::DynamicKey { .. } => return true, // dict elements
                 Arg::For(For { body, .. }) => {
                     // Recursively analyze the for-body
-                    if self.args_have_key(&body.elems) {
+                    if Self::args_have_key(&body.elems) {
                         return true;
                     }
                 }
                 Arg::If(node) => {
                     // Check first if branch
-                    if self.args_have_key(&node.tbranch.body.elems) {
+                    if Self::args_have_key(&node.tbranch.body.elems) {
                         return true;
                     }
 
                     // Check elif branches
                     for (elif_branch, _) in &node.elif_branches {
-                        if self.args_have_key(&elif_branch.body.elems) {
+                        if Self::args_have_key(&elif_branch.body.elems) {
                             return true;
                         }
                     }
 
                     // Check final else branch
                     if let Some((else_body, _)) = &node.else_branch
-                        && self.args_have_key(&else_body.elems)
+                        && Self::args_have_key(&else_body.elems)
                     {
                         return true;
                     }
                 }
                 Arg::Match(node) => {
-                    if node.branches().any(|body| self.args_have_key(&body.elems)) {
+                    if node.branches().any(|body| Self::args_have_key(&body.elems)) {
                         return true;
                     }
                 }
@@ -698,7 +699,7 @@ impl Parser<'_> {
         false
     }
 
-    fn arg_to_array_elem(arg: Arg) -> ArrayElem {
+    pub(super) fn arg_to_array_elem(arg: Arg) -> ArrayElem {
         match arg {
             Arg::Pos(single) => ArrayElem::Single(single),
             Arg::Expand(expand) => ArrayElem::Expand(expand),
