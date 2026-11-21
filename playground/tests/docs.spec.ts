@@ -87,7 +87,7 @@ test('lookup follows re-exports, members and overloads', async () => {
           pub: true,
           doc: 'An inner thing.',
           members: [
-            { kind: 'method', name: '(init)', pub: true, params: [{ kind: 'pos', name: 'self' }], doc: 'Makes one.' },
+            { kind: 'method', name: '(init)', pub: true, scope: 'instance', doc: 'Makes one.' },
             { kind: 'method', name: 'hidden', pub: false },
           ],
         },
