@@ -503,6 +503,12 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
     Some(match (module, tables.name(owner.unit, name)) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
+        ("strand", "PipeStages") => (Designated::PipeStages, DeclKind::OpaqueAlias),
+        ("strand", "pipeline") => (Designated::Pipeline, DeclKind::Function),
+        ("std", "Iter") => (Designated::Iter, DeclKind::Class),
+        ("std", "Iterable") => (Designated::Iterable, DeclKind::Class),
+        ("std", "Sink") => (Designated::Sink, DeclKind::Class),
+        ("std", "Sinkable") => (Designated::Sinkable, DeclKind::Class),
         ("std", "Value") => (Designated::Value, DeclKind::Class),
         ("std", "Never") => (Designated::Never, DeclKind::Alias),
         ("std", "Unknown") => (Designated::Unknown, DeclKind::OpaqueAlias),

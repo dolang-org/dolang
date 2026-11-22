@@ -720,6 +720,18 @@ pub(crate) enum Designated {
     PipeSender,
     /// `strand.PipeReceiver`, which stands for the embedding's pipe receiver
     PipeReceiver,
+    /// `strand.PipeStages`, which a pipeline's stages are declared as
+    PipeStages,
+    /// `strand.pipeline`, whose calls the checker types by a rule of its own
+    Pipeline,
+    /// `std.Iter`, which a pipeline's first stage may read
+    Iter,
+    /// `std.Iterable`, which a pipeline's `:input` is
+    Iterable,
+    /// `std.Sink`, which a pipeline's last stage may write
+    Sink,
+    /// `std.Sinkable`, which a pipeline's `:output` is
+    Sinkable,
     Intrinsic(Intrinsic),
 }
 

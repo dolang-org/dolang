@@ -42,6 +42,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use super::{
     Ambient, At, Detail, Flow, Role, Seen, State, Template,
     member::CallTarget,
+    pipeline::{PipeRoles, pipeline_signature},
     problem::{Misfit, Problem},
     state::Group,
 };
@@ -355,6 +356,25 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         term
     }
 
+    /// The term of a positional item an `if`'s branches can join (see
+    /// [`Value::joins`])
+    fn positional(&mut self, values: &'p Values, value: &'p Value, repeated: bool) -> Term {
+        match *value {
+            Value::Pos(ty, _) => self.closed(ty),
+            Value::Lambda(None, ref lambda, span) => self.lambda(lambda, span),
+            Value::Held(HeldAt::Positional, index, _) => self.hold(&values.held[index], repeated),
+            Value::Alike(ref alternatives, _) => {
+                let var = self.solver.infer();
+                for alternative in alternatives {
+                    let term = self.positional(values, alternative, repeated);
+                    self.constrain(term, var, Provenance::default());
+                }
+                var
+            }
+            _ => unreachable!("a positional item an `if`'s branches join"),
+        }
+    }
+
     /// A call's arguments, or a collection's items, as often as each is passed,
     /// with the span each is diagnosed at: its own, its group's, or `fallback`
     fn arguments(
@@ -438,6 +458,12 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                             joined.atom(rule, atom);
                         }
                     }
+                    Value::Alike(ref alternatives, _) => {
+                        for alternative in alternatives {
+                            let term = rule.positional(values, alternative, true);
+                            joined.positional.add(rule, Part::Term(term));
+                        }
+                    }
                 }
                 continue;
             }
@@ -480,6 +506,10 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                         }
                     };
                     vec![(multiplicity, argument, span)]
+                }
+                Value::Alike(_, span) => {
+                    let term = rule.positional(values, &placed.value, false);
+                    vec![(multiplicity, CallArgument::Positional(term), span)]
                 }
                 Value::Spread(_, span) => flat
                     .into_iter()
@@ -604,6 +634,30 @@ enum Value {
     /// An argument held back until the call's parameters give it an expectation,
     /// by its index into [`Values::held`]
     Held(HeldAt, usize, Span),
+    /// One positional item of an `if`'s branches, which are alike: one of these,
+    /// each a positional [`Value::Pos`], [`Value::Lambda`] or [`Value::Held`]
+    Alike(Vec<Value>, Span),
+}
+
+impl Value {
+    /// Whether it's one positional item that an `if`'s branches can join
+    fn joins(&self) -> bool {
+        matches!(
+            self,
+            Self::Pos(..)
+                | Self::Lambda(None, ..)
+                | Self::Held(HeldAt::Positional, ..)
+                | Self::Alike(..)
+        )
+    }
+
+    /// Its alternatives, if it's [`Value::Alike`], and otherwise itself
+    fn alternatives(self) -> Vec<Value> {
+        match self {
+            Self::Alike(values, _) => values,
+            value => vec![value],
+        }
+    }
 }
 
 /// Where an argument held back goes
@@ -780,9 +834,15 @@ struct Values {
 
 impl Values {
     fn lambdas(&self) -> impl Iterator<Item = &Lambda> {
-        self.values.iter().filter_map(|placed| match &placed.value {
-            Value::Lambda(_, lambda, _) => Some(lambda),
-            _ => None,
+        self.values.iter().flat_map(|placed| {
+            let values = match &placed.value {
+                Value::Alike(values, _) => &values[..],
+                value => std::slice::from_ref(value),
+            };
+            values.iter().filter_map(|value| match value {
+                Value::Lambda(_, lambda, _) => Some(lambda),
+                _ => None,
+            })
         })
     }
 }
@@ -2073,13 +2133,38 @@ impl<'a> Flow<'a, '_> {
         receivers: &[(TypeId, Span)],
         call: Call<'_>,
     ) -> PreparedCall {
-        let mut params = self.params(callee).unwrap_or_default();
+        // A pipeline's signature is built for its arguments, which are held to
+        // take what it expects of them
+        let pipeline = self.pipe_roles(callee).is_some();
+        let mut params = match pipeline {
+            true => Params::default(),
+            false => self.params(callee).unwrap_or_default(),
+        };
+        let callee = match pipeline && conditional_ends(self.db, call.args) {
+            true => {
+                self.gap(call.span, "a pipeline whose input or output is conditional");
+                self.db.unknown()
+            }
+            false => callee,
+        };
         let skipped = receivers.len().min(params.positional.len());
         params.positional.drain(..skipped);
         let generic =
             matches!(self.db.ty(callee), Type::Quantified { .. }) || self.overloaded(callee);
         let mut values = self.values(at, state, operands, call.args, Some(&params), true, generic);
         received(&mut values, receivers, self.db.bottom());
+        // A pipeline needs a stage that always runs
+        let staged = values
+            .values
+            .iter()
+            .any(|placed| placed.multiplicity == Multiplicity::Required && placed.value.joins());
+        let callee = match pipeline && !staged && callee != self.db.unknown() && !values.never {
+            true => {
+                self.problem(Problem::MissingArgument(call.span));
+                self.db.unknown()
+            }
+            false => callee,
+        };
         PreparedCall {
             callee,
             values,
@@ -2175,13 +2260,14 @@ impl<'a> Flow<'a, '_> {
             return self.db.unknown();
         }
         let spread = self.designated(Designated::Spread);
+        let pipeline = self.pipe_roles(callee_type);
         let decision = self.decide(at, span, expected, |_, rule| {
             vec![call_constraint(
                 rule,
                 values,
                 spread,
                 (span, name.clone(), call.logs),
-                callee_type,
+                (callee_type, pipeline),
                 input,
                 output.clone(),
             )]
@@ -2544,7 +2630,7 @@ impl<'a> Flow<'a, '_> {
                     &call.values,
                     spread,
                     (call.span, name, call.logs),
-                    call.callee,
+                    (call.callee, self.pipe_roles(call.callee)),
                     input,
                     output,
                 );
@@ -2897,9 +2983,9 @@ impl<'a> Flow<'a, '_> {
                     }
                     self.diverged = diverged.or(first.filter(|_| !converges));
                     let [then, else_] = branches;
-                    let arms = match self.alike(&then, &else_, span) {
-                        Some(arms) => arms,
-                        None => then
+                    let arms = match self.alike(then, else_, span) {
+                        Ok(arms) => arms,
+                        Err((then, else_)) => then
                             .into_iter()
                             .chain(else_)
                             .map(|placed| Placed {
@@ -2919,35 +3005,53 @@ impl<'a> Flow<'a, '_> {
 
     /// An `if`'s branches as one set of required items, if they're alike: each
     /// branch's items are required, and pairwise of the same kind and key. A joined
-    /// value is diagnosed at the `if`.
-    fn alike(&self, then: &[Placed], else_: &[Placed], span: Span) -> Option<Vec<Placed>> {
-        if then.len() != else_.len() {
-            return None;
+    /// value is diagnosed at the `if`. Positional items join whatever they are, a
+    /// `do` block or an argument held back among them, as one of either.
+    fn alike(
+        &self,
+        then: Vec<Placed>,
+        else_: Vec<Placed>,
+        span: Span,
+    ) -> Result<Vec<Placed>, (Vec<Placed>, Vec<Placed>)> {
+        let required = Multiplicity::Required;
+        let alike = then.len() == else_.len()
+            && then.iter().zip(&else_).all(|(a, b)| {
+                a.multiplicity == required
+                    && b.multiplicity == required
+                    && match (&a.value, &b.value) {
+                        (Value::Key(k, ..), Value::Key(l, ..)) => k == l,
+                        (Value::Pair(..), Value::Pair(..)) => true,
+                        (a, b) => a.joins() && b.joins(),
+                    }
+            });
+        if !alike {
+            return Err((then, else_));
         }
-        then.iter()
+        Ok(then
+            .into_iter()
             .zip(else_)
             .map(|(a, b)| {
-                let required = Multiplicity::Required;
-                if a.multiplicity != required || b.multiplicity != required {
-                    return None;
-                }
-                let value = match (&a.value, &b.value) {
-                    (&Value::Pos(x, _), &Value::Pos(y, _)) => Value::Pos(self.lub(x, y), span),
-                    (&Value::Key(k, x, _), &Value::Key(l, y, _)) if k == l => {
+                let value = match (a.value, b.value) {
+                    (Value::Pos(x, _), Value::Pos(y, _)) => Value::Pos(self.lub(x, y), span),
+                    (Value::Key(k, x, _), Value::Key(_, y, _)) => {
                         Value::Key(k, self.lub(x, y), span)
                     }
-                    (&Value::Pair(k, x), &Value::Pair(l, y)) => {
+                    (Value::Pair(k, x), Value::Pair(l, y)) => {
                         Value::Pair(self.lub(k, l), self.lub(x, y))
                     }
-                    _ => return None,
+                    (a, b) => {
+                        let mut alternatives = a.alternatives();
+                        alternatives.extend(b.alternatives());
+                        Value::Alike(alternatives, span)
+                    }
                 };
-                Some(Placed {
+                Placed {
                     value,
                     multiplicity: required,
                     group: None,
-                })
+                }
             })
-            .collect()
+            .collect())
     }
 
     /// Instantiate each `do` block among values that no rule types
@@ -3160,7 +3264,8 @@ impl<'a> Flow<'a, '_> {
                             let (positional, keyed) = match placed.value {
                                 Value::Pos(..)
                                 | Value::Lambda(None, ..)
-                                | Value::Held(HeldAt::Positional, ..) => (true, false),
+                                | Value::Held(HeldAt::Positional, ..)
+                                | Value::Alike(..) => (true, false),
                                 Value::Key(..)
                                 | Value::Pair(..)
                                 | Value::Lambda(Some(_), ..)
@@ -4427,17 +4532,23 @@ fn received(values: &mut Values, receivers: &[(TypeId, Span)], bottom: TypeId) {
 /// [`Solver::constrain_call`]). Returns the variable standing for its result. An overloaded
 /// callee's overloads are tried against what the arguments alone say, with each
 /// `do` block's result hidden as it is from other alternatives (see
-/// [`Solver::blind`]), and the result `Value`.
+/// [`Solver::blind`]), and the result `Value`. A call of `strand.pipeline` is
+/// checked against the signature [`pipeline_signature`] builds for its arguments.
 fn call_constraint<'p>(
     rule: &mut Rule<'_, '_, 'p>,
     values: &'p Values,
     spread: Option<DeclId>,
     (span, name, logs): (Span, Option<String>, bool),
-    callee: TypeId,
+    (callee, pipeline): (TypeId, Option<PipeRoles>),
     input: Option<TypeId>,
     output: Ambient,
 ) -> Term {
     let (arguments, spans) = rule.arguments(values, spread, span);
+    // A pipeline's signature mirrors what it's passed
+    let callee = match pipeline {
+        Some(roles) => pipeline_signature(rule.db, roles, &arguments),
+        None => callee,
+    };
     let result = rule.solver.infer_result();
     let input = input.map(|ty| rule.closed(ty));
     let (output, open) = match (output, &rule.output) {
@@ -4495,6 +4606,25 @@ fn call_constraint<'p>(
     result
 }
 
+/// Whether a pipeline's `:input` or `:output` is passed in a comprehension, so
+/// that which end its stages have isn't known
+fn conditional_ends(db: &Database, items: &[Item]) -> bool {
+    let ends = [db.intern_symbol("input"), db.intern_symbol("output")];
+    fn within(items: &[Item], ends: &[SymbolId; 2]) -> bool {
+        items.iter().any(|item| match item {
+            Item::Key(key, _) => ends.contains(key),
+            Item::For { items, .. } => within(items, ends),
+            Item::If { then, else_, .. } => within(then, ends) || within(else_, ends),
+            _ => false,
+        })
+    }
+    items.iter().any(|item| match item {
+        Item::For { items, .. } => within(items, &ends),
+        Item::If { then, else_, .. } => within(then, &ends) || within(else_, &ends),
+        _ => false,
+    })
+}
+
 /// The designated class a collection literal is
 fn collection_role(kind: Collection) -> Designated {
     match kind {
@@ -4549,6 +4679,10 @@ fn collection_constraint<'p>(
                     }
                     Value::Key(..) | Value::Pair(..) => {
                         rule.constrain(rule.closed(unknown), element, Provenance::default());
+                    }
+                    Value::Alike(..) => {
+                        let term = rule.positional(values, &placed.value, placed.group.is_some());
+                        rule.constrain(term, element, Provenance::default());
                     }
                     Value::Held(at, index, _) => {
                         let term = rule.hold(&values.held[index], placed.group.is_some());
@@ -4616,6 +4750,10 @@ fn collection_constraint<'p>(
                         rule.constrain(rule.closed(ty), positional, Provenance::default())
                     }
                     Value::Key(name, ty, _) => entry(rule, symbol(name), rule.closed(ty)),
+                    Value::Alike(..) => {
+                        let term = rule.positional(values, &placed.value, placed.group.is_some());
+                        rule.constrain(term, positional, Provenance::default());
+                    }
                     Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
                     Value::Lambda(key, ref lambda, span) => {
                         let term = rule.lambda(lambda, span);
@@ -4679,6 +4817,10 @@ fn collection_constraint<'p>(
                             HeldAt::Pair(_) => unreachable!("a tuple or `Pack` has no pairs"),
                         };
                         elements.push((key, var, Kind::Type));
+                    }
+                    Value::Alike(..) => {
+                        let term = rule.positional(values, &placed.value, placed.group.is_some());
+                        elements.push((None, term, Kind::Type));
                     }
                     Value::Pair(..) => unreachable!("a tuple or `Pack` has no pairs"),
                 }

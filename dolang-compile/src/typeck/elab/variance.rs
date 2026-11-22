@@ -371,6 +371,7 @@ impl<'t> Collect<'t, '_> {
         // members at the same types, and its own only optionally.
         if let Some(
             designated @ (Designated::Phantom
+            | Designated::PipeStages
             | Designated::Intrinsic(
                 Intrinsic::Union
                 | Intrinsic::Keys
