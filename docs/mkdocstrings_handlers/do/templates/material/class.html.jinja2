@@ -17,7 +17,7 @@
 {{ entity.doc | convert_markdown(heading_level - 1, "") }}
 {% endif %}
 
-{# A protocol's supertypes are all type-only, but it has no runtime ones to
+{# A protocol's supertypes are all checker-only, but it has no runtime ones to
    tell them apart from. #}
 {% set supers = entity.super_annotations + (entity.protocol_annotations if entity.protocol else []) %}
 {% set protocols = [] if entity.protocol else entity.protocol_annotations %}

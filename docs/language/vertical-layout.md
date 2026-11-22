@@ -297,11 +297,11 @@ def flags level
     --color
     match level
       Int(n) if (n > 1) => --jobs $n
-      :quiet: => --quiet --no-progress
+      :QUIET: => --quiet --no-progress
       _ => --verbose
 
 assert_eq $flags(4) ["--color", "--jobs", 4]
-assert_eq $flags(:quiet:) ["--color", "--quiet", "--no-progress"]
+assert_eq $flags(:QUIET:) ["--color", "--quiet", "--no-progress"]
 assert_eq $flags(nil) ["--color", "--verbose"]
 ```
 

@@ -216,7 +216,7 @@ pub class Acl
 pub @let PermissionSpec = (Permission | PermissionBit | Iterable[PermissionBit])
 
 # A POSIX entry, built or declared as a dictionary. A dictionary has exactly
-# one qualifier key, with the same meaning as the keyword arguments of
+# one qualifier key, with the same meaning as the key arguments of
 # [`ace`](security.unix.ace).
 pub @let AceSpec = $
   | Ace

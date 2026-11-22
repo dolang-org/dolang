@@ -867,7 +867,7 @@ impl Diagnose for RedundantTypeOnly {
     }
 
     fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "a protocol's supertypes are already type-only")
+        write!(w, "a protocol's supertypes are already checker-only")
     }
 }
 

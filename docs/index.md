@@ -148,3 +148,5 @@ a Linux host can remotely modify security descriptors on Windows, etc.
 [command-line tool worked example](./shell/cli-tools.md).
 
 **Curious about the VFS model?** Read the [VFS Guide](./shell/vfs.md).
+
+**Want static checking?** Read the [Type Guide](./types/index.md).

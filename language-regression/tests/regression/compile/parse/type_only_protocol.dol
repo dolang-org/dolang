@@ -1,5 +1,5 @@
 @class Proto: @Other
-  # error: a protocol's supertypes are already type-only
+  # error: a protocol's supertypes are already checker-only
   #   --> type_only_protocol.dol:LL:LL
   #    |
   # LL | @class Proto: @Other

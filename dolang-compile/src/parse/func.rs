@@ -253,7 +253,7 @@ impl Parser<'_> {
                     return Err(self.syntax_error(
                         scope,
                         other,
-                        "a type-only declaration has no body",
+                        "a checker-only declaration has no body",
                     ));
                 }
             }

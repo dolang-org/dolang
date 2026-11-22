@@ -28,11 +28,20 @@ nav:
     - language/decorators.md
     - language/error-handling.md
     - language/concurrency.md
-    - language/types.md
-    - language/type-syntax.md
-    - language/type-checking.md
     - language/syntax-design.md
     - language/prelude.md
+  - Type Guide:
+    - types/index.md
+    - types/annotations.md
+    - types/syntax.md
+    - types/schemas.md
+    - types/generics.md
+    - types/functions.md
+    - types/classes.md
+    - types/aliases.md
+    - types/checking.md
+    - types/strict.md
+    - types/standard.md
   - Shell Guide:
     - shell/index.md
     - shell/external-programs.md

@@ -28,7 +28,7 @@ impl Import {
         let type_only = item.starts_with('@');
         let item = if type_only { &item[1..] } else { item };
         if type_only && item.is_empty() {
-            return Err("type-only prelude item name cannot be empty".into());
+            return Err("checker-only prelude item name cannot be empty".into());
         }
         Ok(match (type_only, bind) {
             (false, None) => Self::Item(module.into(), item.into()),

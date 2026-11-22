@@ -6,7 +6,7 @@
 #
 # The styling functions -- [`print`](term.print),
 # [`text`](term.text) and [`Style`](term.Style) -- all accept the same
-# keyword options:
+# key options:
 #
 # | Name            | Type                                                                                                   | Description                        |
 # | --------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------- |
@@ -42,7 +42,7 @@ pub @let Color = (:BLACK: | :RED: | :GREEN: | :YELLOW: | :BLUE: | :MAGENTA: | :C
 # An attribute [style option](term.style-options).
 pub @let Attribute = (true | :INHERIT:)
 
-# The [style options](term.style-options), as keyword arguments.
+# The [style options](term.style-options), as key arguments.
 pub @let StyleOptions = $
   ?fg: Color
   ?bg: Color

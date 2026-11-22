@@ -155,7 +155,7 @@ pub @let ContainerStatus = $
   | :DEAD:
 
 
-# Build steps and tags, in order, as keyword arguments. Keys may repeat.
+# Build steps and tags, in order, as key arguments. Keys may repeat.
 #
 # | Key      | Value                                         | Meaning                              |
 # | -------- | --------------------------------------------- | ------------------------------------ |

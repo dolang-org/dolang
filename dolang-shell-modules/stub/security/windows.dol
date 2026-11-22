@@ -297,7 +297,7 @@ pub @let AclSpec = $
       *AceSpec
       ?revision: (AclRevision | Int)
 
-# The components and control flags of a security descriptor, as keyword
+# The components and control flags of a security descriptor, as key
 # arguments or dictionary items. `S` is what an owner or group may be given
 # as, and `A` what an ACL may be given as: specs by default, built values where
 # a [`SecDesc`](security.windows.SecDesc) method requires them.

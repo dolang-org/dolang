@@ -625,13 +625,13 @@ pub @class Env: MutMap[Str, Str] Func
   # returns.
   @def (call)[R]
     self
-    # The overrides, as for keyword arguments.
+    # The overrides, as for key arguments.
     vars @ BaseDict[Str | Sym, Str | :INHERIT: | nil]
     # The block to call.
     body @ (() -> R)
   do -> R
 
-  # Calls `body` with the variables given as keyword arguments in place,
+  # Calls `body` with the variables given as key arguments in place,
   # restoring them when it returns.
   #
   # A `nil` value unsets a variable, and any other value is converted to a string

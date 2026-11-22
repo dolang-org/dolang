@@ -1,6 +1,6 @@
 @def foo x
   x
-# error: a type-only declaration has no body
+# error: a checker-only declaration has no body
 #   --> type_only_body.dol:LL:LL
 #    |
 # LL |   @def foo x

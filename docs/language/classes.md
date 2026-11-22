@@ -149,15 +149,15 @@ suggest using `.#field` instead.
 
 Private access requires the method's first parameter as the receiver, or the
 class's own name anywhere inside the class. The receiver's name need not be
-`self`; class methods use their type-object parameter, and static methods,
-which have none, use the class's name. Receiver and class bindings cannot be
-reassigned, but their fields can be written. Aliases and other objects cannot
-be used with `.#`, even inside the same class. Nested functions may access
-private members through the captured receiver. A decorated class's name grants
-no private access, since the decorator may replace the class, unless every
+`self`; class methods use their type-object parameter, and static methods, which
+have none, use the class's name. Receiver and class bindings cannot be
+reassigned, but their fields can be written. Aliases and other objects cannot be
+used with `.#`, even inside the same class. Nested functions may access private
+members through the captured receiver. A decorated class's name grants no
+private access, since the decorator may replace the class, unless every
 decorator is the prelude's [`final`](#final-classes) or
-[`mixable`](#disjoint-classes), which return the class they are
-given.
+[`mixable`](../types/classes.md#disjoint-classes), which return the class they
+are given.
 
 ### Private Methods
 
@@ -276,13 +276,13 @@ class Cat: Animal
 ```
 
 The type checker requires this call before `self` is otherwise used; see
-[Superclass Initialization](./type-checking.md#superclass-initialization).
+[Superclass Initialization](../types/classes.md#superclass-initialization).
 
 ### Multiple Inheritance
 
 List multiple parents after the colon, separated by spaces. A class can't
 combine two ordinary unrelated parents, so the extra parents are marked
-[`mixable`](#disjoint-classes):
+[`mixable`](../types/classes.md#disjoint-classes):
 
 ```
 #[mixable]
@@ -302,8 +302,8 @@ class LocalTool: tools.build.Tool
   pub field root = "."
 ```
 
-A superclass written with `@` exists only in types, and the class does not
-inherit from it. See [Protocols](types.md#protocols).
+A superclass written with `@` is checker-only, and the class does not
+inherit from it. See [Protocols](../types/classes.md#protocols).
 
 ### Vertical Supertypes
 
@@ -372,7 +372,7 @@ class Tagged: Str
     Str.(init) $self $value
     self.tag = tag
 
-let t = Tagged "hello" :greeting:
+let t = Tagged "hello" :GREETING:
 assert_eq (str t) "hello"
 assert_eq $t.len 5
 ```
@@ -414,35 +414,7 @@ class Point3: Point   # TypeError: cannot inherit from final type
 `final` raises a [`StateError`](std.StateError) for a class that already has a
 subclass. Since a final class has no subclasses, the type checker treats its
 values as outside every class it doesn't inherit from, so a type test for such
-a class drops it (see [Narrowing](./type-checking.md#narrowing)).
-
-### Disjoint Classes
-
-Every class is disjoint unless it is decorated with the prelude's
-[`mixable`](std.mixable), and `Value` is disjoint. A class can't inherit from
-two disjoint classes neither of which inherits from the other; the type checker
-reports one that does. A mixable class takes the place of its nearest disjoint
-superclass, so subclasses of unrelated classes may share it:
-
-```
-#[mixable]
-class Named
-  pub field name = nil
-
-class Shape
-class Image
-class Square: Shape Named
-class Icon: Image Named
-
-class Tile: Square Image   # error: unrelated disjoint classes `Square` and `Image`
-```
-
-A diamond is allowed when every class in its middle is mixable. Classes whose
-nearest disjoint superclasses are unrelated have no instances in common, so a
-type test for one drops the other. `Iterable`, `Iter`, `Sinkable`, `Sink`, and
-the error kinds below [`RuntimeError`](std.RuntimeError) are mixable. Only
-runtime supertypes count, and protocols are never disjoint. The runtime doesn't
-enforce the rule.
+a class drops it (see [Narrowing](../types/checking.md#narrowing)).
 
 ## Type Inspection
 
@@ -738,10 +710,11 @@ Invoked when an instance is called like a function. As a class or static member
 it instead governs calling the class itself; see
 [Class and Static Members](#class-and-static-members). A class whose instances
 are passed as functions names `Func` among its supertypes; the type checker then
-takes its `(call)`'s signature as theirs. `Func` is disjoint, so a function
-type test separates functions from instances of other disjoint classes. An
-instance whose class inherits another disjoint class is still called through
-its `(call)`. To pass it as a function, pass the bound `obj.(call)`.
+takes its `(call)`'s signature as theirs. `Func` is
+[disjoint](../types/classes.md#disjoint-classes), so a function type test
+separates functions from instances of other disjoint classes. An instance whose
+class inherits another disjoint class is still called through its `(call)`. To
+pass it as a function, pass the bound `obj.(call)`.
 
 ```
 class Multiplier: Func
