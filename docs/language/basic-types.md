@@ -73,7 +73,7 @@ statements with nothing interesting to return.
 ## Symbols (`Sym`)
 
 Identifiers that compare and hash faster than strings, since each name has
-exactly one symbol. Bare dictionary keys, keyword argument names, and field
+exactly one symbol. Bare dictionary keys, key argument names, and field
 names are symbols, and symbols serve as ad-hoc enumerated constants.
 
 ```

@@ -49,7 +49,7 @@ mod = true
 run = true
 ```
 
-Prefix an item name with `@` to bind it only in types. In a table, the
+Prefix an item name with `@` to make it checker-only. In a table, the
 prefix belongs to the source name; an alias has no prefix:
 
 ```toml

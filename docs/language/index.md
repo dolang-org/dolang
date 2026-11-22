@@ -61,3 +61,9 @@ Several positions are compact expressions by default (no `$` needed):
 - The scrutinee in `bind`
 - The right-hand side of `let` and assignment
 - The value in `return`
+
+## Types
+
+Do is dynamically typed, but bindings can carry type annotations that a type
+checker verifies without running the script. Annotations have no effect at
+runtime. The [Type Guide](../types/index.md) describes them.

@@ -115,7 +115,7 @@ impl<'v> Display for Boxed<'v> {
             Field(name) => write!(f, "no such field: {name}"),
             UnexpectedPos(i) => write!(f, "unexpected positional item: {i}"),
             UnexpectedKey(name) => write!(f, "unexpected key item: {name}"),
-            DuplicateKey(name) => write!(f, "duplicate keyword argument: {name}"),
+            DuplicateKey(name) => write!(f, "duplicate key argument: {name}"),
             MissingPos(i) => write!(f, "missing positional item: {i}"),
             MissingKey(name) => write!(f, "missing key item: {name}"),
             Import(name) => write!(f, "module not found: {name}"),

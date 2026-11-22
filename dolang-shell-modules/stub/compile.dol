@@ -28,7 +28,7 @@ import term:
 
 # What a prelude binds a module to: `true` to import it as is, an alias, an
 # array of items, or a dictionary of items to their aliases. Prefix an item
-# name with `@` to bind it only in types; aliases are written without the
+# name with `@` to make it checker-only; aliases are written without the
 # prefix.
 pub @let PreludeBinding = $
   | true
@@ -383,7 +383,7 @@ pub class ImportModule: Import
   pub def is_pub self -> Bool
     ...
 
-  # Whether the module was imported with `@`, for types only.
+  # Whether the module was imported with `@`, as checker-only.
   #[getter]
   pub def type_only self -> Bool
     ...
@@ -399,7 +399,7 @@ pub class ImportItem: Import
   pub def item self -> Span
     ...
 
-  # Whether the item was imported with `@`, for types only. Such an item binds no
+  # Whether the item was imported with `@`, as checker-only. Such an item binds no
   # variable.
   #[getter]
   pub def type_only self -> Bool
@@ -421,7 +421,7 @@ pub class PreludeModule: Import
 # [`Str`](std.Str) values rather than spans, and it appears only where
 # the binding it introduces is referenced.
 pub class PreludeItem: Import
-  # Whether this binding is available only in types.
+  # Whether this binding is checker-only.
   #[getter]
   pub def type_only self -> Bool
     ...
@@ -450,7 +450,7 @@ pub class PositionalParam: Param
   pub def default self -> (Span | nil)
     ...
 
-# A keyword parameter.
+# A key parameter.
 #
 # The kind is at the granularity of the language rather than the parser: `:foo`
 # and `foo: local` both arrive here, differing only in whether `key` and `name`
@@ -715,7 +715,7 @@ pub class PosTypeArg: TypeArg
   pub def ty self -> TypeExpr
     ...
 
-# A keyword argument, such as `name: T`.
+# A key argument, such as `name: T`.
 pub class KeyTypeArg: TypeArg
   # The argument's type.
   #[getter]

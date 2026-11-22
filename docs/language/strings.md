@@ -465,7 +465,7 @@ parameter `0` wherever it appears, including in a sequence interpolated into
 another.
 
 [`format()`](std.Fmt.format) fills holes from its arguments, numbered holes
-from positional arguments and named holes from keyword arguments, and raises an
+from positional arguments and named holes from key arguments, and raises an
 error for a hole left unfilled.
 
 ```playground

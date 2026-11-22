@@ -812,7 +812,7 @@ def register name @ (Str | nil) tags @ Tuple[...Str] func @ TestFn[{}] -> TestFn
   func
 
 # Returns a decorator that runs a test once for each combination of values of
-# one or more axes. Each keyword argument names an axis, under which each of
+# one or more axes. Each key argument names an axis, under which each of
 # its values is passed to the test function in turn.
 #
 # Decorators apply from the bottom up, each over the result of the one below.

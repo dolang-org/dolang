@@ -14,13 +14,13 @@ let native_required = do |...args| callme (do |:msg| msg) ...args
 let native_optional = do |...args| assert true ...args
 for f = [required, optional, native_required, native_optional]
   f msg: nil
-  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+  assert_throws $UnexpectedKeyError str: "duplicate key argument: msg" do
     f msg: nil msg: 2
-  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+  assert_throws $UnexpectedKeyError str: "duplicate key argument: msg" do
     f ...(msg: 1, msg: 2)
-  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+  assert_throws $UnexpectedKeyError str: "duplicate key argument: msg" do
     f msg: 1 ...{msg: 2}
-  assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+  assert_throws $UnexpectedKeyError str: "duplicate key argument: msg" do
     f ...{msg: 1} msg: 2
 
 assert_eq (required msg: 7) 7
@@ -56,7 +56,7 @@ assert_eq (first 1 k: 2 k: 3) [1, 2, (k: 3,)]
 def positional_only :msg *rest
   let _ = msg
   rest
-assert_throws $UnexpectedKeyError str: "duplicate keyword argument: msg" do
+assert_throws $UnexpectedKeyError str: "duplicate key argument: msg" do
   positional_only msg: 1 msg: 2
 
 # Errors clean up the frame and don't affect subsequent invocations.
@@ -135,9 +135,9 @@ do
   [k0, k63, k64, k65]
 assert_eq (many k65: 1) [0, 63, 64, 1]
 assert_eq (many k64: nil k65: nil k0: nil) [nil, 63, nil, nil]
-assert_throws $UnexpectedKeyError str: "duplicate keyword argument: k65" do
+assert_throws $UnexpectedKeyError str: "duplicate key argument: k65" do
   many k65: 1 k65: 2
-assert_throws $UnexpectedKeyError str: "duplicate keyword argument: k64" do
+assert_throws $UnexpectedKeyError str: "duplicate key argument: k64" do
   many k64: nil k65: 1 k64: 2
 assert_throws $std.MissingKeyError str: "missing key item: k65" do
   many k64: 1

@@ -309,7 +309,7 @@ impl Diagnose for PubOverload {
     fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
-            "a type-only `def` is exported with its implementation, so it cannot be `pub`"
+            "a checker-only `def` is exported with its implementation, so it cannot be `pub`"
         )
     }
 

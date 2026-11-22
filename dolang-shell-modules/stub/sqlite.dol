@@ -352,7 +352,7 @@ pub class Connection
 # the life of the statement.
 #
 # A **parameter** -- `${#name}` or `${#0}` -- is a hole left for each call to
-# fill. A named parameter is filled by a keyword argument and a numbered one
+# fill. A named parameter is filled by a key argument and a numbered one
 # by the positional argument in that place; a hole used twice is one
 # parameter, filled once.
 #
@@ -434,7 +434,7 @@ pub class Statement[S @ {*SqlValue, **SqlValue}]
   # | [`MissingPosError`](std.MissingPosError)       | A numbered parameter unfilled                                        |
   # | [`MissingKeyError`](std.MissingKeyError)       | A named parameter unfilled                                           |
   # | [`UnexpectedPosError`](std.UnexpectedPosError) | A positional argument unused                                         |
-  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A keyword argument unused                                            |
+  # | [`UnexpectedKeyError`](std.UnexpectedKeyError) | A key argument unused                                            |
   # | [`ValueError`](std.ValueError)                 | A `Str` argument contains a NUL, or an argument is too large to bind |
   # | [`ConstraintError`](sqlite.ConstraintError)    | The statement violates a constraint                                  |
   # | [`Busy`](sqlite.Busy)                          | The database stays locked through every retry                        |

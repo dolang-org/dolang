@@ -77,7 +77,7 @@ def migrates()
 [`fixture`](test.fixture) turns a function into a decorator that wraps a test
 with setup and teardown. The function receives the test and the arguments left
 for it, and calls the test with those arguments and any keys it adds. The test
-takes the added keys as keyword parameters:
+takes the added keys as key parameters:
 
 ```
 import fs:
@@ -107,7 +107,7 @@ runs.
 ## Parametrization
 
 [`parametrize`](test.parametrize) runs a test once for each value of an axis,
-passing the value as the keyword argument of the axis's name. Stacked
+passing the value as the key argument of the axis's name. Stacked
 `parametrize` decorators run every combination of their axes:
 
 ```

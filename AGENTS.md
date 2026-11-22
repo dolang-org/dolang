@@ -226,10 +226,10 @@ This compiles fine either way; the bug only shows up at runtime. It is
 deliberate, not an inconsistency to "fix": `"$basename.txt"` must interpolate
 `$basename` and append `.txt`.
 
-#### Vertical/Keyword-Argument *Values* Are Still Statement Level
+#### Vertical/Key-Argument *Values* Are Still Statement Level
 
 A bareword on the **value** side of a vertical key item, dash item, or
-keyword argument is a literal string, not a variable reference — the same
+key argument is a literal string, not a variable reference — the same
 "statement level is shell-like by default" rule from the top of this section
 applies there too, and it's easy to forget once you're several nested calls
 deep:
@@ -333,7 +333,7 @@ let f = do |x|
 let x = 42                # declare and bind
 x = (x + 1)              # reassign (x must already exist)
 let a b = [1, 2]         # destructuring
-let :name :age = person   # keyword destructuring
+let :name :age = person   # key destructuring
 ```
 
 ### Functions
@@ -475,7 +475,7 @@ foo                           # bare name → evaluates variable (NOT a call)
 foo()                         # zero-arg call
 foo 1 2                       # call with args
 
-connect host: db port: 5432   # keyword arguments
+connect host: db port: 5432   # key arguments
 let host = "db"
 connect :host port: 5432      # :key shorthand (passes host: $host)
 ```
@@ -628,7 +628,7 @@ class LoudDog: Animal Pet
 
 An empty `:` introduces vertical supertypes. Mix bin-packed lines and single
 supertype dash lines; a dedented `do` ends the list. Protocols use the same
-layout, with implicitly type-only supertypes:
+layout, with implicitly checker-only supertypes:
 
 ```
 class Derived[T]:
@@ -726,9 +726,9 @@ For a `let` RHS beginning with `if`, `else` belongs to the RHS; a subsequent
 
 ### Type Annotations
 
-Annotations document types and have no runtime effect. Full syntax (schemas,
+Annotations document types and have no runtime effect. Full guide (schemas,
 quantifiers, implicit `<T`/`>T` parameters, vertical schemas):
-[`docs/language/type-syntax.md`](./docs/language/type-syntax.md).
+[`docs/types/`](./docs/types/index.md).
 
 `@` and a type follow a bound name and precede any default. Write a space on
 each side of `@`, except where several bindings share a line: there write none,
@@ -767,10 +767,11 @@ class Registry[V]: Table[Sym, V]
 pub @let Pair[T] = Tuple[T, T]
 ```
 
-Type-only declarations: `@def name` declares a bodiless overload (never `pub`;
-it is exported with the implementation). `@class Name` declares a protocol.
-`@` before a supertype makes it type-only. `@let Name = Type` is a type-only
-alias. `@` before an import item, or `@import`, binds it for types only.
+Checker-only declarations: `@def name` declares a bodiless overload (never
+`pub`; it is exported with the implementation). `@class Name` declares a
+protocol. `@` before a supertype makes it checker-only. `@let Name = Type` is a
+checker-only alias. `@` before an import item, or `@import`, makes it
+checker-only.
 
 ```
 @def double x@Int -> Int

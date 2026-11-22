@@ -129,7 +129,7 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 
 # Mode string accepted by [`open`](fs.open), shorthand for common
 # [`OpenMode`](fs.OpenMode) settings. A mode string cannot be combined with
-# [`OpenMode`](fs.OpenMode) or [`OpenOptions`](fs.OpenOptions) keywords.
+# [`OpenMode`](fs.OpenMode) or [`OpenOptions`](fs.OpenOptions) keys.
 #
 # | Mode | Description                                         |
 # | ---- | --------------------------------------------------- |
@@ -140,7 +140,7 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 #
 # A trailing `+` adds read access, and to `r`, write access.
 #
-# In [`OpenMode`](fs.OpenMode) keywords:
+# In [`OpenMode`](fs.OpenMode) keys:
 #
 # | Mode | Equivalent                                          |
 # | ---- | --------------------------------------------------- |
@@ -152,7 +152,7 @@ pub @let XattrNamespace = (Str | :USER: | :SYSTEM:)
 pub @let OpenHow = ("r" | "w" | "a" | "x" | "r+" | "w+" | "a+" | "x+")
 
 # How [`open`](fs.open) accesses a file, and what it does when the file exists
-# or is missing, as keyword arguments.
+# or is missing, as key arguments.
 #
 # Without `read`, `write`, or `access`, the file is opened for reading. With
 # any of them, the file gets only the access they ask for: `write: true` alone
@@ -191,7 +191,7 @@ pub @let ShareRight = $
   # Delete or rename
   | :DELETE:
 
-# Further [`open`](fs.open) settings, as keyword arguments.
+# Further [`open`](fs.open) settings, as key arguments.
 #
 # The creation settings apply only when the open creates the file. A setting
 # the target platform lacks throws
@@ -1466,7 +1466,7 @@ pub class Path
     ...
 
   # The method form of [`fs.update_metadata`](fs.update_metadata),
-  # which documents the metadata keyword arguments.
+  # which documents the metadata key arguments.
   pub def update_metadata
     self
     # Resolution mode. Defaults to `:TARGET:`.
@@ -1759,8 +1759,8 @@ do -> File
 
 # Opens a file, by default for reading.
 #
-# [`OpenMode`](fs.OpenMode) keywords say how to access the file and what to do
-# when it exists or is missing, and [`OpenOptions`](fs.OpenOptions) keywords
+# [`OpenMode`](fs.OpenMode) keys say how to access the file and what to do
+# when it exists or is missing, and [`OpenOptions`](fs.OpenOptions) keys
 # give further settings.
 #
 # ```

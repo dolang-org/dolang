@@ -373,7 +373,7 @@ Matching follows the same rules as `if let` and `if bind`, including the
 truthiness test for a single name. The new bindings are not in scope inside
 `else`; an existing outer name is still visible there.
 
-In a [strict](type-checking.md#strict-checking) file, `else` is how to
+In a [strict](../types/strict.md) file, `else` is how to
 destructure a value that may not match.
 
 The `else` body must diverge: return, throw, break, continue, or call something
@@ -705,15 +705,15 @@ continues with the next arm:
 def sign n
   match n
     m if (m < 0)
-      :negative:
-    0 => :zero:
-    m if (m > 100) => :large:
-    _ => :positive:
+      :NEGATIVE:
+    0 => :ZERO:
+    m if (m > 100) => :LARGE:
+    _ => :POSITIVE:
 
-assert_eq (sign (-3)) :negative:
-assert_eq (sign 0) :zero:
-assert_eq (sign 4) :positive:
-assert_eq (sign 500) :large:
+assert_eq (sign (-3)) :NEGATIVE:
+assert_eq (sign 0) :ZERO:
+assert_eq (sign 4) :POSITIVE:
+assert_eq (sign 500) :LARGE:
 ```
 
 A guard may be `if let` or `if bind`, which matches a pattern of its own, as in
@@ -750,15 +750,15 @@ being matched is evaluated once, before the first arm. In
 [vertical layout](./vertical-layout.md#match-in-vertical-layout), the bodies
 hold items instead.
 
-The [type checker](./type-checking.md#narrowing) narrows the value by each arm
+The [type checker](../types/checking.md#narrowing) narrows the value by each arm
 that does not match, so a later arm sees only what remains:
 
 ```
-def run step @ ((:cmd:, Str) | (:wait:, Int))
+def run step @ ((:CMD:, Str) | (:WAIT:, Int))
   match step
-    (:cmd: line) => echo "run $line"
+    (:CMD: line) => echo "run $line"
     _
-      # step is (:wait:, Int)
+      # step is (:WAIT:, Int)
       let _ secs = step
       echo "wait $secs"
 ```

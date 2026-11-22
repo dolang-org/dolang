@@ -23,8 +23,9 @@ def hello()
   echo Hello, world!
 ```
 
-`=>` after the parameters, or after a [return type](type-syntax.md), puts a
-single-statement body on the same line:
+`=>` after the parameters, or after a
+[return type](../types/annotations.md#return-types), puts a single-statement
+body on the same line:
 
 ```
 def double x => (x * 2)
@@ -203,10 +204,10 @@ func ...kwargs
 See [Spreading](./data-structures.md#spreading) for what each kind of value
 contributes.
 
-A keyword that names a parameter binds its first occurrence, including one
+A key that names a parameter binds its first occurrence, including one
 supplied through spreading. A `**` or `...` rest takes any repeats, and without
 one they raise [UnexpectedKeyError](std.UnexpectedKeyError). A rest keeps the
-keywords it takes in order, repeats included.
+keys it takes in order, repeats included.
 
 ### Vertical Parameter Layout
 

@@ -1040,7 +1040,7 @@ fn prelude_item_name<'a, 'v, 's>(
     match name.strip_prefix('@') {
         Some("") => Err(Error::value(
             strand,
-            "type-only prelude item name cannot be empty",
+            "checker-only prelude item name cannot be empty",
         )),
         Some(name) => Ok((name, true)),
         None => Ok((name, false)),

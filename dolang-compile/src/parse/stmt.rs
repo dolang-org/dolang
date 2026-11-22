@@ -1008,7 +1008,7 @@ impl Parser<'_> {
                 return Err(self.syntax_error(
                     scope,
                     other,
-                    "expected type-only declaration keyword after `@`",
+                    "expected checker-only declaration keyword after `@`",
                 ));
             }
         }

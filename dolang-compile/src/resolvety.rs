@@ -100,7 +100,7 @@ impl Diagnose for OverloadWithoutImpl {
     }
 
     fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "type-only def has no implementation")
+        write!(w, "checker-only def has no implementation")
     }
 
     fn span(&self) -> Span {

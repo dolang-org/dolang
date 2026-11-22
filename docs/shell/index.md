@@ -72,7 +72,7 @@ dolang script.dolc
 
 ### Checking Scripts
 
-`--check` runs the [type checker](../language/type-checking.md) on a
+`--check` runs the [type checker](../types/index.md) on a
 script's source without executing it:
 
 ```bash

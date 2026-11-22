@@ -29,7 +29,7 @@ Full expressions support:
 - Tuple literals: `(1, 2)`, `(x,)`, `()`
 - Pack literals: `(name: "Alice", age: 30)`
 - Casts: `(value @ Type)`, `(value !@ Type)` (see
-  [Casts](types.md#casts))
+  [Casts](../types/annotations.md#casts))
 
 Parentheses around a single item with no trailing comma only group it. With a
 comma, several items, or none, they make a tuple, or a `Pack` if any item has a

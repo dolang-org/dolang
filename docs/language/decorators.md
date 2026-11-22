@@ -37,8 +37,8 @@ Decorators are valid in four places:
 - Before a `field` inside a class body, restricted to the prelude `class` and
   `static` decorators
 
-They are not valid before an `@def` overload, which describes its
-implementation (see [Overloads](./types.md#overloads)), or before `let` or other
+They are not valid before an `@def` overload, which describes its implementation
+(see [Overloads](../types/functions.md#overloads)), or before `let` or other
 statements.
 
 `pub` goes after any decorators:

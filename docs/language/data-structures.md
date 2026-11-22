@@ -382,17 +382,17 @@ could belong to either `if`. Use `&&` and `||` for a conditional value.
 or into a call's arguments. What it contributes depends on both the value and
 the context:
 
-| Context                     | Spread input                          | Behavior                                                    |
-| --------------------------- | ------------------------------------- | ----------------------------------------------------------- |
-| Arguments, `Pack` or record | Array, tuple, set, [`Iter`](std.Iter) | Positional items, including pair elements                   |
-| Arguments, `Pack` or record | `Pack`, record, struct                | Positional items stay positional, symbol keys are keywords  |
-| Arguments, `Pack` or record | Dict                                  | Symbol keys are keywords; another key raises an error       |
-| Array or tuple              | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                         |
-| Array or tuple              | `Pack`, record, struct                | Positional elements; a keyed entry raises an error          |
-| Array or tuple              | Dict                                  | Raises an error, since every entry is keyed                 |
-| Dictionary                  | Array, tuple, set, [`Iter`](std.Iter) | Raises an error, since every element is positional          |
-| Dictionary                  | Dict, `Pack`, record, struct          | Keyed entries; a positional item raises an error            |
-| Any                         | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                |
+| Context                     | Spread input                          | Behavior                                                        |
+| --------------------------- | ------------------------------------- | --------------------------------------------------------------- |
+| Arguments, `Pack` or record | Array, tuple, set, [`Iter`](std.Iter) | Positional items, including pair elements                       |
+| Arguments, `Pack` or record | `Pack`, record, struct                | Positional items stay positional, symbol keys are key arguments |
+| Arguments, `Pack` or record | Dict                                  | Symbol keys are key arguments; another key raises an error      |
+| Array or tuple              | Array, tuple, set, [`Iter`](std.Iter) | Positional elements                                             |
+| Array or tuple              | `Pack`, record, struct                | Positional elements; a keyed entry raises an error              |
+| Array or tuple              | Dict                                  | Raises an error, since every entry is keyed                     |
+| Dictionary                  | Array, tuple, set, [`Iter`](std.Iter) | Raises an error, since every element is positional              |
+| Dictionary                  | Dict, `Pack`, record, struct          | Keyed entries; a positional item raises an error                |
+| Any                         | `kv()` adapter                        | Keyed entries; arrays and tuples reject them                    |
 
 Spread a dictionary directly to preserve its keys:
 

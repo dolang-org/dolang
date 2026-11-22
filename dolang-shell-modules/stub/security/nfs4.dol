@@ -315,7 +315,7 @@ pub @let MaskSpec = (Mask | MaskBit | Iterable[MaskBit])
 pub @let FlagsSpec = (Flags | FlagBit | Iterable[FlagBit])
 
 # An NFSv4 entry, built or declared as a dictionary. A dictionary has
-# exactly one type key, with the same meaning as the keyword arguments of
+# exactly one type key, with the same meaning as the key arguments of
 # [`ace`](security.nfs4.ace).
 pub @let AceSpec = $
   | Ace

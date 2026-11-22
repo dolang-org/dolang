@@ -143,7 +143,7 @@ pub class Archive
   # Opens a file within the archive and calls `func` with it. The file is
   # closed when `func` returns.
   #
-  # The keywords are those of the form without `func`.
+  # The keys are those of the form without `func`.
   @def open[R]
     self
     # Name of the file within the archive.

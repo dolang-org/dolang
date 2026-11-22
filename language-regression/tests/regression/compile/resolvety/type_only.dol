@@ -11,7 +11,7 @@ pub @class Shape
   @def size self scale@Int -> Int
   pub def size self *scale@Int -> Int
   @def orphan self -> Int
-# error: type-only def has no implementation
+# error: checker-only def has no implementation
 #   --> type_only.dol:LL:LL
 #    |
 # LL |   @def orphan self -> Int
@@ -27,14 +27,14 @@ pub class Square: @Shape @Missing
   pub def area _self
     1
   @def perimeter self -> Int
-# error: type-only def has no implementation
+# error: checker-only def has no implementation
 #   --> type_only.dol:LL:LL
 #    |
 # LL |   @def perimeter self -> Int
 #    |        ^^^^^^^^^
 
 @def lonely x @ Shape -> Shape
-# error: type-only def has no implementation
+# error: checker-only def has no implementation
 #   --> type_only.dol:LL:LL
 #    |
 # LL | @def lonely x @ Shape -> Shape

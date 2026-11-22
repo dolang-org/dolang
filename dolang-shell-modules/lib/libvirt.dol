@@ -4,7 +4,7 @@
 # ## Domain Options {: #libvirt.common-domain-options }
 #
 # [`create`](libvirt.create), [`with`](libvirt.with), and
-# [`build`](libvirt.build) take the keyword arguments
+# [`build`](libvirt.build) take the key arguments
 # [`DomainOptions`](libvirt.DomainOptions) lists.
 #
 # Exactly one of `image`, `bundle`, and `installer` is required.
@@ -304,7 +304,7 @@ pub @let DomainState = $
 # A guest vTPM model.
 @let TpmModel = :CRB_2_0:
 
-# Domain options and steps, as keyword arguments and positional items in
+# Domain options and steps, as key arguments and positional items in
 # order. Those marked `*` may repeat.
 pub @let DomainOptions[I, O] = $
   # Base disk image, optionally gzip-, xz-, or zstd-compressed
@@ -2975,10 +2975,10 @@ def write_files_entry add@Add app@Str -> Dict[Sym, (Str | Bool)]
 @let InitState = (boot: Array[Array[Str]], write: Array[Add], packages: Array[Str])
 
 # Parses the `init:` sub-dict into boot-time cloud-init state. Like the
-# top-level keyword arguments, `add:`, `run:` and `packages:` may repeat (dicts
+# top-level key arguments, `add:`, `run:` and `packages:` may repeat (dicts
 # are multimaps). `run:` entries here must be a raw string or Array of strings —
 # anything needing a live VFS connection belongs in the top-level repeated
-# `run:` keyword argument instead.
+# `run:` key argument instead.
 def parse_init init @ (InitSpec | nil) -> InitState
   let boot @ Array[Array[Str]] = []
   let write @ Array[Add] = []
@@ -3011,7 +3011,7 @@ def parse_init init @ (InitSpec | nil) -> InitState
 # all run post-SSH, and `installer:`/`drivers:`, the media an unattended install
 # boots from. Boot-time commands belong in `init: {run: ...}` instead.
 #
-# These are repeatable, which a declared keyword parameter cannot be, so they
+# These are repeatable, which a declared key parameter cannot be, so they
 # arrive through `...options` and are sorted out here instead. The order they
 # arrive in is the order they run in, positional steps included.
 #
