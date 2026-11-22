@@ -28,6 +28,8 @@ pub(crate) enum Problem {
         found: Shown,
         expected: Option<Shown>,
         causes: Vec<Vec<String>>,
+        /// The calls that wrote what a `do` block's output doesn't fit
+        written: Vec<Span>,
     },
     /// A call that doesn't pass one of its callee's required parameters
     MissingArgument(Span),
@@ -277,8 +279,16 @@ impl Report for Problem {
     }
 
     fn annotations(&self) -> Vec<Annotation> {
-        match *self {
-            Problem::Unreachable { span, call } if span != call => vec![Annotation {
+        match self {
+            Problem::Argument { written, .. } => written
+                .iter()
+                .map(|&span| Annotation {
+                    kind: AnnotationKind::Context,
+                    span,
+                    message: "written here".to_owned(),
+                })
+                .collect(),
+            &Problem::Unreachable { span, call } if span != call => vec![Annotation {
                 kind: AnnotationKind::Context,
                 span: call,
                 message: "any code after this call is unreachable".to_owned(),

@@ -40,7 +40,7 @@ use dolang_util::{alias, mono::MonoVec};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
-    At, Detail, Flow, Role, Seen, State,
+    Ambient, At, Detail, Flow, Role, Seen, State, Template,
     member::CallTarget,
     problem::{Misfit, Problem},
     state::Group,
@@ -138,6 +138,19 @@ struct Rule<'s, 'a, 'p> {
     /// Whether a `do` block's result is left to a variable even once it's known,
     /// so that choosing a fresh dict's schema doesn't depend on it
     blind: bool,
+    /// The running `do` block's output, when its writes infer its items
+    output: Option<Shared>,
+}
+
+/// The output of a `do` block whose writes infer its items (see [`Template`]),
+/// as every call of a step passes it: its template's body applied to a variable
+/// for each item, which the step's calls share, so that one held back bounds
+/// it as any other does
+struct Shared {
+    body: TypeId,
+    items: Vec<Term>,
+    /// The calls passed it, by obligation, with their spans
+    calls: Vec<(ObligationId, Span)>,
 }
 
 /// An argument held back that a make of a rule found exactly (see
@@ -213,6 +226,7 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             found: Vec::new(),
             isolated: FxHashMap::default(),
             blind: false,
+            output: None,
         }
     }
 
@@ -238,13 +252,18 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
         };
         let group: Vec<Term> = holes
             .iter()
-            .map(|&hole| {
-                let term = self.solver.infer();
-                match hole {
-                    Hole::Passed(var) => self.passed.push((var, term)),
-                    Hole::Result => self.pending.push(term),
+            .map(|hole| match hole {
+                Hole::Passed(var) => {
+                    let term = self.solver.infer();
+                    self.passed.push((*var, term));
+                    term
                 }
-                term
+                Hole::Result => {
+                    let term = self.solver.infer();
+                    self.pending.push(term);
+                    term
+                }
+                Hole::Written(template, written) => self.written(template, written),
             })
             .collect();
         let empty = self.solver.empty_environment();
@@ -267,6 +286,38 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
             self.logged.push(Pending::Value(term, span));
         }
         term
+    }
+
+    /// A `do` block's output whose writes infer its items: its template, applied
+    /// to a variable for each item above what the block wrote to it. Until it
+    /// writes any, it's a variable nothing else bounds, so what's expected of it
+    /// is solved as it would be without the block.
+    fn written(&mut self, template: &Template, written: &[(TypeId, Vec<Span>)]) -> Term {
+        let bottom = self.db.bottom();
+        if written.iter().all(|&(ty, _)| ty == bottom) {
+            return self.solver.infer();
+        }
+        let items: Vec<Term> = template
+            .kinds
+            .iter()
+            .zip(written)
+            .map(|(&kind, (ty, spans))| {
+                let item = self.solver.infer_kind(kind, Rest::All);
+                if *ty != bottom {
+                    let span = spans.first().copied().unwrap_or(INVALID_SPAN);
+                    let written = OriginKind::Written(spans.clone().into());
+                    let provenance = Provenance {
+                        actual: Some(Origin::local(written, span)),
+                        expected: None,
+                    };
+                    self.constrain(self.closed(*ty), item, provenance);
+                }
+                item
+            })
+            .collect();
+        let environment = self.solver.empty_environment();
+        let environment = self.solver.environment(environment, items);
+        self.solver.view(template.body, environment)
     }
 
     /// A fresh variable standing for an argument held back, above what it's
@@ -494,6 +545,7 @@ struct Run<'g> {
     /// The constraint bounding its result by what's expected of it
     expectation: Option<ConstraintId>,
     isolated: FxHashMap<ObligationId, Vec<ObligationId>>,
+    output: Option<Shared>,
 }
 
 impl Run<'_> {
@@ -623,7 +675,7 @@ pub(super) struct PreparedCall {
     /// Whether its callee runs without the caller's channels
     isolated: bool,
     /// The ambient channels it passes
-    channels: (Option<TypeId>, Option<TypeId>),
+    channels: (Option<TypeId>, Ambient),
 }
 
 impl PreparedCall {
@@ -692,12 +744,15 @@ pub(super) struct Lambda {
     blinded: Option<(TypeId, Vec<Hole>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Hole {
     /// A parameter's or channel's type, joined into its signature variable
     Passed(VarId),
     /// The block's result, until it's known
     Result,
+    /// Its output, once its writes infer its items: its template, applied to
+    /// a variable for each item above what its writes gave it so far
+    Written(Template, Vec<(TypeId, Vec<Span>)>),
 }
 
 /// An evaluated item, and how often it occurs
@@ -1087,6 +1142,7 @@ impl<'a> Flow<'a, '_> {
     ) -> Decision {
         // Each run has a budget of its own
         let gases = MonoVec::new();
+        let template = self.step_template(at);
         // An argument held back that's found exactly is then passed as one that
         // isn't, closed, so it chooses only what that would: the rule is made
         // again with it
@@ -1096,10 +1152,25 @@ impl<'a> Flow<'a, '_> {
                 gases.push(Gas::default());
                 let gas = &gases[gases.len() - 1];
                 let mut solver = self.solver(gas);
+                // Made before anything forks, so that every call, held back
+                // or not, shares them
+                let output = template.as_ref().map(|template| {
+                    let items = template
+                        .kinds
+                        .iter()
+                        .map(|&kind| solver.infer_kind(kind, Rest::All))
+                        .collect();
+                    Shared {
+                        body: template.body,
+                        items,
+                        calls: Vec::new(),
+                    }
+                });
                 let mut rule = Rule {
                     defaulting: default,
                     logging: self.logging && self.observing(),
                     exact: &exact,
+                    output,
                     ..Rule::new(&mut solver, self.db, gas)
                 };
                 let results = build(self, &mut rule);
@@ -1122,6 +1193,7 @@ impl<'a> Flow<'a, '_> {
                     logged,
                     found,
                     isolated,
+                    output,
                     ..
                 } = rule;
                 if exact.is_empty() && !found.is_empty() {
@@ -1135,7 +1207,24 @@ impl<'a> Flow<'a, '_> {
                         let bottom = solver.closed(self.db.bottom());
                         solver.constrain(bottom, term, Provenance::default());
                     }
+                    // An item nothing writes is bottom. Until then, one that's
+                    // left open may be what a block passed on writes, as the
+                    // final stage of a pipeline does.
+                    let written = output.iter().flat_map(|shared| &shared.items);
+                    let kinds = template.iter().flat_map(|template| &template.kinds);
+                    for (&item, _) in written
+                        .clone()
+                        .zip(kinds)
+                        .filter(|(_, kind)| **kind == Kind::Type)
+                    {
+                        let bottom = solver.closed(self.db.bottom());
+                        solver.constrain(bottom, item, Provenance::default());
+                    }
                     let roots = outputs(&results, &[]);
+                    let roots: Vec<_> = roots
+                        .into_iter()
+                        .chain(written.map(|&item| (item, Variance::Covariant)))
+                        .collect();
                     default_all(&mut solver, self.db, true, Some(&roots))
                 } else {
                     solver.solve()
@@ -1150,6 +1239,7 @@ impl<'a> Flow<'a, '_> {
                     outcomes,
                     expectation,
                     isolated,
+                    output,
                 };
             }
         };
@@ -1235,6 +1325,7 @@ impl<'a> Flow<'a, '_> {
             logged,
             outcomes,
             isolated,
+            output,
             ..
         } = run;
         let bottom = self.db.bottom();
@@ -1262,8 +1353,26 @@ impl<'a> Flow<'a, '_> {
                 }
             }
         } else {
-            for (var, ty) in self::passed(&mut solver, self.db, &results, &passed, &pending) {
+            let concluded = self::passed(
+                &mut solver,
+                self.db,
+                &results,
+                &passed,
+                &pending,
+                output.as_ref(),
+            );
+            for (var, ty) in concluded.joined {
                 self.join(var, ty);
+            }
+            for (var, template) in concluded.open {
+                if self.block_output(var) {
+                    self.join_template(var, template);
+                }
+            }
+            if output.is_some()
+                && let Some(var) = self.step_output(at)
+            {
+                self.join_written(var, concluded.written);
             }
         }
         Decision {
@@ -1421,6 +1530,7 @@ impl<'a> Flow<'a, '_> {
                                 found,
                                 expected,
                                 causes: notes,
+                                written: Vec::new(),
                             }]
                         }
                     };
@@ -1648,11 +1758,28 @@ impl<'a> Flow<'a, '_> {
         // What fails may lie deeper than the argument's own relation, as in a
         // binder's bound its type solves
         let causes = self.cause(path, root, contradiction).into_iter().collect();
+        // A `do` block's writes its output doesn't fit
+        let mut written = Vec::new();
+        for node in path {
+            for origin in [&node.origins.actual, &node.origins.expected]
+                .into_iter()
+                .flatten()
+            {
+                if let OriginKind::Written(spans) = &origin.kind {
+                    for &span in spans.iter() {
+                        if !written.contains(&span) {
+                            written.push(span);
+                        }
+                    }
+                }
+            }
+        }
         Problem::Argument {
             span: arg,
             found,
             expected,
             causes,
+            written,
         }
     }
 
@@ -2056,7 +2183,7 @@ impl<'a> Flow<'a, '_> {
                 (span, name.clone(), call.logs),
                 callee_type,
                 input,
-                output,
+                output.clone(),
             )]
         });
         let given = decision.values[0];
@@ -2283,6 +2410,7 @@ impl<'a> Flow<'a, '_> {
                 defaulting: rule.defaulting,
                 exact: rule.exact,
                 blind: rule.blind,
+                output: rule.output.take(),
                 ..Rule::new(&mut fork, db, gas)
             };
             let (given, seeded) = self.held_term(&mut sub, held.prepared, expected, shape);
@@ -2372,8 +2500,10 @@ impl<'a> Flow<'a, '_> {
                 logged,
                 found,
                 mut isolated,
+                output,
                 ..
             } = sub;
+            rule.output = output;
             // The checks made in it, as one solved alone would make them,
             // don't take in what's expected of it
             for check in fork.root_obligations() {
@@ -2408,7 +2538,7 @@ impl<'a> Flow<'a, '_> {
             Prepared::Call { call, instance } => {
                 let spread = self.designated(Designated::Spread);
                 let name = self.call_name(call.member, call.callee);
-                let (input, output) = call.channels;
+                let (input, output) = call.channels.clone();
                 let result = call_constraint(
                     rule,
                     &call.values,
@@ -2439,6 +2569,11 @@ impl<'a> Flow<'a, '_> {
         let data = ir.func(func);
         let signature = data.signature.as_ref()?;
         let declared = self.declared[func.index()].clone()?;
+        // Its output, once its writes infer its items
+        let output = signature.output.and_then(|var| {
+            let template = self.template(var, at)?;
+            Some((var, template, self.written_items(var, at)))
+        });
         let mut holes = Vec::new();
         let hole = |holes: &mut Vec<Hole>, filled| {
             holes.push(filled);
@@ -2452,8 +2587,11 @@ impl<'a> Flow<'a, '_> {
             input,
             output,
             ..
-        } = passed_signature(db, data, &declared, |var| {
-            hole(&mut holes, Hole::Passed(var))
+        } = passed_signature(db, data, &declared, |var| match &output {
+            Some((output, template, written)) if *output == var => {
+                hole(&mut holes, Hole::Written(template.clone(), written.clone()))
+            }
+            _ => hole(&mut holes, Hole::Passed(var)),
         })?;
         let function = |result| {
             db.intern(Type::Function(Function {
@@ -4062,32 +4200,96 @@ fn root(outcome: &Outcome) -> ObligationId {
         .expect("a contradicted constraint has a diagnostic")
 }
 
+/// What a rule concludes for the `do` blocks it's given and runs in (see
+/// [`passed`])
+struct Concluded {
+    /// What it passes each block's signature variable
+    joined: Vec<(VarId, TypeId)>,
+    /// The signature variables it can't solve that a sink with open items is
+    /// below, as an output its block's writes may infer, with that sink as a
+    /// template
+    open: Vec<(VarId, Template)>,
+    /// What the calls of the block it runs in wrote to each item of its output,
+    /// when its writes infer them, with the spans of the calls that wrote it
+    written: Vec<(TypeId, Vec<Span>)>,
+}
+
 /// What a rule passes the `do` blocks it's given: each variable's solution, once
 /// everything that defaulting can solve is. It runs after the rule is concluded,
 /// so its defaults decide nothing. A block's result that isn't known yet is taken
 /// to be bottom here, as a defaulting run takes it, so that a callee's binder it
 /// also bounds, as `T` in `fold[T] init@T f@((T, T) -> T)`, is solved from the
-/// other bounds.
+/// other bounds. A variable it can't solve whose one lower bound is a sink with
+/// open items is concluded as that sink's template. It also concludes what the
+/// calls of the block it runs in wrote to its `output`, by the least solution
+/// of each item.
 fn passed(
     solver: &mut Solver<'_>,
     db: &Database,
     results: &[Term],
     passed: &[(VarId, Term)],
     pending: &[Term],
-) -> Vec<(VarId, TypeId)> {
-    if passed.is_empty() {
-        return Vec::new();
+    output: Option<&Shared>,
+) -> Concluded {
+    let mut concluded = Concluded {
+        joined: Vec::new(),
+        open: Vec::new(),
+        written: Vec::new(),
+    };
+    if passed.is_empty() && output.is_none() {
+        return concluded;
     }
     for &term in pending {
         solver.constrain(solver.closed(db.bottom()), term, Provenance::default());
     }
     let parameters: Vec<Term> = passed.iter().map(|&(_, term)| term).collect();
-    let roots = outputs(results, &parameters);
+    let mut roots = outputs(results, &parameters);
+    let items = output.iter().flat_map(|shared| &shared.items);
+    roots.extend(items.clone().map(|&item| (item, Variance::Covariant)));
     default_all(solver, db, false, Some(&roots));
-    passed
-        .iter()
-        .filter_map(|&(var, term)| solver.reify(term).ok().map(|ty| (var, ty)))
-        .collect()
+    for &(var, term) in passed {
+        if let Ok(ty) = solver.reify(term) {
+            concluded.joined.push((var, ty));
+            continue;
+        }
+        let Term::Infer(id) = term else {
+            continue;
+        };
+        let bounds = solver.bounds(id);
+        let mut lower = bounds.lower();
+        if let (Some(sink), None) = (lower.next(), lower.next())
+            && let Some((body, kinds)) = solver.sink_template(sink)
+        {
+            concluded.open.push((var, Template { body, kinds }));
+        }
+    }
+    let Some(output) = output else {
+        return concluded;
+    };
+    for &item in &output.items {
+        let Ok(ty) = solver.reify(item) else {
+            concluded.written.push((db.bottom(), Vec::new()));
+            continue;
+        };
+        // The calls whose checks bound it from below wrote it
+        let Term::Infer(id) = item else {
+            unreachable!("an item is a variable")
+        };
+        let sources: FxHashSet<ObligationId> = solver
+            .bound_sources(id, true)
+            .into_iter()
+            .flat_map(|(_, sources)| sources)
+            .collect();
+        let spans = output
+            .calls
+            .iter()
+            .filter(|&&(call, _)| !solver.derived(call).is_disjoint(&sources))
+            .map(|&(_, span)| span)
+            .collect();
+        // Its literals decay, as a value a variable joins does
+        concluded.written.push((db.decay(ty), spans));
+    }
+    concluded
 }
 
 /// What a rule produces, for [`Solver::locked`]: its results, and the
@@ -4233,14 +4435,26 @@ fn call_constraint<'p>(
     (span, name, logs): (Span, Option<String>, bool),
     callee: TypeId,
     input: Option<TypeId>,
-    output: Option<TypeId>,
+    output: Ambient,
 ) -> Term {
     let (arguments, spans) = rule.arguments(values, spread, span);
     let result = rule.solver.infer_result();
-    let (input, output) = (
-        input.map(|ty| rule.closed(ty)),
-        output.map(|ty| rule.closed(ty)),
-    );
+    let input = input.map(|ty| rule.closed(ty));
+    let (output, open) = match (output, &rule.output) {
+        (Ambient::Closed(output), _) => (output.map(|ty| rule.closed(ty)), false),
+        (Ambient::Open(_), Some(shared)) => {
+            let (body, items) = (shared.body, shared.items.clone());
+            let environment = rule.solver.empty_environment();
+            let environment = rule.solver.environment(environment, items);
+            (Some(rule.solver.view(body, environment)), true)
+        }
+        // Made apart from a step of the block, so nothing it writes is inferred
+        (Ambient::Open(template), None) => {
+            let items = vec![rule.db.bottom(); template.kinds.len()];
+            let output = rule.closed(rule.db.instantiate(template.body, &items));
+            (Some(output), false)
+        }
+    };
     let blinded: Vec<(Multiplicity, CallArgument)> = arguments
         .iter()
         .map(|&(multiplicity, argument)| {
@@ -4269,6 +4483,11 @@ fn call_constraint<'p>(
         callee: name.as_deref().map(alias::Box::new_str),
     };
     let constraint = rule.solver.constrain_call(call, actual(kind, span));
+    if open && let Some(shared) = &mut rule.output {
+        shared
+            .calls
+            .push((rule.solver.obligation(constraint), span));
+    }
     if rule.logging && logs {
         let obligation = rule.solver.obligation(constraint);
         rule.logged.push(Pending::Callee(obligation, span));

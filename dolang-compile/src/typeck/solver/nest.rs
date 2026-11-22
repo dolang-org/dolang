@@ -417,7 +417,7 @@ impl<'db> Solver<'db> {
     }
 
     /// One side of a variable's bounds, each with the obligations that imposed it
-    pub(super) fn bound_sources(
+    pub(crate) fn bound_sources(
         &self,
         id: InferVarId,
         lower: bool,

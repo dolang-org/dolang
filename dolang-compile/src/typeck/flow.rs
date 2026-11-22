@@ -476,6 +476,47 @@ struct Accumulator {
     readers: FxHashSet<(BlockId, CtxId)>,
 }
 
+/// What a `do` block's output is when the call it's passed to leaves the item
+/// types of the sink it gives open, for the block's writes to infer them: the
+/// sink, with a reference at depth 0 to slot `i` for the `i`th open item, and
+/// each slot's kind
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Template {
+    pub(super) body: TypeId,
+    pub(super) kinds: Vec<Kind>,
+}
+
+/// What a call gives a `do` block's output as a template
+#[derive(Default)]
+enum Templated {
+    #[default]
+    None,
+    Some(Template),
+    /// Calls gave it different ones, so its output is inferred as it would be
+    /// without one
+    Conflicting,
+}
+
+/// A `do` block's output that its writes infer (see [`Template`]), by its
+/// signature variable
+#[derive(Default)]
+struct Written {
+    template: Templated,
+    /// By slot, the join of what the block's steps wrote, `Never` until one
+    /// does, with the spans of the calls that wrote it
+    items: Vec<(TypeId, Vec<Span>)>,
+    /// The blocks that read it, queued again when it changes
+    readers: FxHashSet<(BlockId, CtxId)>,
+}
+
+/// The output a call passes its callee
+#[derive(Clone, Debug)]
+pub(super) enum Ambient {
+    Closed(Option<TypeId>),
+    /// The running `do` block's, which its calls infer the items of
+    Open(Template),
+}
+
 /// Where each block falls in the queue
 struct Blocks {
     /// Each block's place in the queue: its reverse postorder index
@@ -524,6 +565,8 @@ struct Flow<'a, 'u> {
     /// The accumulator of each ivar, and of each result a non-local return gives
     /// a value, once a value joins it or a block reads it
     accumulators: FxHashMap<VarId, Accumulator>,
+    /// The `do` block outputs its writes infer, by signature variable
+    written: FxHashMap<VarId, Written>,
     /// The function of the running block
     current: Option<FuncId>,
     /// The declarations whose rigids states may hold, which every solver assumes,
@@ -599,6 +642,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             unit: layout.unit,
             declared: declared.into(),
             accumulators: FxHashMap::default(),
+            written: FxHashMap::default(),
             current: None,
             scope,
             contexts: Contexts::new(),
@@ -906,22 +950,146 @@ impl<'a, 'u> Flow<'a, 'u> {
         };
         let signature = self.ir.func(at.func).signature.as_ref();
         let (input, output) = signature.map_or((None, None), |sig| (sig.input, sig.output));
+        let written = output.and_then(|var| Some((var, self.template(var, at)?)));
         let mut channel = |var: Option<VarId>, declared| match var {
             Some(var) => Some(self.joined(var, at)),
             None => declared,
         };
-        (
-            channel(input, declared.input),
-            channel(output, declared.output),
-        )
+        let input = channel(input, declared.input);
+        let output = match written {
+            None => channel(output, declared.output),
+            Some((var, template)) => {
+                let written = self.written_items(var, at);
+                let items: Vec<TypeId> = written.iter().map(|&(ty, _)| ty).collect();
+                Some(self.db.instantiate(template.body, &items))
+            }
+        };
+        (input, output)
     }
 
     /// The ambient channels a call passes: the caller's, or `Value` for each to
-    /// a callee that runs without them
-    fn passed_channels(&mut self, at: At, isolated: bool) -> (Option<TypeId>, Option<TypeId>) {
-        match isolated {
-            true => (Some(self.db.top()), Some(self.db.top())),
-            false => self.channels(at),
+    /// a callee that runs without them. A `do` block's output whose writes
+    /// infer its items is passed open.
+    fn passed_channels(&mut self, at: At, isolated: bool) -> (Option<TypeId>, Ambient) {
+        if isolated {
+            return (Some(self.db.top()), Ambient::Closed(Some(self.db.top())));
+        }
+        if let Some(template) = self.step_template(at) {
+            return (self.channels(at).0, Ambient::Open(template));
+        }
+        let (input, output) = self.channels(at);
+        (input, Ambient::Closed(output))
+    }
+
+    /// The template of the running `do` block's output, if its writes infer its
+    /// items, making the block depend on it
+    fn step_template(&mut self, at: At) -> Option<Template> {
+        let var = self.step_output(at)?;
+        self.template(var, at)
+    }
+
+    /// The signature variable of the running `do` block's output, if its
+    /// signature leaves that to the call it's passed to
+    fn step_output(&self, at: At) -> Option<VarId> {
+        self.ir.func(at.func).signature.as_ref()?.output
+    }
+
+    /// Whether a signature variable is a `do` block's output
+    fn block_output(&self, var: VarId) -> bool {
+        let ir = self.ir;
+        self.run.funcs.iter().any(|&func| {
+            ir.func(func)
+                .signature
+                .as_ref()
+                .is_some_and(|signature| signature.output == Some(var))
+        })
+    }
+
+    /// The template a call gave a `do` block's output, by its signature
+    /// variable, unless calls gave it different ones, making the block depend on
+    /// it
+    fn template(&mut self, var: VarId, at: At) -> Option<Template> {
+        let written = self.written.entry(var).or_default();
+        written.readers.insert((at.block, at.ctx));
+        match &written.template {
+            Templated::Some(template) => Some(template.clone()),
+            Templated::None | Templated::Conflicting => None,
+        }
+    }
+
+    /// What a `do` block's writes gave each slot of its output's template, by
+    /// its signature variable, making the block depend on it
+    fn written_items(&mut self, var: VarId, at: At) -> Vec<(TypeId, Vec<Span>)> {
+        let written = self.written.entry(var).or_default();
+        written.readers.insert((at.block, at.ctx));
+        written.items.clone()
+    }
+
+    /// Join a template a call gives a `do` block's output into what calls gave
+    /// it, queueing its readers if that changed
+    fn join_template(&mut self, var: VarId, template: Template) {
+        if self.observing() {
+            return;
+        }
+        let bottom = self.db.bottom();
+        let written = self.written.entry(var).or_default();
+        let joined = match &written.template {
+            Templated::None => {
+                written.items = vec![(bottom, Vec::new()); template.kinds.len()];
+                Templated::Some(template)
+            }
+            Templated::Some(other) if *other == template => return,
+            Templated::Some(_) => Templated::Conflicting,
+            Templated::Conflicting => return,
+        };
+        trace!(
+            "template of {}: {}",
+            self.var_name(var),
+            match &joined {
+                Templated::Some(template) => self.show(template.body),
+                _ => "conflicting".into(),
+            }
+        );
+        let written = self.written.get_mut(&var).expect("just entered");
+        written.template = joined;
+        let readers = written.readers.clone();
+        for (block, ctx) in readers {
+            self.enqueue(block, ctx);
+        }
+    }
+
+    /// Join what a step of a `do` block wrote into each slot of its output's
+    /// template, with the spans of the calls that wrote it, queueing its readers
+    /// if that grew
+    fn join_written(&mut self, var: VarId, items: Vec<(TypeId, Vec<Span>)>) {
+        if self.observing() {
+            return;
+        }
+        let gas = Gas::default();
+        let solver = self.solver(&gas);
+        let Some(written) = self.written.get_mut(&var) else {
+            return;
+        };
+        let mut grew = false;
+        for ((joined, spans), (ty, written)) in written.items.iter_mut().zip(items) {
+            let new = solver.lub(*joined, ty);
+            if new != *joined {
+                *joined = new;
+                grew = true;
+            }
+            for span in written {
+                if !spans.contains(&span) {
+                    spans.push(span);
+                }
+            }
+        }
+        if !grew {
+            return;
+        }
+        let readers = written.readers.clone();
+        trace!("written into {}", self.var_name(var));
+        for (block, ctx) in readers {
+            self.enqueue(block, ctx);
         }
     }
 
@@ -1241,6 +1409,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                     .map(|&var| (var, unknown))
                     .chain([(signature.input, input), (signature.output, output)])
                     .filter_map(|(var, ty)| Some((var?, ty)))
+            })
+            // An output its writes infer has no other source
+            .filter(|(var, _)| {
+                !self
+                    .written
+                    .get(var)
+                    .is_some_and(|written| matches!(written.template, Templated::Some(_)))
             })
             .filter(|(var, _)| {
                 self.accumulators

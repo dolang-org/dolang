@@ -1,6 +1,6 @@
 # dolang: strict
-# A `stream` channel that nothing determines takes `Value`, and one with a bound
-# takes it
+# A `stream` input that nothing determines takes `Value`, and its output what
+# the block writes. One with a bound takes it, and checks the writes.
 
 import strand:
   - stream
@@ -16,7 +16,7 @@ pub def produces_unexpected()
   let s = stream do
     put 1
   let _ = s
-  #       ^: flow strand.Stream[nil, Value, Value]
+  #       ^: flow strand.Stream[nil, std.Int, Value]
   nil
 
 pub def pipelined -> Iterable[Int]
@@ -27,7 +27,7 @@ pub def consumes()
   let s = stream do |<Iter[Int]|
     each do |x @ Int| (x + 1)
   let _ = s
-  #       ^: flow strand.Stream[nil, Value, std.Int]
+  #       ^: flow strand.Stream[nil, std.Int, std.Int]
   nil
 
 # Reading the input as something specific needs the channel annotated
