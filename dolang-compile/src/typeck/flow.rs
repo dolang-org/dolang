@@ -89,6 +89,7 @@ macro_rules! trace {
 mod eval;
 mod live;
 mod member;
+mod pipeline;
 mod problem;
 mod rule;
 mod settle;
@@ -584,6 +585,9 @@ struct Flow<'a, 'u> {
     unsettled: FxHashSet<(BlockId, CtxId)>,
     /// The blocks whose next run defaults the rules it leaves undecided
     marked: FxHashSet<(BlockId, CtxId)>,
+    /// How many defaulting rounds have left each `do` block for the functions
+    /// it's in (see [`Flow::awaits_signature`])
+    deferred: FxHashMap<FuncId, u32>,
     /// Whether the running block defaults the rules it leaves undecided
     defaulting: bool,
     /// The first call in the running step or terminal that gave bottom, which
@@ -651,6 +655,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             reversed,
             unsettled: FxHashSet::default(),
             marked: FxHashSet::default(),
+            deferred: FxHashMap::default(),
             defaulting: false,
             diverged: None,
             results: None,
@@ -745,6 +750,39 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let rank = self.layout.blocks.rank[block.index()];
                 let entry = earliest.entry(self.ir.block(block).func).or_insert(rank);
                 *entry = (*entry).min(rank);
+            }
+            // A `do` block that no call has given anything waits for a function
+            // it's in that defaults this round, whose calls give it: defaulted
+            // first, it would see dynamic parameters and channels. A function
+            // with none of its own in the round isn't left, so a round always
+            // defaults something, and a block that no call gives anything waits
+            // a bounded number of rounds.
+            const WAITS: u32 = 4;
+            let waiting: Vec<FuncId> = earliest
+                .keys()
+                .copied()
+                .filter(|&func| {
+                    self.deferred.get(&func).is_none_or(|&waits| waits < WAITS)
+                        && self.awaits_signature(func)
+                })
+                .filter(|&func| {
+                    let mut outer = self.ir.func(func).parent;
+                    while let Some(parent) = outer {
+                        if earliest.contains_key(&parent) {
+                            return true;
+                        }
+                        outer = self.ir.func(parent).parent;
+                    }
+                    false
+                })
+                .collect();
+            for func in waiting {
+                trace!(
+                    "{} waits for what it's passed to",
+                    self.ir.func(func).entry.index()
+                );
+                earliest.remove(&func);
+                *self.deferred.entry(func).or_default() += 1;
             }
             if earliest.is_empty() {
                 // Nothing gave these `do` block parameters and channels anything
@@ -1384,6 +1422,33 @@ impl<'a, 'u> Flow<'a, 'u> {
             widening: Widening::default(),
             readers: FxHashSet::default(),
         })
+    }
+
+    /// Whether `func` is a `do` block with a parameter or channel left to the
+    /// calls it's passed to that's still bottom, other than an output its writes
+    /// infer
+    fn awaits_signature(&self, func: FuncId) -> bool {
+        let Some(signature) = &self.ir.func(func).signature else {
+            return false;
+        };
+        let bottom = self.db.bottom();
+        signature
+            .params
+            .iter()
+            .copied()
+            .chain([signature.input, signature.output])
+            .flatten()
+            .filter(|var| {
+                !self
+                    .written
+                    .get(var)
+                    .is_some_and(|written| matches!(written.template, Templated::Some(_)))
+            })
+            .any(|var| {
+                self.accumulators
+                    .get(&var)
+                    .is_none_or(|accumulator| accumulator.ty == bottom)
+            })
     }
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
@@ -2506,6 +2571,30 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// The declaration a designated role of `std` or `strand` is, if it's checked
     fn designated(&self, role: Designated) -> Option<DeclId> {
         self.tables.designated_decl(role)
+    }
+
+    /// The declarations a call of `callee` builds its signature from, if it's
+    /// `strand.pipeline` and they're all checked (see [`pipeline`])
+    fn pipe_roles(&self, callee: TypeId) -> Option<pipeline::PipeRoles> {
+        let decl = match *self.db.ty(callee) {
+            Type::Decl(decl) => decl,
+            Type::Overloaded {
+                function: Some(decl),
+                ..
+            } => decl,
+            _ => return None,
+        };
+        if self.designated(Designated::Pipeline)? != decl {
+            return None;
+        }
+        Some(pipeline::PipeRoles {
+            sender: self.designated(Designated::PipeSender)?,
+            receiver: self.designated(Designated::PipeReceiver)?,
+            iter: self.designated(Designated::Iter)?,
+            iterable: self.designated(Designated::Iterable)?,
+            sink: self.designated(Designated::Sink)?,
+            sinkable: self.designated(Designated::Sinkable)?,
+        })
     }
 
     /// A designated class's instance type, or `Unknown` if it isn't checked

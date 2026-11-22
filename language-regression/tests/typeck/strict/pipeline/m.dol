@@ -1,0 +1,198 @@
+# dolang: strict
+# A `strand.pipeline` call's stages read what the stage before them writes
+
+import strand:
+  - pipeline
+  - stream
+  - collect
+  - each
+import strand: s
+
+def strs <Iter[Str] -> Int
+  0
+
+pub def chained()
+  let res = pipeline (do put 1) (do collect())
+  let _ = res
+  #       ^~~: flow std.Array[std.Int]
+  nil
+
+# A stage that reads `Str` checks what the stage before it writes
+pub def writer_mismatch()
+  pipeline (do put 1) $strs
+  # error: expected `std.Str`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   pipeline (do put 1) $strs
+  #    |                    ^
+  nil
+
+# A stage reads what the one before it writes
+pub def reader_mismatch()
+  pipeline (do put 1)
+    do for x
+      x.upper()
+  # error: `std.Int` has no member `upper`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |       x.upper()
+  #    |       ^^^^^^^^^
+  nil
+
+# Every stage but the last returns `nil`
+pub def middle_result()
+  pipeline
+    do
+      put 1
+      1
+    # error: expected `(>strand.PipeSender[std.Int]) -> nil`, found `(>strand.PipeSender[std.Int]) -> 1`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL | /     do
+    # LL | |       put 1
+    # LL | |       1
+    #    | |_______^
+    #    |
+    #    = note: `1` does not fit `nil`
+    do collect()
+  nil
+
+pub def input()
+  let res = pipeline input: [1, 2] (do collect())
+  let _ = res
+  #       ^~~: flow std.Array[std.Int]
+  nil
+
+pub def output buf @ StrBuf
+  pipeline output: $buf (do put 1)
+  nil
+
+# Without `:input`, the first stage reads the caller's input
+pub def inherited <Iter[Int]
+  let res = pipeline (do collect())
+  let _ = res
+  #       ^~~: flow std.Array[std.Int]
+  nil
+
+pub def single()
+  let res = pipeline (do 42)
+  let _ = res
+  #       ^~~: flow std.Int
+  nil
+
+pub def empty()
+  pipeline()
+  # error: this call is missing an argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   pipeline()
+  #    |   ^^^^^^^^^^
+  nil
+
+pub def only_repeated stages @ Array[(() -> nil)]
+  pipeline
+    for stage = stages
+      - $stage
+  # error: this call is missing an argument
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | /   pipeline
+  # LL | |     for stage = stages
+  # LL | |       - $stage
+  #    | |______________^
+  nil
+
+# An optional stage reads what the stage before it writes, and the next stage
+# reads either
+pub def optional flag@Bool
+  let res = pipeline
+    do put 1
+    if flag
+      - do each do |x| "$x"
+    do collect()
+  let _ = res
+  #       ^~~: flow std.Array[std.Int | std.Str]
+  nil
+
+pub def repeated xs @ Array[Int]
+  let res = pipeline
+    do put 1
+    for _ = xs
+      - do each do |x| x
+    do collect()
+  let _ = res
+  #       ^~~: flow std.Array[std.Int]
+  nil
+
+# A trailing optional stage's result is the pipeline's when it runs
+pub def trailing flag@Bool >Sink[Int]
+  let res = pipeline
+    do put 1
+    if flag
+      - do collect()
+  let _ = res
+  #       ^~~: flow nil | std.Array[std.Int]
+  nil
+
+pub def matched n@Int
+  let res = pipeline
+    do put 1
+    match n
+      0
+        - do each do |x| "$x"
+      _
+        - do each do |x| (x + 1)
+    do collect()
+  let _ = res
+  #       ^~~: flow std.Array[std.Int | std.Str]
+  nil
+
+# The rule applies to the declaration, whatever it's named
+pub def qualified()
+  let res = s.pipeline (do put 1) (do collect())
+  let _ = res
+  #       ^~~: flow std.Array[std.Int]
+  nil
+
+# Which input a stage reads isn't known when `:input` is conditional
+pub def conditional_input flag@Bool
+  pipeline
+    if flag
+      input: [1]
+    do nil
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | /   pipeline
+  # LL | |     if flag
+  # LL | |       input: [1]
+  # LL | |     do nil
+  #    | |__________^
+  #    |
+  #    = note: it doesn't handle a pipeline whose input or output is conditional
+  nil
+
+pub def streamed()
+  let st = stream do pipeline (do put 1) (do each do |x @ Int| (x + 1))
+  let _ = st
+  #       ^~: flow strand.Stream[nil, std.Int, Value]
+  nil
+
+# A step only defaulting decides, before the call, leaves the stages for the
+# call to type
+pub def ranged n@Int
+  let res = pipeline
+    do put 1
+    for _ = 0..n
+      - do each do |x| x
+    do collect()
+  let _ = res
+  #       ^~~: flow std.Array[std.Int]
+  nil
+
+pub def after_defaulting n@Int
+  let _r = (0..n)
+  let st = stream do collect()
+  let _ = st
+  #       ^~: flow strand.Stream[std.Array[Value], Value, Value]
+  nil

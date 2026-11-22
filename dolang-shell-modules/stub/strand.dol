@@ -26,6 +26,14 @@ pub @let PipeSender[I] = ...
 # [`Receiver`](strand.Receiver).
 pub @let PipeReceiver[I] = ...
 
+# The stages of a [`pipeline`](strand.pipeline) giving `R`. No other type fits
+# it: the checker types a call's stages by a rule of its own. Each stage reads
+# what the one before it writes, every stage but the last returns `nil`, and
+# the last gives the result. A stage that may be first, because the stages
+# before it are passed by an `if`, `match` or `for`, reads an
+# [`Iter`](std.Iter), and one that may be last writes a [`Sink`](std.Sink).
+pub @let PipeStages[R] = ...
+
 # Stores a strand-local value.
 pub class Key[T]
   # Creates a strand-local key. An initial value is returned in a strand until
@@ -456,23 +464,10 @@ pub def output[O] >O -> O
 @def pipeline[R]
   # Input for the first stage, in place of the strand-local input.
   :input @ Iterable[Value] = ...
-  # Pipeline stages, each reading the previous stage's output.
-  ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
-  # Final stage.
-  final @ ((<Iter[std.Unknown]) -> R)
-do -> R
-
-# Connects pipeline stages and runs them concurrently, writing the last stage's
-# output to a sink and returning its result.
-@def pipeline[R, O]
-  # Input for the first stage, in place of the strand-local input.
-  :input @ Iterable[Value] = ...
   # Output for the last stage, in place of the strand-local output.
-  :output @ Sinkable[O]
+  :output @ Sinkable[Value] = ...
   # Pipeline stages, each reading the previous stage's output.
-  ...stages @ ((<Iter[std.Unknown], >Sink[std.Unknown]) -> Value)
-  # Final stage.
-  final @ ((<Iter[std.Unknown], >Sink[O]) -> R)
+  *stages @ PipeStages[R]
 do -> R
 
 pub def pipeline ...args @ Value -> Value
