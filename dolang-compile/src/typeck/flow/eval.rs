@@ -221,6 +221,7 @@ impl Flow<'_, '_> {
                     ty
                 });
                 if pending {
+                    self.awaited.insert(func);
                     return bottom;
                 }
                 if let Some(passed) = passed {
