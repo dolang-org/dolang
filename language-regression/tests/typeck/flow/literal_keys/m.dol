@@ -1,0 +1,18 @@
+# A schema's string and integer keys are written as they are, but a key that
+# would be taken for a symbol, such as `true`, `nil` or a name, is
+# parenthesized
+
+pub def keys
+  d @ Dict[{"name": Str, ?"port": Int}]
+  i @ Dict[{1: Str, -2: Int}]
+  b @ Dict[{(true): Str, (nil): Int}]
+  t @ Dict[{(Str): Int}]
+do
+  let _ = d
+  #   ^: flow std.Dict[{"name": std.Str, ?"port": std.Int}]
+  let _ = i
+  #   ^: flow std.Dict[{1: std.Str, -2: std.Int}]
+  let _ = b
+  #   ^: flow std.Dict[{(true): std.Str, (nil): std.Int}]
+  let _ = t
+  #   ^: flow std.Dict[{(std.Str): std.Int}]

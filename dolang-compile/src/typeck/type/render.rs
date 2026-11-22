@@ -863,6 +863,11 @@ impl Renderer<'_> {
             Element::Keyed { key, value } => {
                 match db.ty(key) {
                     Type::Literal(Literal::Sym(sym)) => out.push_str(db.symbol(*sym)),
+                    // A string or integer can't be taken for a symbol, but
+                    // `true`, `nil` and names would be
+                    Type::Literal(Literal::Str(_) | Literal::Int(_)) => {
+                        self.render_into(key, naming, out)
+                    }
                     _ => {
                         out.push('(');
                         self.render_into(key, naming, out);
