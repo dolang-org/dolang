@@ -18,15 +18,13 @@ pipeline
     let Array(posts) = res.json()
     posts[..NUM_POSTS]
   # Process posts with worker pool
-  do pool $NUM_WORKERS do |post|
+  do pool $NUM_WORKERS do |Dict("id": id ...)|
     # Feed first NUM_COMMENTS per post into pipeline
-    from $ http.get
-      (COMMENTS.with_query postId: post["id"])
-      do |res|
-        let Array(comments) = res.json()
-        comments[..NUM_COMMENTS]
+    from $ http.get (COMMENTS.with_query postId: id) do |res|
+      let Array(comments) = res.json()
+      comments[..NUM_COMMENTS]
   # Print name and body of each comment
-  do for "name": name "body": body ...
+  do for Dict("name": name "body": Str(body) ...)
     echo "comment: $name"
     echo "  $(body.replace "\n" "\n  ")"
 
