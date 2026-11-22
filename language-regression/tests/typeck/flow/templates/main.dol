@@ -59,7 +59,7 @@ pub def inferred n @ Int text @ Str
   # LL |   let lone = t"${#1}"
   #    |                   ^
   let _ = lone
-  #       ^~~~: flow std.Fmt[Never, {(1): Unknown}]
+  #       ^~~~: flow std.Fmt[Never, {1: Unknown}]
   lone.format 1
   # error: the callee takes no such argument
   #   --> main.dol:LL:LL
@@ -73,7 +73,7 @@ pub def inferred n @ Int text @ Str
   # LL |   let gap = t"${#0} ${#2} ${#2}"
   #    |                        ^
   let _ = gap
-  #       ^~~: flow std.Fmt[Never, {Unknown, (2): Unknown}]
+  #       ^~~: flow std.Fmt[Never, {Unknown, 2: Unknown}]
 
   let value = FmtValue $n
   let _ = value.value
