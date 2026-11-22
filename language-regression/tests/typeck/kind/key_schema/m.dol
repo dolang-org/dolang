@@ -1,0 +1,56 @@
+# A key binder takes its bound's kind, like a positional one, so a schema bound
+# makes it a schema passed by key.
+
+pub class Table[T, :Schema @ {*(Value): Value} = {*(Sym): Value}]
+  pub field item @ T = ...
+  pub field rows @ Dict[Schema] = ...
+
+# Passed on through the `:Schema` shorthand
+pub def forward[:Schema @ {*(Value): Value}] t @ Table[Int, :Schema] -> Dict[Schema]
+  t.rows
+
+# Written in place, and substituted like a positional schema argument
+pub def written t @ Table[Int, Schema: {a: Int}] -> Dict[{a: Int}]
+  t.rows
+# ^~~~~~: value std.Dict[{a: std.Int}]
+
+pub def mismatch t @ Table[Int, Schema: {a: Int}] -> Dict[{a: Str}]
+  t.rows
+# error: `std.Dict[{a: std.Int}]` does not fit the declared result `std.Dict[{a: std.Str}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   t.rows
+#    |   ^^^^^^
+
+pub def through t @ Table[Int, Schema: {a: Int}] -> Dict[{a: Str}]
+  forward $t
+# error: `std.Dict[{a: std.Int}]` does not fit the declared result `std.Dict[{a: std.Str}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   forward $t
+#    |   ^^^^^^^^^^
+
+pub def defaulted t @ Table[Int] -> Dict[Sym, Value]
+  t.rows
+
+pub let not_schema @ Table[Int, Schema: Int] = ...
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let not_schema @ Table[Int, Schema: Int] = ...
+#    |                                         ^^^
+
+# With no bound, a key binder is a type
+pub def unbounded[:K] k @ K -> K
+  k
+
+# A keyed schema can't be included in a tuple form
+pub def included[:Schema @ {*(Value): Value}] _x @ (Int, ...Schema) -> Int
+  # error: included schema may have keyed items, which a tuple type can't hold
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def included[:Schema @ {*(Value): Value}] _x @ (Int, ...Schema) -> Int
+  #    |                                                             ^^^^^^
+  #    |
+  #    = help: a keyed item makes a `Pack`; to include keyed items without one, write `Pack[...{...}]`
+  1

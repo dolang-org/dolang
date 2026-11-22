@@ -1346,7 +1346,7 @@ declaration's type. The type-checking tests in
 source.
 
 Kinds come from declarations only, never from uses. A variadic binder is a
-schema and a keyword binder a type; any other binder has its bound's kind, and a
+schema; any other binder, positional or keyword, has its bound's kind, and a
 transparent alias its body's. These equations are solved by union-find over one
 variable per binder and alias, so alias chains and cycles across units need no
 ordering. A kind nothing determines is a type. One that only an erroneous name
