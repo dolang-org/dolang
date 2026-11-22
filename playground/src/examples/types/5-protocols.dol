@@ -1,0 +1,67 @@
+# title: Protocols
+# dolang: strict
+
+# A protocol (`@class`) describes members without implementing them. It
+# exists only for the checker; there's no `Resource` object at runtime.
+@class Resource
+  pub field name @ Str
+  pub def plan self -> Str
+
+# A class conforms by having the members, without naming the protocol...
+#
+# `#[final]` forbids subclasses. Without it, writing `self.name` in `(init)`
+# might run a subclass's setter while `version` is still unset, and the
+# checker would reject it.
+#[final]
+class Package
+  pub field name @ Str
+  pub field version @ Str
+
+  def (init) self name@Str version@Str
+    self.name = name
+    self.version = version
+
+  pub def plan self -> Str
+    "install $(self.name)=$(self.version)"
+
+# ...or it can name the protocol with `@`, and the checker holds it to the
+# claim here, at the declaration.
+#[final]
+class Service: @Resource
+  pub field name @ Str
+  pub field enabled @ Bool
+
+  def (init) self name@Str enabled@Bool
+    self.name = name
+    self.enabled = enabled
+
+  pub def plan self -> Str
+    let action = (self.enabled && "enable" || "disable")
+    "$action $(self.name).service"
+
+def apply resources @ Iterable[Resource]
+  for resource = resources
+    echo "$(resource.name): $(resource.plan())"
+
+apply [Package "nginx" "1.27", Service "nginx" true]
+
+# A generic protocol's argument comes from the members: `Counter` is a
+# `Source[Int]` because its `next` returns `Int`.
+@class Source[T]
+  pub def next self -> T
+
+class Counter
+  field count @ Int = 0
+
+  pub def next self -> Int
+    self.#count = (self.#count + 1)
+    self.#count
+
+def take[T] source@Source[T] n@Int -> Array[T]
+  [for _ = 0..n => source.next()]
+
+let counter = Counter()
+echo "counted: $(take counter 3)"
+
+# Uncomment for a type error: `Str` has no `plan` method.
+# apply ["nginx"]

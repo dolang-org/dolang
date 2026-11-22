@@ -1,0 +1,38 @@
+# title: Input and Output
+# dolang: strict
+import strand:
+  - collect
+
+# Besides its parameters, a function reads its strand's input and writes its
+# output. `<T` gives the type it reads, and `>T` the type it writes.
+def parse_log <Iter[Str] >Sink[(Str, Str)]
+  # A `for` without an iteratee reads the input.
+  for line
+    let level message = line.split " " limit: 1
+    else continue
+    put (level, message)
+
+def errors_only <Iter[(Str, Str)] >Sink[Str]
+  for level message
+    if (level == "ERROR")
+      put $message
+
+# Each `pipeline` stage reads what the stage before it writes, so the
+# checker matches each stage's `<` against the previous one's `>`.
+let log = |-
+  INFO starting web
+  ERROR disk full on /var
+  INFO retrying
+  ERROR upstream timed out
+
+let failures = pipeline input: (log.split "\n")
+  $parse_log
+  $errors_only
+  $collect
+
+# Hover over `failures`: the last stage collects `Str`s.
+for failure = failures
+  echo "failed: $(failure.upper())"
+
+# Uncomment for a type error: `errors_only` reads pairs, not `Str`s.
+# pipeline input: ["x"] $errors_only $collect
