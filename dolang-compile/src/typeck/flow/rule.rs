@@ -361,8 +361,8 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
     fn positional(&mut self, values: &'p Values, value: &'p Value, repeated: bool) -> Term {
         match *value {
             Value::Pos(ty, _) => self.closed(ty),
-            Value::Lambda(None, ref lambda, span) => self.lambda(lambda, span),
-            Value::Held(HeldAt::Positional, index, _) => self.hold(&values.held[index], repeated),
+            Value::Lambda(ItemAt::Positional, ref lambda, span) => self.lambda(lambda, span),
+            Value::Held(ItemAt::Positional, index, _) => self.hold(&values.held[index], repeated),
             Value::Alike(ref alternatives, _) => {
                 let var = self.solver.infer();
                 for alternative in alternatives {
@@ -438,19 +438,20 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                     Value::Pair(key, ty) => {
                         joined.keyed(rule, rule.db.regular(key), Part::Closed(ty))
                     }
-                    Value::Lambda(key, ref lambda, span) => {
+                    Value::Lambda(at, ref lambda, span) => {
                         let term = Part::Term(rule.lambda(lambda, span));
-                        match key {
-                            Some(key) => joined.keyed(rule, symbol(key), term),
-                            None => joined.positional.add(rule, term),
+                        match at {
+                            ItemAt::Positional => joined.positional.add(rule, term),
+                            ItemAt::Keyword(key) => joined.keyed(rule, symbol(key), term),
+                            ItemAt::Pair(key) => joined.keyed(rule, rule.db.regular(key), term),
                         }
                     }
                     Value::Held(at, index, _) => {
                         let term = Part::Term(rule.hold(&values.held[index], true));
                         match at {
-                            HeldAt::Positional => joined.positional.add(rule, term),
-                            HeldAt::Keyword(key) => joined.keyed(rule, symbol(key), term),
-                            HeldAt::Pair(key) => joined.keyed(rule, rule.db.regular(key), term),
+                            ItemAt::Positional => joined.positional.add(rule, term),
+                            ItemAt::Keyword(key) => joined.keyed(rule, symbol(key), term),
+                            ItemAt::Pair(key) => joined.keyed(rule, rule.db.regular(key), term),
                         }
                     }
                     Value::Spread(..) => {
@@ -488,20 +489,23 @@ impl<'s, 'a, 'p> Rule<'s, 'a, 'p> {
                     let argument = CallArgument::Pair(key, rule.closed(ty));
                     vec![(multiplicity, argument, fallback)]
                 }
-                Value::Lambda(key, ref lambda, span) => {
+                Value::Lambda(at, ref lambda, span) => {
                     let term = rule.lambda(lambda, span);
-                    let argument = match key {
-                        Some(key) => CallArgument::Keyword(key, term),
-                        None => CallArgument::Positional(term),
+                    let argument = match at {
+                        ItemAt::Positional => CallArgument::Positional(term),
+                        ItemAt::Keyword(key) => CallArgument::Keyword(key, term),
+                        ItemAt::Pair(key) => {
+                            CallArgument::Pair(rule.closed(rule.db.regular(key)), term)
+                        }
                     };
                     vec![(multiplicity, argument, span)]
                 }
                 Value::Held(at, index, span) => {
                     let term = rule.hold(&values.held[index], false);
                     let argument = match at {
-                        HeldAt::Positional => CallArgument::Positional(term),
-                        HeldAt::Keyword(key) => CallArgument::Keyword(key, term),
-                        HeldAt::Pair(key) => {
+                        ItemAt::Positional => CallArgument::Positional(term),
+                        ItemAt::Keyword(key) => CallArgument::Keyword(key, term),
+                        ItemAt::Pair(key) => {
                             CallArgument::Pair(rule.closed(rule.db.regular(key)), term)
                         }
                     };
@@ -630,10 +634,10 @@ enum Value {
     Pair(TypeId, TypeId),
     Spread(TypeId, Span),
     /// A `do` block that the rule types, positional or keyed
-    Lambda(Option<SymbolId>, Lambda, Span),
+    Lambda(ItemAt, Lambda, Span),
     /// An argument held back until the call's parameters give it an expectation,
     /// by its index into [`Values::held`]
-    Held(HeldAt, usize, Span),
+    Held(ItemAt, usize, Span),
     /// One positional item of an `if`'s branches, which are alike: one of these,
     /// each a positional [`Value::Pos`], [`Value::Lambda`] or [`Value::Held`]
     Alike(Vec<Value>, Span),
@@ -645,8 +649,8 @@ impl Value {
         matches!(
             self,
             Self::Pos(..)
-                | Self::Lambda(None, ..)
-                | Self::Held(HeldAt::Positional, ..)
+                | Self::Lambda(ItemAt::Positional, ..)
+                | Self::Held(ItemAt::Positional, ..)
                 | Self::Alike(..)
         )
     }
@@ -660,9 +664,9 @@ impl Value {
     }
 }
 
-/// Where an argument held back goes
+/// Where a `do` block the rule types, or an argument held back, goes
 #[derive(Clone, Copy)]
-enum HeldAt {
+enum ItemAt {
     Positional,
     Keyword(SymbolId),
     /// Under an evaluated key
@@ -2837,15 +2841,15 @@ impl<'a> Flow<'a, '_> {
                 _ => None,
             };
             if let Some(lambda) = lambda {
-                let (key, value) = match item {
+                let (item_at, value) = match item {
                     Item::Pos(value) => {
                         gathering.advance(place);
-                        (None, value)
+                        (ItemAt::Positional, value)
                     }
-                    &Item::Key(key, ref value) => (Some(key), value),
+                    &Item::Key(key, ref value) => (ItemAt::Keyword(key), value),
                     _ => unreachable!("a positional or keyed item"),
                 };
-                out.push(placed(Value::Lambda(key, lambda, value.span)));
+                out.push(placed(Value::Lambda(item_at, lambda, value.span)));
                 continue;
             }
             match item {
@@ -2857,7 +2861,7 @@ impl<'a> Flow<'a, '_> {
                             Ok(prepared) => {
                                 values.held.push(prepared);
                                 let index = values.held.len() - 1;
-                                let held = Value::Held(HeldAt::Positional, index, value.span);
+                                let held = Value::Held(ItemAt::Positional, index, value.span);
                                 out.push(placed(held));
                                 continue;
                             }
@@ -2881,7 +2885,7 @@ impl<'a> Flow<'a, '_> {
                             Ok(prepared) => {
                                 values.held.push(prepared);
                                 let index = values.held.len() - 1;
-                                let held = Value::Held(HeldAt::Keyword(key), index, value.span);
+                                let held = Value::Held(ItemAt::Keyword(key), index, value.span);
                                 out.push(placed(held));
                                 continue;
                             }
@@ -2897,12 +2901,23 @@ impl<'a> Flow<'a, '_> {
                 Item::Pair(key, value) => {
                     let key_type = self.eval(at, state, operands, key);
                     let key_produced = produced(values, key_type);
+                    let lambda = match value.kind {
+                        ExprKind::Lambda(func) if key_produced && gathering.contextual => {
+                            self.contextual(at, func)
+                        }
+                        _ => None,
+                    };
+                    if let Some(lambda) = lambda {
+                        let lambda = Value::Lambda(ItemAt::Pair(key_type), lambda, value.span);
+                        out.push(placed(lambda));
+                        continue;
+                    }
                     let ty = match key_produced && hold(gathering, place, None, value) {
                         true => match self.prepare(at, state, operands, value) {
                             Ok(prepared) => {
                                 values.held.push(prepared);
                                 let index = values.held.len() - 1;
-                                let held = Value::Held(HeldAt::Pair(key_type), index, value.span);
+                                let held = Value::Held(ItemAt::Pair(key_type), index, value.span);
                                 out.push(placed(held));
                                 continue;
                             }
@@ -3263,12 +3278,12 @@ impl<'a> Flow<'a, '_> {
                         for placed in &values.values {
                             let (positional, keyed) = match placed.value {
                                 Value::Pos(..)
-                                | Value::Lambda(None, ..)
-                                | Value::Held(HeldAt::Positional, ..)
+                                | Value::Lambda(ItemAt::Positional, ..)
+                                | Value::Held(ItemAt::Positional, ..)
                                 | Value::Alike(..) => (true, false),
                                 Value::Key(..)
                                 | Value::Pair(..)
-                                | Value::Lambda(Some(_), ..)
+                                | Value::Lambda(..)
                                 | Value::Held(..) => (false, true),
                                 Value::Spread(ty, _) => self.spread_lanes(spread, ty),
                             };
@@ -3742,7 +3757,7 @@ impl<'a> Flow<'a, '_> {
                 values.held.push(prepared);
                 values
                     .values
-                    .push(placed(Value::Held(HeldAt::Positional, 0, span)));
+                    .push(placed(Value::Held(ItemAt::Positional, 0, span)));
             }
             Err(ty) if ty == self.db.bottom() => return ty,
             Err(ty) => values.values.push(placed(Value::Pos(ty, span))),
@@ -4659,11 +4674,11 @@ fn collection_constraint<'p>(
                     Value::Pos(ty, _) => {
                         rule.constrain(rule.closed(ty), element, Provenance::default())
                     }
-                    Value::Lambda(key, ref lambda, span) => {
+                    Value::Lambda(at, ref lambda, span) => {
                         let term = rule.lambda(lambda, span);
-                        let element = match key {
-                            Some(_) => rule.closed(unknown),
-                            None => element,
+                        let element = match at {
+                            ItemAt::Positional => element,
+                            ItemAt::Keyword(_) | ItemAt::Pair(_) => rule.closed(unknown),
                         };
                         rule.constrain(term, element, Provenance::default());
                     }
@@ -4687,8 +4702,8 @@ fn collection_constraint<'p>(
                     Value::Held(at, index, _) => {
                         let term = rule.hold(&values.held[index], placed.group.is_some());
                         let element = match at {
-                            HeldAt::Positional => element,
-                            HeldAt::Keyword(_) | HeldAt::Pair(_) => rule.closed(unknown),
+                            ItemAt::Positional => element,
+                            ItemAt::Keyword(_) | ItemAt::Pair(_) => rule.closed(unknown),
                         };
                         rule.constrain(term, element, Provenance::default());
                     }
@@ -4755,11 +4770,14 @@ fn collection_constraint<'p>(
                         rule.constrain(term, positional, Provenance::default());
                     }
                     Value::Pair(key_type, ty) => entry(rule, key_type, rule.closed(ty)),
-                    Value::Lambda(key, ref lambda, span) => {
+                    Value::Lambda(at, ref lambda, span) => {
                         let term = rule.lambda(lambda, span);
-                        match key {
-                            Some(key) => entry(rule, symbol(key), term),
-                            None => rule.constrain(term, positional, Provenance::default()),
+                        match at {
+                            ItemAt::Positional => {
+                                rule.constrain(term, positional, Provenance::default())
+                            }
+                            ItemAt::Keyword(key) => entry(rule, symbol(key), term),
+                            ItemAt::Pair(key) => entry(rule, key, term),
                         }
                     }
                     // A record literal always has a positional lane, and a
@@ -4771,11 +4789,11 @@ fn collection_constraint<'p>(
                     Value::Held(at, index, _) => {
                         let term = rule.hold(&values.held[index], placed.group.is_some());
                         match at {
-                            HeldAt::Positional => {
+                            ItemAt::Positional => {
                                 rule.constrain(term, positional, Provenance::default())
                             }
-                            HeldAt::Keyword(key) => entry(rule, symbol(key), term),
-                            HeldAt::Pair(key) => entry(rule, key, term),
+                            ItemAt::Keyword(key) => entry(rule, symbol(key), term),
+                            ItemAt::Pair(key) => entry(rule, key, term),
                         }
                     }
                 }
@@ -4789,7 +4807,12 @@ fn collection_constraint<'p>(
             let mut elements = Vec::new();
             for placed in &values.values {
                 match placed.value {
-                    Value::Lambda(key, ref lambda, span) => {
+                    Value::Lambda(at, ref lambda, span) => {
+                        let key = match at {
+                            ItemAt::Positional => None,
+                            ItemAt::Keyword(key) => Some(key),
+                            ItemAt::Pair(_) => unreachable!("a tuple or `Pack` has no pairs"),
+                        };
                         elements.push((key, rule.lambda(lambda, span), Kind::Type));
                     }
                     Value::Pos(ty, _) => {
@@ -4812,9 +4835,9 @@ fn collection_constraint<'p>(
                         let var = rule.solver.infer();
                         rule.constrain(term, var, Provenance::default());
                         let key = match at {
-                            HeldAt::Positional => None,
-                            HeldAt::Keyword(key) => Some(key),
-                            HeldAt::Pair(_) => unreachable!("a tuple or `Pack` has no pairs"),
+                            ItemAt::Positional => None,
+                            ItemAt::Keyword(key) => Some(key),
+                            ItemAt::Pair(_) => unreachable!("a tuple or `Pack` has no pairs"),
                         };
                         elements.push((key, var, Kind::Type));
                     }
