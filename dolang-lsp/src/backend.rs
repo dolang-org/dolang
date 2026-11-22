@@ -255,12 +255,20 @@ fn one_line_source(unit: &Unit<'_>, span: diag::Span) -> String {
 /// A parameter of a signature, from its declaration
 fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<signature::Param> {
     let node = unit.node(id)?;
+    let span = node.span()?;
     let default = match node.kind() {
         Kind::PositionalParam { default, .. } | Kind::KeyParam { default, .. } => default,
         Kind::RestParam { .. } | Kind::SelfParam { .. } => None,
+        // An implicit is written as its sigil and type with no `@` between
+        Kind::ImplicitParam { .. } => {
+            return Some(signature::Param {
+                head: one_line_source(unit, span),
+                ty: None,
+                default: false,
+            });
+        }
         _ => return None,
     };
-    let span = node.span()?;
     let ty = node
         .children()
         .filter_map(|child| unit.node(child))
@@ -454,15 +462,39 @@ fn external_hover(kind: Kind<'_>, unit: &Unit<'_>) -> Vec<Described> {
         Kind::PreludeItem { module, item, .. } => (module, item),
         _ => return Vec::new(),
     };
-    bundled_hover(module, item)
+    bundled_hover(module, item, None)
 }
 
-/// Hover text for an item of a bundled module, from the static doc index.
-/// Overloads share a name, and each is described in turn.
-fn bundled_hover(module: &str, item: &str) -> Vec<Described> {
-    doc_index::lookup(module, item)
-        .iter()
-        .map(Described::entry)
+/// Hover text for an item of a bundled module, from the static doc index: the
+/// overload `chosen` of an overloaded one, or else each overload in turn. The
+/// overloads say all the checker does of its interface, so the implementation
+/// is left out, but an overload with no doc comment of its own has the
+/// implementation's.
+fn bundled_hover(module: &str, item: &str, chosen: Option<u32>) -> Vec<Described> {
+    let entries = doc_index::lookup(module, item);
+    let overloads: Vec<_> = entries.iter().filter(|entry| entry.type_only).collect();
+    let (shown, implementation) = match entries.len() > 1 && !overloads.is_empty() {
+        true => (overloads, entries.iter().find(|entry| !entry.type_only)),
+        false => (entries.iter().collect(), None),
+    };
+    let chosen = chosen
+        .filter(|_| shown.len() > 1)
+        .and_then(|index| shown.get(usize::try_from(index).ok()?));
+    let shown = match chosen {
+        Some(&entry) => vec![entry],
+        None => shown,
+    };
+    shown
+        .into_iter()
+        .map(|entry| {
+            let mut described = Described::entry(entry);
+            if described.prose.is_empty()
+                && let Some(implementation) = implementation
+            {
+                implementation.doc.clone_into(&mut described.prose);
+            }
+            described
+        })
         .collect()
 }
 
@@ -528,7 +560,7 @@ fn build_hovers(unit: &Unit<'_>) -> HashMap<NodeId, Vec<Described>> {
         .filter_map(|(id, node)| {
             let mut docs = external_hover(node.kind(), unit);
             if docs.is_empty() {
-                docs.extend(local_hover(unit, id, None));
+                docs = overloaded_hover(unit, id, None, None);
             }
             (!docs.is_empty()).then_some((id, docs))
         })
@@ -572,6 +604,40 @@ fn local_hover(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<Desc
             .unwrap_or_default(),
         shape,
     })
+}
+
+/// Hover text for a declaration in a unit, as `local_hover` gives it, or for
+/// an overloaded function or method, the overload `chosen` of it, or else each
+/// overload in turn: the overloads say all the checker does of its interface.
+/// An overload with no doc comment of its own has its implementation's.
+fn overloaded_hover(
+    unit: &Unit<'_>,
+    implementation: NodeId,
+    chosen: Option<u32>,
+    module: Option<&str>,
+) -> Vec<Described> {
+    let ids = match chosen {
+        Some(index) => vec![lookup::overload(unit, implementation, index)],
+        None => {
+            let overloads = lookup::overloads(unit, implementation);
+            match overloads.is_empty() {
+                true => vec![implementation],
+                false => overloads,
+            }
+        }
+    };
+    let doc = unit.node(implementation).and_then(|node| node.doc());
+    ids.into_iter()
+        .filter_map(|id| {
+            let mut described = local_hover(unit, id, module)?;
+            if described.prose.is_empty()
+                && let Some(span) = doc
+            {
+                described.prose = normalize_doc(unit, span);
+            }
+            Some(described)
+        })
+        .collect()
 }
 
 /// Where a declaration in a unit is: `Some` at the top level, with the header
@@ -922,48 +988,27 @@ fn location(
 }
 
 /// What hover shows of a declaration found in another module, or of the
-/// overload `chosen` of it. An overload with no doc comment of its own has its
-/// implementation's. A declaration in `own`, the document's module, is noted
-/// as a local one is.
+/// overload `chosen` of it, as `overloaded_hover` and `bundled_hover` give it.
+/// A declaration in `own`, the document's module, is noted as a local one is.
 fn target_hover(target: &Target<'_>, chosen: Option<u32>, own: Option<&str>) -> Vec<Described> {
     match *target {
-        Target::Source(module, implementation) => {
-            let described = chosen_node(target, chosen).and_then(|(_, id)| {
-                let unit = &module.unit;
-                // A module is documented by the comment opening its source
-                if unit.root() == Some(id) {
-                    return Some(Described {
-                        label: format!("import {}", module.name),
-                        prose: unit
-                            .node(id)?
-                            .doc()
-                            .map(|span| normalize_doc(unit, span))
-                            .unwrap_or_default(),
-                        shape: Shape::Other,
-                    });
-                }
-                let name = Some(&module.name[..]).filter(|&name| Some(name) != own);
-                let mut described = local_hover(unit, id, name)?;
-                if described.prose.is_empty()
-                    && let Some(span) = unit.node(implementation)?.doc()
-                {
-                    described.prose = normalize_doc(unit, span);
-                }
-                Some(described)
-            });
-            described.into_iter().collect()
-        }
-        Target::Bundled(ref module, ref item) => {
-            let entries = doc_index::lookup(module, item);
-            // The index describes each overload in turn
-            let entry = chosen
-                .filter(|_| entries.len() > 1)
-                .and_then(|index| entries.get(usize::try_from(index).ok()?));
-            match entry {
-                Some(entry) => vec![Described::entry(entry)],
-                None => bundled_hover(module, item),
+        Target::Source(module, id) => {
+            let unit = &module.unit;
+            // A module is documented by the comment opening its source
+            if unit.root() == Some(id) {
+                let prose = unit.node(id).and_then(|node| node.doc());
+                return vec![Described {
+                    label: format!("import {}", module.name),
+                    prose: prose
+                        .map(|span| normalize_doc(unit, span))
+                        .unwrap_or_default(),
+                    shape: Shape::Other,
+                }];
             }
+            let name = Some(&module.name[..]).filter(|&name| Some(name) != own);
+            overloaded_hover(unit, id, chosen, name)
         }
+        Target::Bundled(ref module, ref item) => bundled_hover(module, item, chosen),
     }
 }
 
@@ -3606,6 +3651,79 @@ mod tests {
         };
         assert!(content.value.contains("@let Never = Union[]"));
         assert!(content.value.contains("no values"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn local_signatures_show_inputs_and_outputs() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///implicit-hover.dol".parse().unwrap();
+        let text = "def parse_log x <Iter[Str] >Sink[(Str, Str)]\n  nil\nparse_log 1\n";
+        harness.open(uri.clone(), text, 1).await;
+        let hover = hover_text(&mut harness, uri, 2, 2).await.unwrap();
+        assert_eq!(
+            hover,
+            "```dolang\ndef parse_log x <Iter[Str] >Sink[(Str, Str)]\n  ...\n```"
+        );
+    }
+
+    #[test]
+    fn bundled_overloads_leave_out_the_implementation() {
+        let described = |chosen| {
+            let found = bundled_hover("m", "grow", chosen);
+            (found.into_iter())
+                .map(|described| (described.label, described.prose))
+                .collect::<Vec<_>>()
+        };
+        let pair = |label: &str, prose: &str| (label.to_owned(), prose.to_owned());
+        // An overload with no doc comment of its own has the implementation's
+        let int = pair(
+            "# module m\ndef grow x @ Int -> Int\n  ...",
+            "Grows a number.",
+        );
+        let str = pair(
+            "# module m\ndef grow x @ Str -> Str\n  ...",
+            "Grows anything.",
+        );
+        assert_eq!(described(None), [int.clone(), str.clone()]);
+        assert_eq!(described(Some(0)), [int]);
+        assert_eq!(described(Some(1)), [str]);
+        // An item that isn't overloaded is described alone
+        let echo = described_of("term", "echo");
+        assert_eq!(echo, ["Writes to standard output."]);
+    }
+
+    fn described_of(module: &str, item: &str) -> Vec<String> {
+        let found = bundled_hover(module, item, None);
+        found.into_iter().map(|described| described.prose).collect()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn local_overloads_stand_for_their_implementation() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///overload-hover.dol".parse().unwrap();
+        // A comment opening the source documents the module instead
+        let text = "\
+let n = 1
+# Twice a number
+@def twice x @ Int -> Int
+@def twice x @ Str -> Str
+# Twice anything
+def twice x
+  (x + x)
+let f = twice
+";
+        harness.open(uri.clone(), text, 1).await;
+        let hover = hover_text(&mut harness, uri, 7, 9).await.unwrap();
+        assert_eq!(
+            hover,
+            concat!(
+                "```dolang\n@def twice x @ Int -> Int\n```\n\nTwice a number",
+                "\n\n---\n\n",
+                "```dolang\n@def twice x @ Str -> Str\n```\n\nTwice anything",
+            )
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

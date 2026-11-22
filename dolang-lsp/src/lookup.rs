@@ -203,7 +203,25 @@ pub(crate) fn member<'m>(
 /// The `index`th `@def` overload of the function or method `id`, in source
 /// order, or `id` itself when it has no such overload
 pub(crate) fn overload(unit: &Unit<'_>, id: NodeId, index: u32) -> NodeId {
-    let chosen = || {
+    let overloads = named_overloads(unit, id);
+    let chosen = usize::try_from(index)
+        .ok()
+        .and_then(|index| overloads.get(index));
+    chosen.copied().unwrap_or(id)
+}
+
+/// The `@def` overloads of the function or method `id`, in source order: none
+/// when it has none, or is one itself
+pub(crate) fn overloads(unit: &Unit<'_>, id: NodeId) -> Vec<NodeId> {
+    match is_overload(unit, id) {
+        true => Vec::new(),
+        false => named_overloads(unit, id),
+    }
+}
+
+/// The `@def` overloads named as the declaration `id` is, in source order
+fn named_overloads(unit: &Unit<'_>, id: NodeId) -> Vec<NodeId> {
+    let found = || {
         let node = unit.node(id)?;
         let name = unit.text(node.definition()?);
         let mut overloads: Vec<_> = unit
@@ -217,9 +235,9 @@ pub(crate) fn overload(unit: &Unit<'_>, id: NodeId, index: u32) -> NodeId {
             })
             .collect();
         overloads.sort_unstable_by_key(|&(start, _)| start);
-        Some(overloads.get(usize::try_from(index).ok()?)?.1)
+        Some(overloads.into_iter().map(|(_, id)| id).collect())
     };
-    chosen().unwrap_or(id)
+    found().unwrap_or_default()
 }
 
 /// Whether a declaration is an `@def` overload signature
@@ -322,6 +340,16 @@ mod tests {
                 ..
             }
         ));
+        // Its overloads in source order, and an overload has none of its own
+        let found = overloads(&module.unit, id);
+        let lines: Vec<_> = (found.iter())
+            .map(|&id| {
+                let span = module.unit.node(id).unwrap().definition().unwrap();
+                span.start().line_number()
+            })
+            .collect();
+        assert_eq!(lines, [1, 2]);
+        assert_eq!(overloads(&module.unit, found[0]), []);
     }
 
     #[test]

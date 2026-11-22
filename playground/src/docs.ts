@@ -18,6 +18,8 @@ export interface Entity {
   kind: string;
   name: string;
   pub?: boolean;
+  /** An `@def` overload, or a protocol or its member */
+  type_only?: boolean;
   doc?: string | null;
   binders?: BinderJson[];
   /** A class's `final` and `mixable` decorators */
@@ -349,12 +351,23 @@ export class Docs {
 
   /**
    * A bundled item's docs, as `bundled_hover` finds them: the overload a call
-   * chose, or each in turn.
+   * chose of an overloaded one, or else each overload in turn. The overloads
+   * say all the checker does of its interface, so the implementation is left
+   * out, but an overload with no doc comment of its own has the
+   * implementation's.
    */
   async describe(key: BundledKey): Promise<Described[]> {
     const entities = await this.#entities(key.module, key.item);
-    const chosen = entities.length > 1 && key.overload !== undefined ? entities[key.overload] : undefined;
-    return (chosen ? [chosen] : entities).map(found => described(key.module, found));
+    const overloads = entities.filter(found => found.entity.type_only);
+    const overloaded = entities.length > 1 && overloads.length > 0;
+    const shown = overloaded ? overloads : entities;
+    const implementation = overloaded ? entities.find(found => !found.entity.type_only) : undefined;
+    const chosen = shown.length > 1 && key.overload !== undefined ? shown[key.overload] : undefined;
+    return (chosen ? [chosen] : shown).map(found => {
+      const docs = described(key.module, found);
+      if (!docs.prose && implementation) docs.prose = prose(implementation.entity.doc);
+      return docs;
+    });
   }
 }
 

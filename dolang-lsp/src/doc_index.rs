@@ -42,6 +42,8 @@ pub(crate) struct DocEntry {
     /// The annotated type, as written: a function or method's return type, or a
     /// field's type
     pub(crate) type_: Option<&'static str>,
+    /// An `@def` overload, or a protocol or its member
+    pub(crate) type_only: bool,
 }
 
 // The real table depends on DOLANG_LSP_DOC_JSON_DIR having been set at build
@@ -53,6 +55,52 @@ include!(concat!(env!("OUT_DIR"), "/doc_index_data.rs"));
 
 #[cfg(test)]
 pub(crate) static ENTRIES: &[DocEntry] = &[
+    // An overloaded function: its overloads, then its implementation
+    DocEntry {
+        module: "m",
+        item: "grow",
+        kind: "function",
+        doc: "Grows a number.",
+        binders: &[],
+        decorators: &[],
+        params: &[Param {
+            name: "x",
+            optional: false,
+            type_: Some("Int"),
+        }],
+        type_: Some("Int"),
+        type_only: true,
+    },
+    DocEntry {
+        module: "m",
+        item: "grow",
+        kind: "function",
+        doc: "",
+        binders: &[],
+        decorators: &[],
+        params: &[Param {
+            name: "x",
+            optional: false,
+            type_: Some("Str"),
+        }],
+        type_: Some("Str"),
+        type_only: true,
+    },
+    DocEntry {
+        module: "m",
+        item: "grow",
+        kind: "function",
+        doc: "Grows anything.",
+        binders: &[],
+        decorators: &[],
+        params: &[Param {
+            name: "x",
+            optional: false,
+            type_: None,
+        }],
+        type_: None,
+        type_only: false,
+    },
     DocEntry {
         module: "std",
         item: "Never",
@@ -62,6 +110,7 @@ pub(crate) static ENTRIES: &[DocEntry] = &[
         decorators: &[],
         params: &[],
         type_: Some("Union[]"),
+        type_only: false,
     },
     DocEntry {
         module: "term",
@@ -76,6 +125,7 @@ pub(crate) static ENTRIES: &[DocEntry] = &[
             type_: None,
         }],
         type_: Some("nil"),
+        type_only: false,
     },
 ];
 
@@ -190,6 +240,7 @@ mod tests {
                 },
             ],
             type_: Some("(Int | nil)"),
+            type_only: false,
         };
         let text = signature(&function);
         assert_eq!(
@@ -206,6 +257,7 @@ mod tests {
             decorators: &[],
             params: &[],
             type_: Some("Int"),
+            type_only: false,
         };
         let text = signature(&field);
         assert_eq!(text, "# module m\nclass Point\n  field x @ Int");
@@ -238,6 +290,7 @@ mod tests {
             decorators: &[],
             params: &[],
             type_: None,
+            type_only: false,
         };
         assert_eq!(signature(&class), "# module m\nclass Box[T]");
 
