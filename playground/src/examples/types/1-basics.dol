@@ -1,0 +1,47 @@
+# title: Strict Basics
+# dolang: strict
+
+# A strict file annotates every named function's parameters. An omitted
+# return type means the function returns nothing (`nil`).
+def parse_line line @ Str -> ((Str, Str) | nil)
+  let text = line.trim()
+  if (text == "" || text.starts_with "#")
+    return nil
+  # Splitting may give one item, so the checker requires an `else` for a
+  # pattern that needs exactly two.
+  let key value = text.split "=" limit: 1
+  else throw std.ValueError "expected KEY=VALUE: $text"
+  (key.trim(), value.trim())
+
+def parse_config source @ Str -> Dict[Str, Str]
+  # The annotation says what the empty dict will hold.
+  let config @ Dict[Str, Str] = {}
+  for line = source.split "\n"
+    let entry = parse_line $line
+    # Comparing with `nil` narrows `entry` to a tuple in this branch.
+    if (entry != nil)
+      let key value = entry
+      config[key] = value
+  config
+
+# Busy parameter lists read better vertically, with `do` before the body.
+def lookup
+  config @ Dict[Str, Str]
+  key @ Str
+  fallback @ Str
+do -> Str
+  # `found` is `Str | nil`; `||` drops the `nil`.
+  let found = config.get $key
+  (found || fallback)
+
+let config = parse_config |
+  # deployment settings
+  host = db.internal
+  port = 5432
+
+echo "host: $(lookup config "host" "localhost")"
+echo "user: $(lookup config "user" "postgres")"
+
+# Hover over `config`, `entry`, or `found` to see their checked types.
+# Uncomment for a type error: `5432` is an `Int`, not a `Str`.
+# lookup $config port 5432

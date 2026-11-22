@@ -4,7 +4,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { setDiagnostics } from '@codemirror/lint';
 import { AnsiUp } from 'ansi_up';
 import type { AnalysisReply, AnalysisRequest, Diagnostic, HoverTip, PageCall, RunReply, RunRequest, TokenRange } from './protocol';
-import { examples } from './examples';
+import { exampleGroups, examples } from './examples';
 import { decodeSource, encodeSource } from './share';
 import './style.css';
 
@@ -319,7 +319,10 @@ shareButton.onclick = async () => {
   }
 };
 select.add(new Option(blankLabel, blankLabel));
-for (const name of Object.keys(examples)) select.add(new Option(name, name));
+for (const [label, names] of exampleGroups) {
+  const group = select.appendChild(Object.assign(document.createElement('optgroup'), { label }));
+  for (const name of names) group.appendChild(new Option(name, name));
+}
 select.onchange = () => view.dispatch({
   changes: { from: 0, to: view.state.doc.length, insert: select.value === blankLabel ? '' : examples[select.value] },
 });

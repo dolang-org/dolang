@@ -1,0 +1,46 @@
+# title: Schemas
+# dolang: strict
+import json
+
+# A schema lists the items a dict (or other container, parameter pack, etc.)
+# holds; `?` marks an optional one. These keys are strings to match decoded
+# JSON. Bare keys would be symbols.
+@let Service = Dict $
+  "name": Str
+  "image": Str
+  ?"replicas": Int
+  "ports": Array[Int]
+
+def describe service @ Service -> Str
+  # `bind` takes the dict apart in one pattern. Each name gets its item's
+  # type, and a default covers the optional one.
+  bind service
+    "name": name
+    "image": image
+    "replicas": replicas = 1
+    "ports": ports
+  let port_list = ",".join $ ports.map $str
+  "$name ($image) x$replicas on $port_list"
+
+def scale service@Service :by@Int = 1
+  let current = service.get "replicas" default: 1
+  service["replicas"] = (current + by)
+
+let web @ Service = $
+  "name": web
+  "image": "nginx:1.27"
+  "ports": [80, 443]
+
+echo $ describe $web
+scale $web by: 2
+echo $ describe $web
+
+# Decoded JSON could hold anything. `!@` asserts a type that the checker
+# can't verify.
+let decoded = json.decode r|
+  [{"name": "db", "image": "postgres:17", "replicas": 2, "ports": [5432]}]
+for service = (decoded !@ Array[Service])
+  echo $ describe $service
+
+# Uncomment for a type error: the schema has no "tag" item.
+# let bad @ Service = {"name": "x", "image": "y", "ports": [], "tag": "z"}

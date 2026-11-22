@@ -1,0 +1,39 @@
+# title: Unions and Narrowing
+# dolang: strict
+
+# A health check either succeeds with a latency or fails with a reason. The
+# leading symbol tags which one it is.
+@let Check = ((:UP:, Int) | (:DOWN:, Str))
+
+def probe host @ Str -> Check
+  if (host.ends_with ".internal")
+    (:UP:, host.len * 3)
+  else
+    (:DOWN:, "no route to $host")
+
+def summarize check @ Check -> Str
+  # Unpacking links `status` to `detail`: testing one narrows the other.
+  let status detail = check
+  if (status == :UP:)
+    # `detail` is `Int` here...
+    let speed = (detail > 50 && "slow" || "fast")
+    "up in $(detail)ms ($speed)"
+  else
+    # ...and `Str` here.
+    "down: $(detail.upper())"
+
+# Type tests narrow too, in `match` arms and in conditions.
+def width value @ (Int | Str | Array[Str]) -> Int
+  match value
+    Int(n) => n
+    Str(s) => s.len
+    # Only `Array[Str]` is left for the last arm.
+    _ => value.len
+
+for host = ["db.internal", "example.com"]
+  echo "$host: $(summarize $ probe host)"
+
+echo "widths: $(width 7), $(width "seven"), $(width ["a", "b"])"
+
+# Uncomment for a type error: without a test, the detail may be an `Int`.
+# def shout check @ Check -> Str => check[1].upper()

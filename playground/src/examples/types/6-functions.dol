@@ -1,0 +1,51 @@
+# title: Functions and Overloads
+# dolang: strict
+
+# A function type lists parameter types, then `->` and the result type.
+# `retry` returns whatever its action does.
+def retry[T]
+  attempts @ Int
+  action @ ((Int) -> T)
+do -> T
+  for attempt = 1..attempts
+    try
+      return action $attempt
+    catch err
+      echo "attempt $attempt failed: $err"
+  action $attempts
+
+# A `do` block's parameter types come from the function it's passed to:
+# `attempt` is an `Int` here, and `port` gets the block's result type.
+let port = retry 3 do |attempt|
+  if (attempt < 3)
+    throw std.RuntimeError "connection refused"
+  (8000 + attempt)
+echo "connected on port $port"
+
+# Functions are values, and collections of them are typed like any other.
+# Each block's `s` is a `Str`, from the annotation.
+let checks @ Dict[Sym, ((Str) -> Bool)] = $
+  not_empty: (do |s| s != "")
+  no_spaces: (do |s| !s.contains(" "))
+  lowercase: (do |s| s == s.lower())
+for name check = checks
+  echo "$name: $(check "web-01")"
+
+# Overloads give one implementation several signatures, so each call gets a
+# precise result type. They don't dispatch: every call runs the one
+# implementation, and the checker trusts that its signatures are accurate.
+@def quote value @ Str -> Str
+@def quote value @ Array[Str] -> Array[Str]
+def quote value @ (Str | Array[Str]) -> (Str | Array[Str])
+  match value
+    Str(s) => "'$(s.replace "'" r"'\''")'"
+    Array(items) => [for item = items => quote item]
+
+# Hover over `one` and `many`: each result type comes from the overload
+# that its call matched.
+let one = quote "it's"
+let many = quote ["a b", "c"]
+echo "$one $(" ".join many)"
+
+# Uncomment for a type error: no overload of `quote` takes an `Int`.
+# quote 42

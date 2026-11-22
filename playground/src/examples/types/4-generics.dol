@@ -1,0 +1,58 @@
+# title: Generics
+# dolang: strict
+
+# `[T]` after a name declares a type parameter. Each call infers it from the
+# arguments, so the result keeps the caller's element type.
+def first_or[T] items@Seq[T] fallback@T -> T
+  if (items.len == 0)
+    fallback
+  else
+    items[0]
+
+# A bound limits what `T` may be, which makes `>` available on it.
+def largest[T @ std.Num] items @ Seq[T] -> (T | nil)
+  let best @ (T | nil) = nil
+  for item = items
+    if (best == nil || item > best)
+      best = item
+  best
+
+# A generic alias names a family of types.
+@let Pair[T] = (T, T)
+
+def swap[T] pair @ Pair[T] -> Pair[T]
+  let a b = pair
+  (b, a)
+
+# Classes take type parameters too. The checker infers `T` from the
+# arguments passed to `(init)`.
+class Queue[T]
+  field items @ Array[T]
+
+  # `*items` collects the positional arguments.
+  def (init) self *items @ T
+    self.#items = [...items]
+
+  pub def push self item @ T
+    self.#items.push $item
+
+  # `pop` returns `T | D`, where `D` is the type of its default.
+  pub def take self -> (T | nil)
+    self.#items.pop 0 default: nil
+
+# Nothing in `[]` says what it holds, so an annotation gives its type.
+let empty @ Array[Str] = []
+echo "first: $(first_or ["a", "b"] "none"), $(first_or empty "none")"
+echo "largest: $(largest [3, 9, 4]), $(largest [1.5, 0.5])"
+echo "swapped: $(swap((1, 2)))"
+
+let jobs = Queue "build" "test"
+jobs.push deploy
+# A single-name `while let` loops while the value is truthy, which drops
+# `nil` from its type. Hover over `job`: it's a `Str`, because `jobs` is a
+# `Queue[Str]`.
+while let job = jobs.take()
+  echo "running $(job.upper())"
+
+# Uncomment for a type error: this queue holds `Str`s.
+# jobs.push 42
