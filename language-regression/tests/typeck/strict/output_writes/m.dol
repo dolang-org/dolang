@@ -1,0 +1,128 @@
+# dolang: strict
+# A `do` block's output whose items the call it's passed to leaves open takes
+# what the block writes
+
+import strand:
+  - stream
+
+def quiet() => nil
+
+def sends[T] sink @ Sink[T] value @ T
+  sink.put $value
+
+def ints[T @ Int] _f @ ((>strand.PipeSender[T]) -> nil) -> Array[T]
+  ([] @ Array[T])
+
+pub def writes()
+  let s = stream do
+    put 1
+  let _ = s
+  #       ^: flow strand.Stream[nil, std.Int, Value]
+  nil
+
+pub def joins()
+  let s = stream do
+    put 1
+    put "a"
+  let _ = s
+  #       ^: flow strand.Stream[nil, std.Int | std.Str, Value]
+  nil
+
+# A write in a nested statement block counts
+pub def nested flag@Bool
+  let s = stream do
+    if flag
+      put 1
+    for x = ["a"]
+      put $x
+  let _ = s
+  #       ^: flow strand.Stream[std.Nil, std.Int | std.Str, Value]
+  nil
+
+# A block passed to another call writes to what that call gives it
+pub def replaced()
+  let s = stream do
+    let _inner = stream do
+      put 1
+    nil
+  let _ = s
+  #       ^: flow strand.Stream[std.Nil, Value, Value]
+  nil
+
+# Nothing infers the output of a block that isn't passed directly
+pub def bound_first()
+  let block = do
+    put 1
+  # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     put 1
+  #    |     ^^^^^
+  let s = stream $block
+  let _ = s
+  #       ^: flow strand.Stream[nil, Value, Value]
+  nil
+
+# A call passed the output infers its items as the block's own calls do
+pub def read_passed()
+  let s = stream do
+    sends(strand.output(), 1)
+  let _ = s
+  #       ^: flow strand.Stream[nil, std.Int, Value]
+  nil
+
+# An output read into a variable leaves its step, so nothing written through it
+# is inferred
+pub def read_escaped()
+  let s = stream do
+    let o = strand.output()
+    o.put 1
+  # error: expected `Never`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     o.put 1
+  #    |           ^
+  let _ = s
+  nil
+
+# Annotating the output leaves nothing to infer
+pub def read_annotated()
+  let s = stream do |>strand.PipeSender[Int]|
+    let o = strand.output()
+    o.put 1
+  let _ = s
+  #       ^: flow strand.Stream[nil, std.Int, Value]
+  nil
+
+# A binder's bound checks what the block writes at the call
+pub def bounded()
+  ints do
+    put foo
+  # error: `(>strand.PipeSender[std.Str]) -> nil` does not fit this parameter
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |     ints do
+  #    |  ________^
+  # LL | |     put foo
+  #    | |_____------^
+  #    |       |
+  #    |       written here
+  #    |
+  #    = note: `std.Str` does not fit `std.Int`
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | /   ints do
+  # LL | |     put foo
+  #    | |___________^
+  #    |
+  #    = note: it doesn't handle a type nothing determines
+  nil
+
+# A block that writes nothing leaves its output to defaulting
+pub def silent()
+  let s = stream do
+    quiet()
+  let _ = s
+  #       ^: flow strand.Stream[nil, Value, Value]
+  nil

@@ -205,6 +205,9 @@ pub(crate) enum OriginKind {
     Empty,
     /// What a rule's context expects of its result
     ExpectedResult,
+    /// What a `do` block wrote to an item of its output, by the spans of the
+    /// calls that wrote it
+    Written(alias::Box<[diag::Span]>),
 }
 
 /// Where an origin is
@@ -1471,6 +1474,93 @@ impl<'db> Solver<'db> {
             .map(|argument| self.reify(argument).ok())
             .collect::<Option<_>>()?;
         Some((nominal.declaration, arguments))
+    }
+
+    /// What a term is with its unsolved variables left open, when it's an
+    /// application whose arguments are closed or unsolved variables, each of
+    /// those in a contravariant parameter, as a sink's item is, and bounded
+    /// above by nothing but its binder's bound: the application with a
+    /// reference at depth 0 to slot `i` for the `i`th distinct variable, and
+    /// each slot's kind. `None` if it isn't, or no variable is open.
+    pub(crate) fn sink_template(&self, term: Term) -> Option<(TypeId, Vec<Kind>)> {
+        let Ok(Term::View(view)) = self.resolve(term) else {
+            return None;
+        };
+        let Type::Apply {
+            base,
+            ref args,
+            kind,
+        } = *self.db.ty(view.ty)
+        else {
+            return None;
+        };
+        let Type::Decl(decl) = *self.db.ty(base) else {
+            return None;
+        };
+        let Type::Quantified { binders, .. } = self.db.ty(self.db.declaration(decl).ty) else {
+            return None;
+        };
+        if binders.len() != args.len() {
+            return None;
+        }
+        let mut open: Vec<InferVarId> = Vec::new();
+        let mut caller = None;
+        let mut kinds = Vec::new();
+        let mut templated = Vec::with_capacity(args.len());
+        for (binder, arg) in binders.iter().zip(args.iter()) {
+            let ty = match *arg {
+                Argument::Positional(ty) => {
+                    let child = view.child(ty);
+                    match self.resolve(child) {
+                        Ok(Term::Infer(id)) => {
+                            if binder.variance != Variance::Contravariant {
+                                return None;
+                            }
+                            // What's expected of it says what it is, so
+                            // nothing is left for writes to infer
+                            let caller = caller.get_or_insert_with(|| self.caller_expected());
+                            if self
+                                .bounds(id)
+                                .upper()
+                                .any(|upper| !self.bound_only(id, upper, caller))
+                            {
+                                return None;
+                            }
+                            let slot = match open.iter().position(|&other| other == id) {
+                                Some(slot) => slot,
+                                None => {
+                                    open.push(id);
+                                    kinds.push(binder.kind);
+                                    open.len() - 1
+                                }
+                            };
+                            self.db.intern(Type::Bound {
+                                reference: BoundRef::new(0, slot),
+                                kind: binder.kind,
+                            })
+                        }
+                        _ => self.reify(child).ok()?,
+                    }
+                }
+                Argument::Keyword(_, ty) | Argument::Expand(ty) => {
+                    self.reify(view.child(ty)).ok()?
+                }
+            };
+            templated.push(match *arg {
+                Argument::Positional(_) => Argument::Positional(ty),
+                Argument::Keyword(name, _) => Argument::Keyword(name, ty),
+                Argument::Expand(_) => Argument::Expand(ty),
+            });
+        }
+        if open.is_empty() {
+            return None;
+        }
+        let body = self.db.intern(Type::Apply {
+            base,
+            args: templated.into(),
+            kind,
+        });
+        Some((body, kinds))
     }
 
     /// Rebuild a closed canonical type, retaining references owned by local binders.
