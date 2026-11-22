@@ -38,6 +38,9 @@ struct Entity {
     name: String,
     #[serde(default, rename = "pub")]
     is_pub: bool,
+    /// An `@def` overload, or a protocol or its member
+    #[serde(default)]
+    type_only: bool,
     #[serde(default)]
     doc: Option<String>,
     #[serde(default)]
@@ -365,6 +368,7 @@ struct Row {
     decorators: Vec<String>,
     params: Vec<ParamJson>,
     type_: Option<String>,
+    type_only: bool,
 }
 
 fn main() {
@@ -426,6 +430,7 @@ fn add_module(rows: &mut Vec<Row>, modules: &HashMap<String, ModuleJson>, module
         decorators: Vec::new(),
         params: Vec::new(),
         type_: None,
+        type_only: false,
     });
     for entity in &module.entities {
         if entity.is_pub {
@@ -560,6 +565,7 @@ fn add_entity(rows: &mut Vec<Row>, module: &str, prefix: &str, entity: &Entity) 
             .as_ref()
             .or(entity.type_.as_ref())
             .map(|ty| ty.render(Binding::Compact)),
+        type_only: entity.type_only,
     });
     for member in &entity.members {
         if member.is_pub {
@@ -573,8 +579,8 @@ fn render(rows: &[Row]) -> String {
     for row in rows {
         write!(
             out,
-            "    DocEntry {{ module: {:?}, item: {:?}, kind: {:?}, doc: {:?}, binders: &{:?}, decorators: &{:?}, type_: {:?}, params: &[",
-            row.module, row.item, row.kind, row.doc, row.binders, row.decorators, row.type_,
+            "    DocEntry {{ module: {:?}, item: {:?}, kind: {:?}, doc: {:?}, binders: &{:?}, decorators: &{:?}, type_: {:?}, type_only: {:?}, params: &[",
+            row.module, row.item, row.kind, row.doc, row.binders, row.decorators, row.type_, row.type_only,
         )
         .expect("writing to a String cannot fail");
         for param in &row.params {

@@ -380,7 +380,37 @@ test('hover shows a prelude function signature and doc', async ({ page }) => {
 test('hover on an overloaded bundled call shows the chosen overload', async ({ page }) => {
   await source(page, 'echo (int "ff" base: 16)');
   const tip = await hoverAt(page, 7);
-  await expect(tip.locator('pre')).toHaveText('# module std\ndef int value@Str :base@Int -> Int\n  ...');
+  // The implementation's doc comment, which the overload has, holds examples
+  await expect(tip.locator('pre', { hasText: '# module' }))
+    .toHaveText('# module std\ndef int value@Str :base@Int -> Int\n  ...');
+});
+
+test('hover on an overloaded bundled name shows its overloads with the implementation doc', async ({ page }) => {
+  const text = 'let f = int\necho $f';
+  await source(page, text);
+  const tip = await hoverAt(page, text.indexOf('int') + 1);
+  await expect(tip.locator('pre', { hasText: '# module' })).toHaveText([
+    '# module std\ndef int value @ (Num | Str) -> Int\n  ...',
+    '# module std\ndef int value@Str :base@Int -> Int\n  ...',
+  ]);
+  await expect(tip.getByText('Coerces or parses a value as an Int.')).toHaveCount(2);
+});
+
+test('hover shows a local function input and output', async ({ page }) => {
+  const text = 'def parse_log x <Iter[Str] >Sink[(Str, Str)]\n  nil\nparse_log 1';
+  await source(page, text);
+  const tip = await hoverAt(page, text.lastIndexOf('parse_log') + 1);
+  await expect(tip.locator('pre')).toHaveText('def parse_log x <Iter[Str] >Sink[(Str, Str)]\n  ...');
+});
+
+test('hover on an overloaded local function shows its overloads', async ({ page }) => {
+  const text = 'let n = 1\n# Twice a number\n@def twice x @ Int -> Int\n@def twice x @ Str -> Str\n'
+    + '# Twice anything\ndef twice x\n  (x + x)\nlet f = twice\necho $f';
+  await source(page, text);
+  const tip = await hoverAt(page, text.lastIndexOf('twice') + 1);
+  await expect(tip.locator('pre')).toHaveText(['@def twice x @ Int -> Int', '@def twice x @ Str -> Str']);
+  await expect(tip).toContainText('Twice a number');
+  await expect(tip).toContainText('Twice anything');
 });
 
 test('hover shows a method of a bundled class', async ({ page }) => {

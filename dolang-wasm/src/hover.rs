@@ -414,7 +414,7 @@ fn chosen(node: typeck::Node<'_>) -> Option<u32> {
 
 /// The item `module` exports as `name`, following re-exports. The source is
 /// the module `own`; any other is bundled. An overloaded function is found as
-/// its implementation.
+/// its implementation, which hover describes as its overloads.
 fn item_target(unit: &Unit<'_>, own: &str, module: &str, name: &str) -> Option<Target> {
     let (mut module, mut name) = (module.to_owned(), name.to_owned());
     for _ in 0..MAX_HOPS {
@@ -510,7 +510,25 @@ fn member_target(
 /// The `index`th `@def` overload of the function or method `id`, in source
 /// order, or `id` itself when it has no such overload
 fn overload(unit: &Unit<'_>, id: NodeId, index: u32) -> NodeId {
-    let chosen = || {
+    let overloads = named_overloads(unit, id);
+    let chosen = usize::try_from(index)
+        .ok()
+        .and_then(|index| overloads.get(index));
+    chosen.copied().unwrap_or(id)
+}
+
+/// The `@def` overloads of the function or method `id`, in source order: none
+/// when it has none, or is one itself
+fn overloads(unit: &Unit<'_>, id: NodeId) -> Vec<NodeId> {
+    match is_overload(unit, id) {
+        true => Vec::new(),
+        false => named_overloads(unit, id),
+    }
+}
+
+/// The `@def` overloads named as the declaration `id` is, in source order
+fn named_overloads(unit: &Unit<'_>, id: NodeId) -> Vec<NodeId> {
+    let found = || {
         let node = unit.node(id)?;
         let name = unit.text(node.definition()?);
         let mut overloads: Vec<_> = unit
@@ -524,9 +542,9 @@ fn overload(unit: &Unit<'_>, id: NodeId, index: u32) -> NodeId {
             })
             .collect();
         overloads.sort_unstable_by_key(|&(start, _)| start);
-        Some(overloads.get(usize::try_from(index).ok()?)?.1)
+        Some(overloads.into_iter().map(|(_, id)| id).collect())
     };
-    chosen().unwrap_or(id)
+    found().unwrap_or_default()
 }
 
 /// Whether a declaration is an `@def` overload signature
@@ -555,32 +573,46 @@ fn is_overload(unit: &Unit<'_>, id: NodeId) -> bool {
     }
 }
 
-/// How hover describes a target, or the overload `chosen` of it. An overload
-/// with no doc comment of its own has its implementation's.
+/// How hover describes a target, or the overload `chosen` of it
 fn describe(unit: &Unit<'_>, target: &Target, chosen: Option<u32>) -> Vec<Declaration> {
     match *target {
-        Target::Source(implementation) => {
-            let id = match chosen {
-                Some(index) => overload(unit, implementation, index),
-                None => implementation,
-            };
-            let Some(mut described) = local(unit, id) else {
-                return Vec::new();
-            };
-            if let Declaration::Local { doc, .. } = &mut described
-                && doc.is_empty()
-                && let Some(span) = unit.node(implementation).and_then(|node| node.doc())
-            {
-                *doc = normalize_doc(unit, span);
-            }
-            vec![described]
-        }
+        Target::Source(implementation) => overloaded(unit, implementation, chosen),
         Target::Bundled(ref module, ref item) => vec![Declaration::Bundled {
             module: module.clone(),
             item: item.clone(),
             overload: chosen,
         }],
     }
+}
+
+/// How hover describes a declaration in the source, or for an overloaded
+/// function or method, the overload `chosen` of it, or else each overload in
+/// turn: the overloads say all the checker does of its interface. An overload
+/// with no doc comment of its own has its implementation's.
+fn overloaded(unit: &Unit<'_>, implementation: NodeId, chosen: Option<u32>) -> Vec<Declaration> {
+    let ids = match chosen {
+        Some(index) => vec![overload(unit, implementation, index)],
+        None => {
+            let overloads = overloads(unit, implementation);
+            match overloads.is_empty() {
+                true => vec![implementation],
+                false => overloads,
+            }
+        }
+    };
+    let span = unit.node(implementation).and_then(|node| node.doc());
+    ids.into_iter()
+        .filter_map(|id| {
+            let mut described = local(unit, id)?;
+            if let Declaration::Local { doc, .. } = &mut described
+                && doc.is_empty()
+                && let Some(span) = span
+            {
+                *doc = normalize_doc(unit, span);
+            }
+            Some(described)
+        })
+        .collect()
 }
 
 /// How hover describes the declaration `id` a reference names, without a
@@ -592,16 +624,15 @@ fn declared(unit: &Unit<'_>, id: NodeId) -> Vec<Declaration> {
         item: item.to_owned(),
         overload: None,
     };
-    let declaration = match unit.node(id).map(|node| node.kind()) {
-        Some(Kind::ImportModule { module, .. }) => Some(bundled(unit.text(module), "")),
+    match unit.node(id).map(|node| node.kind()) {
+        Some(Kind::ImportModule { module, .. }) => vec![bundled(unit.text(module), "")],
         Some(Kind::ImportItem { module, item, .. }) => {
-            Some(bundled(unit.text(module), unit.text(item)))
+            vec![bundled(unit.text(module), unit.text(item))]
         }
-        Some(Kind::PreludeModule { module, .. }) => Some(bundled(module, "")),
-        Some(Kind::PreludeItem { module, item, .. }) => Some(bundled(module, item)),
-        _ => local(unit, id),
-    };
-    declaration.into_iter().collect()
+        Some(Kind::PreludeModule { module, .. }) => vec![bundled(module, "")],
+        Some(Kind::PreludeItem { module, item, .. }) => vec![bundled(module, item)],
+        _ => overloaded(unit, id, None),
+    }
 }
 
 /// A declaration in the source: its signature, the classes it's in, and its
@@ -692,12 +723,20 @@ fn one_line(unit: &Unit<'_>, span: Span) -> String {
 fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<Param> {
     let source = unit.source();
     let node = unit.node(id)?;
+    let span = node.span()?;
     let default = match node.kind() {
         Kind::PositionalParam { default, .. } | Kind::KeyParam { default, .. } => default,
         Kind::RestParam { .. } | Kind::SelfParam { .. } => None,
+        // An implicit is written as its sigil and type with no `@` between
+        Kind::ImplicitParam { .. } => {
+            return Some(Param {
+                head: one_line(unit, span),
+                ty: None,
+                default: false,
+            });
+        }
         _ => return None,
     };
-    let span = node.span()?;
     let ty = node
         .children()
         .filter_map(|child| unit.node(child))
@@ -990,6 +1029,76 @@ mod tests {
             ("x", Some("Int"), false)
         );
         assert_eq!(returns.as_deref(), Some("Int"));
+    }
+
+    #[wasm_bindgen_test]
+    fn local_signature_has_its_input_and_output() {
+        let source = "def parse_log x <Iter[Str] >Sink[(Str, Str)]\n  nil\nparse_log 1";
+        let at = last(source, "parse_log");
+        let hover = Analyzed::new(source.to_owned()).hover(at, at).unwrap();
+        let [
+            Declaration::Local {
+                signature: Signature::Def { params, .. },
+                ..
+            },
+        ] = &hover.declarations[..]
+        else {
+            panic!("{:?}", hover.declarations)
+        };
+        let params: Vec<_> = params
+            .iter()
+            .map(|param| (&param.head[..], param.ty.as_deref(), param.default))
+            .collect();
+        assert_eq!(
+            params,
+            [
+                ("x", None, false),
+                ("<Iter[Str]", None, false),
+                (">Sink[(Str, Str)]", None, false)
+            ]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn overloaded_function_is_its_overloads() {
+        // A comment opening the source documents the module instead
+        let source = "\
+let n = 1
+# Twice a number
+@def twice x @ Int -> Int
+@def twice x @ Str -> Str
+# Twice anything
+def twice x
+  (x + x)
+let f = twice";
+        let at = last(source, "twice");
+        for analyzed in [Analyzed::new(source.to_owned()), checked(source)] {
+            let hover = analyzed.hover(at, at).unwrap();
+            let described: Vec<_> = hover
+                .declarations
+                .iter()
+                .map(|declaration| match declaration {
+                    Declaration::Local {
+                        doc,
+                        signature:
+                            Signature::Def {
+                                type_only, returns, ..
+                            },
+                        ..
+                    } => (&doc[..], *type_only, returns.as_deref()),
+                    other => panic!("not a local def: {other:?}"),
+                })
+                .collect();
+            // An overload with no doc comment of its own has its
+            // implementation's
+            assert_eq!(
+                described,
+                [
+                    ("Twice a number", true, Some("Int")),
+                    ("Twice anything", true, Some("Str"))
+                ]
+            );
+        }
     }
 
     #[wasm_bindgen_test]

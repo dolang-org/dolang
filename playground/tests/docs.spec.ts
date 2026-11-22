@@ -91,8 +91,14 @@ test('lookup follows re-exports, members and overloads', async () => {
             { kind: 'method', name: 'hidden', pub: false },
           ],
         },
-        { kind: 'function', name: 'f', pub: true, params: [{ kind: 'pos', name: 'x', type: { kind: 'name', name: 'Int' } }] },
-        { kind: 'function', name: 'f', pub: true, params: [{ kind: 'pos', name: 'x', type: { kind: 'name', name: 'Str' } }] },
+        {
+          kind: 'function', name: 'f', pub: true, type_only: true, doc: 'Does f to an Int.',
+          params: [{ kind: 'pos', name: 'x', type: { kind: 'name', name: 'Int' } }],
+        },
+        {
+          kind: 'function', name: 'f', pub: true, type_only: true,
+          params: [{ kind: 'pos', name: 'x', type: { kind: 'name', name: 'Str' } }],
+        },
         { kind: 'function', name: 'f', pub: true, params: [{ kind: 'pos', name: 'x' }], doc: 'Does f.' },
         { kind: 'function', name: 'private', pub: false },
       ],
@@ -110,11 +116,16 @@ test('lookup follows re-exports, members and overloads', async () => {
   expect(await docs.describe({ module: 'a', item: 'Gone' })).toEqual([]);
   expect(await docs.describe({ module: 'b', item: 'private' })).toEqual([]);
   expect(await docs.describe({ module: 'missing', item: 'x' })).toEqual([]);
-  const labels = async (overload?: number) =>
-    (await docs.describe({ module: 'b', item: 'f', overload })).map(described => described.label);
+  // The overloads stand for the implementation, and one with no doc comment of
+  // its own has the implementation's
+  const described = async (overload?: number) =>
+    (await docs.describe({ module: 'b', item: 'f', overload })).map(({ label, prose }) => [label, prose]);
   const f = (param: string) => `# module b\ndef f ${param}\n  ...`;
-  expect(await labels()).toEqual([f('x @ Int'), f('x @ Str'), f('x')]);
-  expect(await labels(1)).toEqual([f('x @ Str')]);
+  const int = [f('x @ Int'), 'Does f to an Int.'];
+  const str = [f('x @ Str'), 'Does f.'];
+  expect(await described()).toEqual([int, str]);
+  expect(await described(0)).toEqual([int]);
+  expect(await described(1)).toEqual([str]);
 });
 
 test('links go to API pages beside the playground', () => {
