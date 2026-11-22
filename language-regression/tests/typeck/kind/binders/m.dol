@@ -1,5 +1,5 @@
-# Only declarations determine kinds. A variadic binder is a schema, a keyword
-# binder a type, and any other binder has its bound's kind, or is a type.
+# Only declarations determine kinds. A variadic binder is a schema, and any
+# other binder has its bound's kind, or is a type.
 
 import @ext
 # error: module `ext` not found

@@ -630,7 +630,7 @@ impl<'t, 'u> Populate<'t, 'u> {
                         .map(|bound| tables.site_ty(bound))
                         .filter(|bound| tables.kind_of(bound) == Some(Kind::Schema));
                     match (written.kind, bound) {
-                        (BinderKind::Key | BinderKind::Rest(RestKind::Pos), _) => false,
+                        (BinderKind::Rest(RestKind::Pos), _) => false,
                         (BinderKind::Rest(RestKind::Key), _) => true,
                         (_, Some(bound)) => self.may_key(bound, aliases),
                         (_, None) => true,

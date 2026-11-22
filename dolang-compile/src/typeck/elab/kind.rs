@@ -1,9 +1,8 @@
 //! Kinds: whether each binder and alias stands for a type or a schema, and a check
 //! that every type expression is used as its kind allows.
 //!
-//! Only declarations determine kinds, never uses. A variadic binder is a schema and
-//! a keyword binder a type; any other binder takes the kind of its bound, and an
-//! alias the kind of its body. Those equations are solved with union-find, so alias
+//! Only declarations determine kinds, never uses. A variadic binder is a schema;
+//! any other binder takes the kind of its bound, and an alias the kind of its body. Those equations are solved with union-find, so alias
 //! chains and cycles across units need no ordering. A kind no declaration
 //! determines is a type. An opaque alias is a type, unless it's designated as an
 //! intrinsic schema, and an application has its alias's kind.
@@ -39,8 +38,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
                 let fixed = match binder.kind {
                     BinderKind::Rest(_) => Some(Kind::Schema),
-                    BinderKind::Key => Some(Kind::Type),
-                    BinderKind::Pos => None,
+                    BinderKind::Pos | BinderKind::Key => None,
                 };
                 infer.var(Var::Binder(BinderRef { decl, sig, slot }), fixed);
             }
@@ -66,12 +64,14 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         }
     }
 
-    // A positional binder takes its bound's kind, and an alias its body's. A variadic
-    // binder's bound is either kind, bounding each item or the whole pack.
+    // A positional or key binder takes its bound's kind, and an alias its body's. A
+    // variadic binder's bound is either kind, bounding each item or the whole pack.
     for decl in tables.decl_ids() {
         for sig in 0..tables.sig_count(decl) {
             for (slot, binder) in tables.binders(decl, sig).iter().enumerate() {
-                if let (BinderKind::Pos, Some(bound)) = (binder.kind, binder.bound) {
+                if let (BinderKind::Pos | BinderKind::Key, Some(bound)) =
+                    (binder.kind, binder.bound)
+                {
                     let term = infer.synth(tables, tables.site_ty(bound));
                     infer.equate(Var::Binder(BinderRef { decl, sig, slot }), term);
                 }
