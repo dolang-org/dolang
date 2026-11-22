@@ -16,3 +16,18 @@ pub def keys n @ Int
 #    |                                             ^^^^^^
 #    |
 #    = note: `{?a: std.Bool}` doesn't admit `b: 1`
+
+# A `do` block under such a key takes the schema's value type, as one under a
+# keyword does
+pub def lambdas n @ Int
+  let _ @ Dict[Str, ((Str) -> Bool)] = {"x": (do |s| s == s.lower())}
+  let _ @ Dict[{*(Str): ((Str) -> Bool)}] = {"x": (do |s| s == s.lower())}
+  let _ @ Dict[Int, ((Str) -> Bool)] = {(n + 1): (do |s| s == s.lower())}
+  let _ @ Dict[Str, ((Str) -> Bool)] = $
+    "x": (do |s| s == s.lower())
+  let _ @ Dict[Str, ((Int) -> Bool)] = {"x": (do |s| s == s.lower())}
+# error: `std.Int` has no member `lower`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ @ Dict[Str, ((Int) -> Bool)] = {"x": (do |s| s == s.lower())}
+#    |                                                           ^^^^^^^^^

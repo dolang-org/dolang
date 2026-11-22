@@ -17,6 +17,16 @@ pub def chained()
   #       ^~~: flow std.Array[std.Int]
   nil
 
+# A bound stage whose input nothing gives reads `Value`, and the stage after it
+# still reads what it writes
+pub def bound()
+  let report = do |>Sink[Str]|
+    put x
+  let res = pipeline $report (do collect())
+  let _ = res
+  #       ^~~: flow std.Array[std.Str]
+  nil
+
 # A stage that reads `Str` checks what the stage before it writes
 pub def writer_mismatch()
   pipeline (do put 1) $strs

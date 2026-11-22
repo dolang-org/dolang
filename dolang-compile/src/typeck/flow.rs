@@ -588,6 +588,9 @@ struct Flow<'a, 'u> {
     /// How many defaulting rounds have left each `do` block for the functions
     /// it's in (see [`Flow::awaits_signature`])
     deferred: FxHashMap<FuncId, u32>,
+    /// The `do` blocks whose values have waited for their parameters and
+    /// channels outside a rule that types them (see [`Flow::dynamic_signatures`])
+    awaited: FxHashSet<FuncId>,
     /// Whether the running block defaults the rules it leaves undecided
     defaulting: bool,
     /// The first call in the running step or terminal that gave bottom, which
@@ -656,6 +659,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             unsettled: FxHashSet::default(),
             marked: FxHashSet::default(),
             deferred: FxHashMap::default(),
+            awaited: FxHashSet::default(),
             defaulting: false,
             diverged: None,
             results: None,
@@ -743,6 +747,12 @@ impl<'a, 'u> Flow<'a, 'u> {
                     return;
                 }
             }
+            // A `do` block value waiting for its parameters and channels waits on
+            // nothing a defaulting round would decide, which could instead see the
+            // blocks its call is passed before that call types them
+            if self.dynamic_signatures(true) {
+                continue;
+            }
             // Upstream first: in each function, its earliest block with an undecided
             // rule. A later rule in that block runs after its inputs.
             let mut earliest: FxHashMap<FuncId, u32> = FxHashMap::default();
@@ -786,7 +796,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
             if earliest.is_empty() {
                 // Nothing gave these `do` block parameters and channels anything
-                if self.dynamic_signatures() {
+                if self.dynamic_signatures(false) {
                     continue;
                 }
                 break;
@@ -1453,8 +1463,11 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Make each `do` block parameter and channel that's still bottom dynamic,
     /// saying whether there was one. In a strict unit, each instead takes
-    /// `Value`, as a def's omitted channel is seen there.
-    fn dynamic_signatures(&mut self) -> bool {
+    /// `Value`, as a def's omitted channel is seen there. With `awaited`, only
+    /// those of blocks whose values wait for them: no rule types such a block,
+    /// so nothing else gives them anything, and a call its value is passed to
+    /// can then type the other blocks it's passed.
+    fn dynamic_signatures(&mut self, awaited: bool) -> bool {
         let bottom = self.db.bottom();
         let unknown = match self.strict() {
             true => self.db.top(),
@@ -1466,6 +1479,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             .run
             .funcs
             .iter()
+            .filter(|func| !awaited || self.awaited.contains(func))
             .filter_map(|&id| ir.func(id).signature.as_ref())
             .flat_map(|signature| {
                 signature
