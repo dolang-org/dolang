@@ -9,7 +9,7 @@ import lax
 pub def writes()
   #     ^~~~~~: decl [in -, out -] (<in, >out) -> nil
   put 1
-  # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+  # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
   #   --> m.dol:LL:LL
   #    |
   # LL |   put 1
@@ -28,8 +28,8 @@ pub def reads()
   # LL |   let _xs = strand.collect()
   #    |             ^^^^^^^^^^^^^^^^
   #    |
-  #    = note: `@[I] (<std.Iter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.Iter[I]) -> std.Array[I]`
-  #    = note: `@[I, S] (S, <std.Iter[I]) -> S`: this call does not fit `@[I, S] (S, <std.Iter[I]) -> S`; this call is missing an argument
+  #    = note: `@[I] (<std.BaseIter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.BaseIter[I]) -> std.Array[I]`
+  #    = note: `@[I, S] (S, <std.BaseIter[I]) -> S`: this call does not fit `@[I, S] (S, <std.BaseIter[I]) -> S`; this call is missing an argument
   nil
 
 pub def reads_declared <Iter[Int]
@@ -100,7 +100,7 @@ def feed[I] f @ ((<I) -> nil) <I -> nil
 pub def passes_quiet()
   run do
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -141,10 +141,10 @@ pub def map_disconnected <Iter[Int] >Sink[Int]
     # LL |     let _ = strand.collect()
     #    |             ^^^^^^^^^^^^^^^^
     #    |
-    #    = note: `@[I] (<std.Iter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.Iter[I]) -> std.Array[I]`
-    #    = note: `@[I, S] (S, <std.Iter[I]) -> S`: this call does not fit `@[I, S] (S, <std.Iter[I]) -> S`; this call is missing an argument
+    #    = note: `@[I] (<std.BaseIter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.BaseIter[I]) -> std.Array[I]`
+    #    = note: `@[I, S] (S, <std.BaseIter[I]) -> S`: this call does not fit `@[I, S] (S, <std.BaseIter[I]) -> S`; this call is missing an argument
     strand.put 1
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     strand.put 1
@@ -180,7 +180,7 @@ pub def each_where_channels <Iter[Int] >Sink[Int]
   strand.each do |x| (x + 1)
   strand.where do |x|
     strand.put $x
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     strand.put $x
@@ -204,7 +204,7 @@ pub def passes_fixed >Sink[Int]
 pub def spawns()
   let s = strand.spawn do
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -217,7 +217,7 @@ pub def spawns()
 pub def named()
   let f = do
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -268,7 +268,7 @@ pub def callback d @ Dict[Str, Int] >Sink[Str]
 pub def deferred xs @ Array[Int] >Sink[Str]
   let _ = xs.iter().map do |x|
     put "x"
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put "x"
@@ -345,7 +345,7 @@ pub def restored_unreadable()
 pub def exact_unwritable()
   strand.with_io output: "opaque" do
     put 1
-    # error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+    # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL
     #    |
     # LL |     put 1
@@ -387,3 +387,24 @@ pub def joined_block c @ Bool -> Str
   let g @ ((Int) -> Str) = f
   #                        ^: flow (Value, <Value, >Value) -> std.Str
   g 1
+
+# Operations that only read or write a channel accept any value implementing
+# the protocol
+pub def protocol_channels <BaseIter[Int] >BaseSink[Int] -> Int
+  put 1
+  strand.from [1, 2]
+  strand.each do |x| (x + 1)
+  strand.where do |x| (x > 0)
+  strand.map 1 do |x| (x + 1)
+  strand.pool 1 do |_x| nil
+  let xs = strand.collect()
+  let _ = xs
+  #       ^~: flow std.Array[std.Int]
+  strand.next default: 0
+
+# A wider sink accepts narrower values
+pub def protocol_wider >BaseSink[Int | Str]
+  put 1
+  put "x"
+  strand.from [1, 2]
+  nil
