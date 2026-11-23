@@ -9,9 +9,9 @@ import std:
 pub def tuple_rest()
   let a ...r = (1, "a", true)
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = r
-  #       ^: flow std.SeqRest[{std.Str, std.Bool}]
+  #       ^: flow std.SeqRest[{"a", true}]
   let xs = [...r]
   let _ = xs
   #       ^~: flow std.Array[std.Bool | std.Str]
@@ -39,16 +39,16 @@ pub def quantified source @ Unpack[{Int, ?Str, *Bool}]
 pub def keyed()
   let :a ...r = (a: 1, b: "x")
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = r
-  #       ^: flow std.MixedRest[{b: std.Str}]
+  #       ^: flow std.MixedRest[{b: "x"}]
   let :b *p **k = (1, b: "x", c: true)
   let _ = b
-  #       ^: flow std.Str
+  #       ^: flow "x"
   let _ = p
-  #       ^: flow std.SeqRest[{std.Int}]
+  #       ^: flow std.SeqRest[{1}]
   let _ = k
-  #       ^: flow std.MixedRest[{c: std.Bool}]
+  #       ^: flow std.MixedRest[{c: true}]
 
 pub def const_keys d @ Dict[Str, Int]
   let "name": name = d
@@ -71,9 +71,9 @@ pub def unions c @ Bool
     (true,)
   let x ...r = v
   let _ = x
-  #       ^: flow std.Bool | std.Int
+  #       ^: flow 1 | true
   let _ = r
-  #       ^: flow std.SeqRest[{std.Str}] | std.SeqRest[{}]
+  #       ^: flow std.SeqRest[{"a"}] | std.SeqRest[{}]
 
 # An iterator's rest is an iterator of the same kind, and so is that rest's
 pub def iterators s @ Str
@@ -114,7 +114,7 @@ pub def positional_rests d @ Record[Int, *Str, a: Bool] ...cmd @ Str
     #       ^~~: flow std.Str
   let _ *t = (1, "a", true)
   let _ = t
-  #       ^: flow std.SeqRest[{std.Str, std.Bool}]
+  #       ^: flow std.SeqRest[{"a", true}]
 
 # Generic code can iterate a `Seq`'s or `Mixed`'s rests
 pub def protocol_rests s @ Seq[Int] m @ Mixed[{Int, a: Str}]

@@ -3791,18 +3791,18 @@ let f = twice
         let mut harness = Harness::checking(Duration::from_millis(50));
         harness.initialize(vec![PositionEncodingKind::UTF16]).await;
         let uri: Uri = "file:///checked-hover.dol".parse().unwrap();
-        let text = "let w = 0\n# The x\nlet x = 1\nlet y = x\n";
+        let text = "let w = 0\n# The x\nlet x = 1\nlet y = (x + 1)\n";
         harness.open(uri.clone(), text, 1).await;
         let unchecked = hover_text(&mut harness, uri.clone(), 2, 4).await.unwrap();
         assert_eq!(unchecked, "```dolang\nlet x = ...\n```\n\nThe x");
         harness.next_publish().await;
 
         // The type says what `let x` would, so only the doc comment follows
-        let typed = "```dolang\nlet x @ std.Int = ...\n```\n\n---\n\nThe x";
+        let typed = "```dolang\nlet x @ 1 = ...\n```\n\n---\n\nThe x";
         // The binding and the use
         let bound = hover_text(&mut harness, uri.clone(), 2, 4).await.unwrap();
         assert_eq!(bound, typed);
-        let read = hover_text(&mut harness, uri.clone(), 3, 8).await.unwrap();
+        let read = hover_text(&mut harness, uri.clone(), 3, 9).await.unwrap();
         assert_eq!(read, typed);
         // Without a doc comment, the type is all there is
         let y = hover_text(&mut harness, uri.clone(), 3, 4).await.unwrap();

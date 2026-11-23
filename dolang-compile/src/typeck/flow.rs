@@ -598,6 +598,9 @@ struct Flow<'a, 'u> {
     /// The first call in the running step or terminal that gave bottom, which
     /// ends its path
     diverged: Option<Divergence>,
+    /// The span of the iteratee the running step binds, whose rule locks none
+    /// of its literals in (see [`VarFlags::ITERATEE`])
+    iteratee: Option<Span>,
     /// Filled by the final pass, which leaves states alone
     results: Option<Results>,
     /// Whether the final pass logs facts, for an analysis
@@ -665,6 +668,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             exhausted: FxHashSet::default(),
             defaulting: false,
             diverged: None,
+            iteratee: None,
             results: None,
             logging: false,
             escaped: BitBox::default(),
@@ -1694,7 +1698,15 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Pattern::Bind(var) => self.annotation(var),
                     Pattern::Unpack { .. } => None,
                 };
+                let iteratee = match *pattern {
+                    Pattern::Bind(var) if self.ir.var(var).flags.contains(VarFlags::ITERATEE) => {
+                        Some(value.span)
+                    }
+                    _ => None,
+                };
+                let outer = mem::replace(&mut self.iteratee, iteratee);
                 let ty = self.expect(at, state, &mut operands, value, expected);
+                self.iteratee = outer;
                 if self.diverged.is_some() {
                     return false;
                 }
@@ -1945,7 +1957,10 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// The type an assignment stores: a literal assigned to a declared local or a
     /// field decays to its class, when that fits the annotation. A field keeps its
     /// annotation instead of a value that doesn't fit, which is reported where it's
-    /// written.
+    /// written. An unannotated local assigned at only one site that no importer
+    /// can assign keeps the literals no write can widen: only those a value of
+    /// its type could be written through decay (see [`Database::decay_locked`]),
+    /// since writing through the value doesn't assign the local.
     fn settle(&mut self, var: VarId, ty: TypeId) -> TypeId {
         let var = self.ir.var(var);
         if let (Origin::Field(_), Some(annotation)) = (var.origin, var.annotation)
@@ -1955,6 +1970,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         if !matches!(var.origin, Origin::Source(..) | Origin::Field(_)) {
             return ty;
+        }
+        if matches!(var.origin, Origin::Source(..))
+            && var.annotation.is_none()
+            && var.flags.contains(VarFlags::ONCE)
+            && !var.flags.contains(VarFlags::EXPORTED)
+        {
+            return self.db.decay_locked(ty);
         }
         let decayed = self.db.decay(ty);
         match var.annotation {

@@ -58,7 +58,7 @@ pub def scoped node @ xml.Element >Sink[Str] -> nil
     put "x"
     1
   let _n = n
-  #   ^~: flow std.Int
+  #   ^~: flow 1
   let _ = node.attrs.get "id" else: do
     put "y"
     "d"
@@ -113,7 +113,7 @@ pub def file_scopes >Sink[Str] -> Int
       put "lock"
       1
   let _n = n
-  #   ^~: flow std.Int
+  #   ^~: flow 1
   let dir = fs.with_temp_dir do |dir|
     put "temp"
     dir
@@ -140,7 +140,7 @@ pub def windows_scopes >Sink[Str] -> Int
       put "env"
       1
   let _n = n
-  #   ^~: flow std.Int
+  #   ^~: flow 1
   let status = winscm.open do |manager|
     put "manager"
     manager.open_service "Spooler" do |service|
@@ -181,7 +181,7 @@ pub def progress_scopes >Sink[Str] -> Int
       w.delta()
       1
   let _n = n
-  #   ^~: flow std.Int
+  #   ^~: flow 1
   n
 
 # Request scopes run with their caller's channels
@@ -245,7 +245,7 @@ pub def shell_scopes >Sink[Str] -> Int
     put "cd"
     1
   let _n = n
-  #   ^~: flow std.Int
+  #   ^~: flow 1
   n
 
 # XML attribute constructors normalize symbols; views use string/tuple keys.

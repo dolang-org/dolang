@@ -347,7 +347,7 @@ test('hover shows checked types before the check delay ends', async ({ page }) =
   const text = 'let n = 2\necho $n';
   await source(page, text);
   const tip = await hoverAt(page, text.length - 1);
-  await expect(tip).toHaveText('let n @ std.Int = ...');
+  await expect(tip).toHaveText('let n @ 2 = ...');
   // Its fence is highlighted as source is
   await expect(tip.locator('pre .token-keyword')).toHaveText('let');
 });
@@ -457,7 +457,7 @@ test('an edit drops a shown or pending hover', async ({ page }) => {
   const text = 'let n = 2\necho $n';
   await source(page, text);
   const tip = await hoverAt(page, text.length - 1);
-  await expect(tip).toHaveText('let n @ std.Int = ...');
+  await expect(tip).toHaveText('let n @ 2 = ...');
   await source(page, `${text}\n`);
   await expect(tip).toHaveCount(0);
   await page.evaluate(() => { document.documentElement.dataset.holdHover = 'yes'; });

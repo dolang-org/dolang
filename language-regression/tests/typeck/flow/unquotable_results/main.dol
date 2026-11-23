@@ -13,7 +13,7 @@ def use b @ m.Box
   let leaked = b.leaked
   #   ^~~~~~: flow Unknown
   let generic = m.generic("g")
-  #   ^~~~~~~: flow std.Str
+  #   ^~~~~~~: flow "g"
   let over = m.over(1)
   #   ^~~~: flow std.Int
   let kept = m.Kept()

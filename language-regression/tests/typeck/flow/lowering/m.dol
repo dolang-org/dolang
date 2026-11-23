@@ -175,7 +175,7 @@ pub def defaults_after_bind a @ (Int | nil)
   do
     n
   let _ = z
-  #       ^: flow std.Int | std.Nil
+  #       ^: flow nil | std.Int
 
 pub def defaults_in_comprehension a @ (Int | nil)
   let r = $
@@ -190,9 +190,9 @@ pub def defaults_in_comprehension a @ (Int | nil)
 pub def destructuring()
   let a :b ..._c = (1, b: "s")
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = b
-  #       ^: flow std.Str
+  #       ^: flow "s"
   bind (1, 2)
     - _
     - e = 3
@@ -224,7 +224,7 @@ pub def optional_defaults()
   #       ^: flow std.Int
   let Int(c = "dead") = 2
   let _ = c
-  #       ^: flow std.Int
+  #       ^: flow 2
   if let ?k: Int(n = 0) = ()
     let _ = n
     #       ^: flow std.Int
@@ -276,9 +276,9 @@ pub class Members
 # `continue` and `break` leave with the state at the jump
 pub def loops()
   let y = 1
-  for k v = {a: 1}
+  for k v = {a: 1, b: 2}
     let _ = v
-    #       ^: flow std.Int
+    #       ^: flow 1 | 2
     if (k == :a:)
       y = "a"
       continue

@@ -87,7 +87,7 @@ pub def inherited <Iter[Int]
 pub def single()
   let res = pipeline (do 42)
   let _ = res
-  #       ^~~: flow std.Int
+  #       ^~~: flow 42
   nil
 
 pub def empty()
