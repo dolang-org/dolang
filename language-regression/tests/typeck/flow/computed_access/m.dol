@@ -1,0 +1,97 @@
+# Calling `(get)` or `(set)` is field access by name: `x.(get) :n:` reads
+# `x.n` and `x.(set) :n: v` writes it, so a class's own `(get)` and `(set)` are
+# reached only as the fallback for a name without a member. Through a class
+# object, the instance comes first.
+
+pub class Bag
+  pub field x @ Int = 0
+
+  def (get) _self _name @ Sym -> Str
+    ""
+
+  def (set) _self _name @ Sym _value @ Str
+    nil
+
+pub class Plain
+  pub field x @ Int = 0
+
+  pub def m _self -> Str
+    ""
+
+pub def fallback b @ Bag
+  let _ = b.(get) :x:
+  #   ^: flow std.Int
+  let _ = b.(get) :other:
+  #   ^: flow std.Str
+  b.(set) :other: "s"
+  b.(set) :x: "s"
+# error: expected `std.Int`, found `"s"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.(set) :x: "s"
+#    |               ^^^
+
+pub def plain p @ Plain
+  let _ = p.(get) :x:
+  #   ^: flow std.Int
+  let _ = p.(get) :m:
+  #   ^: flow () -> std.Str
+  let _ = p.(get) :missing:
+  # error: `m.Plain` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = p.(get) :missing:
+  #    |           ^^^^^^^^^^^^^^^^^
+  p.(set) :x: 1
+  p.(set) :x: "s"
+# error: expected `std.Int`, found `"s"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   p.(set) :x: "s"
+#    |               ^^^
+
+pub def names p @ Plain name @ (:x: | :m:) any @ Sym
+  let _ = p.(get) $name
+  #   ^: flow (() -> std.Str) | std.Int
+  let _ = p.(get) $any
+  let _ = p.(get) 1
+# error: expected `std.Sym`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = p.(get) 1
+#    |                   ^
+
+# A value written to several names is checked against each
+pub def several b @ Bag name @ (:x: | :other:)
+  b.(set) $name "s"
+# error: expected `std.Int`, found `"s"`
+#   --> m.dol:LL:LL
+#    |
+# LL |   b.(set) $name "s"
+#    |                 ^^^
+
+pub def unbound p @ Plain
+  let _ = Plain.(get) $p :x:
+  #   ^: flow std.Int
+  Plain.(set) $p :x: 2
+  let _ = Plain.(get) 1 :x:
+  # error: expected `m.Plain`, found `1`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = Plain.(get) 1 :x:
+  #    |                       ^
+  let _ = type(Plain).(get) $Plain :m:
+  #   ^: flow (m.Plain) -> std.Str
+
+pub def union v @ (Bag | Plain)
+  let _ = v.(get) :x:
+  #   ^: flow std.Int
+
+pub def structure s @ Struct[a: Int]
+  let _ = s.(get) :a:
+  #   ^: flow std.Int
+  s.(set) :a: 1
+
+pub def shapes p @ Plain
+  let _ = p.(get) :x: :m:
+  let _ = p.(get)()

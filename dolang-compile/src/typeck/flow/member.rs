@@ -7,7 +7,9 @@
 //! an explicit residual. A call through an overloaded method is a call of its
 //! overloads as a whole, which the solver chooses among (see
 //! [`Type::Overloaded`]), and its value is those overloads, bound to the
-//! receiver when read from one.
+//! receiver when read from one. A call of `(get)` or `(set)` reads or writes
+//! the member it names, as the runtime does, rather than calling a member of
+//! that name.
 //!
 //! [`Solver::member`]: crate::typeck::solver::Solver::member
 
@@ -29,7 +31,7 @@ use crate::{
             Access, Constructor, FoundKind, Gas, Issue, Lookup, Residual, Signature, Signatures,
             bound_method,
         },
-        r#type::{DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId},
+        r#type::{Argument, DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId},
     },
 };
 
@@ -591,22 +593,36 @@ impl Flow<'_, '_> {
         let ExprKind::Get { object, member } = &expr.kind else {
             unreachable!("a member read")
         };
-        let (member, span) = (*member, expr.span);
         let receiver = self.eval(at, state, operands, object);
-        if receiver == self.db.bottom() {
-            return receiver;
-        }
         let call = Call {
             args: &[],
             expected,
-            span,
+            span: expr.span,
             callee: None,
             logs: false,
             isolated: false,
         };
+        self.read_member(at, state, operands, (receiver, object.span), *member, call)
+    }
+
+    /// Reading a member of a receiver already evaluated, as [`Self::get`] does,
+    /// with `call` reaching a getter or `(get)`
+    fn read_member(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        member: Member,
+        call: Call<'_>,
+    ) -> TypeId {
+        let (receiver, object) = receiver;
+        if receiver == self.db.bottom() {
+            return receiver;
+        }
+        let span = call.span;
         let Some(alternatives) = self.alternatives(receiver, span) else {
-            let receiver = (receiver, object.span);
-            return self.got(at, state, operands, receiver, None, member, call);
+            return self.got(at, state, operands, (receiver, object), None, member, call);
         };
         // An alternative that never returns ends the path only if they all do
         let diverged = self.diverged;
@@ -614,7 +630,7 @@ impl Flow<'_, '_> {
         for alternative in alternatives {
             let given = match alternative {
                 Some(ty) => {
-                    let alternative = (ty, object.span);
+                    let alternative = (ty, object);
                     self.got(
                         at,
                         state,
@@ -707,7 +723,8 @@ impl Flow<'_, '_> {
     }
 
     /// A method call: the member got from the receiver, called with the call's
-    /// arguments. A method is passed the receiver first.
+    /// arguments. A method is passed the receiver first. A call of `(get)` or
+    /// `(set)` is field access by name instead (see [`Self::computed_access`]).
     pub(super) fn invoke(
         &mut self,
         at: At,
@@ -740,6 +757,14 @@ impl Flow<'_, '_> {
         {
             return self.construct_with(at, state, operands, first, call);
         }
+        if member.class.is_none() {
+            for (name, set) in [("get", false), ("set", true)] {
+                if member.key == self.special(name).key {
+                    let receiver = (receiver, object.span);
+                    return self.computed_access(at, state, operands, receiver, set, call);
+                }
+            }
+        }
         self.send(
             at,
             state,
@@ -749,6 +774,164 @@ impl Flow<'_, '_> {
             &[],
             call,
         )
+    }
+
+    /// A call of `(get)` or `(set)`, which the runtime makes as field access by
+    /// name: `x.(get) name` reads `x.name`, and `x.(set) name value` writes it,
+    /// so a class's own `(get)` and `(set)` are reached only as the fallback for a
+    /// name without a member. Through a class object, `C.(get) x name` takes the
+    /// instance first, which must be one of `C`'s. A name that's a symbol literal,
+    /// or a union of them, is the member or members it names; any other symbol is
+    /// dynamic. A call of another shape is a gap.
+    fn computed_access(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        set: bool,
+        call: Call<'_>,
+    ) -> TypeId {
+        let (bottom, unknown) = (self.db.bottom(), self.db.unknown());
+        if receiver.0 == bottom || matches!(self.db.ty(receiver.0), Type::Unknown(_)) {
+            return self.call_with(at, state, operands, receiver.0, &[], call);
+        }
+        let unbound = self.unbound_instance(receiver.0);
+        let arity = usize::from(unbound.is_some()) + 1 + usize::from(set);
+        if call.args.len() != arity || !call.args.iter().all(|item| matches!(item, Item::Pos(_))) {
+            self.gap(
+                call.span,
+                "a `(get)` or `(set)` call the checker can't type",
+            );
+            return self.call_with(at, state, operands, unknown, &[], call);
+        }
+        let (receiver, rest) = match unbound {
+            Some(instance) => {
+                let first = call.args[0].pos();
+                let object = self.eval(at, state, operands, first);
+                // The class's members are looked up, as the runtime does
+                let object = match instance {
+                    Some(instance) if object != bottom => {
+                        self.store(at, object, instance, first.span);
+                        instance
+                    }
+                    _ => object,
+                };
+                ((object, first.span), &call.args[1..])
+            }
+            None => (receiver, call.args),
+        };
+        let name = rest[0].pos();
+        let named = self.eval(at, state, operands, name);
+        if receiver.0 == bottom || named == bottom {
+            return bottom;
+        }
+        let Some(members) = self.named_members(named) else {
+            if let Some(sym) = self.db.intrinsic(Intrinsic::Sym) {
+                self.store(at, named, sym, name.span);
+            }
+            if !set {
+                return unknown;
+            }
+            let value = self.eval(at, state, operands, rest[1].pos());
+            return if value == bottom { bottom } else { self.nil() };
+        };
+        let span = call.span;
+        if !set {
+            let got = Call { args: &[], ..call };
+            let mut result = bottom;
+            for member in members {
+                let given = self.read_member(at, state, operands, receiver, member, got);
+                result = self.solver(&Gas::default()).lub(result, given);
+            }
+            return result;
+        }
+        let value = &rest[1];
+        if let [member] = members[..] {
+            self.write_member(at, state, operands, receiver, member, value, span);
+        } else {
+            // The value is written to each member, so none of them sets its
+            // expectation
+            let value = value.pos();
+            let written = (self.eval(at, state, operands, value), value.span);
+            if written.0 == bottom {
+                return bottom;
+            }
+            let (within, alternatives) = match self.alternatives(receiver.0, span) {
+                Some(alternatives) => (Some(receiver.0), alternatives),
+                None => (None, vec![Some(receiver.0)]),
+            };
+            for member in members {
+                for &ty in alternatives.iter().flatten() {
+                    let resolved = self.resolve(ty, member, Access::Class, span, true);
+                    let alternative = (ty, receiver.1);
+                    self.written(
+                        at,
+                        state,
+                        operands,
+                        alternative,
+                        within,
+                        member,
+                        resolved,
+                        written,
+                        span,
+                    );
+                }
+            }
+        }
+        self.nil()
+    }
+
+    /// The instance a class object takes first when calling `(get)` or `(set)`,
+    /// if `receiver` is one: `Some(None)` for a generic class's object, whose
+    /// instances aren't a single type
+    fn unbound_instance(&self, receiver: TypeId) -> Option<Option<TypeId>> {
+        let (ty, generic) = match self.db.ty(receiver) {
+            Type::Quantified { body, .. } => (*body, true),
+            _ => (receiver, false),
+        };
+        let ty = self.db.widen_meta(ty).unwrap_or(ty);
+        let class_type = self.db.intrinsic(Intrinsic::Type)?;
+        match self.db.ty(ty) {
+            Type::Apply { base, args, .. } if *base == class_type => match &args[..] {
+                [Argument::Positional(instance)] if !generic => Some(Some(*instance)),
+                _ => Some(None),
+            },
+            _ => None,
+        }
+    }
+
+    /// The members a name of type `named` names: one for a symbol literal, and
+    /// one for each alternative of a union of them. `None` for any other name.
+    fn named_members(&self, named: TypeId) -> Option<Vec<Member>> {
+        let symbol = |ty: TypeId| match self.db.literal(ty) {
+            Some(&Literal::Sym(name)) => Some(name),
+            _ => None,
+        };
+        let names = match symbol(named) {
+            Some(name) => vec![name],
+            None => {
+                let alternatives = self.solver(&Gas::default()).closed_alternatives(named)?;
+                alternatives
+                    .into_iter()
+                    .map(|alternative| alternative.and_then(symbol))
+                    .collect::<Option<Vec<_>>>()?
+            }
+        };
+        let member = |name| Member {
+            key: MemberKey {
+                name,
+                special: false,
+                private: false,
+            },
+            class: None,
+        };
+        Some(names.into_iter().map(member).collect())
+    }
+
+    /// The type of `nil`
+    fn nil(&self) -> TypeId {
+        self.db.intern(Type::Literal(Literal::Nil))
     }
 
     /// The type of the item a `for` takes, as the runtime gets it: the `(next)` of
@@ -1012,6 +1195,30 @@ impl Flow<'_, '_> {
         span: Span,
     ) {
         let receiver = self.eval(at, state, operands, object);
+        self.write_member(
+            at,
+            state,
+            operands,
+            (receiver, object.span),
+            member,
+            value,
+            span,
+        );
+    }
+
+    /// Writing a member of a receiver already evaluated, as [`Self::set`] does
+    #[expect(clippy::too_many_arguments, reason = "a write's parts")]
+    fn write_member(
+        &mut self,
+        at: At,
+        state: &mut State,
+        operands: &mut VecDeque<TypeId>,
+        receiver: (TypeId, Span),
+        member: Member,
+        value: &Item,
+        span: Span,
+    ) {
+        let (receiver, object) = receiver;
         // Each alternative's member, as a union's alternatives are written
         let (within, alternatives) = match self.alternatives(receiver, span) {
             _ if receiver == self.db.bottom() => (None, Vec::new()),
@@ -1040,7 +1247,7 @@ impl Flow<'_, '_> {
             let targets = resolved
                 .into_iter()
                 .map(|(receiver, resolved)| {
-                    let receiver = (receiver, object.span);
+                    let receiver = (receiver, object);
                     self.write_target(at, state, receiver, within, member, resolved, span)
                         .unwrap_or_else(|| CallTarget::dynamic(&[]))
                 })
@@ -1069,7 +1276,7 @@ impl Flow<'_, '_> {
         let written = self.expect(at, state, operands, value, expected);
         let written = (written, value.span);
         for (receiver, resolved) in resolved {
-            let receiver = (receiver, object.span);
+            let receiver = (receiver, object);
             self.written(
                 at, state, operands, receiver, within, member, resolved, written, span,
             );

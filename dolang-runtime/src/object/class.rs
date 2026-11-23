@@ -2668,6 +2668,11 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
         mut args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        // `(get)` and `(set)` are field access by name, which falls back to the
+        // class's own `(get)` and `(set)` only for a name it has no member of
+        if matches!(method.tag(), sym::GET_METHOD | sym::SET_METHOD) {
+            return instance_mcall_fallback(strand, &this, method, args, out);
+        }
         let class = this.annex().prefix.class.annex();
         match class.entry(method) {
             Some(ClassEntry::Method(v)) => {
