@@ -1066,7 +1066,12 @@ The rules are:
   expectation only once the call is solved, so a collection literal, call or
   template passed to it is held back: it's evaluated as far as it can be
   without its expectation (`Prepared`), and the call's rule stands a fresh
-  variable for it. Once what the rule makes is solved, each held argument is a
+  variable for it. A call that can't use its context is finished instead, and
+  passed closed (`Flow::context_sensitive`). That holds when nothing among
+  its arguments is held back, is a `do` block its rule types, or has a
+  literal, and its callee's result names its binders only covariantly and
+  only ones a parameter names. Its result's least solution then fits whatever
+  any solution does. Once what the rule makes is solved, each held argument is a
   sub-rule in a fork of the rule's solver, which the rule then takes over
   (`Flow::release`). Its expectation is what's solved so far expects of its
   variable, open in the binders not yet solved, so what it holds, such as a

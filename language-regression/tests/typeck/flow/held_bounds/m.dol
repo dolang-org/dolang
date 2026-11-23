@@ -5,6 +5,22 @@ def same[T] x @ T -> T
   x
 def wrap[T] x @ T -> Array[T]
   [x]
+def one[T] x @ T -> Tuple[T]
+  (x,)
+def fresh[T]() -> Array[T]
+  []
+def both[U] _a@Array[U] b@U -> U
+  b
+def pick[U] _a@Tuple[U] b@U -> U
+  b
+
+# A held call is finished without its context only if the context can't change
+# its result: an invariant binder can still be raised, and one that only the
+# result names is left to the context
+pub def raised n @ Int
+  let _ @ (Int | Str) = both (wrap n) "s"
+  let _ @ (Int | Str) = both (fresh()) "s"
+  let _ @ (Int | Str) = pick (one n) "s"
 
 pub def bounds()
   let _ @ Dict[{a: Int}] = same {a: 1}

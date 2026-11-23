@@ -1113,7 +1113,8 @@ pub(super) fn passed_signature(
 /// Whether to hold an item back: if it takes an expectation that its position
 /// doesn't give yet, as a collection literal, range, call or template does. One
 /// in an `if` outside every `for` isn't, since the `if`'s branches are compared
-/// as they're gathered.
+/// as they're gathered. A call that can't use its context is finished once
+/// it's prepared (see [`Flow::held_call`]).
 fn hold(gathering: &Gathering<'_>, place: Place, expected: Option<TypeId>, value: &Expr) -> bool {
     let takes = matches!(
         value.kind,
@@ -2345,10 +2346,70 @@ impl<'a> Flow<'a, '_> {
         }
     }
 
+    /// Whether a call held back can use what its context expects of it. It can
+    /// if anything among its arguments is held back or is a `do` block its rule
+    /// types, if an argument has a literal, which its context decides whether
+    /// to decay, or if its callee's result names a binder that the arguments
+    /// can't fix: one in a position that isn't covariant, which the context
+    /// can raise, or one that no parameter names. Otherwise its result's least
+    /// solution, which its arguments alone give, fits whatever the context
+    /// expects that any solution does. The choice among overloads is made from
+    /// the arguments alone, so a call of them can if one's signature can.
+    fn context_sensitive(&self, call: &PreparedCall) -> bool {
+        if !call.values.held.is_empty() || call.values.lambdas().next().is_some() {
+            return true;
+        }
+        let literal = |ty: TypeId| self.db.decay(ty) != ty;
+        let literals = call.values.values.iter().any(|placed| {
+            let values = match &placed.value {
+                Value::Alike(values, _) => &values[..],
+                value => std::slice::from_ref(value),
+            };
+            values.iter().any(|value| match *value {
+                Value::Pos(ty, _) | Value::Key(_, ty, _) | Value::Spread(ty, _) => literal(ty),
+                Value::Pair(key, ty) => literal(key) || literal(ty),
+                Value::Lambda(..) | Value::Held(..) | Value::Alike(..) => false,
+            })
+        });
+        if literals {
+            return true;
+        }
+        let signature = |ty: TypeId| {
+            let (binders, body) = match self.db.ty(ty) {
+                Type::Quantified { binders, body } => (binders.len(), *body),
+                _ => (0, ty),
+            };
+            let Type::Function(function) = self.db.ty(body) else {
+                return true;
+            };
+            (0..binders).any(|slot| {
+                let slot = u16::try_from(slot).expect("a quantifier's binders fit a group");
+                match self.db.slot_variance(function.result, slot) {
+                    None => false,
+                    Some(Variance::Covariant) => {
+                        self.db.slot_variance(function.params, slot).is_none()
+                    }
+                    Some(Variance::Contravariant | Variance::Invariant) => true,
+                }
+            })
+        };
+        match self.db.ty(call.callee) {
+            Type::Overloaded {
+                overloads,
+                implementation,
+                ..
+            } => overloads
+                .iter()
+                .chain(implementation.iter())
+                .any(|&ty| signature(ty)),
+            _ => signature(call.callee),
+        }
+    }
+
     /// Evaluate an item held back as far as it can be without its expectation.
     /// What's left to finish is held back; anything else is evaluated whole,
-    /// giving its type: a call of a union's alternatives, or one its rule won't
-    /// check, and what's never produced.
+    /// giving its type: a call of a union's alternatives, one its rule won't
+    /// check or one that can't use its context, and what's never produced.
     fn prepare(
         &mut self,
         at: At,
@@ -2405,7 +2466,9 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// A call held back, giving `instance` if it's a constructor with unchecked
-    /// arguments, unless its rule won't check it: then it's finished now
+    /// arguments, unless its rule won't check it or it can't use its context
+    /// (see [`Flow::context_sensitive`]): then it's finished now, and passed
+    /// closed
     fn held_call(
         &mut self,
         at: At,
@@ -2413,12 +2476,27 @@ impl<'a> Flow<'a, '_> {
         instance: Option<TypeId>,
     ) -> Result<Prepared, TypeId> {
         let bottom = self.db.bottom();
-        if call.callee == bottom || call.values.never || !self.callable(call.callee) {
+        let checked = call.callee != bottom && !call.values.never && self.callable(call.callee);
+        let sensitive = checked && self.context_sensitive(&call);
+        if checked && !sensitive {
+            trace!(
+                "{}: {} can't use its context, so it's finished now",
+                self.tables.locate(self.unit, call.span),
+                self.show(call.callee)
+            );
+        }
+        if !sensitive {
+            let (span, logs) = (call.span, call.logs);
             let given = self.finish_prepared(at, call, None);
-            return Err(match instance {
+            let given = match instance {
                 Some(instance) if given != bottom => instance,
                 _ => given,
-            });
+            };
+            // Its value is judged as an argument's that isn't held back is
+            if checked && logs {
+                self.log(span, Role::Value, Seen::ty(given));
+            }
+            return Err(given);
         }
         Ok(Prepared::Call { call, instance })
     }
