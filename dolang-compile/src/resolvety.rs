@@ -20,7 +20,7 @@ use crate::{
         AliasBody, Annot, Arg, Arm, ArrayElem, Binders, Block, Class, ClassMember, Decorator, Def,
         DictElem, Expr, ExprBody, FieldInit, For, Function, Ident, If, ImportElement, LValue,
         Match, NameMut, Origin, PatBind, PatIdent, PatItem, Pattern, PrimStmt, Res, Root, Stmt,
-        TypeArg, TypeDecl, TypeEntry, TypeExpr, TypeRes, Var, VarFlags, implicit_tys_mut,
+        TypeDecl, TypeEntry, TypeExpr, TypeParam, TypeRes, Var, VarFlags, implicit_tys_mut,
         visit::Node,
     },
     diag::Severity,
@@ -927,7 +927,7 @@ impl Check<'_> {
                     &super_ref.fields,
                 );
             }
-            for ty in super_ref.args.iter_mut().map(TypeArg::ty_mut) {
+            for ty in super_ref.args.iter_mut().flat_map(TypeParam::tys_mut) {
                 self.ty(&inner, ty);
             }
         }

@@ -48,7 +48,7 @@ pub def positional[**Ks] x @ Tuple[...Ks]
   x
 
 pub def keyed[*Ps] x @ Args[...Ps]
-  # error: this does not satisfy `**Ks @ {**Value}`
+  # error: this does not satisfy `**Ks @ {*(Sym): Value}`
   #   --> m.dol:LL:LL
   #    |
   # LL | pub def keyed[*Ps] x @ Args[...Ps]

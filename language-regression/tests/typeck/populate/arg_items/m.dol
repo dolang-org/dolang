@@ -1,0 +1,85 @@
+# Type arguments are schema items, keyed by symbols as in parentheses. An item
+# other than a lone type or a symbol key fills only a variadic binder.
+
+@import std:
+  - IndexItem
+  - Phantom
+
+pub let repeated @ Tuple[*Int] = ...
+#                  ^~~~~~~~~~~: type (*std.Int)
+pub let mixed @ Record[Int, *Str, a: Bool] = ...
+#               ^~~~~~~~~~~~~~~~~~~~~~~~~~: type std.Record[std.Int, *std.Str, a: std.Bool]
+pub let open @ BaseRecord[*Value, **Value] = ...
+#              ^~~~~~~~~~~~~~~~~~~~~~~~~~~: type std.BaseRecord[...]
+pub let optional @ Pack[host: Str, ?port: Int] = ...
+#                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~: type (host: std.Str, ?port: std.Int)
+pub let any_keyed @ Pack[**Int] = ...
+#                   ^~~~~~~~~~~: type (**std.Int)
+pub let keyed_type @ Pack[*(Str): Int] = ...
+#                    ^~~~~~~~~~~~~~~~~: type (*(std.Str): std.Int)
+# error: this does not satisfy `...Ts @ {*, *(Sym): Value}`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let keyed_type @ Pack[*(Str): Int] = ...
+#    |                                   ^^^
+
+# A dictionary-like type takes a schema or its shorthand, never a quantified
+# item
+pub let dict @ Dict[**Int] = ...
+# error: `Dict` takes a schema, a type, or a key and a value type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let dict @ Dict[**Int] = ...
+#    |                       ^^^
+
+# An inclusion's items are never schemas, so a type takes none while a required
+# schema binder, positional or key, isn't filled by an argument of its own: one
+# by key, or by position before the inclusion
+pub def included[S @ {...}] d @ Dict[...S]
+  # error: an inclusion's items can't fill `Dict`'s schema binder `S`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def included[S @ {...}] d @ Dict[...S]
+  #    |                                         ^
+  d
+pub class Shaped[T, :Shape @ {...}]
+  pub field items @ Phantom[T, ...Shape] = ...
+pub def shaped[S @ {Int}] s @ Shaped[...S, Shape: {}]
+  s
+pub def unshaped[S @ {Int}] s @ Shaped[...S]
+  # error: an inclusion's items can't fill `Shaped`'s schema binder `Shape`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def unshaped[S @ {Int}] s @ Shaped[...S]
+  #    |                                           ^
+  s
+pub def indexed[S @ {:a:}] i @ IndexItem[{a: Int}, ...S]
+  i
+
+# A key argument fills a key binder of its name before the variadic binder, but
+# an optional one goes to the variadic binder
+pub class Keyed[:k = Bool, **Ks]
+  pub field items @ Phantom[k, ...Ks] = ...
+pub let named @ Keyed[k: Int, j: Str] = ...
+#               ^~~~~~~~~~~~~~~~~~~~~: type m.Keyed[k: std.Int, j: std.Str]
+pub let optional_key @ Keyed[?k: Int] = ...
+#                      ^~~~~~~~~~~~~~: type m.Keyed[k: std.Bool, ?k: std.Int]
+
+# Before the positional binders are filled, where a repeat's items go is unknown
+pub class Two[A, B]
+  pub field items @ Phantom[A, B] = ...
+pub let unplaced @ Two[*Int, Str] = ...
+#                  ^~~~~~~~~~~~~~: type m.Two[*std.Int, std.Str]
+
+# A keyed item needs a keyed variadic binder
+pub let excess @ Array[**Int] = ...
+# error: too many type arguments
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let excess @ Array[**Int] = ...
+#    |                          ^^^
+# error: missing type arguments for `T`
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let excess @ Array[**Int] = ...
+#    |                  ^^^^^^^^^^^^

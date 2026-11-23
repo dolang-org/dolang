@@ -76,7 +76,7 @@ pub class EncodeError: std.ValueError
   # the `Int`, and for `:KEY:` to the table holding the keys. Each key is the
   # one in the encoded value.
   #[getter]
-  pub def path self -> Tuple[...(Int | Str | Sym)]
+  pub def path self -> Tuple[*(Int | Str | Sym)]
     ...
 
 # A value decoded from TOML.
@@ -96,8 +96,8 @@ pub @let EncodeValue = $
   | Str
   | Sym
   | BaseArray[EncodeValue]
-  | Tuple[...EncodeValue]
-  | BaseStruct[...{*(Sym): EncodeValue}]
+  | Tuple[*EncodeValue]
+  | BaseStruct[**EncodeValue]
   | BaseDict[Str | Sym, EncodeValue]
 
 # Parses a TOML string into a Do value.

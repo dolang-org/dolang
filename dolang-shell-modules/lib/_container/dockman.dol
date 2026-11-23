@@ -298,8 +298,8 @@ pub class ContainerState
   field name @ (Str | nil)
   field state @ (ContainerStatus | Str | nil)
   field status @ (Str | nil)
-  field ports @ Tuple[...PortBinding]
-  field mounts @ Tuple[...MountInfo]
+  field ports @ Tuple[*PortBinding]
+  field mounts @ Tuple[*MountInfo]
 
   def (init)
     self
@@ -333,12 +333,12 @@ pub class ContainerState
 
   # Published ports.
   #[getter]
-  pub def ports self -> Tuple[...PortBinding]
+  pub def ports self -> Tuple[*PortBinding]
     self.#ports
 
   # Mounts.
   #[getter]
-  pub def mounts self -> Tuple[...MountInfo]
+  pub def mounts self -> Tuple[*MountInfo]
     self.#mounts
 
 # A repository and tag naming an image.
@@ -1071,7 +1071,7 @@ pub class Runtime
     cmd @ Str
     :cd @ (Str | Path | nil)
     :env @ Env
-    :argv @ Tuple[...Value]
+    :argv @ Tuple[*Value]
     :pull @ PullPolicy
     :name @ (Str | nil)
     :mounts @ Iterable[ContainerMount]

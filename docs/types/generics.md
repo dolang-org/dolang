@@ -56,8 +56,8 @@ schema bound such as `S @ {...}` makes it take a [schema](./schemas.md). A
 variadic binder instead collects the remaining arguments into a schema. The two
 differ only in the arguments they accept; within the declaration, either binder
 is a schema. Like any schema, it becomes type arguments only through
-[expansion](./schemas.md#expanding-schemas), so `class Tuple[*Ts]` is passed on
-as `Tuple[...Ts]`. See [Kinds](./checking.md#kinds) for how the checker
+[inclusion](./schemas.md#type-arguments), so `class Tuple[*Ts]` is passed on as
+`Tuple[...Ts]`. See [Kinds](./checking.md#kinds) for how the checker
 determines which binders are schemas.
 
 A rest binding can [map a type](./annotations.md#rest-bindings) over a schema

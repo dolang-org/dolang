@@ -570,14 +570,6 @@ impl<'a> Node<'a> {
                 base: public_node_id(*base),
                 args: NodeIds(args.iter()),
             },
-            doc::Kind::TypeArg { kind, ty } => Kind::TypeArg {
-                kind: match kind {
-                    doc::TypeArgKind::Pos => TypeArgKind::Pos,
-                    doc::TypeArgKind::Key { name } => TypeArgKind::Key { name: span(name) },
-                    doc::TypeArgKind::Expand => TypeArgKind::Expand,
-                },
-                ty: public_node_id(*ty),
-            },
             doc::Kind::SchemaType { items } => Kind::SchemaType {
                 items: NodeIds(items.iter()),
             },
@@ -854,15 +846,8 @@ pub enum Kind<'a> {
     AppType {
         /// The type the arguments apply to
         base: NodeId,
-        /// The [`Kind::TypeArg`] nodes, in the order written
+        /// The [`Kind::TypeItem`] nodes, in the order written
         args: NodeIds<'a>,
-    },
-    /// An argument in the `[]` of an application, without a trailing `,`
-    TypeArg {
-        /// How the argument is given
-        kind: TypeArgKind,
-        /// The argument's type
-        ty: NodeId,
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`
     SchemaType {
@@ -897,8 +882,8 @@ pub enum Kind<'a> {
         /// The [`Kind::FuncType`] the binders quantify
         func: NodeId,
     },
-    /// An item of a schema, a tuple or `Pack` type, or a function type's
-    /// parameters, without a trailing `,`
+    /// An item of a schema, a tuple or `Pack` type, a function type's parameters or
+    /// type arguments, without a trailing `,`
     TypeItem {
         /// The item's quantifier and element
         kind: TypeItemKind,
@@ -970,21 +955,6 @@ pub enum TypeConst<'a> {
     Nil,
 }
 
-/// How a [`Kind::TypeArg`] is given
-#[non_exhaustive]
-#[derive(Clone, Debug)]
-pub enum TypeArgKind {
-    /// `T`
-    Pos,
-    /// `name: T`
-    Key {
-        /// The name
-        name: diag::Span,
-    },
-    /// `...T`, expanding a pack into further arguments
-    Expand,
-}
-
 /// How a [`Kind::TypeItem`] is given
 #[non_exhaustive]
 #[derive(Clone, Debug)]
@@ -994,7 +964,7 @@ pub enum TypeItemKind {
         /// How many of the element the item admits, or `None` for exactly one
         quant: Option<TypeQuant>,
     },
-    /// `key: T`, `?key: T` or `*(K): V`
+    /// `key: T`, `?key: T` or `*(K): V`, or `:Name` among type arguments
     Key {
         /// How many of the element the item admits, or `None` for exactly one
         quant: Option<TypeQuant>,
@@ -1006,7 +976,7 @@ pub enum TypeItemKind {
     },
     /// `*` alone, for any positional items
     AnyPos,
-    /// `**V`, for symbol-keyed items of type `V`, or `**` alone, for any keyed items
+    /// `**V`, for keyed items of type `V`, or `**` alone, for any keyed items
     AnyKey,
     /// `...` alone, for any items
     Open,

@@ -70,8 +70,15 @@ pub let schema_default @ Box = nil
 # LL | pub let schema_default @ Box = nil
 #    |                          ^^^
 
-# A type expands as a pack of any number of it
+# Only a schema expands; any number of a type is `*T`
 pub let expanded @ Opaque[...Int] = ...
+# error: expected a schema, found a type
+#   --> m.dol:LL:LL
+#    |
+# LL | pub let expanded @ Opaque[...Int] = ...
+#    |                              ^^^
+#    |
+#    = help: for any number of the type, write `*Int`
 pub @let Opaque[...Ts] = ...
 
 # A dictionary-like type takes its schema's items directly

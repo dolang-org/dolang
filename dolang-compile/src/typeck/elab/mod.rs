@@ -980,11 +980,12 @@ struct KindMismatch {
     expected: Kind,
     /// Where the kind was declared, when in the same unit
     declared: Option<Span>,
-    /// What to write for a schema where a type is expected
+    /// What to write in place of the kind found
     schema: Option<SchemaUse>,
 }
 
-/// What a kind mismatch suggests for a schema written where a type is expected
+/// What a kind mismatch suggests for a schema written where a type is expected, or
+/// a type where a schema is
 #[derive(Clone)]
 enum SchemaUse {
     /// A dict with the schema, as written or named
@@ -993,6 +994,8 @@ enum SchemaUse {
     Vertical,
     /// The schema, as written or named, expanded into a class's items
     Expand(String),
+    /// The type, as written, repeated rather than included
+    Repeat(String),
 }
 
 impl Report for KindMismatch {
@@ -1031,6 +1034,9 @@ impl Report for KindMismatch {
             }
             Some(SchemaUse::Expand(schema)) => {
                 format!("to give the schema's items, expand it: `...{schema}`")
+            }
+            Some(SchemaUse::Repeat(ty)) => {
+                format!("for any number of the type, write `*{ty}`")
             }
             None => return Vec::new(),
         };
@@ -1088,6 +1094,60 @@ impl Report for TooManyTypeArgs {
 
     fn span(&self) -> Span {
         self.0
+    }
+}
+
+/// A schema item given as a type argument for a schema binder, which takes a schema
+/// or its shorthand types
+struct ShorthandItem {
+    span: Span,
+    /// The declaration applied
+    name: String,
+}
+
+impl Report for ShorthandItem {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "`{}` takes a schema, a type, or a key and a value type",
+            self.name
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// An inclusion among the type arguments of a declaration with a required schema
+/// binder, which an inclusion's items can't fill
+struct UnfilledSchema {
+    span: Span,
+    /// The declaration applied
+    name: String,
+    /// The schema binder
+    binder: String,
+}
+
+impl Report for UnfilledSchema {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "an inclusion's items can't fill `{}`'s schema binder `{}`",
+            self.name, self.binder
+        )
+    }
+
+    fn span(&self) -> Span {
+        self.span
     }
 }
 

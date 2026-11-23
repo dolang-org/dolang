@@ -62,8 +62,9 @@ def key_of[:Key] x @ Keyed[Str, :Key] -> K
   x.key
 ```
 
-An argument may also [expand a schema](./schemas.md#expanding-schemas) into
-further arguments.
+Arguments are the items of a schema, so they take
+[quantifiers](./schemas.md#type-arguments) and include schemas with `...`, as
+in `Tuple[*Str]` and `Record[Int, ...Fields]`.
 
 ## Unions
 

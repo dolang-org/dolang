@@ -32,7 +32,7 @@ import args exec strand term proc fs digest json
 @let Rule = (Spec | Items | Handler | Str)
 
 # Spec items every task takes
-@let Common = BaseRecord[...{*args.SpecItem[Value, Iter[Value], Sink[Value]]}]
+@let Common = BaseRecord[*args.SpecItem[Value, Iter[Value], Sink[Value]]]
 
 # The tasks `dodo.dol` returns
 @let Rules = BaseDict $
@@ -179,9 +179,9 @@ pub @let Digestible = $
   | Sym
   | fs.Path
   | Array[Digestible]
-  | Tuple[...Digestible]
+  | Tuple[*Digestible]
   | Dict[Digestible, Digestible]
-  | Pack[...Digestible]
+  | Pack[*Digestible]
 
 # A [`make`](dodo.make) input that adds a value to the digest.
 pub @let DataSpec = BaseDict $

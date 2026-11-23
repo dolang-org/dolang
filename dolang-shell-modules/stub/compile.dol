@@ -45,7 +45,7 @@ pub @let Prelude = $
   | Sym
   | BaseArray[Str | Sym]
   | BaseDict[Str | Sym, PreludeBinding]
-  | BaseRecord[...{*(Str | Sym), *(Sym): PreludeBinding}]
+  | BaseRecord[*(Str | Sym), **PreludeBinding]
 
 # A staged compilation unit.
 #
@@ -641,7 +641,7 @@ pub class ConstType: TypeExpr
 pub class AppType: TypeExpr
   # The type arguments, in the order written.
   #[getter]
-  pub def args self -> Array[TypeArg]
+  pub def args self -> Array[TypeItem]
     ...
 
   # The type the arguments apply to.
@@ -704,40 +704,12 @@ pub class QuantType: TypeExpr
   pub def func self -> FuncType
     ...
 
-# Supertype of the type arguments in the `[]` of an
-# [`AppType`](compile.AppType). Its span leaves out a trailing `,`.
-pub class TypeArg: Node
-
-# A positional argument, such as `T`.
-pub class PosTypeArg: TypeArg
-  # The argument's type.
-  #[getter]
-  pub def ty self -> TypeExpr
-    ...
-
-# A key argument, such as `name: T`.
-pub class KeyTypeArg: TypeArg
-  # The argument's type.
-  #[getter]
-  pub def ty self -> TypeExpr
-    ...
-  # The span of the name.
-  #[getter]
-  pub def name self -> Span
-    ...
-
-# An expansion of a pack into further arguments, such as `...T`.
-pub class ExpandTypeArg: TypeArg
-  # The type expanded.
-  #[getter]
-  pub def ty self -> TypeExpr
-    ...
-
 # Supertype of the items of a [`SchemaType`](compile.SchemaType),
-# [`ParensType`](compile.ParensType), or [`FuncType`](compile.FuncType). Its
-# span includes a leading `-` and leaves out a trailing `,`. An item carries
-# the doc of the comment block directly above it, except the lone parameter of
-# a function type written without parentheses.
+# [`ParensType`](compile.ParensType) or [`FuncType`](compile.FuncType), and of
+# the type arguments of an [`AppType`](compile.AppType). Its span includes a
+# leading `-` and leaves out a trailing `,`. An item carries the doc of the
+# comment block directly above it, except a type argument and the lone
+# parameter of a function type written without parentheses.
 pub class TypeItem: Node
 
 # A positional item, such as `T`, `?T`, `*T` or `...S`.
@@ -757,7 +729,8 @@ pub class PosTypeItem: TypeItem
   pub def ty self -> TypeExpr
     ...
 
-# A keyed item, such as `name: T`, `?name: T` or `*(K): V`.
+# A keyed item, such as `name: T`, `?name: T`, `*(K): V` or, among type
+# arguments, `:Name`, which is short for `Name: Name`.
 pub class KeyTypeItem: TypeItem
   # How many of the element the item admits, or `nil` for exactly one, as
   # for [`PosTypeItem.quant`](compile.PosTypeItem.quant).
@@ -781,8 +754,8 @@ pub class KeyTypeItem: TypeItem
 # A `*` alone, admitting any positional items.
 pub class AnyPosTypeItem: TypeItem
 
-# A `**V`, admitting symbol-keyed items of type `V`, or a `**` alone, admitting
-# any keyed items.
+# A `**V`, admitting keyed items of type `V`, or a `**` alone, admitting any
+# keyed items.
 pub class AnyKeyTypeItem: TypeItem
   # The value type, or `nil` for a `**` alone.
   #[getter]

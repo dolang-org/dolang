@@ -438,22 +438,6 @@ impl Diagnose for InvalidConstType {
     }
 }
 
-pub(super) struct OptionalTypeArg(pub(super) Span);
-
-impl Diagnose for OptionalTypeArg {
-    fn span(&self) -> Span {
-        self.0
-    }
-
-    fn severity(&self) -> Severity {
-        Severity::Error
-    }
-
-    fn message(&self, _file: &File<'_>, w: &mut dyn Write) -> fmt::Result {
-        write!(w, "type arguments cannot be optional")
-    }
-}
-
 pub(super) struct QuantifiedNonFunction(pub(super) Span);
 
 impl Diagnose for QuantifiedNonFunction {

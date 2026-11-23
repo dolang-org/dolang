@@ -177,7 +177,6 @@ pub enum NodeKind {
     Pattern,
     Key,
     Type,
-    TypeArg,
     TypeParam,
     Annot,
     RetType,

@@ -37,7 +37,7 @@ use crate::{
             self, Bases, BinderRef, DeclNode, Referent, Role, Shard, UnitInfo, local,
             surface::{
                 self, ConstLit, Decorator, LinkId, Member, MemberScope, ModuleId, ParamKind, Ref,
-                SiteId, StrId, Symbol, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeQuant,
+                SiteId, StrId, Symbol, TypeExpr, TypeKey, TypeParam, TypeQuant,
             },
         },
         r#type::{DeclId, DeclKind, UnitSpan, Variance},
@@ -179,7 +179,7 @@ struct Field {
 #[derive(Serialize, Deserialize)]
 struct Super {
     head: Opt,
-    args: Vec<Arg>,
+    args: Vec<WireParam>,
     type_only: bool,
 }
 
@@ -344,7 +344,7 @@ pub(super) enum Type {
     Const(Option<Const>),
     App {
         base: u32,
-        args: Vec<Arg>,
+        args: Vec<WireParam>,
     },
     Schema {
         params: Vec<WireParam>,
@@ -377,14 +377,7 @@ pub(super) enum Const {
     Sym(u32),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub(super) enum Arg {
-    Pos(u32),
-    Key { name: u32, ty: u32 },
-    Expand(u32),
-}
-
-/// An item of a schema or a function type's parameters
+/// An item of a schema, a function type's parameters or type arguments
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(super) enum WireParam {
     Pos {
@@ -1057,7 +1050,7 @@ impl<'s, 'u> Encode<'s, 'u> {
                 .iter()
                 .map(|supertype| Super {
                     head: self.link(supertype.head.link),
-                    args: supertype.args.iter().map(|arg| self.arg(arg)).collect(),
+                    args: self.params(&supertype.args),
                     type_only: supertype.type_only,
                 })
                 .collect(),
@@ -1216,17 +1209,6 @@ impl<'s, 'u> Encode<'s, 'u> {
         }
     }
 
-    fn arg(&mut self, arg: &surface::TypeArg) -> Arg {
-        match &arg.kind {
-            TypeArgKind::Pos(ty) => Arg::Pos(self.ty(ty)),
-            TypeArgKind::Key { name, ty } => Arg::Key {
-                name: self.str(name.text),
-                ty: self.ty(ty),
-            },
-            TypeArgKind::Expand { ty } => Arg::Expand(self.ty(ty)),
-        }
-    }
-
     fn params(&mut self, params: &[TypeParam]) -> Vec<WireParam> {
         params
             .iter()
@@ -1243,8 +1225,8 @@ impl<'s, 'u> Encode<'s, 'u> {
                     },
                     ty: self.ty(ty),
                 },
-                TypeParam::AnyPos => WireParam::AnyPos,
-                TypeParam::AnyKey(ty) => {
+                TypeParam::AnyPos(_) => WireParam::AnyPos,
+                TypeParam::AnyKey(_, ty) => {
                     WireParam::AnyKey(ty.as_ref().map_or(0, |ty| self.ty(ty) + 1))
                 }
                 TypeParam::Open(_) => WireParam::Open,
@@ -1261,7 +1243,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             }
             TypeExpr::App { base, args, .. } => Type::App {
                 base: self.ty(base),
-                args: args.iter().map(|arg| self.arg(arg)).collect(),
+                args: self.params(args),
             },
             TypeExpr::Schema {
                 params, vertical, ..
@@ -1779,7 +1761,7 @@ impl Decode<'_> {
             .map(|supertype| {
                 Ok(surface::Super {
                     head: unref(supertype.head),
-                    args: self.args(supertype.args)?,
+                    args: self.params(&supertype.args)?,
                     bracket_span: None,
                     type_only: supertype.type_only,
                     interned: Default::default(),
@@ -1846,22 +1828,6 @@ impl Decode<'_> {
         })
     }
 
-    fn args(&self, args: Vec<Arg>) -> Result<Vec<surface::TypeArg>, &'static str> {
-        args.into_iter()
-            .map(|arg| {
-                let kind = match arg {
-                    Arg::Pos(ty) => TypeArgKind::Pos(self.ty(ty)?),
-                    Arg::Key { name, ty } => TypeArgKind::Key {
-                        name: symbol(name),
-                        ty: self.ty(ty)?,
-                    },
-                    Arg::Expand(ty) => TypeArgKind::Expand { ty: self.ty(ty)? },
-                };
-                Ok(surface::TypeArg { kind })
-            })
-            .collect()
-    }
-
     fn params(&self, params: &[WireParam]) -> Result<Vec<TypeParam>, &'static str> {
         params
             .iter()
@@ -1879,8 +1845,8 @@ impl Decode<'_> {
                         },
                         ty: self.ty(*ty)?,
                     },
-                    WireParam::AnyPos => TypeParam::AnyPos,
-                    &WireParam::AnyKey(ty) => TypeParam::AnyKey(self.opt_ty(ty)?),
+                    WireParam::AnyPos => TypeParam::AnyPos(INVALID_SPAN),
+                    &WireParam::AnyKey(ty) => TypeParam::AnyKey(INVALID_SPAN, self.opt_ty(ty)?),
                     WireParam::Open => TypeParam::Open(INVALID_SPAN),
                 })
             })
@@ -1906,7 +1872,7 @@ impl Decode<'_> {
                 Type::App { base, args } => TypeExpr::App {
                     span,
                     base: boxed(*base)?,
-                    args: self.args(args.clone())?,
+                    args: self.params(args)?,
                     interned: Default::default(),
                 },
                 Type::Schema { params, vertical } => TypeExpr::Schema {
@@ -1979,9 +1945,7 @@ impl Type {
             Type::Name(_) | Type::Const(_) | Type::Error => {}
             Type::App { base, args } => {
                 out.push(*base);
-                out.extend(args.iter().map(|arg| match *arg {
-                    Arg::Pos(ty) | Arg::Key { ty, .. } | Arg::Expand(ty) => ty,
-                }));
+                params(out, args);
             }
             Type::Schema { params: items, .. } | Type::Tuple(items) | Type::Pack(items) => {
                 params(out, items)

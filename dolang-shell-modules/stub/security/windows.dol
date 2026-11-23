@@ -727,7 +727,7 @@ pub class Sid
 
   # The sub-authorities.
   #[getter]
-  pub def sub_authorities self -> Tuple[...Int]
+  pub def sub_authorities self -> Tuple[*Int]
     ...
 
   # Number of sub-authorities.

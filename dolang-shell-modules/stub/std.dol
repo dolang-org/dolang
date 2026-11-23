@@ -1394,7 +1394,7 @@ pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
     ...
 
   @def (assign)[K] self key@K value@AssignItem[{*T}, K]
-  @def (assign) self range@Range[Int] value@(BaseArray[T] | Tuple[...T])
+  @def (assign) self range@Range[Int] value@(BaseArray[T] | Tuple[*T])
 
   # Replaces an element, or the elements of a slice.
   #
@@ -5063,7 +5063,7 @@ do
   # assert (!Struct.contains(s, :port:))
   # ```
   #[class]
-  pub def contains self target @ BaseStruct[...{*Value, *(Sym): Value}] key @ (Int | Sym) -> Bool
+  pub def contains self target @ BaseStruct[...] key @ (Int | Sym) -> Bool
     ...
 
   # Reads the item a name keys, as in `s.name`.
@@ -5235,7 +5235,7 @@ do
   #   echo "$k: $v"
   # ```
   @def (init)[T]
-    self @ Tuple[...T]
+    self @ Tuple[*T]
     # values to collect
     iterable @ Iterable[T]
   do
@@ -5281,7 +5281,7 @@ do
     ...
 
   @def (index)[K] self key@K -> IndexItem[Ts, K]
-  @def (index) self range@Range[Int] -> Tuple[...Union[...Ts]]
+  @def (index) self range@Range[Int] -> Tuple[*Union[...Ts]]
 
   # Returns an element, or a new tuple for a slice.
   #

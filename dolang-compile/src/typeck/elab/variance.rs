@@ -34,7 +34,7 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Ambient, BinderRef, DeclNode, Designated, Head, ParamTy, Referent, RestSlot, Slot, Tables, sig,
-    surface::{Member, Ref, SiteId, TypeArg, TypeExpr, TypeKey, TypeParam},
+    surface::{Member, Ref, SiteId, TypeExpr, TypeKey, TypeParam},
 };
 use crate::{
     ast::SpecialMethod,
@@ -278,11 +278,7 @@ impl<'t> Collect<'t, '_> {
                         Some(&Referent::Decl(super_decl)) if self.is_type(super_decl) => {
                             self.app(super_decl, &super_ref.args, Use::CO)
                         }
-                        _ => {
-                            for arg in &super_ref.args {
-                                self.ty(arg.ty(), Use::BOTH);
-                            }
-                        }
+                        _ => self.items(&super_ref.args, Use::BOTH),
                     }
                 }
                 for member in &class.members {
@@ -529,13 +525,6 @@ impl<'t> Collect<'t, '_> {
             .push(((self.decl, binder), Source::Path(u, self.path.clone())));
     }
 
-    /// Walk a type within a position that varies as `key` does.
-    fn through(&mut self, key: Key, ty: &'t TypeExpr, u: Use) {
-        self.path.push(key);
-        self.ty(ty, u);
-        self.path.pop();
-    }
-
     /// Record the uses of the binders a type declaration captures, as its implicit
     /// arguments.
     fn captures(&mut self, decl: DeclId, u: Use) {
@@ -548,17 +537,24 @@ impl<'t> Collect<'t, '_> {
     }
 
     /// Walk type arguments applied to a type declaration.
-    fn app(&mut self, decl: DeclId, args: &'t [TypeArg], u: Use) {
+    fn app(&mut self, decl: DeclId, args: &'t [TypeParam], u: Use) {
         self.captures(decl, u);
         let fills = self.tables.fill(self.unit, decl, args);
         for (arg, fill) in args.iter().zip(fills) {
+            let arg = std::slice::from_ref(arg);
             match fill {
                 Fill::Binder(slot) | Fill::Item(slot) | Fill::Expand(Some(slot)) => {
-                    let binder = BinderRef { decl, sig: 0, slot };
-                    self.through((decl, binder), arg.ty(), u);
+                    self.path.push((decl, BinderRef { decl, sig: 0, slot }));
+                    self.items(arg, u);
+                    self.path.pop();
                 }
-                Fill::Expand(None) | Fill::Unknown | Fill::Excess | Fill::UnknownKeyword => {
-                    self.ty(arg.ty(), Use::BOTH);
+                Fill::Expand(None)
+                | Fill::Unknown
+                | Fill::Excess
+                | Fill::UnknownKeyword
+                | Fill::Unfit
+                | Fill::Included(_) => {
+                    self.items(arg, Use::BOTH);
                 }
             }
         }
@@ -604,9 +600,7 @@ impl<'t> Collect<'t, '_> {
                 }
                 // What a binder, an external or an erroneous name takes is unknown
                 self.ty(base, Use::BOTH);
-                for arg in args {
-                    self.ty(arg.ty(), Use::BOTH);
-                }
+                self.items(args, Use::BOTH);
             }
             TypeExpr::Schema { params, .. } => self.items(params, u),
             TypeExpr::Tuple { params, .. } => {
@@ -683,14 +677,14 @@ impl<'t> Collect<'t, '_> {
     fn items(&mut self, params: &'t [TypeParam], u: Use) {
         for param in params {
             match param {
-                TypeParam::Pos { ty, .. } | TypeParam::AnyKey(Some(ty)) => self.ty(ty, u),
+                TypeParam::Pos { ty, .. } | TypeParam::AnyKey(_, Some(ty)) => self.ty(ty, u),
                 TypeParam::Key { key, ty, .. } => {
                     if let TypeKey::Type(key) = key {
                         self.ty(key, u);
                     }
                     self.ty(ty, u);
                 }
-                TypeParam::AnyPos | TypeParam::AnyKey(None) | TypeParam::Open(_) => {}
+                TypeParam::AnyPos(_) | TypeParam::AnyKey(_, None) | TypeParam::Open(_) => {}
             }
         }
     }

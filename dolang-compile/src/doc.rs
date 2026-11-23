@@ -184,13 +184,8 @@ pub(crate) enum Kind {
     ConstType(TypeConst),
     AppType {
         base: Id,
-        /// [`Kind::TypeArg`] nodes, in written order
+        /// [`Kind::TypeItem`] nodes, in written order
         args: alias::Box<[Id]>,
-    },
-    /// An argument in the `[]` of an application, without its trailing `,`
-    TypeArg {
-        kind: TypeArgKind,
-        ty: Id,
     },
     SchemaType {
         /// [`Kind::TypeItem`] nodes, in written order
@@ -248,13 +243,6 @@ pub(crate) enum TypeConst {
     Int(i128),
     Bool(bool),
     Nil,
-}
-
-#[derive(Debug)]
-pub(crate) enum TypeArgKind {
-    Pos,
-    Key { name: Span },
-    Expand,
 }
 
 #[derive(Debug)]
@@ -319,7 +307,6 @@ impl Kind {
             | Kind::NameType { .. }
             | Kind::ConstType(_)
             | Kind::AppType { .. }
-            | Kind::TypeArg { .. }
             | Kind::SchemaType { .. }
             | Kind::ParensType { .. }
             | Kind::UnionType { .. }

@@ -73,7 +73,7 @@ pub class EncodeError: std.ValueError
   # the `Int`, or to the object holding it when it is a key, and for `:KEY:` to
   # the object holding the key. Each key is the one in the encoded value.
   #[getter]
-  pub def path self -> Tuple[...(Int | Str | Sym | Float | Bool)]
+  pub def path self -> Tuple[*(Int | Str | Sym | Float | Bool)]
     ...
 
 # A value decoded from JSON.
@@ -96,8 +96,8 @@ pub @let EncodeValue = $
   | Str
   | Sym
   | BaseArray[EncodeValue]
-  | Tuple[...EncodeValue]
-  | BaseStruct[...{*EncodeValue, *(Sym): EncodeValue}]
+  | Tuple[*EncodeValue]
+  | BaseStruct[*EncodeValue, **EncodeValue]
   | BaseDict[Str | Sym | Int | Float | Bool, EncodeValue]
 
 # Deserializes a JSON string to a Do value.

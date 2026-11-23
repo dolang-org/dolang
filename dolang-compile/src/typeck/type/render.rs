@@ -442,6 +442,14 @@ impl Renderer<'_> {
                             self.render_into(*ty, naming, &mut out);
                         }
                         Argument::Expand(ty) => {
+                            // Items that would read as plain arguments stay in
+                            // their schema
+                            if let Some(items) = self.flat(*ty)
+                                && !items.iter().any(|item| self.plain(item))
+                            {
+                                shown_args.extend(self.arguments(&items, naming));
+                                continue;
+                            }
                             out.push_str("...");
                             self.render_into(*ty, naming, &mut out);
                         }
@@ -758,50 +766,26 @@ impl Renderer<'_> {
         Some(flat)
     }
 
-    /// A pack's items as the type arguments that give them
+    /// A pack's items as the type arguments that give them, keyed by symbols as in
+    /// parentheses
     fn arguments(&self, items: &[SchemaItem], naming: Naming<'_>) -> Vec<String> {
-        let db = self.db;
         let mut args = Vec::new();
-        // Items with no argument of their own are included together
-        let mut rest = Vec::new();
-        let flush = |rest: &mut Vec<SchemaItem>, args: &mut Vec<String>| {
-            if !rest.is_empty() {
-                let mut out = String::from("...{");
-                self.item_list(rest, Keys::Value, naming, &mut out);
-                out.push('}');
-                args.push(out);
-                rest.clear();
+        let mut rest = items;
+        while let [item, after @ ..] = rest {
+            // `*, **` together are `...`
+            if let [next, after @ ..] = after
+                && self.any_positional(item)
+                && self.any_keyed(next, Keys::Sym) == Some(true)
+            {
+                args.push("...".to_owned());
+                rest = after;
+                continue;
             }
-        };
-        for item in items {
             let mut out = String::new();
-            match (item.multiplicity, &item.element) {
-                (Multiplicity::Required, Element::Positional(ty)) => {
-                    self.render_into(*ty, naming, &mut out)
-                }
-                (Multiplicity::Required, Element::Keyed { key, .. })
-                    if matches!(db.ty(*key), Type::Literal(Literal::Sym(_))) =>
-                {
-                    self.item(item, Keys::Value, naming, &mut out)
-                }
-                // `*T` is given as `...T`, even for `Value`: a bare `...` would
-                // be an open rest
-                (Multiplicity::Repeated, Element::Positional(ty)) => {
-                    out.push_str("...");
-                    self.render_into(*ty, naming, &mut out);
-                }
-                (Multiplicity::Required, Element::Include(_)) => {
-                    self.item(item, Keys::Value, naming, &mut out)
-                }
-                _ => {
-                    rest.push(item.clone());
-                    continue;
-                }
-            }
-            flush(&mut rest, &mut args);
+            self.item(item, Keys::Sym, naming, &mut out);
             args.push(out);
+            rest = after;
         }
-        flush(&mut rest, &mut args);
         args
     }
 
@@ -853,6 +837,18 @@ impl Renderer<'_> {
             }
             self.item(item, keys, naming, out);
             rest = after;
+        }
+    }
+
+    /// Whether `item` is written as a plain type argument: a lone type, or one keyed
+    /// by a symbol
+    fn plain(&self, item: &SchemaItem) -> bool {
+        match (item.multiplicity, &item.element) {
+            (Multiplicity::Required, Element::Positional(_)) => true,
+            (Multiplicity::Required, Element::Keyed { key, .. }) => {
+                matches!(self.db.ty(*key), Type::Literal(Literal::Sym(_)))
+            }
+            _ => false,
         }
     }
 

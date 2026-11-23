@@ -3,7 +3,7 @@ use super::{
     diag::{
         BracketType, DuplicateImplicit, ExtraQuant, ImplicitInSchema, ImplicitWithoutArrow,
         InvalidConstType, KeyedInclusion, KeyedStarStar, NonConstExpr, OptionalQuant,
-        OptionalTypeArg, QuantifiedImplicit, QuantifiedInclusion, QuantifiedNonFunction,
+        QuantifiedImplicit, QuantifiedInclusion, QuantifiedNonFunction,
     },
     stream::ExpectKind,
 };
@@ -11,8 +11,7 @@ use crate::{
     RestKind,
     ast::{
         Annot, Binder, BinderDefault, BinderKind, Binders, Const, Ident, Implicit, Implicits,
-        RetType, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant,
-        visit::Node,
+        RetType, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, visit::Node,
     },
     lex::{Keyword, Mode, Op, Token, TokenInfo},
     source::Span,
@@ -27,6 +26,8 @@ enum Params {
     Schema,
     /// An array type's, in `[]`
     Array,
+    /// Type arguments, in `[]`
+    Args,
     /// A vertical schema introduced by `$`.
     Vertical,
 }
@@ -36,7 +37,7 @@ impl Params {
         match self {
             Params::Func => ExpectKind::RightParen,
             Params::Schema => ExpectKind::RightBrace,
-            Params::Array => ExpectKind::RightBracket,
+            Params::Array | Params::Args => ExpectKind::RightBracket,
             Params::Vertical => ExpectKind::Dedent,
         }
     }
@@ -46,7 +47,7 @@ impl Params {
             (self, info),
             (Params::Func, TokenInfo::RightParen)
                 | (Params::Schema, TokenInfo::RightBrace)
-                | (Params::Array, TokenInfo::RightBracket)
+                | (Params::Array | Params::Args, TokenInfo::RightBracket)
                 | (Params::Vertical, TokenInfo::Dedent)
         )
     }
@@ -140,15 +141,12 @@ impl Parser<'_> {
         let dollar_span = self.expect(scope, &[ExpectKind::Dollar])?;
         self.expect(scope, &[ExpectKind::Indent])?;
         let schema = self.parse_type_layout_body(scope, dollar_span, false)?;
-        let kind = match ellipsis_span {
-            Some(ellipsis_span) => TypeArgKind::Expand {
-                ellipsis_span,
+        let arg = TypeParam {
+            dash_span: None,
+            kind: TypeParamKind::Pos {
+                quant: ellipsis_span.map(TypeQuant::Include),
                 ty: schema,
             },
-            None => TypeArgKind::Pos(schema),
-        };
-        let arg = TypeArg {
-            kind,
             delim_span: None,
         };
         let ty = match ty {
@@ -702,76 +700,14 @@ impl Parser<'_> {
         Ok(Group::Type(ty))
     }
 
-    /// Parse type arguments after the opening `[`.
+    /// Parse type arguments after the opening `[`. They're the items of a schema.
     pub(super) fn parse_type_args(
         &mut self,
         scope: &mut Scope,
         open: Span,
-    ) -> Result<(Vec<TypeArg>, Span)> {
-        self.with_mode(Mode::FullExpr, |this| {
-            let mut args = Vec::new();
-            let close = loop {
-                if let Some(token!(TokenInfo::RightBracket)) = this.peek()? {
-                    break this.advance();
-                }
-                if let Some(token!(TokenInfo::Question)) = this.peek()? {
-                    let span = this.advance();
-                    this.fail = true;
-                    this.diags.push(OptionalTypeArg(span));
-                }
-                let kind = match this.peek()? {
-                    Some(token @ token!(TokenInfo::Op(Op::Star) | TokenInfo::Op(Op::StarStar))) => {
-                        return Err(this.syntax_error(
-                            scope,
-                            Some(token),
-                            "type arguments expand a pack only with `...`",
-                        ));
-                    }
-                    Some(token!(TokenInfo::Ellipsis)) => TypeArgKind::Expand {
-                        ellipsis_span: this.advance(),
-                        ty: this.parse_type_full(scope)?,
-                    },
-                    Some(token!(TokenInfo::Key, name)) => {
-                        this.advance();
-                        TypeArgKind::Key {
-                            name,
-                            colon_span: name.after_right_char(),
-                            ty: this.parse_type_full(scope)?,
-                        }
-                    }
-                    // `:Name` is `Name: Name`
-                    Some(token!(TokenInfo::DittoKey, name)) => {
-                        this.advance();
-                        TypeArgKind::Key {
-                            name,
-                            colon_span: name.before_left_char(),
-                            ty: TypeExpr::Name {
-                                head: name,
-                                fields: Vec::new(),
-                                res: None,
-                            },
-                        }
-                    }
-                    _ => {
-                        let ty = this.parse_type_full(scope)?;
-                        if let Some(token @ token!(TokenInfo::Colon)) = this.peek()? {
-                            return Err(this.syntax_error(
-                                scope,
-                                Some(token),
-                                "a key outside a schema must be a name",
-                            ));
-                        }
-                        TypeArgKind::Pos(ty)
-                    }
-                };
-                let delim_span = this.consume_comma()?;
-                args.push(TypeArg { kind, delim_span });
-                if delim_span.is_none() {
-                    break this.expect(scope, &[ExpectKind::RightBracket])?;
-                }
-            };
-            Ok((args, open | close))
-        })
+    ) -> Result<(Vec<TypeParam>, Span)> {
+        let (args, _, span) = self.parse_type_params(scope, Params::Args, open)?;
+        Ok((args, span))
     }
 
     /// Parse the parameters of a function type or a schema after the opening
@@ -951,6 +887,23 @@ impl Parser<'_> {
             }
             None => None,
         };
+        // Among type arguments, `:Name` is `Name: Name`
+        if list == Params::Args
+            && let Some(token!(TokenInfo::DittoKey, name)) = self.peek()?
+        {
+            self.advance();
+            let kind = TypeParamKind::Key {
+                quant: self.keyed_quant(quant),
+                key: TypeKey::Sym(name),
+                colon_span: name.before_left_char(),
+                ty: TypeExpr::Name {
+                    head: name,
+                    fields: Vec::new(),
+                    res: None,
+                },
+            };
+            return Ok((kind, LayoutEnd::Compact));
+        }
         if let Some(token!(TokenInfo::Key, span)) = self.peek()? {
             self.advance();
             let (ty, end) = self.parse_type_element_value(scope, list, true)?;

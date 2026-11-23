@@ -11,8 +11,7 @@ use super::{
     Referent, RestSlot, Role, Shard, Sig, Site, Slot, Target, Value, local,
     surface::{
         Binder, Class, ConstLit, Decorator, LinkId, Member, ModuleId, Name, Param, ParamKind, Ref,
-        Signature, SiteId, StrId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey,
-        TypeParam,
+        Signature, SiteId, StrId, Super, Symbol, TypeExpr, TypeKey, TypeParam,
     },
 };
 use crate::{
@@ -439,22 +438,10 @@ impl Visit for TypeExpr {
     }
 }
 
-impl Visit for TypeArg {
-    fn visit(&mut self, ids: &mut impl Ids) {
-        match &mut self.kind {
-            TypeArgKind::Pos(ty) | TypeArgKind::Expand { ty } => ty.visit(ids),
-            TypeArgKind::Key { name, ty } => {
-                name.visit(ids);
-                ty.visit(ids);
-            }
-        }
-    }
-}
-
 impl Visit for TypeParam {
     fn visit(&mut self, ids: &mut impl Ids) {
         match self {
-            TypeParam::Pos { ty, .. } | TypeParam::AnyKey(Some(ty)) => ty.visit(ids),
+            TypeParam::Pos { ty, .. } | TypeParam::AnyKey(_, Some(ty)) => ty.visit(ids),
             TypeParam::Key { key, ty, .. } => {
                 match key {
                     TypeKey::Sym(name) => name.visit(ids),
@@ -462,7 +449,7 @@ impl Visit for TypeParam {
                 }
                 ty.visit(ids);
             }
-            TypeParam::AnyPos | TypeParam::AnyKey(None) | TypeParam::Open(_) => {}
+            TypeParam::AnyPos(_) | TypeParam::AnyKey(_, None) | TypeParam::Open(_) => {}
         }
     }
 }

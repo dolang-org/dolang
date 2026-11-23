@@ -822,7 +822,7 @@ pub class ServiceConfig
   # Service and load-order-group names this
   # service depends on.
   #[getter]
-  pub def dependencies self -> Tuple[...Str]
+  pub def dependencies self -> Tuple[*Str]
     ...
 
   # Account the service runs as.

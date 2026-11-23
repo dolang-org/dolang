@@ -45,7 +45,7 @@ class TestCollection
     tags @ Seq[Str]
     func @ TestFn[{}]
     base @ Str
-    params @ Tuple[...Tuple[Str, Str]]
+    params @ Tuple[*Tuple[Str, Str]]
     location @ (inspect.Location | nil)
   do
     let module = self.#module
@@ -67,7 +67,7 @@ let collect_key @ strand.Key[TestCollection] = strand.Key(TestCollection nil)
 
 # A pending test case: the `parametrize` axes chosen for it as name parts, the
 # tags they contribute, and the test function with those axes bound.
-class Pending[S @ {*(Sym): Value}]: Struct[params: Tuple[...Tuple[Str, Str]], tags: Tuple[...Str], func: TestFn[S]]
+class Pending[S @ {*(Sym): Value}]: Struct[params: Tuple[*Tuple[Str, Str]], tags: Tuple[*Str], func: TestFn[S]]
 
 # A test function under decorators, as the pending cases that `test` registers.
 # Each decorator applies as a layer over the one below: `parametrize` fans the
@@ -122,9 +122,9 @@ pub class Tagged[T]
   # The parametrize value.
   pub field value @ T
   # Tags contributed to the cases that select the value.
-  pub field tags @ Tuple[...Str]
+  pub field tags @ Tuple[*Str]
 
-  def (init) self value @ T tags @ Tuple[...Str]
+  def (init) self value @ T tags @ Tuple[*Str]
     if (type value Tagged)
       throw std.TypeError "tagged: value is already tagged"
     self.value = value
@@ -159,7 +159,7 @@ do -> Tagged[T]
   Tagged $value $(check_tags "tagged" values)
 
 # Checks that every tag is a string, which the caller's types may not ensure.
-def check_tags who @ Str tags @ Iterable[Value] -> Tuple[...Str]
+def check_tags who @ Str tags @ Iterable[Value] -> Tuple[*Str]
   let tag_values @ Array[Str] = []
   for tag = tags
     if !(type tag Str)
@@ -172,18 +172,18 @@ def check_tags who @ Str tags @ Iterable[Value] -> Tuple[...Str]
 pub class TestInfo
   field module @ Path
   field name @ Str
-  field tags @ Tuple[...Str]
+  field tags @ Tuple[*Str]
   field base @ Str
-  field params @ Tuple[...Tuple[Str, Str]]
+  field params @ Tuple[*Tuple[Str, Str]]
   field location @ (inspect.Location | nil)
 
   def (init)
     self
     module @ Path
     name @ Str
-    tags @ Tuple[...Str]
+    tags @ Tuple[*Str]
     base @ Str
-    params @ Tuple[...Tuple[Str, Str]]
+    params @ Tuple[*Tuple[Str, Str]]
     location @ (inspect.Location | nil)
   do
     self.#module = module
@@ -205,7 +205,7 @@ pub class TestInfo
 
   # The immutable test tags. Order and duplicates are preserved.
   #[getter]
-  pub def tags self -> Tuple[...Str]
+  pub def tags self -> Tuple[*Str]
     self.#tags
 
   # The test's ID, `module/name` with the module path's extension removed: the
@@ -225,7 +225,7 @@ pub class TestInfo
   # appear in the name. Values are given as in the name. Empty for a test
   # without axes.
   #[getter]
-  pub def params self -> Tuple[...Tuple[Str, Str]]
+  pub def params self -> Tuple[*Tuple[Str, Str]]
     self.#params
 
   # Where the test function is defined, as given by
@@ -798,7 +798,7 @@ do -> Value
   register $name $tag_values $func
 
 # Registers each case of a test function, returning the function.
-def register name @ (Str | nil) tags @ Tuple[...Str] func @ TestFn[{}] -> TestFn[{}]
+def register name @ (Str | nil) tags @ Tuple[*Str] func @ TestFn[{}] -> TestFn[{}]
   let test_def = to_test_def $func
   let base = (name || test_def.base)
   for case = test_def.cases

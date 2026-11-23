@@ -4,12 +4,12 @@
 pub def inferred()
   let r = {1, a: "x", 2}
   let _ = r
-  #       ^: flow std.Record[...std.Int, ...{*(std.Sym): std.Str}]
+  #       ^: flow std.Record[*std.Int, **std.Str]
 
 pub def takes r @ Record[Str, ...{*Int, ?tag: Str}]
   let _ = r
 
-pub def reads r @ BaseRecord[...(Int | Str)]
+pub def reads r @ BaseRecord[*(Int | Str)]
   let _ = r
 
 pub def wants_dict d @ Dict[Int, Int]
@@ -32,7 +32,7 @@ pub def expected xs @ Array[Int]
   #    |
   #    = note: `1` does not fit `std.Str`
   wants_dict {1}
-# error: expected `std.Dict[std.Int, std.Int]`, found `std.Record[...std.Int]`
+# error: expected `std.Dict[std.Int, std.Int]`, found `std.Record[*std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   wants_dict {1}
@@ -45,7 +45,7 @@ pub @let Tagged = {Str, ?tag: Str}
 pub def fixed r @ Record[Int, tag: Str]
   let _ = r
 
-pub def repeated r @ Record[...Int]
+pub def repeated r @ Record[*Int]
   let _ = r
 
 pub def aliased r @ BaseRecord[...Tagged]

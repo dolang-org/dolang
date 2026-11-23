@@ -447,7 +447,7 @@ impl Index<'_> {
             let expr = if super_ref.bracket_span.is_some() {
                 let app = this.begin_type(id, span, None);
                 let base = this.push_to(Some(app), name_kind, name, None);
-                let args = this.type_args(app, &super_ref.args)?;
+                let args = this.type_items(app, &super_ref.args, false)?;
                 this.finish_type(app, Kind::AppType { base, args })
             } else {
                 this.push_to(Some(id), name_kind, name, None)
@@ -528,7 +528,7 @@ impl Index<'_> {
             }),
             TypeExpr::App { base, args, .. } => Kind::AppType {
                 base: self.type_expr(id, base)?,
-                args: self.type_args(id, args)?,
+                args: self.type_items(id, args, false)?,
             },
             TypeExpr::Schema { params, .. } => Kind::SchemaType {
                 items: self.type_items(id, params, true)?,
@@ -585,33 +585,6 @@ impl Index<'_> {
         Some(self.finish_type(id, kind))
     }
 
-    fn type_args(&mut self, parent: Id, args: &[TypeArg]) -> Option<alias::Box<[Id]>> {
-        args.iter()
-            .map(|arg| {
-                let (kind, ty, start) = match &arg.kind {
-                    TypeArgKind::Pos(ty) => (doc::TypeArgKind::Pos, ty, None),
-                    // The colon precedes the name in the `:Name` shorthand
-                    TypeArgKind::Key {
-                        name,
-                        colon_span,
-                        ty,
-                    } => (
-                        doc::TypeArgKind::Key { name: *name },
-                        ty,
-                        Some(*name | *colon_span),
-                    ),
-                    TypeArgKind::Expand { ellipsis_span, ty } => {
-                        (doc::TypeArgKind::Expand, ty, Some(*ellipsis_span))
-                    }
-                };
-                let span = start.map_or(ty.span(), |start| start | ty.span());
-                let id = self.begin_type(parent, span, None);
-                let ty = self.type_expr(id, ty)?;
-                Some(self.finish_type(id, Kind::TypeArg { kind, ty }))
-            })
-            .collect()
-    }
-
     /// Convert an implicit parameter's type. The outer `None` means the type
     /// could not be read, the inner that the implicit is absent.
     fn implicit_type(
@@ -650,12 +623,22 @@ impl Index<'_> {
                     }
                     TypeParamKind::Open { ellipsis_span } => (None, None, Some(*ellipsis_span)),
                 };
-                let span = [param.dash_span, quant.map(|quant| quant.span()), start]
-                    .into_iter()
-                    .flatten()
-                    .chain(ty.map(|ty| ty.span()))
-                    .reduce(|acc, span| acc | span)
-                    .expect("a type item has a source span");
+                // The colon precedes the name in the `:Name` shorthand
+                let colon_span = match &param.kind {
+                    TypeParamKind::Key { colon_span, .. } => Some(*colon_span),
+                    _ => None,
+                };
+                let span = [
+                    param.dash_span,
+                    quant.map(|quant| quant.span()),
+                    start,
+                    colon_span,
+                ]
+                .into_iter()
+                .flatten()
+                .chain(ty.map(|ty| ty.span()))
+                .reduce(|acc, span| acc | span)
+                .expect("a type item has a source span");
                 let id = self.begin_type(parent, span, documented.then_some(span.start));
                 let quant = quant.map(|quant| match quant {
                     TypeQuant::Opt(_) => crate::TypeQuant::Opt,
@@ -1298,7 +1281,7 @@ impl Index<'_> {
                 }
                 None => self.reference(scope, &mut super_ref.ident),
             }
-            for ty in super_ref.args.iter_mut().map(TypeArg::ty_mut) {
+            for ty in super_ref.args.iter_mut().flat_map(TypeParam::tys_mut) {
                 self.ty(scope, ty);
             }
             if let Some(id) = id {

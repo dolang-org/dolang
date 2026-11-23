@@ -6,8 +6,8 @@ pub(crate) mod visit;
 
 pub(crate) use self::ty::{
     Annot, Binder, BinderDefault, BinderKind, Binders, Implicit, Implicits, NameMut, NameRef,
-    RetType, TypeArg, TypeArgKind, TypeEntry, TypeExpr, TypeKey, TypeParam, TypeParamKind,
-    TypeQuant, TypeRes, implicit_tys_mut, implicits,
+    RetType, TypeEntry, TypeExpr, TypeKey, TypeParam, TypeParamKind, TypeQuant, TypeRes,
+    implicit_tys_mut, implicits,
 };
 
 use std::{
@@ -2928,7 +2928,7 @@ pub(crate) struct ClassSuper {
     pub(crate) ident: Ident,
     pub(crate) fields: Vec<Span>,
     /// Type arguments, which only annotate the superclass
-    pub(crate) args: Vec<TypeArg>,
+    pub(crate) args: Vec<TypeParam>,
     pub(crate) bracket_span: Option<Span>,
     /// What a type-only head names. A supertype that exists at runtime is a value, which
     /// elaboration resolves through `ident` instead. Set only when documenting.

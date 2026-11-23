@@ -12,12 +12,12 @@ pub @class Positions[T]
 
 pub class Pack[*Ts]: @Index[Ts] @Positions[Union[...Ts]]
   @def (index)[K] self key@K -> IndexItem[Ts, K]
-  @def (index) self range@Range[Int] -> Pack[...Union[...Ts]]
+  @def (index) self range@Range[Int] -> Pack[*Union[...Ts]]
   pub def (index) self key -> Value
     ...
 
 pub class Spelled[*Ts]: @Index[Ts] @Positions[Union[...Ts]]
   @def (index)[K] self key@K -> IndexItem[{...Ts}, K]
-  @def (index) self range@Range[Int] -> Spelled[...Union[...Ts]]
+  @def (index) self range@Range[Int] -> Spelled[*Union[...Ts]]
   pub def (index) self key -> Value
     ...

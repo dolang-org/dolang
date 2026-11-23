@@ -141,7 +141,7 @@ def forms
   - m @true = 13
   - n @nil = 14
   - o @{"x-custom": Str} = 15
-  - q @Tuple[...Str] = 16
+  - q @Tuple[*Str] = 16
   - r @(
       | Str
       | Path

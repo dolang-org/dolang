@@ -334,7 +334,7 @@ pub def keyed ks @ Iter[(:a: | :b:)]
   ...
 
 # A collection keys a schema's positions by their indexes.
-pub def promoted p @ Record[Int, Str] v @ Record[Int, ...Bool]
+pub def promoted p @ Record[Int, Str] v @ Record[Int, *Bool]
   for k x = p
     let _ = k
     #       ^: flow 0 | 1
@@ -351,7 +351,7 @@ pub def promoted p @ Record[Int, Str] v @ Record[Int, ...Bool]
 # it selects, and a write must fit their meet.
 pub def selected
   r @ Pack[Int, a: Str]
-  w @ Record[Int, ...Str]
+  w @ Record[Int, *Str]
   d @ Dict[{a: Int, b: Str}]
   s @ Dict[{*(Sym): Int}]
   p @ Record[Int, Str]

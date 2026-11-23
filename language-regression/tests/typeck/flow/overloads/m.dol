@@ -32,7 +32,7 @@ pub class Picker
 pub def indexed
   a @ Array[Int]
   t @ Tuple[Int, Str]
-  r @ Tuple[...Str]
+  r @ Tuple[*Str]
   i @ Int
   b @ BinBuf
   f @ Fmt[Int, {}]

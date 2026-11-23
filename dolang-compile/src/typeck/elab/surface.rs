@@ -128,7 +128,7 @@ pub(crate) enum TypeExpr {
     App {
         span: Span,
         base: Box<TypeExpr>,
-        args: Vec<TypeArg>,
+        args: Vec<TypeParam>,
         /// Its type, interned in the group it is written in
         interned: Interned,
     },
@@ -182,23 +182,7 @@ pub(crate) enum ConstLit {
     Sym(Symbol),
 }
 
-/// A type argument in the `[]` of an application
-#[derive(Clone)]
-pub(crate) struct TypeArg {
-    pub(crate) kind: TypeArgKind,
-}
-
-#[derive(Clone)]
-pub(crate) enum TypeArgKind {
-    /// `T`
-    Pos(TypeExpr),
-    /// `name: T`
-    Key { name: Symbol, ty: TypeExpr },
-    /// `...T`, expanding a pack into further arguments
-    Expand { ty: TypeExpr },
-}
-
-/// An item a schema or a function type's parameters declare
+/// An item a schema, a function type's parameters or type arguments declare
 #[derive(Clone)]
 pub(crate) enum TypeParam {
     /// `T`, `?T`, `*T`, or `...S`
@@ -212,10 +196,10 @@ pub(crate) enum TypeParam {
         key: TypeKey,
         ty: TypeExpr,
     },
-    /// `*` alone, admitting any positional item
-    AnyPos,
-    /// `**V`, or `**` alone, admitting any keyed item
-    AnyKey(Option<TypeExpr>),
+    /// `*` alone, admitting any positional item, spanning it
+    AnyPos(Span),
+    /// `**V`, or `**` alone, admitting any keyed item, spanning the `**`
+    AnyKey(Span, Option<TypeExpr>),
     /// `...` alone, spanning it
     Open(Span),
 }
@@ -283,8 +267,8 @@ impl TypeExpr {
             TypeExpr::Name(_) | TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
                 base.each_node_in(group, f);
-                for arg in args {
-                    arg.ty().each_node_in(group, f);
+                for ty in args.iter().flat_map(TypeParam::tys) {
+                    ty.each_node_in(group, f);
                 }
             }
             TypeExpr::Schema { params, .. }
@@ -329,15 +313,6 @@ impl TypeExpr {
     }
 }
 
-impl TypeArg {
-    /// The argument's type.
-    pub(crate) fn ty(&self) -> &TypeExpr {
-        match &self.kind {
-            TypeArgKind::Pos(ty) | TypeArgKind::Key { ty, .. } | TypeArgKind::Expand { ty } => ty,
-        }
-    }
-}
-
 impl TypeParam {
     /// The item's key type, if it has one, then its type.
     pub(crate) fn tys(&self) -> impl Iterator<Item = &TypeExpr> {
@@ -350,10 +325,34 @@ impl TypeParam {
                 },
                 Some(ty),
             ),
-            TypeParam::AnyKey(ty) => (None, ty.as_ref()),
-            TypeParam::AnyPos | TypeParam::Open(_) => (None, None),
+            TypeParam::AnyKey(_, ty) => (None, ty.as_ref()),
+            TypeParam::AnyPos(_) | TypeParam::Open(_) => (None, None),
         };
         key_ty.into_iter().chain(ty)
+    }
+
+    /// The span of the item's type, or of the item when it has none
+    pub(crate) fn span(&self) -> Span {
+        match self {
+            TypeParam::Pos { ty, .. } | TypeParam::Key { ty, .. } => ty.span(),
+            TypeParam::AnyPos(span) | TypeParam::Open(span) => *span,
+            TypeParam::AnyKey(span, ty) => ty.as_ref().map_or(*span, TypeExpr::span),
+        }
+    }
+
+    /// The type of a plain type argument: a lone type or a symbol-keyed one,
+    /// admitting exactly one item. Any other item among type arguments goes to a
+    /// variadic binder.
+    pub(crate) fn plain(&self) -> Option<&TypeExpr> {
+        match self {
+            TypeParam::Pos { quant: None, ty }
+            | TypeParam::Key {
+                quant: None,
+                key: TypeKey::Sym(_),
+                ty,
+            } => Some(ty),
+            _ => None,
+        }
     }
 }
 
@@ -484,7 +483,7 @@ pub(crate) enum Member {
 #[derive(Clone)]
 pub(crate) struct Super {
     pub(crate) head: Ref,
-    pub(crate) args: Vec<TypeArg>,
+    pub(crate) args: Vec<TypeParam>,
     /// The `[]` of the arguments, if written
     pub(crate) bracket_span: Option<Span>,
     /// Whether it exists only in types
@@ -612,23 +611,7 @@ impl Printer<'_, '_> {
             TypeExpr::App { base, args, .. } => {
                 self.ty(base, out)?;
                 out.write_char('[')?;
-                for (index, arg) in args.iter().enumerate() {
-                    if index != 0 {
-                        out.write_str(", ")?;
-                    }
-                    match &arg.kind {
-                        TypeArgKind::Pos(ty) => self.ty(ty, out)?,
-                        TypeArgKind::Key { name, ty } => {
-                            self.name(name.text, out)?;
-                            out.write_str(": ")?;
-                            self.ty(ty, out)?;
-                        }
-                        TypeArgKind::Expand { ty } => {
-                            out.write_str("...")?;
-                            self.ty(ty, out)?;
-                        }
-                    }
-                }
+                self.params(args, None, None, out)?;
                 out.write_char(']')
             }
             TypeExpr::Schema { params, .. } => {
@@ -735,8 +718,8 @@ impl Printer<'_, '_> {
                     out.write_str(": ")?;
                     self.ty(ty, out)?;
                 }
-                TypeParam::AnyPos => out.write_char('*')?,
-                TypeParam::AnyKey(ty) => {
+                TypeParam::AnyPos(_) => out.write_char('*')?,
+                TypeParam::AnyKey(_, ty) => {
                     out.write_str("**")?;
                     if let Some(ty) = ty {
                         self.ty(ty, out)?;

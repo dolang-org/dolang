@@ -24,7 +24,7 @@ pub def fields s @ Struct[host: Str, port: Int, cb: ((Int) -> Str), ...{?user: S
   # LL |   s.port = "x"
   #    |            ^^^
   let _ = s.missing
-  # error: `std.Struct[host: std.Str, port: std.Int, cb: (std.Int) -> std.Str, ...{?user: std.Str}]` has no member `missing`
+  # error: `std.Struct[host: std.Str, port: std.Int, cb: (std.Int) -> std.Str, ?user: std.Str]` has no member `missing`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _ = s.missing
@@ -33,7 +33,7 @@ pub def fields s @ Struct[host: Str, port: Int, cb: ((Int) -> Str), ...{?user: S
   #    = note: `(get)`: expected `:cb: | :host: | :port: | :user:`, found `:missing:`
   #    = note: `:missing:` does not fit `:cb: | :host: | :port: | :user:`
   s.missing = 1
-# error: `std.Struct[host: std.Str, port: std.Int, cb: (std.Int) -> std.Str, ...{?user: std.Str}]` has no member `missing`
+# error: `std.Struct[host: std.Str, port: std.Int, cb: (std.Int) -> std.Str, ?user: std.Str]` has no member `missing`
 #   --> m.dol:LL:LL
 #    |
 # LL |   s.missing = 1
@@ -108,10 +108,10 @@ pub def unpacking s @ Struct[a: Int, b: Str]
 pub def construct()
   let s = Struct {host: "h", port: 1}
   let _ = s
-  #       ^: flow std.Struct[...{*(std.Sym): std.Int | std.Str}]
+  #       ^: flow std.Struct[**std.Int | std.Str]
   let r = Record {host: "h", port: 1}
   let _ = r
-  #       ^: flow std.Record[...{*(std.Sym): std.Int | std.Str}]
+  #       ^: flow std.Record[**std.Int | std.Str]
   let k = Pack {host: "h", port: 1}
   let _ = k
   #       ^: flow (**std.Int | std.Str)
