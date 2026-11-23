@@ -357,40 +357,9 @@ impl Solver<'_> {
                 UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
                 _ if self.shares(*view, member, &j.b)? => continue,
                 _ if self.congruent(*view, member, &j.b)? => continue,
-                _ if self.rigid(member.id())?.is_some() => {
-                    let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
-                        return Err(Residual::Unsupported(
-                            "a projection of a rigid without a bound",
-                        )
-                        .into());
-                    };
-                    // The key may refer to the view's binders
-                    let projected = self.db.intern(Type::Union(vec![member.with(bound)].into()));
-                    (view.child(projected), Step::RigidBound)
-                }
-                UnionMember::IndexItem(schema, _)
-                | UnionMember::Expand(schema)
-                | UnionMember::Keys(schema)
-                | UnionMember::Values(schema)
-                | UnionMember::Entries(schema)
-                    if let Some((fields, step)) =
-                        self.widened_fields(view.child(schema), FieldAccess::Read)? =>
-                {
-                    let projected = self
-                        .db
-                        .intern(Type::Union(vec![member.with(fields)].into()));
-                    (view.child(projected), step)
-                }
-                UnionMember::IndexItem(schema, key) => match self.widened_key(key)? {
-                    Some((key, step)) => {
-                        let projected = self.db.intern(Type::Union(
-                            vec![UnionMember::IndexItem(schema, key)].into(),
-                        ));
-                        (view.child(projected), step)
-                    }
-                    None => return Err(Residual::Unsupported("an unevaluated projection").into()),
-                },
-                _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
+                _ => self
+                    .widened_projection(*view, member)?
+                    .ok_or(Residual::Unsupported("an unevaluated projection"))?,
             };
             derived.push((term, step));
         }
@@ -398,6 +367,49 @@ impl Solver<'_> {
             self.derive(j.obligation, term, j.expected, step);
         }
         Ok(Break(()))
+    }
+
+    /// A projection member of the union `view` widened by one step, as a union
+    /// of it alone, with the step that widens it: a rigid member to its first
+    /// bound, a member schema's projection to its target's bound's (see
+    /// [`Self::widened_fields`]), or an item's rigid key toward its bound (see
+    /// [`Self::widened_key`]). `None` if it can't be widened.
+    pub(super) fn widened_projection(
+        &self,
+        view: TypeView,
+        member: UnionMember,
+    ) -> Result<Option<(Term, Step)>, Issue> {
+        let union = |member: UnionMember| self.db.intern(Type::Union(vec![member].into()));
+        match member {
+            UnionMember::Type(_) => Ok(None),
+            _ if self.rigid(member.id())?.is_some() => {
+                let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
+                    return Err(
+                        Residual::Unsupported("a projection of a rigid without a bound").into(),
+                    );
+                };
+                // The key may refer to the view's binders
+                Ok(Some((
+                    view.child(union(member.with(bound))),
+                    Step::RigidBound,
+                )))
+            }
+            UnionMember::IndexItem(schema, _)
+            | UnionMember::Expand(schema)
+            | UnionMember::Keys(schema)
+            | UnionMember::Values(schema)
+            | UnionMember::Entries(schema)
+                if let Some((fields, step)) =
+                    self.widened_fields(view.child(schema), FieldAccess::Read)? =>
+            {
+                Ok(Some((view.child(union(member.with(fields))), step)))
+            }
+            UnionMember::IndexItem(schema, key) => Ok(self.widened_key(key)?.map(|(key, step)| {
+                let projected = union(UnionMember::IndexItem(schema, key));
+                (view.child(projected), step)
+            })),
+            _ => Ok(None),
+        }
     }
 
     /// An item projection's key widened by one step: a rigid member to its

@@ -392,14 +392,14 @@ impl Flow<'_, '_> {
     }
 
     /// A union receiver's alternatives, each of which a member use is made of,
-    /// with a transparent declaration among them exposed. One that projects a
-    /// schema is undecided, recorded at `span`. `None` if the receiver isn't a
-    /// union.
+    /// with a transparent declaration among them exposed and a projection
+    /// widened toward its bound (see [`Solver::member_alternatives`]). One that
+    /// can't be widened is undecided, recorded at `span`. `None` if the receiver
+    /// isn't a union.
+    ///
+    /// [`Solver::member_alternatives`]: crate::typeck::solver::Solver::member_alternatives
     fn alternatives(&mut self, receiver: TypeId, span: Span) -> Option<Vec<Option<TypeId>>> {
-        let mut alternatives = Vec::new();
-        if !self.expand(receiver, &mut alternatives) {
-            return None;
-        }
+        let alternatives = self.solver(&Gas::default()).member_alternatives(receiver)?;
         if alternatives.contains(&None) {
             self.undecided(
                 span,
