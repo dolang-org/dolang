@@ -3388,8 +3388,8 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The candidate a fresh dict with `values` is: the only one, or else the one
-    /// its items fit, or else the one its keys fit. A choice its values don't
-    /// fit is then reported against it.
+    /// its shape fits (see [`Flow::shape_fits`]). A choice its values don't fit
+    /// is then reported against it.
     fn choose<'p>(
         &self,
         rule: &mut Rule<'_, '_, 'p>,
@@ -3405,21 +3405,14 @@ impl<'a> Flow<'a, '_> {
             return None;
         }
         // Two survivors are as many as it takes to choose none
-        let survivors = |rule: &mut Rule<'_, '_, 'p>, keys_only: bool| {
-            let mut found = Vec::new();
-            for &candidate in candidates {
-                if self.items_fit(rule, class, candidate, values, span, keys_only) {
-                    found.push(candidate);
-                    if found.len() == 2 {
-                        break;
-                    }
+        let mut chosen = Vec::new();
+        for &candidate in candidates {
+            if self.shape_fits(rule, class, candidate, values, span) {
+                chosen.push(candidate);
+                if chosen.len() == 2 {
+                    break;
                 }
             }
-            found
-        };
-        let mut chosen = survivors(rule, false);
-        if chosen.is_empty() {
-            chosen = survivors(rule, true);
         }
         trace!(
             "{}: {} candidates, {}",
@@ -3438,45 +3431,71 @@ impl<'a> Flow<'a, '_> {
         }
     }
 
-    /// Whether a fresh dict's items, `values`, fit a candidate, in a fork of the
-    /// rule's solver that's discarded. What it leaves unsolved of its own is
-    /// defaulted, and with `keys_only`, each item's value is a fresh variable,
-    /// so only its key can contradict.
-    fn items_fit<'p>(
+    /// Whether a fresh dict's shape, from `values`, fits a candidate, in a fork
+    /// of the rule's solver that's discarded, with a budget of its own. Each
+    /// item's value is a fresh variable, so what its values are inferred to be
+    /// doesn't choose: only its keys, and its constants that tell candidates
+    /// apart. A constant does where the candidate expects a type of its class,
+    /// as a literal field such as `kind: :FLAG:` is, and it isn't that type. One
+    /// expected to be another class, as `"two"` of `Int`, is left to be reported
+    /// against the candidate.
+    fn shape_fits<'p>(
         &self,
         rule: &mut Rule<'_, '_, 'p>,
         class: DeclId,
         candidate: Candidate,
         values: &'p Values,
         span: Span,
-        keys_only: bool,
     ) -> bool {
         let spread = self.designated(Designated::Spread);
-        let (db, gas) = (rule.db, rule.gas);
+        let (db, gas) = (rule.db, &Gas::default());
         let mut fork = rule.solver.fork(gas);
         let mut probe = Rule::new(&mut fork, db, gas);
-        probe.blind = true;
         let (_, schema) = self.candidate(&mut probe, class, candidate);
         let (mut arguments, _) = probe.arguments(values, spread, span);
-        if keys_only {
-            for (_, argument) in &mut arguments {
-                match argument {
-                    CallArgument::Positional(value)
-                    | CallArgument::Keyword(_, value)
-                    | CallArgument::Pair(_, value) => *value = probe.solver.infer(),
-                    CallArgument::Spread(_) => {}
+        let mut constants = Vec::new();
+        for (_, argument) in &mut arguments {
+            match argument {
+                CallArgument::Positional(value)
+                | CallArgument::Keyword(_, value)
+                | CallArgument::Pair(_, value) => {
+                    let constant = probe
+                        .solver
+                        .reify(*value)
+                        .ok()
+                        .filter(|&ty| db.literal(ty).is_some());
+                    *value = probe.solver.infer();
+                    if let Some(constant) = constant {
+                        constants.push((*value, constant));
+                    }
                 }
+                CallArgument::Spread(_) => {}
             }
         }
         let exact = probe.solver.arguments_schema(&arguments);
         probe.constrain(exact, schema, Provenance::default());
-        let contradicted = |outcomes: &[Outcome]| {
-            outcomes
-                .iter()
-                .any(|outcome| outcome.status == Status::Contradicted)
-        };
         let solver = probe.solver;
-        !contradicted(&solver.solve()) && !contradicted(&default_own(solver, None))
+        if solver
+            .solve()
+            .iter()
+            .any(|outcome| outcome.status == Status::Contradicted)
+        {
+            return false;
+        }
+        let below = |actual, expected| self.below(actual, expected);
+        constants.into_iter().all(|(value, constant)| {
+            let class = db
+                .literal(constant)
+                .and_then(|literal| db.intrinsic(literal.intrinsic()));
+            let expected = expectation(solver, value, below, false)
+                .and_then(|expected| solver.reify(expected).ok());
+            match (class, expected) {
+                (Some(class), Some(expected)) if below(expected, class) => {
+                    below(constant, expected)
+                }
+                _ => true,
+            }
+        })
     }
 
     /// A chosen candidate's type and schema. An open one's schema is what its

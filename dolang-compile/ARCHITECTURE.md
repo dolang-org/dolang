@@ -1068,9 +1068,16 @@ The rules are:
   variable, open in the binders not yet solved, so what it holds, such as a
   nested handler, raises them with the other arguments; where a variable the
   held arguments can't raise (`Solver::raised`) would solve it once given its
-  least solution, it takes that solved expectation. A dict chooses among an
-  open union's alternatives by probing them in discarded forks. A sub-rule is
-  made once, bounded by its expectation through seed roots (`Solver::seed`).
+  least solution, it takes that solved expectation. A fresh dict expected to be
+  one of several schemas, as a union's members or an open union's alternatives
+  give them, takes the one its shape fits (`Flow::shape_fits`), probed in a
+  discarded fork with a budget of its own. Its values are fresh variables
+  there, so only its keys choose, and its constants where a schema expects
+  values of their class: `:SMALL:` rules out a schema expecting `:NAMED:`, while
+  `"two"` doesn't rule out one expecting `Int`, and is reported against it. What
+  its other values are inferred to be doesn't choose, and with none or several
+  fitting it's unchosen. A sub-rule is made once, bounded by its expectation
+  through seed roots (`Solver::seed`).
   The checks it makes don't report what derives from its seeds, which the
   argument reports itself, and a diagnostic shows a value apart from the
   bounds its seeds impose (`Solver::seeded`). What the call is expected to
