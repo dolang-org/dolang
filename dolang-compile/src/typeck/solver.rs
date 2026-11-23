@@ -314,6 +314,9 @@ pub(crate) enum Contradiction {
     Excess(usize),
     /// The expected schema's item can be missing from the actual schema
     Missing(usize),
+    /// The actual schema's positional packs at these items, in order, stand
+    /// for the same rigids as the expected schema's, but in another order
+    Reordered(usize, usize),
     /// A literal or concrete class has a value outside every union member
     Outside,
     /// A projection's schema has a key that may be a position's index

@@ -615,6 +615,43 @@ fn opaque_rigids_pair_up_or_stand_for_their_bounds() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn rigid_packs_in_another_order_contradict() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let [xs, ys] = [0, 1].map(|slot| {
+        db.intern(Type::Bound {
+            reference: BoundRef::new(0, slot),
+            kind: Kind::Schema,
+        })
+    });
+    let xy = items(&db, vec![include(Req, xs), include(Req, ys)]);
+    let yx = items(&db, vec![include(Req, ys), include(Req, xs)]);
+    let int_xy = items(
+        &db,
+        vec![positional(Req, int), include(Req, xs), include(Req, ys)],
+    );
+    let int_yx = items(
+        &db,
+        vec![positional(Req, int), include(Req, ys), include(Req, xs)],
+    );
+    let body = function(&db, &[], db.top());
+    let pack = || bounded(Kind::Schema, Binding::Rest(Rest::Positional), None);
+    let f = generic(&mut db, vec![pack(), pack()], body);
+    db.seal();
+    assert_eq!(under(&db, f, xy, xy).status, Status::Proven);
+    assert!(contradiction(
+        &under(&db, f, xy, yx),
+        Contradiction::Reordered(0, 1)
+    ));
+    assert!(contradiction(
+        &under(&db, f, int_xy, int_yx),
+        Contradiction::Reordered(1, 2)
+    ));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn the_dynamic_schema_leaves_its_lanes_unchecked() {
     use Multiplicity::{Optional as Opt, Required as Req};
     let mut db = Database::new();

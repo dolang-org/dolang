@@ -16,3 +16,24 @@ pub def split[*Xs] _x @ Split[...Xs, Num]
   #    |
   #    = note: it can't match type arguments past an expansion; put positional arguments first
   ...
+
+@def o _x @ Int -> Int
+@def o _x @ Int -> Str
+pub def o x @ Value -> Value
+  x
+
+# A check undecided for several reasons has a note for each
+pub class Keyed[**Ks]
+  field items @ std.Phantom[...Ks] = ...
+
+pub def both[**Xs, **Ys] p @ Keyed[...Xs, ...Ys] -> Tuple[(Int) -> Int, Keyed[...Ys, ...Xs]]
+  let t = (o, p)
+  t
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   t
+  #    |   ^
+  #    |
+  #    = note: it can't match up these positional items
+  #    = note: several alternatives remain possible; an annotation may pick one
