@@ -52,3 +52,25 @@ pub def settled -> ((Int) -> Int)
   let _p @ ((Int) -> Int) = picked
   let _q = (plain @ ((Int) -> Int))
   plain
+
+# A literal whose items are left undecided against what's expected of it is
+# undecided where it's checked, as a value bound first is
+pub def literal -> Tuple[(Int) -> Int]
+  (o,)
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   (o,)
+  #    |   ^^^^
+  #    |
+  #    = note: nothing determines a type here; annotate it
+
+pub def elements -> Array[(Int) -> Int]
+  [o]
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   [o]
+  #    |   ^^^
+  #    |
+  #    = note: nothing determines a type here; annotate it

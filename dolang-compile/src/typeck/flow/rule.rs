@@ -1350,12 +1350,15 @@ impl<'a> Flow<'a, '_> {
                 // A strict unit's defaulting leaves what nothing determines
                 // unresolved. A check it leaves unresolved is recorded instead.
                 let decided = !run.any(run.outcomes.len(), Status::Unresolved);
-                let (mut empty, mut others) = (false, false);
+                let (mut empty, mut others, mut recorded) = (false, false, false);
                 for outcome in &run.outcomes {
                     let kind = diagnosed(&outcome.provenance).map(|(_, kind)| kind);
                     match (kind, outcome.status) {
                         (Some(OriginKind::Empty), Status::Unresolved) => empty = true,
-                        (_, Status::Unresolved) => others = true,
+                        (kind, Status::Unresolved) => {
+                            others = true;
+                            recorded |= kind.is_some();
+                        }
                         _ => {}
                     }
                 }
@@ -1365,6 +1368,16 @@ impl<'a> Flow<'a, '_> {
                     .zip(&reified)
                     .filter(|(_, ty)| ty.is_none());
                 empty |= open.clone().any(|(&term, _)| run.solver.holds_fresh(term));
+                // A result left open is unknown, which whatever expects it
+                // passes, so the checks that left it open and that no origin
+                // diagnoses, such as what's expected of it, are recorded here
+                if others && !recorded && open.clone().next().is_some() {
+                    for outcome in &run.outcomes {
+                        if outcome.status == Status::Unresolved {
+                            self.unresolved(span, outcome);
+                        }
+                    }
+                }
                 if !others {
                     let what = match (empty, open.next().is_some()) {
                         (true, _) => Some("an empty collection nothing determines"),
