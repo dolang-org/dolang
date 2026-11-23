@@ -66,3 +66,16 @@ pub def reversed()
 #    = note: `{a: std.Int, b: std.Int}` requires `b: std.Int`, which `{a: std.Int}` may be missing
 #    = note: in `std.Dict[{a: std.Int, b: std.Int}]`
 #    = note: in `{std.Dict[{a: std.Int, b: std.Int}]}`
+
+# Rigid positional packs in another order can't line up
+pub def swapped[*Xs, *Ys] t @ Tuple[...Xs, ...Ys]
+  def inner _u @ Tuple[...Ys, ...Xs]
+    ...
+  inner $t
+# error: expected `(...Ys, ...Xs)`, found `(...Xs, ...Ys)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   inner $t
+#    |          ^
+#    |
+#    = note: `{...Xs, ...Ys}` has `...Xs` before `...Ys`, but `{...Ys, ...Xs}` has them the other way around

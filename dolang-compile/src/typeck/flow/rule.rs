@@ -1918,6 +1918,17 @@ impl<'a> Flow<'a, '_> {
                     None => format!("{expected} doesn't admit every item of {actual}"),
                 }
             }
+            (Contradiction::Reordered(first, second), _) => match leaf_actual.and_then(|schema| {
+                Some((
+                    self.schema_item(schema, first)?,
+                    self.schema_item(schema, second)?,
+                ))
+            }) {
+                Some((first, second)) => format!(
+                    "{actual} has {first} before {second}, but {expected} has them the other way around"
+                ),
+                None => format!("{actual} has positional items in another order than {expected}"),
+            },
             (Contradiction::Nominal, _) => format!(
                 "{expected} is nominal: every value has its members, so a class is below it only by naming it"
             ),
