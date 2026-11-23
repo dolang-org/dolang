@@ -1380,6 +1380,15 @@ impl<'a> Flow<'a, '_> {
                 (vec![self.db.bottom(); run.results.len()], false)
             }
         };
+        // What a run that ran out of budget concludes is only what it got to,
+        // and joins what it passes as any run's does, so the final pass reports
+        // that the call couldn't be checked, whichever run ran out
+        if gases[gases.len() - 1].is_exhausted() {
+            self.exhausted.insert(span);
+        }
+        if self.observing() && self.exhausted.contains(&span) {
+            self.undecided(span, Residual::Exhausted);
+        }
         let Run {
             mut solver,
             results,
@@ -2464,7 +2473,8 @@ impl<'a> Flow<'a, '_> {
             return open;
         }
         let solved = {
-            let mut fork = rule.solver.fork(rule.gas);
+            let gas = Gas::default();
+            let mut fork = rule.solver.fork(&gas);
             let raised = fork
                 .raised(raisable)
                 .unwrap_or_else(|_| fork.unresolved().collect());
@@ -2483,7 +2493,10 @@ impl<'a> Flow<'a, '_> {
         expected: Option<Term>,
         shape: Option<Term>,
     ) {
-        let (db, gas) = (rule.db, rule.gas);
+        // A budget of its own, so that what a held argument costs doesn't
+        // leave less for the next. One it runs out of exhausts the rule's.
+        let own = Gas::default();
+        let (db, gas) = (rule.db, &own);
         let lengths = (rule.passed.len(), rule.pending.len());
         let logged = rule.logged.len();
         let delta = {
@@ -2611,6 +2624,9 @@ impl<'a> Flow<'a, '_> {
             ) = (passed, pending, calls, logged, found, isolated);
             fork.commit()
         };
+        if own.is_exhausted() {
+            rule.gas.exhaust();
+        }
         rule.solver.absorb(delta);
     }
 
@@ -3363,7 +3379,8 @@ impl<'a> Flow<'a, '_> {
         alternative: Term,
         bounds: bool,
     ) -> bool {
-        let mut fork = rule.solver.fork(rule.gas);
+        let gas = Gas::default();
+        let mut fork = rule.solver.fork(&gas);
         let (argument, ty) = applied_term(&mut fork, rule.db, class, Kind::Schema);
         fork.constrain(ty, alternative, Provenance::default());
         if fork
@@ -3530,7 +3547,7 @@ impl<'a> Flow<'a, '_> {
         let schema = match candidate {
             Candidate::Closed(_, schema) => Some(schema),
             Candidate::Open(..) => {
-                let (db, gas) = (rule.db, rule.gas);
+                let (db, gas) = (rule.db, &Gas::default());
                 let mut fork = rule.solver.fork(gas);
                 let mut probe = Rule::new(&mut fork, db, gas);
                 probe.blind = true;

@@ -529,7 +529,7 @@ impl<'db> Solver<'db> {
         });
         fork.quiesce();
         if self.gas.is_exhausted() {
-            return Err(Residual::Limit);
+            return Err(Residual::Exhausted);
         }
         let outcome = fork.outcome(constraint);
         let status = outcome.status;

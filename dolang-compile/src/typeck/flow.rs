@@ -591,6 +591,8 @@ struct Flow<'a, 'u> {
     /// The `do` blocks whose values have waited for their parameters and
     /// channels outside a rule that types them (see [`Flow::dynamic_signatures`])
     awaited: FxHashSet<FuncId>,
+    /// The rules, by span, a run of which ran out of its budget
+    exhausted: FxHashSet<Span>,
     /// Whether the running block defaults the rules it leaves undecided
     defaulting: bool,
     /// The first call in the running step or terminal that gave bottom, which
@@ -660,6 +662,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             marked: FxHashSet::default(),
             deferred: FxHashMap::default(),
             awaited: FxHashSet::default(),
+            exhausted: FxHashSet::default(),
             defaulting: false,
             diverged: None,
             results: None,
