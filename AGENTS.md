@@ -755,7 +755,15 @@ a union, but `@(Str | Path)` is. Other forms: `@Dict[Str, Array[Int]]`,
 `@Dict[{name: Str, ?port: Int}]`, `@((Int, ?Int) -> Int)`, `@(:a: | :b:)`.
 `(Int, Str)` is `Tuple[Int, Str]`, and a form with a keyed item is a `Pack`,
 `(name: Str, Int)`. Braces are a schema, never a type: give one to a class, as
-in `Dict[{...}]`, or expand it into a class's items, as in `Record[...{...}]`.
+in `Dict[{...}]`, or include its items among the arguments, as in
+`Record[Int, ...Opts]`.
+
+Type arguments are schema items, so they take quantifiers directly:
+`Tuple[*Str]`, `Pack[host: Str, ?port: Int]`, `Record[*Int, **Str]`, and
+`Record[...]` for any items. `...X` includes only a schema; for any number of a
+type `T`, write `*T`, not `...T`. A type whose schema argument has no default,
+such as `Dict` or `Spread`, takes `Dict[K, V]`, `Spread[T]` or a whole schema,
+never a quantified item like `Dict[**Int]`.
 
 `[]` directly after a `def` or `class` name declares type binders, with optional
 bounds and defaults (`T @ Bound = Default`):
