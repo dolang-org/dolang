@@ -87,11 +87,12 @@ class gets those methods by inheriting one; a class that only implements
 
 ### Collection Protocols
 
-Further protocols describe what a reader of a collection can rely on. Each
-combines the item protocols above, and has variants that add assignment and
-then insertion and removal:
+Further protocols describe what a user of a collection can rely on. Each
+combines the item protocols above. A reading protocol has an assigning
+counterpart, which only writes, and a mutable one, which reads, assigns,
+inserts and removes:
 
-| Reads                   | Also assigns                        | Also inserts and removes      |
+| Reads                   | Assigns                             | Mutable                       |
 | ----------------------- | ----------------------------------- | ----------------------------- |
 | [`Seq[T]`](std.Seq)     | [`AssignSeq[T]`](std.AssignSeq)     | [`MutSeq[T]`](std.MutSeq)     |
 | [`Mixed[S]`](std.Mixed) | [`AssignMixed[S]`](std.AssignMixed) | [`MutMixed[S]`](std.MutMixed) |
@@ -103,6 +104,8 @@ then insertion and removal:
   its entries, and indexes, spreads, and destructures as `S`.
 - A `Map[S]` is a `Mixed[S]` whose items are all keyed, with dictionary methods
   such as `get`, `keys`, and `values`.
+- An assigning protocol sets items without reading them, so a value may read
+  one schema and assign another, as a [`fields`](std.fields) proxy does.
 
 The rest that a pattern captures is a [`SeqRest`](std.SeqRest) when it iterates
 as values, and a [`MixedRest`](std.MixedRest) when it iterates as entries.

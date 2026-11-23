@@ -131,9 +131,9 @@ pub def dict[...Ts @ {*(Sym): Value}] ...pairs @ Ts -> Dict[Ts]
 # Indexing the proxy with a member's symbol reads or sets the member, and
 # unpacking or spreading it reads members by key, so a value without its own
 # [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) can be
-# destructured through `fields`. Iterating it gives `(key, value)` pairs. A
-# member is read when the proxy is indexed, unpacked, spread or iterated, not
-# when it is made.
+# destructured through `fields`. Iterating it gives `(key, value)` pairs, and it
+# has the reading methods of a [`Map`](std.Map), such as `get` and `keys`. A
+# member is read when the proxy is used, not when it is made.
 #
 # ```
 # #[final]
@@ -609,13 +609,14 @@ pub @class Mixed[S @ {...}]:
 do
 
 
-# A [`Mixed`](std.Mixed) supporting assignment, which replaces every value of a
-# key. It need not support adding or removing items.
-pub @class AssignMixed[S @ {...}]: Mixed[S] Assign[S]
+# Assigns a value's positional and keyed items, replacing every value of a key.
+# It need not support reading, adding or removing items; a
+# [`MutMixed`](std.MutMixed) also reads them.
+pub @class AssignMixed[S @ {...}]: Assign[S]
 
 
 # A [`Mixed`](std.Mixed) supporting assignment and removal.
-pub @class MutMixed[S @ {...}]: AssignMixed[S]
+pub @class MutMixed[S @ {...}]: Mixed[S] AssignMixed[S]
   @def delete[K] self @ MutMixed[Deletable[S, K]] key @ K -> Bool
 
   # Removes every value of a key, reporting whether any were present.
@@ -687,22 +688,24 @@ pub @class Map[S @ {*(Value): Value}]: Mixed[S]
   pub def (unpack) self -> MixedRest[S]
 
 
-# A [`fields`](std.fields) proxy, which reads the members in `S` and sets those
-# in `M`. A captured rest spreads and destructures the members left over.
-pub @class FieldProxy[S @ {...}, M @ {...}]:
-  Index[S] Assign[M] MixedRest[S]
+# A [`fields`](std.fields) proxy, a [`Map`](std.Map) of the members in `S` that
+# sets those in `M`. A captured rest spreads and destructures the members left
+# over.
+pub @class FieldProxy[S @ {*(Value): Value}, M @ {*(Value): Value}]:
+  Map[S] AssignMap[M] MixedRest[S]
 do
   # Returns a value that destructures the proxy by key.
   pub def (unpack) self -> MixedRest[S]
 
 
-# A [`Map`](std.Map) supporting assignment, which replaces every value of a key.
-# It need not support adding or removing keys.
-pub @class AssignMap[S @ {*(Value): Value}]: Map[S] AssignMixed[S]
+# Assigns dictionary-like entries, replacing every value of a key. It need not
+# support reading, adding or removing keys; a [`MutMap`](std.MutMap) also reads
+# them.
+pub @class AssignMap[S @ {*(Value): Value}]: AssignMixed[S]
 
 
 # A [`Map`](std.Map) supporting assignment and removal.
-pub @class MutMap[S @ {*(Value): Value}]: AssignMap[S] MutMixed[S]
+pub @class MutMap[S @ {*(Value): Value}]: Map[S] AssignMap[S] MutMixed[S]
 
 
 # An iterable sequence of `T`, which integers index, slices, spreads, and
@@ -719,12 +722,13 @@ pub @class Seq[T]: Iterable[T] Spread[T] Unpack[T, Rest: SeqRest[T]] Index[T]
   pub def (index)[K] self key@K -> IndexItem[{*T}, K]
 
 
-# A [`Seq`](std.Seq) whose items can be replaced, but not added or removed.
-pub @class AssignSeq[T]: Seq[T] Assign[T]
+# Replaces the items of a sequence by integer index. It need not support reading,
+# adding or removing items; a [`MutSeq`](std.MutSeq) also reads them.
+pub @class AssignSeq[T]: Assign[T]
 
 
 # A [`Seq`](std.Seq) whose items can be replaced, added, and removed.
-pub @class MutSeq[T]: AssignSeq[T]
+pub @class MutSeq[T]: Seq[T] AssignSeq[T]
   # Appends values.
   pub def push
     self
