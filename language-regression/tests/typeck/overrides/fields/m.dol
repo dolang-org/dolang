@@ -1,7 +1,10 @@
-# A member keeps its kind when a subclass redeclares it: the runtime rejects a
-# field replaced by a method or property, and a method replaced by a field.
+# A subclass's member replaces the one it inherits whatever its kind, but the
+# checker holds it to the same reads and writes: a field and a method don't
+# replace each other, a property replaces a field only with a getter and a
+# setter, and a field replaces a property as accessors reading and setting it.
 
 pub class Num
+pub class Int: Num
 
 pub class Base
   pub field name @ Num = ...
@@ -34,3 +37,64 @@ pub class Field: Base
 #    |
 # LL |   pub field run @ Num = ...
 #    |             ^^^
+
+# The getter may narrow what's read, but the setter must take all the field holds
+pub class Accessors: Base
+  #[getter]
+  pub def name _self -> Int
+    ...
+
+  #[setter]
+  pub def name _self value @ Num
+    ...
+
+pub class PickySetter: Base
+  #[getter]
+  pub def name _self -> Num
+    # error: `name` does not match `Base.name`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def name _self -> Num
+    #    |           ^^^^
+    ...
+
+  #[setter]
+  pub def name _self value @ Int
+    ...
+
+pub class Sized
+  #[getter]
+  pub def size _self -> Num
+    ...
+
+  #[setter]
+  pub def size _self value @ Num
+    ...
+
+pub class Held: Sized
+  pub field size @ Num = ...
+
+pub class NarrowHeld: Sized
+  pub field size @ Int = ...
+# error: `size` does not match `Sized.size`
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field size @ Int = ...
+#    |             ^^^^
+
+pub class WideHeld: Sized
+  pub field size @ Value = ...
+# error: `size` does not match `Sized.size`
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field size @ Value = ...
+#    |             ^^^^
+
+pub class Measured
+  #[getter]
+  pub def size _self -> Num
+    ...
+
+# Only what's read is required of a field replacing a read-only property
+pub class Measure: Measured
+  pub field size @ Int = ...

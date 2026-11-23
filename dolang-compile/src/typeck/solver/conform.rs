@@ -5,8 +5,9 @@
 //! declared in it, or what it inherits. A class's members are what the runtime
 //! inherits, so a member it only claims through a protocol is missing. Members
 //! are compared by kind: fields invariantly, as they are mutable, methods and
-//! property accessors by their implementations' signatures, and a protocol's
-//! field by a getter and a setter as well as a field. An overload below a
+//! property accessors by their implementations' signatures. A field is also
+//! upheld by a property with a getter and a setter, and a property by a field,
+//! each compared as accessors that read and set the field. An overload below a
 //! required signature satisfies it in place of the implementation, as overloads
 //! are unchecked assertions narrowing it. The supertype's signature
 //! takes the conforming declaration's own type as its receiver, or `Type` of it
@@ -317,14 +318,16 @@ impl Solver<'_> {
                     }
                 }
             }
-            // A protocol's field is upheld by a property that reads and writes it
+            // A field is upheld by a property that reads and writes it: the
+            // getter may narrow what's read, but the setter must take all the
+            // field holds
             (
                 FoundKind::Property {
                     getter: Some(getter),
                     setter: Some(setter),
                 },
                 &FoundKind::Field(field),
-            ) if self.is_protocol(required.class) => {
+            ) => {
                 // A field whose type isn't solved yet, as a structural judgment
                 // leaves its protocol's arguments, is related to what the getter
                 // returns and what the setter takes
@@ -348,6 +351,29 @@ impl Solver<'_> {
                 if let Some(setter) = setter.implementation {
                     let expected = self.rewrite(setter, None, Some(field), None)?;
                     pairs.push((setter, expected, false));
+                }
+            }
+            // A property is upheld by a field, as by accessors that read and
+            // set it: what it holds must be readable, and what's set held
+            (
+                &FoundKind::Field(field),
+                FoundKind::Property {
+                    getter: required_getter,
+                    setter: required_setter,
+                },
+            ) => {
+                let field = self.reify(field)?;
+                for (accessor, value) in [(required_getter, false), (required_setter, true)] {
+                    let Some(signature) = accessor.as_ref().and_then(|s| s.implementation) else {
+                        continue;
+                    };
+                    let (value, result) = match value {
+                        true => (Some(field), None),
+                        false => (None, Some(field)),
+                    };
+                    let actual = self.rewrite(signature, receiver, value, result)?;
+                    let expected = self.rewrite(signature, receiver, None, None)?;
+                    pairs.push((actual, expected, false));
                 }
             }
             _ => return Ok(changed()),

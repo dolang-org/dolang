@@ -191,6 +191,11 @@ class Port
       fail "port must be positive"
 ```
 
+A subclass may override a field with a getter and a setter. The getter may
+return a narrower type, but the setter must accept the field's whole type. A
+field may likewise override a property: its type must fit what the getter
+returns and accept what the setter takes.
+
 Writing a public field may run a setter from a subclass override, so `self` is
 conservatively treated as escaping. A
 [final](../language/classes.md#final-classes) class's public fields can't be
