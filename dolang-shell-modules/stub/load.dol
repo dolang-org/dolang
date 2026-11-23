@@ -1,6 +1,10 @@
 # dolang: strict
 # Loads and executes Do bytecode and registers runtime import handlers.
 
+@import strand:
+  - @ScriptInput
+  - @ScriptOutput
+
 # Decoded and verified Do bytecode, produced by [`load`](load.load).
 #
 # It runs at most once.
@@ -26,8 +30,8 @@ pub class Bytecode
     # Program-specific module importer, called with the requested module name.
     # Input ends immediately and output is discarded while the importer runs.
     :importer @ ((Str, <Value, >Value) -> Value) = ...
-    <Iter[Value]
-    >Sink[Value]
+    <ScriptInput
+    >ScriptOutput
   do -> Value
     ...
 
@@ -185,7 +189,7 @@ pub def run
   # Program-specific module importer, called with the requested module name.
   # Input ends immediately and output is discarded while the importer runs.
   :importer @ ((Str, <Value, >Value) -> Value) = ...
-  <Iter[Value]
-  >Sink[Value]
+  <ScriptInput
+  >ScriptOutput
 do -> Value
   ...

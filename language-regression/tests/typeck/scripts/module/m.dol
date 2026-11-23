@@ -1,0 +1,22 @@
+# A module's top level has neither input nor output, strict or not: any strand
+# may import it.
+
+put 1
+# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL | put 1
+#    | ^^^^^
+
+for _line
+  # error: `Value` has no member `(next)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | for _line
+  #    | ^^^
+  nil
+
+# A def's channels are its own
+pub def writes >Sink[Int]
+  put 1
+  nil

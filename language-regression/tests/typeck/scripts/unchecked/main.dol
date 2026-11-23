@@ -1,0 +1,7 @@
+# A nominee whose module isn't checked leaves a script's channels dynamic.
+
+put 1
+
+for line
+  let _ = line
+  #       ^~~~: flow Unknown

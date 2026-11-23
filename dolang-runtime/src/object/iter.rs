@@ -8,8 +8,11 @@ use crate::{
     call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
+    io::IoCaps,
     object::{
         BoundMethod,
+        interface::Request,
+        io::{provide_bridge, recv_get, recv_mcall},
         protocol::{
             Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext, Unpack,
             abstract_call, abstract_init, instance_get_fallback, instance_mcall_fallback,
@@ -21,7 +24,10 @@ use crate::{
     strand::{Strand, with_scan, with_slots_dynamic},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View},
+    value::{
+        BinEmbryo, Input, Output, Slot, Slots, TypeObject, Value, ValueCell, view::View,
+        with_u8_slice,
+    },
     vm::{AllocExt, Vm},
     with_slots,
 };
@@ -3100,10 +3106,12 @@ impl<'v> Protocol<'v> for NullType {
     ) -> bool {
         // `null` acts as a complete iterator and sink by itself, not merely
         // something an `iter()`/`sink()` call can produce one from -- so it
-        // claims `Iter`/`Sink` themselves, not just `Iterable`/`Sinkable`.
+        // claims `Iter`/`Sink` themselves, not just `Iterable`/`Sinkable`. As a
+        // byte stream it is always at its end and discards what it is written.
         let sings = strand.singletons();
         supertype.eq(strand, &this).unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
+            || supertype.eq(strand, TypeObject::Io).unwrap_or(false)
             || sings.input_iter.eq(strand, supertype).unwrap_or(false)
             || sings.output_iter.eq(strand, supertype).unwrap_or(false)
             || sings.iterable.eq(strand, supertype).unwrap_or(false)
@@ -3119,7 +3127,8 @@ impl<'v> Protocol<'v> for NullType {
     }
 }
 
-/// Singleton iterator/sink that yields no items and discards all items.
+/// Singleton iterator/sink that yields no items and discards all items, and as
+/// an `Io`, reads no bytes and discards those written.
 pub(crate) struct Null;
 
 unsafe impl Collect for Null {
@@ -3210,14 +3219,44 @@ impl<'v> Protocol<'v> for Null {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if field.tag() == sym::INIT_METHOD {
-            BoundMethod::create(strand, &this, field, out);
-            Ok(())
-        } else if classify(field.tag()) == Some(Surface::Sinkable) {
-            sink_get(strand, &this, field, out)
-        } else {
-            iter_get(strand, &this, field, out)
+        match field.tag() {
+            sym::INIT_METHOD
+            | sym::READ_SOME
+            | sym::WRITE_SOME
+            | sym::SEEK
+            | sym::FORK
+            | sym::CLOSE => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            sym::READABLE | sym::WRITABLE => {
+                strand.store(out, true);
+                Ok(())
+            }
+            sym::SEEKABLE | sym::FORKABLE => {
+                strand.store(out, false);
+                Ok(())
+            }
+            sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS | sym::IO => {
+                recv_get(strand, &this, field, out)
+            }
+            tag if classify(tag) == Some(Surface::Sinkable) => sink_get(strand, &this, field, out),
+            _ => iter_get(strand, &this, field, out),
         }
+    }
+
+    /// Provides [`ByteIo`](crate::io::ByteIo) through the `Io` bridge, which calls
+    /// its own `read_some` and `write_some`.
+    fn op_provide<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        request: &mut Request<'v, 's, '_>,
+    ) -> Result<'v, 's, ()> {
+        let (strand, answer) = request.parts();
+        with_slots!(strand, |mut stream| {
+            strand.store(Slot::reborrow(&mut stream), &this);
+            let caps = IoCaps::READ | IoCaps::WRITE;
+            provide_bridge(&mut Request::new(strand, answer), &stream, caps)
+        })
     }
 
     async fn op_mcall<'a, 's>(
@@ -3231,6 +3270,29 @@ impl<'v> Protocol<'v> for Null {
             sym::INIT_METHOD => {
                 unpack!(strand, args => _self_val);
                 Ok(())
+            }
+            // Always at the end of the stream
+            sym::READ_SOME => {
+                unpack!(strand, args => _size);
+                BinEmbryo::new().finish(strand, out);
+                Ok(())
+            }
+            // Discards what it is written, all of it at once
+            sym::WRITE_SOME => {
+                unpack!(strand, args => data);
+                let len = with_u8_slice!(strand, data, |bytes| bytes.len())
+                    .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))?;
+                strand.store(out, len);
+                Ok(())
+            }
+            // The one `null` is never closed
+            sym::CLOSE => {
+                unpack!(strand, args =>);
+                Ok(())
+            }
+            sym::SEEK | sym::FORK => Err(Error::unsupported(strand, "`std.null` doesn't seek")),
+            sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS | sym::IO => {
+                recv_mcall(strand, &this, method, args, out).await
             }
             tag if classify(tag) == Some(Surface::Sinkable) => {
                 sink_mcall(strand, &this, method, args, out).await

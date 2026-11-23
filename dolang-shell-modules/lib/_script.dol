@@ -109,7 +109,7 @@ class Bundle
   # recompiled from its source when there is one. Sources compile with default
   # options, whatever the CLI's prelude and diagnostic levels, so a bundle means
   # the same thing however it is invoked.
-  def load_member self stem @ Str mode @ (:SCRIPT: | Str) <Iter[Value] >Sink[Value] -> Value
+  def load_member self stem @ Str mode @ (:SCRIPT: | Str) <strand.ScriptInput >strand.ScriptOutput -> Value
     let label = "$(self.#path)/$stem.dol"
     let source = self.#members.get "$stem.dol"
     def recompile() -> (Bin | nil)
@@ -151,14 +151,14 @@ class Bundle
       else
         self.#pending[name] = true
         try
-          let module = strand.redirect input: ([] @ Array[Value]) output: $std.null do
+          let module = strand.with_io input: $std.null output: $std.null do
             self.#load_member $stem $name
           modules[name] = module
           module
         finally
           self.#pending.delete $name
 
-  pub def run self <Iter[Value] >Sink[Value] -> Value
+  pub def run self <strand.ScriptInput >strand.ScriptOutput -> Value
     if !(self.#members.contains("main.dol") || self.#members.contains("main.dolc"))
       throw std.RuntimeError "bundle has no main.dol: $(self.#path)"
     self.#load_member main :SCRIPT:
@@ -185,7 +185,7 @@ pub def load
   :diagnose @ compile.Severity = :WARNING:
   :fail @ compile.Severity = :ERROR:
   :cache @ Bool = true
-do -> ((<Iter[Value], >Sink[Value]) -> Value)
+do -> ((<strand.ScriptInput, >strand.ScriptOutput) -> Value)
   let kind = shell.with_host do classify $path script: (mode == :SCRIPT:)
   if let Int(offset) = kind
     let bundle = shell.with_host do read_bundle $path $offset
@@ -212,8 +212,8 @@ pub def run
   :diagnose @ compile.Severity = :WARNING:
   :fail @ compile.Severity = :ERROR:
   :cache @ Bool = true
-  <Iter[Value]
-  >Sink[Value]
+  <strand.ScriptInput
+  >strand.ScriptOutput
 do -> Value
   let program = load $path :prelude :diagnose :fail :cache
   program()
@@ -228,4 +228,4 @@ pub def run_module
   :cache @ Bool = true
 do -> Value
   let program = load $path mode: $name :diagnose :fail :cache
-  strand.redirect input: ([] @ Array[Value]) output: $std.null do program()
+  strand.with_io input: $std.null output: $std.null do program()

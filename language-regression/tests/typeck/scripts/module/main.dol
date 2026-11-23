@@ -1,0 +1,7 @@
+# With nothing nominated, a script's channels are dynamic.
+
+put 1
+
+for line
+  let _ = line
+  #       ^~~~: flow Unknown

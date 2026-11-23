@@ -1,0 +1,66 @@
+# The shell's standard streams and `null` are a script's input and output, and
+# running a script needs a caller with them.
+
+import load shell
+@import proc:
+  - @PipeReceiver
+  - @PipeSender
+
+put 1
+# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+#   --> m.dol:LL:LL
+#    |
+# LL | put 1
+#    | ^^^^^
+
+pub def stdin() -> shell.Input
+  shell.stdin
+
+pub def stdout() -> shell.Output
+  shell.stdout
+
+pub def null_input() -> shell.Input
+  std.null
+
+pub def null_output() -> shell.Output
+  std.null
+
+pub def narrow code @ Bin <Iter[Int] >Sink[Value] -> Value
+  load.run $code
+# error: this call does not fit `(load.Bytecode | std.Bin, ?importer: (std.Str) -> Value, <strand.ScriptInput, >strand.ScriptOutput) -> Value`
+#   --> m.dol:LL:LL
+#    |
+# LL |   load.run $code
+#    |   ^^^^^^^^^^^^^^
+
+pub def scripted code @ Bin <shell.Input >shell.Output -> Value
+  load.run $code
+
+# `with_io` installs `null` as it is
+pub def nulled code @ Bin -> Value
+  strand.with_io input: $std.null output: $std.null do load.run $code
+
+# `redirect` converts its channels to an `Iter` and a `Sink`, which aren't a
+# script's
+pub def redirected code @ Bin -> Value
+  strand.redirect input: $std.null output: $std.null do load.run $code
+# error: this call does not fit `(load.Bytecode | std.Bin, ?importer: (std.Str) -> Value, <strand.ScriptInput, >strand.ScriptOutput) -> Value`
+#   --> m.dol:LL:LL
+#    |
+# LL |   strand.redirect input: $std.null output: $std.null do load.run $code
+#    |                                                         ^^^^^^^^^^^^^^
+
+# A `stream` strand piping strings in is a script's input and output
+pub def streamed code @ Bin -> Value
+  strand.stream do |<PipeReceiver[Str] >PipeSender[Value]|
+    load.run $code
+
+# Not when it reads anything but strings
+pub def streamed_ints code @ Bin -> Value
+  strand.stream do |<PipeReceiver[Int] >PipeSender[Value]|
+    load.run $code
+# error: this call does not fit `?`
+#   --> m.dol:LL:LL
+#    |
+# LL |     load.run $code
+#    |     ^^^^^^^^^^^^^^

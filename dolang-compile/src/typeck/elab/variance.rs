@@ -342,7 +342,7 @@ impl<'t> Collect<'t, '_> {
 
         // A pipe placeholder stands for its nominee applied to its binders in order,
         // so each varies as the binder it fills
-        if let Some(&Some(nominee)) = tables.pipes.get(&id) {
+        if let Some(&Some(nominee)) = tables.nominated.get(&id) {
             let given = tables.binders(id, 0).len();
             let key = |decl, slot| BinderRef { decl, sig: 0, slot };
             for (slot, filled) in sig::positional(tables, nominee)

@@ -210,6 +210,10 @@ fn main() {
         true => [("proc", "PipeSender"), ("proc", "PipeReceiver")],
         false => [("strand", "Sender"), ("strand", "Receiver")],
     };
+    // The shell runs scripts with any input and output its protocols describe.
+    // Without `shell`, as in wasm, a script's channels are dynamic.
+    let scripts =
+        selected(Path::new("stub/shell.dol")).then_some([("shell", "Input"), ("shell", "Output")]);
 
     dolang_private_bundle::bundle(&Bundle {
         roots: &[
@@ -242,6 +246,7 @@ fn main() {
         typelibs: Some(Typelibs {
             name: "typelibs",
             pipes,
+            scripts,
         }),
     });
 }

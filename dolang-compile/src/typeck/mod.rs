@@ -88,9 +88,9 @@ pub struct Check<'u> {
     /// concluded of it already, by [`UnitId`]
     units: Vec<(elab::Shard<'u>, elab::Facts)>,
     modules: FxHashSet<&'u str>,
-    /// The types `strand.PipeSender` and `strand.PipeReceiver` stand for, by module
-    /// and item
-    pipes: [(&'u str, &'u str); 2],
+    /// The types `strand`'s nominated placeholders stand for (see [`Check::pipes`]
+    /// and [`Check::scripts`])
+    nominations: elab::Nominations<&'u str>,
     /// The threads to check units on, if not rayon's global pool
     threads: Option<NonZeroUsize>,
     /// Whether to give the check an [`Analysis`]
@@ -110,7 +110,12 @@ impl<'u> Check<'u> {
         Self {
             units: Vec::new(),
             modules: FxHashSet::default(),
-            pipes: [("strand", "Sender"), ("strand", "Receiver")],
+            nominations: [
+                Some(("strand", "Sender")),
+                Some(("strand", "Receiver")),
+                None,
+                None,
+            ],
             threads: None,
             analysis: false,
             typelibs: false,
@@ -155,11 +160,36 @@ impl<'u> Check<'u> {
     ///
     /// Panics if a typelib was already added; nominate the pipes first.
     pub fn pipes(&mut self, sender: (&'u str, &'u str), receiver: (&'u str, &'u str)) -> &mut Self {
+        self.nominate(0, [sender, receiver])
+    }
+
+    /// Nominate the types `strand.ScriptInput` and `strand.ScriptOutput` stand for,
+    /// each by module and item: the input and output the embedding runs scripts
+    /// with, which a script's or REPL turn's top level reads and writes.
+    ///
+    /// Each placeholder becomes an alias of its nominee. A nominee whose module is
+    /// not checked leaves the placeholder dynamic, as does nominating nothing,
+    /// the default. A module's top level has neither input nor output, whatever
+    /// is nominated.
+    ///
+    /// A typelib whose module is or imports `strand` records the nominations of the
+    /// check that wrote it, which only a check nominating the same types loads.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a typelib was already added; nominate the script channels first.
+    pub fn scripts(&mut self, input: (&'u str, &'u str), output: (&'u str, &'u str)) -> &mut Self {
+        self.nominate(2, [input, output])
+    }
+
+    fn nominate(&mut self, start: usize, nominees: [(&'u str, &'u str); 2]) -> &mut Self {
         assert!(
             !(self.units.iter()).any(|(shard, _)| shard.info.source.is_none()),
-            "pipes are nominated before typelibs are added"
+            "nominations are made before typelibs are added"
         );
-        self.pipes = [sender, receiver];
+        for (slot, nominee) in self.nominations[start..].iter_mut().zip(nominees) {
+            *slot = Some(nominee);
+        }
         self
     }
 
@@ -205,12 +235,13 @@ impl<'u> Check<'u> {
     /// | Kind | Condition |
     /// | ---- | --------- |
     /// | [`ErrorKind::DuplicateModule`](crate::ErrorKind::DuplicateModule) | A module of the same name was already added |
-    /// | [`ErrorKind::Pipes`](crate::ErrorKind::Pipes) | The typelib was written by a check that nominated other pipes (see [`Check::pipes`]) |
+    /// | [`ErrorKind::Pipes`](crate::ErrorKind::Pipes) | The typelib was written by a check that nominated other types (see [`Check::pipes`] and [`Check::scripts`]) |
     pub fn typelib(&mut self, typelib: &Typelib<'u>) -> Result<UnitId, Error> {
         let shard = &typelib.shard;
         if let Some(nominations) = shard.nominations {
             let text = |id: elab::surface::StrId| &*shard.strings[id.index()];
-            if nominations.map(|(module, item)| (text(module), text(item))) != self.pipes {
+            let nominations = nominations.map(|nominee| nominee.map(|(m, i)| (text(m), text(i))));
+            if nominations != self.nominations {
                 return Err(Error(ErrorInfo::Pipes(typelib.module().to_owned())));
             }
         }
@@ -229,15 +260,17 @@ impl<'u> Check<'u> {
     /// The modules a unit needs, sorted and listed once each: those it imports,
     /// by statement or through the prelude bindings it uses, and `std`, which
     /// holds the types the checker designates, such as those of literals. For
-    /// `strand`, they include the modules of the nominated pipe types (see
-    /// [`Check::pipes`]). A unit doesn't need its own module.
+    /// `strand`, they include the modules of the nominated types (see
+    /// [`Check::pipes`] and [`Check::scripts`]). A unit doesn't need its own module.
     pub fn depends(&self, unit: UnitId) -> Vec<&str> {
         let (shard, _) = &self.units[unit.index()];
         let own = shard.info.module;
         let nominees = (own == Some("strand"))
-            .then_some(self.pipes.map(|(module, _)| module))
+            .then_some(self.nominations)
             .into_iter()
-            .flatten();
+            .flatten()
+            .flatten()
+            .map(|(module, _)| module);
         let mut modules: Vec<&str> = (shard.modules.iter())
             .map(|module| &*shard.strings[module.name.index()])
             .chain(["std"])
@@ -293,7 +326,7 @@ impl<'u> Check<'u> {
                 None => (1, "", Some(info.path)),
             }
         });
-        let (mut tables, mut diags) = elab::link(&mut db, units, &order, self.pipes);
+        let (mut tables, mut diags) = elab::link(&mut db, units, &order, self.nominations);
         elab::aliases(&mut tables, &mut diags);
         elab::kinds(&mut tables, &mut diags);
         elab::signatures(&mut tables, &mut diags);
@@ -311,7 +344,7 @@ impl<'u> Check<'u> {
         // Written once settled, with what public declarations settled to
         let typelibs = self
             .typelibs
-            .then(|| typelibs(&tables, &settled, self.pipes));
+            .then(|| typelibs(&tables, &settled, self.nominations));
         // Gather each kind of output across units, in the order the passes ran
         let mut unresolved = Vec::new();
         for output in &mut outputs {
@@ -478,14 +511,14 @@ enum Unwritten {
 fn typelibs(
     tables: &elab::Tables<'_>,
     settled: &Settled,
-    pipes: [(&str, &str); 2],
+    nominations: elab::Nominations<&str>,
 ) -> Vec<Result<Vec<u8>, Unwritten>> {
     let db = r#type::Database::fork(&settled.layer);
     let names = typelib::exported(tables);
-    // The units whose facts can depend on the pipes: the one declaring the
+    // The units whose facts can depend on the nominations: the one declaring the
     // placeholders, and those importing it, directly or not
     let mut depends = vec![false; tables.shards.len()];
-    if let Some(&placeholder) = tables.pipes.keys().next() {
+    if let Some(&placeholder) = tables.nominated.keys().next() {
         depends[tables.unit_of(placeholder).index()] = true;
         let mut changed = true;
         while changed {
@@ -504,7 +537,7 @@ fn typelibs(
     }
     // A nominee's module that isn't checked leaves its placeholder dynamic, which
     // the facts would assume as a missing import's interface would be assumed
-    let unchecked = pipes.into_iter().find(|&(module, _)| {
+    let unchecked = nominations.into_iter().flatten().find(|&(module, _)| {
         !(tables.shards.iter()).any(|shard| shard.info.module == Some(module))
     });
     (tables.shards.iter().enumerate())
@@ -531,14 +564,14 @@ fn typelibs(
             };
             let unit = UnitId::from_index(index);
             let base = tables.base(unit);
-            let pipes = depends[index].then_some(pipes);
+            let nominations = depends[index].then_some(nominations);
             Ok(typelib::write(
                 shard,
                 base,
                 kept,
                 &tables.facts[index],
                 &settled_facts(tables, &db, &names, settled, unit),
-                pipes,
+                nominations,
             ))
         })
         .collect()
@@ -1258,7 +1291,7 @@ impl Checked {
     /// | [`ErrorKind::NotRequested`](crate::ErrorKind::NotRequested) | The check wasn't asked for typelibs with [`Check::typelibs`] |
     /// | [`ErrorKind::NoSource`](crate::ErrorKind::NoSource) | The unit was checked from its typelib |
     /// | [`ErrorKind::NotModule`](crate::ErrorKind::NotModule) | The unit is not a module |
-    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it, or is or imports `strand` and the module of a nominated pipe type wasn't (see [`Check::pipes`]) |
+    /// | [`ErrorKind::MissingImport`](crate::ErrorKind::MissingImport) | The module imports a module that wasn't checked with it, or is or imports `strand` and the module of a nominated type wasn't (see [`Check::pipes`] and [`Check::scripts`]) |
     /// | [`ErrorKind::NotExportable`](crate::ErrorKind::NotExportable) | The module's public interface names a private declaration, which the check's diagnostics report |
     /// | [`ErrorKind::Io`](crate::ErrorKind::Io) | Writing failed |
     pub fn typelib(&self, unit: UnitId, write: &mut dyn Write) -> Result<(), Error> {

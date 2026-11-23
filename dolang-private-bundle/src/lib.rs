@@ -60,6 +60,10 @@ pub struct Typelibs<'a> {
     /// and item (see `typeck::Check::pipes`). The checks that read the typelibs
     /// must nominate the same.
     pub pipes: [(&'a str, &'a str); 2],
+    /// The script channel types the check nominates, input then output, each by
+    /// module and item, if any (see `typeck::Check::scripts`). The checks that
+    /// read the typelibs must nominate the same.
+    pub scripts: Option<[(&'a str, &'a str); 2]>,
 }
 
 /// Bundled modules fail to build on warnings; lints are neither shown nor fatal
@@ -140,7 +144,7 @@ pub fn bundle(spec: &Bundle<'_>) {
         .map(|name| Output::new(spec.out_dir, name, bytecode_namespace));
     let typelib_out = (spec.typelibs.as_ref()).map(|typelibs| {
         let out = Output::new(spec.out_dir, typelibs.name, "dolang.typelib");
-        (out, typelibs.pipes)
+        (out, typelibs.pipes, typelibs.scripts)
     });
     let mut table = fs::File::create(spec.out_dir.join("resources.rs")).unwrap();
     writeln!(table, "&[").unwrap();
@@ -211,9 +215,12 @@ pub fn bundle(spec: &Bundle<'_>) {
 
     // The modules are checked together, and each one's typelib written from the
     // check
-    if let Some((out, [sender, receiver])) = &typelib_out {
+    if let Some((out, [sender, receiver], scripts)) = &typelib_out {
         let mut builder = typeck::Check::new();
         builder.typelibs(true).pipes(*sender, *receiver);
+        if let Some([input, output]) = scripts {
+            builder.scripts(*input, *output);
+        }
         let ids: Vec<_> = units
             .iter()
             .map(|unit| builder.unit(unit).unwrap())

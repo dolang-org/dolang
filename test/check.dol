@@ -197,6 +197,34 @@ def a_module_on_the_path_overrides_its_typelib()
     assert ((printed out).contains "passed: 2 units, 0 diagnostics")
 
 #[test]
+def a_script_reads_and_writes_the_shells_channels()
+  with_temp_dir do |dir|
+    let source = (dir / "script.dol")
+    source.write r|
+      # dolang: strict
+      import load
+      put "out"
+      for line
+        put $line.len
+      strand.with_io input: $std.null output: $std.null do load.run b""
+    let out = BinBuf()
+    run $shell.exe -m compile check --fail warning $source stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert ((printed out).contains "passed:")
+
+#[test]
+def a_modules_top_level_has_no_output()
+  with_temp_dir do |dir|
+    let lib = (dir / "lib")
+    lib.create_dir()
+    (lib / "writes.dol").write "put 1\n"
+    let out = BinBuf()
+    let err = assert_throws $proc.Error do
+      cd $dir do
+        run $shell.exe -m compile check lib/writes.dol --path lib stdout: $out stderr: :STDOUT: mode: :CHUNK:
+    assert_eq $err.rc 1
+    assert ((printed out).contains "this call does not fit")
+
+#[test]
 def strict_check_rejects_compiler_warnings()
   with_temp_dir do |dir|
     let source = (dir / "warn.dol")

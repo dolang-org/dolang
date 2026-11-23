@@ -145,6 +145,7 @@ impl<'v> Protocol<'v> for Io {
                 Method(sym::READ_ALL),
                 Method(sym::READ_ALL_STR),
                 Method(sym::CHUNKS),
+                Method(sym::IO),
                 Method(sym::SINK_METHOD),
                 Method(sym::PUT_METHOD),
                 Method(sym::SINK),
@@ -332,7 +333,8 @@ async fn helper_mcall<'v, 'a, 's>(
             );
             Ok(())
         }
-        sym::SINK_METHOD => {
+        // A stream is its own sink and its own byte view.
+        sym::SINK_METHOD | sym::IO => {
             unpack!(strand, args => stream);
             strand.store(out, &stream);
             Ok(())
@@ -373,7 +375,7 @@ pub(crate) fn recv_get<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     match field.tag() {
-        sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS => {
+        sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS | sym::IO => {
             BoundMethod::create(strand, rcvr, field, out);
             Ok(())
         }

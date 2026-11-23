@@ -266,6 +266,38 @@ fn repl_reassigns_only_prelude_items() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn repl_turns_have_script_channels() {
+    let std = "pub class Sink[T]\npub class Int\npub class Str\n";
+    let strand = "pub @let ScriptInput = ...\npub @let ScriptOutput = ...\n\
+                  pub def put[T] _value@T >std.Sink[T]\n  nil\n";
+    let shell =
+        "import std\npub class Ints: std.Sink[std.Int]\npub class Strs: std.Sink[std.Str]\n";
+    let module = |name: &'static str| Mode::Module { name: name.into() };
+    let errors = |mode: Mode<'static>, output: &'static str| {
+        let units = [
+            config(module("std")).unit(Path::new("std.dol"), std),
+            config(module("strand")).unit(Path::new("strand.dol"), strand),
+            config(module("shell")).unit(Path::new("shell.dol"), shell),
+            config(mode).unit(Path::new("turn.dol"), "import strand\nstrand.put 1\n"),
+        ];
+        let mut checker = typeck::Check::new();
+        checker.scripts(("shell", "Ints"), ("shell", output));
+        let ids = units.each_ref().map(|unit| checker.unit(unit).unwrap());
+        // The minimal `std` misses what the checker requires, which it reports in
+        // `std`
+        (checker.run().diagnostics())
+            .filter(|diag| diag.span().unit() == Some(ids[3]))
+            .count()
+    };
+    // A REPL turn writes the script output the embedding nominates
+    assert_eq!(errors(Mode::Repl, "Ints"), 0);
+    assert_eq!(errors(Mode::Repl, "Strs"), 1);
+    // A module's top level has no output
+    assert_eq!(errors(module("turn"), "Ints"), 1);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn owned_unit_is_shared_between_threads() {
     let path = Path::new("m.dol");
     let module = || Mode::Module {

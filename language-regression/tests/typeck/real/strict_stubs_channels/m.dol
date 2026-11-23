@@ -14,10 +14,11 @@ pub def scoped_silent() -> nil
   #    |     ^^^^^^^
   nil
 
-# A loaded program may write anything, so its caller needs an output for `Value`
+# A loaded program runs with its caller's channels, so the caller needs a
+# script's input and output
 pub def loads_silent code @ Bin -> Value
   load.run $code
-# error: this call does not fit `(load.Bytecode | std.Bin, ?importer: (std.Str) -> Value, <std.Iter[Value], >std.Sink[Value]) -> Value`
+# error: this call does not fit `(load.Bytecode | std.Bin, ?importer: (std.Str) -> Value, <strand.ScriptInput, >strand.ScriptOutput) -> Value`
 #   --> m.dol:LL:LL
 #    |
 # LL |   load.run $code

@@ -42,7 +42,7 @@ impl Shard<'_> {
         self.exports.visit(ids);
         self.values.visit(ids);
         self.modules.visit(ids);
-        for (module, item) in self.nominations.iter_mut().flatten() {
+        for (module, item) in self.nominations.iter_mut().flatten().flatten() {
             ids.str(module);
             ids.str(item);
         }

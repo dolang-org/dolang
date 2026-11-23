@@ -67,7 +67,7 @@ do -> Value
 
   args.with args: $argv ...common ...spec
 
-def load_rules path@Str <Iter[Value] >Sink[Value] -> Rules
+def load_rules path@Str <strand.ScriptInput >strand.ScriptOutput -> Rules
   let rules = exec.run $path
   if !(type rules Dict)
     throw std.TypeError "$path must return a Dict of tasks"
@@ -76,8 +76,8 @@ def load_rules path@Str <Iter[Value] >Sink[Value] -> Rules
 def with_rules[R]
   path @ Str
   block @ (Rules -> R)
-  <Iter[Value]
-  >Sink[Value]
+  <strand.ScriptInput
+  >strand.ScriptOutput
 do -> R
   let previous = rules_key.value
   if (previous != nil)
@@ -140,7 +140,7 @@ do -> nil
 # Runs a dodo task from `dodo.dol` in the current directory,
 # equivalent to running `dolang -m dodo ...argv`, but correctly
 # handles re-entrancy.
-pub def run *argv@Str <Iter[Value] >Sink[Value] -> nil
+pub def run *argv@Str <strand.ScriptInput >strand.ScriptOutput -> nil
   args.with args: $argv
     help: run tasks
     - flag: list

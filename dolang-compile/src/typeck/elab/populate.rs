@@ -1070,7 +1070,7 @@ impl<'t, 'u> Populate<'t, 'u> {
     /// The body of a pipe placeholder: its nominee applied to the placeholder's
     /// binders in order, or `Unknown` without one
     fn pipe(&mut self, group: Group<'_>, placeholder: DeclId) -> TypeId {
-        let Some(nominee) = self.tables.pipes[&placeholder] else {
+        let Some(nominee) = self.tables.nominated[&placeholder] else {
             return self.unknown(Kind::Type);
         };
         let mut given = vec![None; self.tables.binders(nominee, 0).len()];
@@ -1309,14 +1309,14 @@ impl<'t, 'u> Populate<'t, 'u> {
             DeclNode::Alias(alias) => {
                 let kind = tables.alias_kind(id).expect("every alias has a kind").kind;
                 let body = match alias.body {
-                    None if tables.pipes.contains_key(&id) => self.pipe(group, id),
+                    None if tables.nominated.contains_key(&id) => self.pipe(group, id),
                     None => self.db.intern(Type::Decl(id)),
                     // An alias on or reaching a cycle, already diagnosed
                     Some(_) if tables.alias(id) == Some(&Head::Error) => self.unknown(kind),
                     Some(body) => self.site(group, body, kind, 0),
                 };
                 // A pipe placeholder is transparent, standing for its nominee
-                let decl_kind = match tables.pipes.contains_key(&id) {
+                let decl_kind = match tables.nominated.contains_key(&id) {
                     true => DeclKind::Alias,
                     false => decl.kind,
                 };

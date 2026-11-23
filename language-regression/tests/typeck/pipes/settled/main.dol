@@ -4,5 +4,5 @@
 import m
 
 let counted = m.counted
-#   ^~~~~~~: flow (<strand.PipeReceiver[std.Int], >Unknown) -> std.Int
+#   ^~~~~~~: flow (<strand.PipeReceiver[std.Int], >Value) -> std.Int
 counted

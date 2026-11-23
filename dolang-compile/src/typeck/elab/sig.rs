@@ -16,8 +16,8 @@
 
 use super::{
     Ambient, BadNominee, BinderRef, DeclNode, Designated, Diag, KindOf, MisdeclaredIntrinsic,
-    MissingAnnotation, MissingIntrinsic, PIPES, ParamTy, Referent, RestSlot, Sig, Slot, Tables,
-    Target, UnitDiag,
+    MissingAnnotation, MissingIntrinsic, PLACEHOLDERS, ParamTy, Referent, RestSlot, Sig, Slot,
+    Tables, Target, UnitDiag,
     surface::{BinderKind, Class, Decorator, Member, MemberScope, Method, ParamKind, Signature},
 };
 use crate::diag::Span;
@@ -95,15 +95,17 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         .designated
         .iter()
         .filter_map(|(&decl, designated)| match designated {
-            Designated::PipeSender => Some((decl, PIPES[0])),
-            Designated::PipeReceiver => Some((decl, PIPES[1])),
+            Designated::PipeSender => Some((decl, PLACEHOLDERS[0])),
+            Designated::PipeReceiver => Some((decl, PLACEHOLDERS[1])),
+            Designated::ScriptInput => Some((decl, PLACEHOLDERS[2])),
+            Designated::ScriptOutput => Some((decl, PLACEHOLDERS[3])),
             _ => None,
         })
         .collect();
     placeholders.sort();
     for (placeholder, name) in placeholders {
         let nominee = nominate(tables, placeholder, name, diags);
-        tables.pipes.insert(placeholder, nominee);
+        tables.nominated.insert(placeholder, nominee);
     }
 }
 
@@ -503,6 +505,8 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
     Some(match (module, tables.name(owner.unit, name)) {
         ("strand", "PipeSender") => (Designated::PipeSender, DeclKind::OpaqueAlias),
         ("strand", "PipeReceiver") => (Designated::PipeReceiver, DeclKind::OpaqueAlias),
+        ("strand", "ScriptInput") => (Designated::ScriptInput, DeclKind::OpaqueAlias),
+        ("strand", "ScriptOutput") => (Designated::ScriptOutput, DeclKind::OpaqueAlias),
         ("strand", "PipeStages") => (Designated::PipeStages, DeclKind::OpaqueAlias),
         ("strand", "pipeline") => (Designated::Pipeline, DeclKind::Function),
         ("std", "Iter") => (Designated::Iter, DeclKind::Class),

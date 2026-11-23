@@ -132,7 +132,7 @@ use super::{
         Multiplicity, SchemaItem, Shared, SymbolId, Type, TypeId, UnitId,
     },
 };
-use crate::{RestKind, diag::Span, typeck::report::Report};
+use crate::{Mode, RestKind, diag::Span, typeck::report::Report};
 
 /// What flow concluded about a unit
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
@@ -991,10 +991,14 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// The ambient channels a function's calls pass, when it declares them. A `do`
     /// block's omitted channels are inferred like its parameters, as what the
-    /// calls it's passed to give them, which its block then depends on.
+    /// calls it's passed to give them, which its block then depends on. A unit's
+    /// top level has those of its mode (see [`Flow::top_channels`]).
     fn channels(&mut self, at: At) -> (Option<TypeId>, Option<TypeId>) {
         let Some(declared) = self.declared[at.func.index()].clone() else {
-            return (None, None);
+            return match self.ir.func(at.func).kind {
+                FuncKind::Module(unit) => self.top_channels(unit),
+                _ => (None, None),
+            };
         };
         let signature = self.ir.func(at.func).signature.as_ref();
         let (input, output) = signature.map_or((None, None), |sig| (sig.input, sig.output));
@@ -1013,6 +1017,27 @@ impl<'a, 'u> Flow<'a, 'u> {
             }
         };
         (input, output)
+    }
+
+    /// A unit's top-level channels. A module has none, as `Value`: any strand may
+    /// import it, and the runtime isolates its body. A script or REPL turn has the
+    /// embedding's script channels, `strand.ScriptInput` and `strand.ScriptOutput`,
+    /// which are dynamic when nothing is nominated or `strand` isn't checked.
+    fn top_channels(&self, unit: UnitId) -> (Option<TypeId>, Option<TypeId>) {
+        let module = (self.tables.info(unit).source)
+            .is_none_or(|source| matches!(source.mode, Mode::Module { .. }));
+        if module {
+            let top = Some(self.db.top());
+            return (top, top);
+        }
+        let channel = |role| {
+            let decl = self.designated(role)?;
+            Some(self.db.intern(Type::Decl(decl)))
+        };
+        (
+            channel(Designated::ScriptInput),
+            channel(Designated::ScriptOutput),
+        )
     }
 
     /// The ambient channels a call passes: the caller's, or `Value` for each to

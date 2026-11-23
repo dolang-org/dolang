@@ -12,6 +12,22 @@ import io:
   - Io
 @import inspect term
 
+# The input a script runs with: strings, with their bytes through
+# [`io`](shell.Input.io). [`stdin`](shell.stdin) and [`null`](std.null) are
+# inputs, as is the receiver of a [`stream`](strand.stream) strand reading
+# strings.
+pub @class Input: Iter[Str]
+  # Returns the input's byte view.
+  pub def io self -> Io
+
+# The output a script runs with: any value, with bytes written through
+# [`io`](shell.Output.io). [`stdout`](shell.stdout), [`null`](std.null) and
+# any other [`Io`](io.Io) are outputs, as is the sender of a
+# [`stream`](strand.stream) strand writing any value.
+pub @class Output: Sink[Value]
+  # Returns the output's byte view.
+  pub def io self -> Io
+
 # The process's standard input.
 #
 # Obtained as [`shell.stdin`](shell.stdin).

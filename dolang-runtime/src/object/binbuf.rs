@@ -739,6 +739,7 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::READ_ALL),
                 Method(sym::READ_ALL_STR),
                 Method(sym::CHUNKS),
+                Method(sym::IO),
             ],
         })
     }

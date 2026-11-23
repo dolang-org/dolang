@@ -11,7 +11,8 @@ use rustc_hash::FxHashMap;
 
 use super::{
     Bases, BinderRef, Decl, DeclAst, DeclNode, Diag, Facts, ImportCycle, MissingExport,
-    MissingModule, PIPES, Referent, Role, Shard, Site, Tables, Target, UnitDiag, UnitInfo,
+    MissingModule, Nominations, PLACEHOLDERS, Referent, Role, Shard, Site, Tables, Target,
+    UnitDiag, UnitInfo,
     ids::Rebase,
     interface::PrivateInInterface,
     local,
@@ -180,13 +181,13 @@ pub(crate) fn collect<'u>(unit: &'u Unit<'u>) -> Shard<'u> {
 /// Link the units' shards and facts, by [`UnitId`], into the tables, allocating
 /// every declaration in `db`, and resolve the type names that go through imports.
 /// The units are linked in `order`, which fixes the order of declarations and
-/// diagnostics. `pipes` nominates the types `strand`'s pipe placeholders stand for,
-/// by module and item.
+/// diagnostics. `nominations` nominates the types `strand`'s nominated placeholders
+/// stand for.
 pub(crate) fn link<'u>(
     db: &mut Database,
     units: Vec<(Shard<'u>, Facts)>,
     order: &[UnitId],
-    pipes: [(&'u str, &'u str); 2],
+    nominations: Nominations<&'u str>,
 ) -> (Tables<'u>, Vec<UnitDiag>) {
     let count = units.len();
     let mut units: Vec<_> = units.into_iter().map(Some).collect();
@@ -288,7 +289,7 @@ pub(crate) fn link<'u>(
         }
         referents
     };
-    let nominees = fixup.nominees(&provided, pipes);
+    let nominees = fixup.nominees(&provided, nominations);
     let mut diags = fixup.diags;
     diags.extend(leaks);
     tables.nominees = nominees;
@@ -1966,18 +1967,22 @@ struct Fixup<'a, 'u> {
 
 impl<'a, 'u> Fixup<'a, 'u> {
     /// Resolve each nominee as if its placeholder imported it. A placeholder that
-    /// isn't an opaque alias is diagnosed when designated.
+    /// isn't an opaque alias is diagnosed when designated, and one with no nominee
+    /// stays dynamic.
     fn nominees(
         &mut self,
         provided: &FxHashMap<&str, UnitId>,
-        pipes: [(&'a str, &'a str); 2],
+        nominations: Nominations<&'a str>,
     ) -> FxHashMap<&'static str, Referent> {
         let mut nominees = FxHashMap::default();
         let Some(&strand) = provided.get("strand") else {
             return nominees;
         };
         let recorded = (self.tables.shards.iter()).any(|shard| shard.nominations.is_some());
-        for (placeholder, (module, item)) in PIPES.into_iter().zip(pipes) {
+        let nominated = PLACEHOLDERS.into_iter().zip(nominations);
+        for (placeholder, (module, item)) in
+            nominated.filter_map(|(placeholder, nominee)| Some((placeholder, nominee?)))
+        {
             if let Some(&Export {
                 span,
                 target: Target::Local(Referent::Decl(decl)),

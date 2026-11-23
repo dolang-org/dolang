@@ -59,8 +59,14 @@ pub(crate) use specialize::specialize;
 pub(crate) use variance::variances;
 pub(crate) use wellformed::{Unresolved, recursion, settled_members, wellformed};
 
-/// The names of `strand`'s pipe placeholders, sender first
-pub(crate) const PIPES: [&str; 2] = ["PipeSender", "PipeReceiver"];
+/// The names of `strand`'s nominated placeholders: its pipes, sender first, then a
+/// script's input and output
+pub(crate) const PLACEHOLDERS: [&str; 4] =
+    ["PipeSender", "PipeReceiver", "ScriptInput", "ScriptOutput"];
+
+/// What each of `strand`'s [`PLACEHOLDERS`] stands for, in their order, as its
+/// module and item; `None` leaves a placeholder dynamic
+pub(crate) type Nominations<T> = [Option<(T, T)>; 4];
 
 /// What collection learns of the checked units, and what elaboration concludes
 /// about their declarations.
@@ -79,12 +85,12 @@ pub(crate) struct Tables<'u> {
     bases: Vec<Bases>,
     /// The declarations of `std` and `strand` the checker treats specially
     pub(crate) designated: FxHashMap<DeclId, Designated>,
-    /// What each of `strand`'s pipe placeholders nominates, by name, resolved where
-    /// the placeholder is exported
+    /// What each of `strand`'s nominated placeholders nominates, by name, resolved
+    /// where the placeholder is exported
     pub(crate) nominees: FxHashMap<&'static str, Referent>,
-    /// The type each designated pipe placeholder stands for, or `None` for a
-    /// nominee that isn't checked or can't stand for it
-    pub(crate) pipes: FxHashMap<DeclId, Option<DeclId>>,
+    /// The type each designated nominated placeholder stands for, or `None` for
+    /// one with no nominee, or one that isn't checked or can't stand for it
+    pub(crate) nominated: FxHashMap<DeclId, Option<DeclId>>,
 }
 
 /// What the checker knows of a unit's declarations and the names written in them.
@@ -134,10 +140,10 @@ pub(crate) struct Shard<'u> {
     /// Whether a typelib of the unit keeps each of its declarations, by offset, for
     /// a unit with source whose interface names no private declaration
     pub(crate) kept: Option<BitBox>,
-    /// The types `strand`'s pipe placeholders stood for, each as its module and
-    /// item, when the facts a typelib records were concluded, if they depend on
-    /// them. `None` for a unit with source.
-    pub(crate) nominations: Option<[(StrId, StrId); 2]>,
+    /// The types `strand`'s nominated placeholders stood for when the facts a
+    /// typelib records were concluded, if they depend on them. `None` for a unit
+    /// with source.
+    pub(crate) nominations: Option<Nominations<StrId>>,
 }
 
 impl Shard<'_> {
@@ -214,7 +220,7 @@ impl<'u> Tables<'u> {
             bases,
             designated: FxHashMap::default(),
             nominees: FxHashMap::default(),
-            pipes: FxHashMap::default(),
+            nominated: FxHashMap::default(),
         }
     }
 
@@ -720,6 +726,10 @@ pub(crate) enum Designated {
     PipeSender,
     /// `strand.PipeReceiver`, which stands for the embedding's pipe receiver
     PipeReceiver,
+    /// `strand.ScriptInput`, which stands for the embedding's script input
+    ScriptInput,
+    /// `strand.ScriptOutput`, which stands for the embedding's script output
+    ScriptOutput,
     /// `strand.PipeStages`, which a pipeline's stages are declared as
     PipeStages,
     /// `strand.pipeline`, whose calls the checker types by a rule of its own

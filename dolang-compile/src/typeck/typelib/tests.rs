@@ -23,13 +23,21 @@ use crate::{
 };
 
 /// Encode the surface of a shard that is not yet linked, with its facts and the
-/// pipe nominations it records.
+/// nominations it records.
 fn encode(shard: Shard<'_>, facts: &Facts) -> Vec<u8> {
     let (kept, _) = shard.interface();
     let text = |id: StrId| &*shard.strings[id.index()];
-    let pipes =
-        (shard.nominations).map(|pipes| pipes.map(|(module, item)| (text(module), text(item))));
-    super::write(&shard, &Bases::local(), &kept, facts, &facts.settled, pipes)
+    let nominations = (shard.nominations).map(|nominations| {
+        nominations.map(|nominee| nominee.map(|(module, item)| (text(module), text(item))))
+    });
+    super::write(
+        &shard,
+        &Bases::local(),
+        &kept,
+        facts,
+        &facts.settled,
+        nominations,
+    )
 }
 
 /// Write a unit's typelib from a check of it with an empty module of each name in
@@ -1035,9 +1043,12 @@ fn records_pipes() {
     let nominations = |bytes: &[u8]| {
         let (shard, _) = read(bytes).unwrap();
         let text = |id: StrId| shard.strings[id.index()].to_string();
-        (shard.nominations).map(|pipes| pipes.map(|(module, item)| (text(module), text(item))))
+        (shard.nominations).map(|nominations| {
+            nominations.map(|nominee| nominee.map(|(module, item)| (text(module), text(item))))
+        })
     };
-    let expected = Some(PIPES.map(|(module, item)| (module.to_owned(), item.to_owned())));
+    let [sender, receiver] = PIPES.map(|(module, item)| Some((module.to_owned(), item.to_owned())));
+    let expected = Some([sender, receiver, None, None]);
     assert_eq!(nominations(&strand), expected);
     assert_eq!(nominations(&dep), expected);
     assert_eq!(nominations(&proc), None);
@@ -1092,7 +1103,7 @@ fn rejects_other_pipes() {
     assert!(matches!(error.kind(), ErrorKind::Pipes));
     assert_eq!(
         error.to_string(),
-        "typelib of `strand` was written with other pipe types"
+        "typelib of `strand` was written with other nominated types"
     );
     let mut builder = Check::new();
     builder.pipes(PIPES[0], PIPES[1]);
@@ -1101,13 +1112,62 @@ fn rejects_other_pipes() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
-#[should_panic = "pipes are nominated before typelibs are added"]
+#[should_panic = "nominations are made before typelibs are added"]
 fn pipes_before_typelibs() {
     let bytes = typelib();
     let typelib = Typelib::read(&bytes).unwrap();
     let mut builder = Check::new();
     builder.typelib(&typelib).unwrap();
     builder.pipes(PIPES[0], PIPES[1]);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn records_scripts() {
+    const STRAND: &str = "pub @let ScriptInput = ...
+pub @let ScriptOutput = ...
+";
+    const SHELL: &str = "pub @class Input
+pub @class Output
+";
+    const SCRIPTS: [(&str, &str); 2] = [("shell", "Input"), ("shell", "Output")];
+    let strand = compile(
+        STRAND,
+        Mode::Module {
+            name: "strand".into(),
+        },
+    );
+    let shell = compile(
+        SHELL,
+        Mode::Module {
+            name: "shell".into(),
+        },
+    );
+    let std = compile(
+        "pub @class Int
+",
+        Mode::Module { name: "std".into() },
+    );
+    let mut builder = Check::new();
+    builder.typelibs(true).scripts(SCRIPTS[0], SCRIPTS[1]);
+    builder.unit(&std).unwrap();
+    let id = builder.unit(&strand).unwrap();
+    builder.unit(&shell).unwrap();
+    // The script nominees' module is needed for `strand`
+    assert_eq!(builder.depends(id), ["shell", "std"]);
+    let check = builder.run();
+    let mut bytes = Vec::new();
+    check.typelib(id, &mut bytes).unwrap();
+    let typelib = Typelib::read(&bytes).unwrap();
+    // Only a check nominating the same script channels loads it
+    let error = Check::new().typelib(&typelib).unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Pipes));
+    let mut other = Check::new();
+    other.scripts(SCRIPTS[1], SCRIPTS[0]);
+    assert!(other.typelib(&typelib).is_err());
+    let mut same = Check::new();
+    same.scripts(SCRIPTS[0], SCRIPTS[1]);
+    same.typelib(&typelib).unwrap();
 }
 
 #[test]
@@ -1159,7 +1219,7 @@ fn missing_nominee() {
     assert!(matches!(error.kind(), ErrorKind::MissingImport));
     assert_eq!(
         error.to_string(),
-        "module `proc` of a nominated pipe type was not checked"
+        "module `proc` of a nominated type was not checked"
     );
     // What doesn't depend on the pipes is written
     check.typelib(ids[1], &mut Vec::new()).unwrap();

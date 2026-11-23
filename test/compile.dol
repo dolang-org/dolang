@@ -1357,10 +1357,10 @@ def check_names_missing_modules()
   let lib = compile.compile "a.dol" "import b.c\n" module: a typecheck: true
   check.add $lib
   assert_eq [...check.missing()] ["b.c", "std"]
-  # `strand`'s pipes are `proc`'s
+  # `strand`'s pipes are `proc`'s, and its script channels `shell`'s
   let strand = compile.compile "strand.dol" "" module: strand typecheck: true
   check.add $strand
-  assert_eq [...check.missing()] ["b.c", "proc", "std"]
+  assert_eq [...check.missing()] ["b.c", "proc", "shell", "std"]
   # A typelib needs what its module did
   let user = compile.compile "user.dol" "import a\n" module: user typecheck: true
   check.add $user

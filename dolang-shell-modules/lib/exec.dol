@@ -166,7 +166,7 @@ class Operation
     else
       compile.compile "$(self.#path)" $source module: $name prelude: $prelude
 
-  def run_loaded self program @ load.Bytecode <Iter[Value] >Sink[Value] -> Value
+  def run_loaded self program @ load.Bytecode <strand.ScriptInput >strand.ScriptOutput -> Value
     let module = Namespace $self.#inject
     let synthetic = self.#synthetic
     let imports = self.#import
@@ -176,7 +176,7 @@ class Operation
       else
         imports.get $name else: do load.import $name
 
-  def compile_cached self <Iter[Value] >Sink[Value] -> Value
+  def compile_cached self <strand.ScriptInput >strand.ScriptOutput -> Value
     let compiled = self.#compile()
     let failed = false
     for diag = compiled.diagnostics
@@ -192,7 +192,7 @@ class Operation
     self.#cache.write $bytecode
     self.#run_loaded $ load.load $bytecode
 
-  pub def run self <Iter[Value] >Sink[Value] -> Value
+  pub def run self <strand.ScriptInput >strand.ScriptOutput -> Value
     if cache_usable $self.#cache $self.#path
       let program = try
         load.load $ self.#cache.read()
@@ -244,8 +244,8 @@ pub def run
   # Identity the script sees as [`shell.program`](shell.program). Defaults to
   # the caller's.
   :program @ (Str | fs.Path) = nil
-  <Iter[Value]
-  >Sink[Value]
+  <strand.ScriptInput
+  >strand.ScriptOutput
 do -> Value
   let op = Operation $path name: nil :app :prelude :inject :import :diagnose :fail
   with_invocation $args $program do op.run()
@@ -299,7 +299,7 @@ pub def module
 do -> std.Module
   let name = module_name (fs.Path path) $name
   let op = Operation $path :name :app :prelude :inject :import :diagnose :fail
-  let module = strand.redirect input: $std.null output: $std.null do
+  let module = strand.with_io input: $std.null output: $std.null do
     with_invocation $args $program do op.run()
   if type(module, std.Module)
     module

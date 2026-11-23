@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     elab::{
-        Bases, BinderRef, Decl, DeclNode, Facts, Referent, Role, Shard, Target,
+        Bases, BinderRef, Decl, DeclNode, Facts, Nominations, Referent, Role, Shard, Target,
         surface::{
             Binder, Decorator, LinkId, Member, ModuleId, ParamKind, Ref, SiteId, StrId, TypeExpr,
             TypeParam,
@@ -54,7 +54,7 @@ pub(crate) use types::{Encode as EncodeTypes, Form, Settled, exported};
 const MAGIC: [u8; 8] = *b"\xffdotypel";
 /// The format's version, which changes with any change to the format. It isn't 0,
 /// which the bytes after the magic of an older typelib would read as.
-const VERSION: u16 = 16;
+const VERSION: u16 = 17;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 struct Header {
@@ -96,16 +96,16 @@ impl fmt::Display for Invalid {
 
 /// Write the typelib of what `kept` keeps of a module's shard, whose IDs start at
 /// `base`, with the facts concluded about it, what its public decorated
-/// declarations settled to, and the pipe nominations they depend on, if any.
+/// declarations settled to, and the nominations they depend on, if any.
 pub(crate) fn write(
     shard: &Shard<'_>,
     base: &Bases,
     kept: &BitSlice,
     facts: &Facts,
     settled: &Settled,
-    pipes: Option<[(&str, &str); 2]>,
+    nominations: Option<Nominations<&str>>,
 ) -> Vec<u8> {
-    let (content, _) = wire::Encode::new(shard, base, kept, facts, settled, pipes).content();
+    let (content, _) = wire::Encode::new(shard, base, kept, facts, settled, nominations).content();
     let out = postcard::to_stdvec(&HEADER).expect("a header serializes");
     postcard::to_extend(&content, out).expect("a surface serializes")
 }
