@@ -3793,6 +3793,30 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
     ...
 
   # Spreads the remaining items positionally.
+  #
+  # A subclass that overrides `(spread)` defers to this behavior by returning
+  # `Iter.(spread) $self`.
+  #
+  # ## Example
+  #
+  # ```
+  # class Countdown: Iter[Int]
+  #   pub field n = 3
+  #   pub field spreads = 0
+  #
+  #   def (next) self
+  #     if (self.n == 0) => throw IterStop()
+  #     self.n = (self.n - 1)
+  #     self.n
+  #
+  #   def (spread) self
+  #     self.spreads = (self.spreads + 1)
+  #     Iter.(spread) $self
+  #
+  # let countdown = Countdown()
+  # assert_eq [...countdown] [2, 1, 0]
+  # assert_eq $countdown.spreads 1
+  # ```
   pub def (spread) self -> Spread[T]
     ...
 
