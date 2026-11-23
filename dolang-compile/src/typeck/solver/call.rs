@@ -107,19 +107,10 @@ impl Solver<'_> {
                 for (index, &member) in members.iter().enumerate() {
                     let (callee, step) = match member {
                         UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
-                        _ if self.rigid(member.id())?.is_some() => {
-                            let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
-                                return Err(Residual::Unsupported(
-                                    "a projection of a rigid without a bound",
-                                )
-                                .into());
-                            };
-                            // The key may refer to the view's binders
-                            let projected =
-                                self.db.intern(Type::Union(vec![member.with(bound)].into()));
-                            (view.child(projected), Step::RigidBound)
-                        }
-                        _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
+                        // A projection is called as what it widens to
+                        _ => self
+                            .widened_projection(view, member)?
+                            .ok_or(Residual::Unsupported("an unevaluated projection"))?,
                     };
                     derived.push((callee, step));
                 }

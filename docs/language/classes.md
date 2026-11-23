@@ -1098,3 +1098,7 @@ assert_eq (d.(get) :foo:) 42
 d.(set) :baz: 99
 assert_eq $d.baz 99
 ```
+
+Calling `x.(get) name` or `x.(set) name value` accesses the field by name, as
+`x.name` and `x.name = value` do. It reaches the class's own `(get)` or `(set)`
+only when `x` has no member of that name.

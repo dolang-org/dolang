@@ -1186,6 +1186,21 @@ impl<'db> Solver<'db> {
         self.abstract_bounds(of).into_iter().next()
     }
 
+    /// The first bound of a term that is a rigid in scope or a skolem, closed,
+    /// with the step that reduces it, or `None` if it's neither or unbounded
+    fn closed_abstract_bound(&self, term: Term) -> Result<Option<(TypeId, Step)>, Issue> {
+        match self.head(term) {
+            Ok(Head::Skolem(id)) => Ok(self
+                .abstract_bound(Abstract::Skolem(id))
+                .and_then(|(bound, step)| Some((self.reify(bound).ok()?, step)))),
+            Ok(Head::Structural(view)) if matches!(self.rigid(view.ty), Ok(Some(_))) => {
+                Ok(self.rigid_bounds(view.ty).first().cloned())
+            }
+            Ok(_) | Err(Issue::Residual(_)) => Ok(None),
+            Err(issue) => Err(issue),
+        }
+    }
+
     /// Walk a term to the target declaration, carrying substitutions. A rigid in
     /// scope continues through its bound.
     pub(crate) fn reach(&self, term: Term, target: DeclId) -> Result<Reach, Issue> {
@@ -1407,15 +1422,27 @@ impl<'db> Solver<'db> {
     /// alternative.
     pub(crate) fn alternatives(&self, term: Term) -> Option<Vec<Term>> {
         let mut alternatives = Vec::new();
-        self.collect_alternatives(term, &mut alternatives, 0)
+        self.collect_alternatives(term, &mut alternatives, false, 0)
             .then(|| alternatives.into_iter().flatten().collect())
     }
 
     /// [`Self::alternatives`] of a closed type, with `None` among them for a
     /// projection or an alternative that can't be reified
     pub(crate) fn closed_alternatives(&self, ty: TypeId) -> Option<Vec<Option<TypeId>>> {
+        self.reified_alternatives(ty, false)
+    }
+
+    /// [`Self::closed_alternatives`] of a receiver, a member use of which is made
+    /// of each alternative. A projection's use is made of what it widens to (see
+    /// [`Self::widened_projection`]), as a rigid's is of its bound, so only one
+    /// that can't be widened is `None`.
+    pub(crate) fn member_alternatives(&self, ty: TypeId) -> Option<Vec<Option<TypeId>>> {
+        self.reified_alternatives(ty, true)
+    }
+
+    fn reified_alternatives(&self, ty: TypeId, widen: bool) -> Option<Vec<Option<TypeId>>> {
         let mut alternatives = Vec::new();
-        if !self.collect_alternatives(self.closed(ty), &mut alternatives, 0) {
+        if !self.collect_alternatives(self.closed(ty), &mut alternatives, widen, 0) {
             return None;
         }
         let mut closed = Vec::with_capacity(alternatives.len());
@@ -1428,12 +1455,14 @@ impl<'db> Solver<'db> {
         Some(closed)
     }
 
-    /// Collect a union's alternatives, `None` standing for its projections.
-    /// Whether `term` is a union.
+    /// Collect a union's alternatives, `None` standing for its projections, or
+    /// for those that can't be widened if it `widen`s them. Whether `term` is a
+    /// union.
     fn collect_alternatives(
         &self,
         term: Term,
         alternatives: &mut Vec<Option<Term>>,
+        widen: bool,
         depth: usize,
     ) -> bool {
         if self.depth(depth).is_err() {
@@ -1451,10 +1480,14 @@ impl<'db> Solver<'db> {
         for member in members.iter() {
             let alternative = match *member {
                 UnionMember::Type(ty) => Some(view.child(ty)),
+                _ if widen => match self.widened_projection(view, *member) {
+                    Ok(Some((widened, _))) => Some(widened),
+                    Ok(None) | Err(_) => None,
+                },
                 _ => None,
             };
             if let Some(term) = alternative
-                && self.collect_alternatives(term, alternatives, depth + 1)
+                && self.collect_alternatives(term, alternatives, widen, depth + 1)
             {
                 continue;
             }

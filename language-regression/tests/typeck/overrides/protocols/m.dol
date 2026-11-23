@@ -45,6 +45,42 @@ pub class Computed: @Shape
   pub def area _self -> Num
     ...
 
+pub class Strict: @Shape
+  #[getter]
+  pub def name _self -> Num
+    # error: `name` does not match `Shape.name`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def name _self -> Num
+    #    |           ^^^^
+    ...
+
+  #[setter]
+  pub def name _self value @ Int
+    ...
+
+  pub def area _self -> Num
+    ...
+
+# A protocol's property is upheld by a field
+pub @class Labeled
+  #[getter]
+  pub def label self -> Num
+
+  #[setter]
+  pub def label self value @ Num
+
+pub class Label: @Labeled
+  pub field label @ Num = ...
+
+pub class NarrowLabel: @Labeled
+  pub field label @ Int = ...
+# error: `label` does not match `Labeled.label`
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub field label @ Int = ...
+#    |             ^^^^^
+
 pub class ReadOnly: @Shape
   #[getter]
   pub def name _self -> Num

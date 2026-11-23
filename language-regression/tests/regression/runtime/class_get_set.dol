@@ -31,9 +31,19 @@ class WithPub
   def (get) _self _key
     "fallback"
 
+  def (set) _self _key _value
+    throw "fallback"
+
 let w = WithPub 10
 assert_eq $w.x 10
 assert_eq $w.missing "fallback"
+
+# Calling (get) or (set) is field access by name, so it reaches the class's own
+# only as the same fallback
+assert_eq (w.(get) :x:) 10
+assert_eq (w.(get) :missing:) "fallback"
+w.(set) :x: 5
+assert_eq $w.x 5
 
 # (get) also works as a fallback for method dispatch:
 # obj.method(args) calls (get) to get the callable, then calls it directly with args

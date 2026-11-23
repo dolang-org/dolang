@@ -68,7 +68,7 @@ impl Solver<'_> {
             a,
             b,
         };
-        let rules: [Rule<'_>; 11] = [
+        let rules: [Rule<'_>; 13] = [
             Self::identical,
             Self::judgeable,
             Self::inclusion,
@@ -78,6 +78,8 @@ impl Solver<'_> {
             Self::bounded,
             Self::projections,
             Self::abstract_right,
+            Self::widened_writes,
+            Self::required_keys,
             Self::union_right,
             Self::overloaded,
         ];
@@ -334,7 +336,8 @@ impl Solver<'_> {
 
     /// A union of projections on the left. A projection is of a rigid's schema,
     /// or can't be evaluated. The former is below the same projection of the
-    /// rigid's bound. An item projection is also below one whose key selects as
+    /// rigid's bound. A read of a rigid's member schema is below the same read
+    /// of its bound's (see [`Self::widened_fields`]). An item projection is also below one whose key selects as
     /// much and whose schema is wider, or for `AssignItem`, one of the same
     /// schema whose key selects as little. An `IndexItem` with a rigid in its
     /// key is below the one with that key widened toward its bound (see
@@ -354,27 +357,9 @@ impl Solver<'_> {
                 UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
                 _ if self.shares(*view, member, &j.b)? => continue,
                 _ if self.congruent(*view, member, &j.b)? => continue,
-                _ if self.rigid(member.id())?.is_some() => {
-                    let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
-                        return Err(Residual::Unsupported(
-                            "a projection of a rigid without a bound",
-                        )
-                        .into());
-                    };
-                    // The key may refer to the view's binders
-                    let projected = self.db.intern(Type::Union(vec![member.with(bound)].into()));
-                    (view.child(projected), Step::RigidBound)
-                }
-                UnionMember::IndexItem(schema, key) => match self.widened_key(key)? {
-                    Some((key, step)) => {
-                        let projected = self.db.intern(Type::Union(
-                            vec![UnionMember::IndexItem(schema, key)].into(),
-                        ));
-                        (view.child(projected), step)
-                    }
-                    None => return Err(Residual::Unsupported("an unevaluated projection").into()),
-                },
-                _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
+                _ => self
+                    .widened_projection(*view, member)?
+                    .ok_or(Residual::Unsupported("an unevaluated projection"))?,
             };
             derived.push((term, step));
         }
@@ -382,6 +367,49 @@ impl Solver<'_> {
             self.derive(j.obligation, term, j.expected, step);
         }
         Ok(Break(()))
+    }
+
+    /// A projection member of the union `view` widened by one step, as a union
+    /// of it alone, with the step that widens it: a rigid member to its first
+    /// bound, a member schema's projection to its target's bound's (see
+    /// [`Self::widened_fields`]), or an item's rigid key toward its bound (see
+    /// [`Self::widened_key`]). `None` if it can't be widened.
+    pub(super) fn widened_projection(
+        &self,
+        view: TypeView,
+        member: UnionMember,
+    ) -> Result<Option<(Term, Step)>, Issue> {
+        let union = |member: UnionMember| self.db.intern(Type::Union(vec![member].into()));
+        match member {
+            UnionMember::Type(_) => Ok(None),
+            _ if self.rigid(member.id())?.is_some() => {
+                let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
+                    return Err(
+                        Residual::Unsupported("a projection of a rigid without a bound").into(),
+                    );
+                };
+                // The key may refer to the view's binders
+                Ok(Some((
+                    view.child(union(member.with(bound))),
+                    Step::RigidBound,
+                )))
+            }
+            UnionMember::IndexItem(schema, _)
+            | UnionMember::Expand(schema)
+            | UnionMember::Keys(schema)
+            | UnionMember::Values(schema)
+            | UnionMember::Entries(schema)
+                if let Some((fields, step)) =
+                    self.widened_fields(view.child(schema), FieldAccess::Read)? =>
+            {
+                Ok(Some((view.child(union(member.with(fields))), step)))
+            }
+            UnionMember::IndexItem(schema, key) => Ok(self.widened_key(key)?.map(|(key, step)| {
+                let projected = union(UnionMember::IndexItem(schema, key));
+                (view.child(projected), step)
+            })),
+            _ => Ok(None),
+        }
     }
 
     /// An item projection's key widened by one step: a rigid member to its
@@ -427,6 +455,106 @@ impl Solver<'_> {
         match rigid {
             true => Err(Issue::Contradiction(Contradiction::Rigid)),
             false => Ok(Continue(())),
+        }
+    }
+
+    /// An assignment through a rigid's member schema on the right, or a key of
+    /// it. What its bound's member schema sets is set by every subtype's, as the
+    /// override rules keep a setter from narrowing, so a value its bound's
+    /// assignment takes fits, at a key it sets (see [`Self::widened_fields`]).
+    /// `AssignItem` is invariant in any other schema, so only a member schema
+    /// widens.
+    fn widened_writes(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
+        let Head::Structural(view) = &j.b else {
+            return Ok(Continue(()));
+        };
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(Continue(()));
+        };
+        let mut widened = Vec::with_capacity(members.len());
+        let mut reduced = None;
+        for &member in members.iter() {
+            if let UnionMember::AssignItem(schema, _) | UnionMember::Keys(schema) = member
+                && let Some((fields, step)) =
+                    self.widened_fields(view.child(schema), FieldAccess::Write)?
+            {
+                reduced.get_or_insert(step);
+                widened.push(member.with(fields));
+            } else {
+                widened.push(member);
+            }
+        }
+        let Some(step) = reduced else {
+            return Ok(Continue(()));
+        };
+        // The keys may refer to the view's binders
+        let widened = view.child(self.db.intern(Type::Union(widened.into())));
+        self.derive(j.obligation, j.actual, widened, step);
+        Ok(Break(()))
+    }
+
+    /// A key of a rigid's schema on the right. A rigid schema is any schema
+    /// below its bound, which may omit every item the bound doesn't require, so
+    /// the keys it's known to admit are those of the bound's required literal
+    /// items, and the index of each fixed position. A read schema of a rigid's
+    /// class lists every member its bound does, which are required. They're
+    /// only some of the keys it admits, so a key among them is proven, and any
+    /// other is left to the rules after.
+    fn required_keys(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
+        let Head::Structural(view) = &j.b else {
+            return Ok(Continue(()));
+        };
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(Continue(()));
+        };
+        let mut known = Vec::with_capacity(members.len());
+        let mut changed = false;
+        for &member in members.iter() {
+            let UnionMember::Keys(schema) = member else {
+                known.push(member);
+                continue;
+            };
+            let schema = view.child(schema);
+            let bound = match self.widened_fields(schema, FieldAccess::Read)? {
+                Some((fields, _)) => Some(fields),
+                None => self.closed_abstract_bound(schema)?.map(|(bound, _)| bound),
+            };
+            let Some(bound) = bound else {
+                known.push(member);
+                continue;
+            };
+            let promoted = match self.keyed_view(bound) {
+                Ok(Some(promoted)) => promoted,
+                Ok(None) | Err(Issue::Residual(_)) => return Ok(Continue(())),
+                Err(issue) => return Err(issue),
+            };
+            changed = true;
+            known.extend((0..promoted.fixed.len()).map(|index| {
+                let index = Literal::Int(index as i128);
+                UnionMember::Type(self.db.intern(Type::Literal(index)))
+            }));
+            known.extend(
+                promoted
+                    .keyed
+                    .iter()
+                    .filter(|&&(multiplicity, key, _)| {
+                        multiplicity == Multiplicity::Required && self.db.literal(key).is_some()
+                    })
+                    .map(|&(_, key, _)| UnionMember::Type(key)),
+            );
+        }
+        if !changed {
+            return Ok(Continue(()));
+        }
+        let (Ok(actual), Ok(known)) = (
+            self.reify(j.actual),
+            self.reify(view.child(self.db.intern(Type::Union(known.into())))),
+        ) else {
+            return Ok(Continue(()));
+        };
+        match self.probe(actual, known)? {
+            Status::Proven => Ok(Break(())),
+            _ => Ok(Continue(())),
         }
     }
 
@@ -817,9 +945,16 @@ impl Solver<'_> {
                 self.derive(obligation, schema, expected, Step::Restricted);
                 Ok(())
             }
-            // A member schema left as itself is below what every member schema
-            // is below, but may be below more, so only that bound's proof counts
+            // A read schema of a rigid is below its bound's. Any other member
+            // schema left as itself is below what every member schema is below,
+            // but may be below more, so only that bound's proof counts.
             (Type::Fields { .. }, _) => {
+                if let Some((fields, step)) =
+                    self.widened_fields(Term::View(a), FieldAccess::Read)?
+                {
+                    self.derive(obligation, self.closed(fields), expected, step);
+                    return Ok(());
+                }
                 let unreduced = match *self.db.ty(self.reify(Term::View(a))?) {
                     Type::Fields { target, access } => self.fields(target, access).err(),
                     _ => None,

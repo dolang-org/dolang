@@ -203,6 +203,45 @@ fn abstract_targets_are_left_as_themselves() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn bounded_targets_read_and_set_through_their_bound() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    // final class Point: pub field x @ Int; def f[T @ Point]
+    let mut point = Class::new(&mut db, "Point", vec![]).final_class();
+    point.field(key(&db, "x"), int, Scope::Instance);
+    let point = point.finish(&mut db, vec![]);
+    let t = reference(&db, 0, 0);
+    let binder = bounded(Kind::Type, Binding::Positional, Some(point));
+    let decl = generic(&mut db, vec![binder], t);
+    db.seal();
+
+    let (x, y) = (sym(&db, "x"), sym(&db, "y"));
+    let (read, write) = (
+        fields(&db, t, FieldAccess::Read),
+        fields(&db, t, FieldAccess::Write),
+    );
+    let keys = |schema| db.intern(Type::Union(vec![UnionMember::Keys(schema)].into()));
+    let status = |a, b| under(&db, decl, a, b).status;
+    // Reads are below the bound's
+    assert_eq!(status(selecting(&db, false, read, x), int), Status::Proven);
+    assert_ne!(status(selecting(&db, false, read, x), str), Status::Proven);
+    let schema = items(&db, vec![required(&db, "x", int)]);
+    assert_eq!(status(read, schema), Status::Proven);
+    // What the bound sets, every subclass sets
+    assert_eq!(status(int, selecting(&db, true, write, x)), Status::Proven);
+    assert_ne!(status(str, selecting(&db, true, write, x)), Status::Proven);
+    // The bound's members are keys of both
+    assert_eq!(status(x, keys(read)), Status::Proven);
+    assert_eq!(status(x, keys(write)), Status::Proven);
+    assert_ne!(status(y, keys(write)), Status::Proven);
+    // A bound, not an equation
+    let bound = fields(&db, point, FieldAccess::Read);
+    assert_ne!(status(bound, read), Status::Proven);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn member_schemas_relate_as_what_they_list() {
     let mut db = Database::new();
     let symbol = sym_class(&mut db);

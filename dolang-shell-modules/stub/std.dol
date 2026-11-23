@@ -81,12 +81,18 @@ pub @let Clearable[S @ {...}] = ...
 # schema also admits other keys, as `Value`. For
 # `#[final] class Point` with `pub field x y @ Int`, `Fields[Point]` is
 # `{x: Int, y: Int}`.
+#
+# For a type parameter `T @ C`, a read through `Fields[T]` gives at most what
+# the same read through `Fields[C]` does.
 pub @let Fields[T] = ...
 
 # The keyed schema of the public members of `T` that can be set: an optional
 # item for each field, at its type, and each setter, at the value it takes. A
 # class that isn't [`final`](std.final) also admits other keys, as `Never`, so
 # that no value can be set at a key its subclasses might add.
+#
+# For a type parameter `T @ C`, `MutFields[T]` can be set wherever
+# `MutFields[C]` can, since an override can't narrow what a member accepts.
 pub @let MutFields[T] = ...
 
 # The singleton [`Null`](std.Null) value.
