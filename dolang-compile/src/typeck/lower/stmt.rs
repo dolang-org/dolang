@@ -1437,6 +1437,7 @@ impl<'u> Scope<'_, '_, 'u> {
                     Some(Entry::Var(var)) => var,
                     _ => self.synthetic(),
                 };
+                self.graph().var_mut(iter).flags.insert(VarFlags::ITERATEE);
                 let value = self.expr(value);
                 let span = value.span;
                 self.emit(Step::Let {

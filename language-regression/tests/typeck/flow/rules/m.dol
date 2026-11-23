@@ -22,7 +22,7 @@ pub def called()
   #       ^: flow std.Int
   let f = first [1, 2]
   let _ = f
-  #       ^: flow std.Int
+  #       ^: flow 1 | 2
   let k = keyed n: 1
   let _ = k
   #       ^: flow std.Str
@@ -41,10 +41,10 @@ pub def collected()
   #       ^: flow std.Dict[std.Sym, std.Int]
   let t = (1, "a")
   let _ = t
-  #       ^: flow (std.Int, std.Str)
+  #       ^: flow (1, "a")
   let r = (a: 1)
   let _ = r
-  #       ^: flow (a: std.Int)
+  #       ^: flow (a: 1)
   let e = []
   let _ = e
   #       ^: flow std.Array[Unknown]
@@ -67,7 +67,7 @@ pub def collected()
 pub def iterated()
   for x = [1, 2]
     let _ = x
-    #       ^: flow std.Int
+    #       ^: flow 1 | 2
 
 # A `for` takes the `(next)` of its iteratee's `(iter)`
 class Hollow
@@ -92,9 +92,9 @@ pub def unpacked()
   # A tuple unpacks as its items
   let p q = (1, "a")
   let _ = p
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = q
-  #       ^: flow std.Str
+  #       ^: flow "a"
 
 pub def wrong()
   length 1

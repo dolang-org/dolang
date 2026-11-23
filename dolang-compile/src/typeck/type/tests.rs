@@ -226,6 +226,76 @@ fn decay_keeps_regular_literals_exact_keys_and_binder_bounds() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn decay_locked_keeps_only_covariant_literals() {
+    let mut db = Database::new();
+    let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
+    db.populate(int, definition(int_source, int_ty));
+    db.set_intrinsic(Intrinsic::Int, int_ty);
+    let one = intern(&mut db, Type::Fresh(Literal::Int(1)));
+    let two = intern(&mut db, Type::Fresh(Literal::Int(2)));
+    let class = |db: &mut Database, name, variance| {
+        let (id, ty, source) = declare(db, DeclKind::Class, name);
+        let quantified = quantify(
+            db,
+            vec![Binder {
+                variance,
+                ..binder(Kind::Type)
+            }],
+            ty,
+        );
+        let metadata = BinderSource {
+            name: source.name.unwrap(),
+            span: source.span,
+            default: None,
+            origin: BinderOrigin::Written,
+        };
+        db.populate(
+            id,
+            Declaration {
+                binders: vec![metadata].into(),
+                ..definition(source, quantified)
+            },
+        );
+        move |db: &mut Database, arg| {
+            intern(
+                db,
+                Type::Apply {
+                    base: ty,
+                    args: vec![Argument::Positional(arg)].into(),
+                    kind: Kind::Type,
+                },
+            )
+        }
+    };
+    let reader = class(&mut db, "Reader", Variance::Covariant);
+    let cell = class(&mut db, "Cell", Variance::Invariant);
+
+    // A scalar, a union's members and a schema's items are covariant
+    assert_eq!(db.decay_locked(one), one);
+    let both = union(&mut db, &[one, two]);
+    assert_eq!(db.decay_locked(both), both);
+    let items = schema(&mut db, &[one, two]);
+    assert_eq!(db.decay_locked(items), items);
+
+    // A covariant argument keeps its literal, and an invariant one decays,
+    // however deep
+    let kept = reader(&mut db, one);
+    assert_eq!(db.decay_locked(kept), kept);
+    let locked = cell(&mut db, one);
+    let decayed = cell(&mut db, int_ty);
+    assert_eq!(db.decay_locked(locked), decayed);
+    let nested = reader(&mut db, locked);
+    let decayed = reader(&mut db, decayed);
+    assert_eq!(db.decay_locked(nested), decayed);
+
+    // A function's parameters decay; its result is covariant
+    let f = function(&mut db, &[one], two);
+    let decayed = function(&mut db, &[int_ty], two);
+    assert_eq!(db.decay_locked(f), decayed);
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn fresh_literals_give_way_to_their_regular_twins() {
     let mut db = Database::new();
     let fresh = intern(&mut db, Type::Fresh(Literal::Int(1)));

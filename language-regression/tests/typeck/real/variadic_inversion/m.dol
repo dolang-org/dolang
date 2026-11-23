@@ -16,7 +16,7 @@ pub def chained names @ Array[Str] ints @ Array[Int] -> Iter[Int | Str]
 
 pub def forked() -> (Int, Str)
   let results = strand.fork (do 1) (do "a")
-  #   ^~~~~~~: flow (std.Int, std.Str)
+  #   ^~~~~~~: flow (1, "a")
   results
 
 pub def forked_all blocks @ Array[() -> Int] -> Array[Int]

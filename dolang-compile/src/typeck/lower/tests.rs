@@ -339,6 +339,54 @@ for i = [1]
 /// rebinding a `for` variable makes a fresh cell
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn once() {
+    let source = "
+def f p
+  p = 1
+  let q = p
+  let _g = do
+    q
+  let r = 1
+  let _h = do
+    r = 2
+  let s = 1
+  s = 2
+  for i = [1]
+    let w = i
+";
+    lower_with(source, |ir| {
+        let mut once: Vec<_> = ir
+            .funcs()
+            .flat_map(|(_, func)| func.vars.iter())
+            .filter_map(|&var| {
+                let var = ir.var(var);
+                let Origin::Source(span, _) = var.origin else {
+                    return None;
+                };
+                Some((text(source, span), var.flags.contains(VarFlags::ONCE)))
+            })
+            .collect();
+        once.sort();
+        once.dedup();
+        assert_eq!(
+            once,
+            [
+                ("_g", true),
+                ("_h", true),
+                ("f", true),
+                ("i", true),
+                ("p", false),
+                ("q", true),
+                ("r", false),
+                ("s", false),
+                ("w", true),
+            ]
+        );
+    });
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn uncached() {
     let source = "
 let a = 1

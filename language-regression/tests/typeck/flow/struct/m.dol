@@ -87,7 +87,7 @@ pub def class_methods s @ Struct[a: Int, ...{?b: Str}]
   let _ = Struct.get $s :b:
   #   ^: flow nil | std.Str
   let _ = Struct.get $s :b: default: 0
-  #   ^: flow std.Int | std.Str
+  #   ^: flow 0 | std.Str
   let _ = Struct.contains $s :b:
   #   ^: flow std.Bool
 

@@ -16,7 +16,7 @@ pub def boxed[T] xs @ (Array[T] | Str) -> T
 
 pub def optional()
   let _ = opt 1
-  #   ^: flow std.Int
+  #   ^: flow 1
   # `nil` is a member, so nothing is inferred
   let _ = opt nil
   #   ^: flow Unknown
@@ -34,7 +34,7 @@ pub def callback()
     #       ^: flow std.Int
     "s"
   let _ = r
-  #       ^: flow std.Str
+  #       ^: flow "s"
   # What a block gives doesn't choose, but is checked against what's chosen
   text do |x|
     x

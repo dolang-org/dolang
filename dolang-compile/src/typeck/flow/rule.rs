@@ -1285,7 +1285,12 @@ impl<'a> Flow<'a, '_> {
                         let bottom = solver.closed(self.db.bottom());
                         solver.constrain(bottom, item, Provenance::default());
                     }
-                    let roots = outputs(&results, &[]);
+                    // An iteratee's results have no alias a later write
+                    // could widen, so they lock nothing in
+                    let roots = match self.iteratee {
+                        Some(iteratee) if iteratee == span => Vec::new(),
+                        _ => outputs(&results, &[]),
+                    };
                     let roots: Vec<_> = roots
                         .into_iter()
                         .chain(written.map(|&item| (item, Variance::Covariant)))

@@ -9,7 +9,7 @@ pub def incomplete value @ (Int | Str)
   let result = match value
     Int(n) => n
   let _ = result
-  #       ^~~~~~: flow std.Int | std.Nil
+  #       ^~~~~~: flow nil | std.Int
 
 pub def complete value @ (Int | Str | Bool)
   let result = match value
@@ -17,7 +17,7 @@ pub def complete value @ (Int | Str | Bool)
     Str(_s) => 2
     _ => value
   let _ = result
-  #       ^~~~~~: flow std.Bool | std.Int
+  #       ^~~~~~: flow 1 | 2 | std.Bool
 
 pub def narrowed value @ (200 | 404 | 500)
   match value
@@ -33,7 +33,7 @@ pub def catch_all value @ (Int | Str)
     Int(_n) => 1
     _ => 2
   let _ = result
-  #       ^~~~~~: flow std.Int
+  #       ^~~~~~: flow 1 | 2
 
 pub def guarded value @ (Int | Str)
   match value

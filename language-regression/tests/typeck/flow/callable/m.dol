@@ -102,9 +102,9 @@ pub def instances f @ Callable c @ Child g @ Generic[Int] n @ Int
   # The method's own binder is inferred from its callback's result
   let s = g $n do |_x| "s"
   let _ = s
-  #   ^: flow std.Str
+  #   ^: flow "s"
   let _ = callback
-  #   ^: flow std.Str
+  #   ^: flow "s"
   f "bad"
   # error: expected `std.Int`, found `"bad"`
   #   --> m.dol:LL:LL

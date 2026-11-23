@@ -2941,6 +2941,102 @@ impl Database {
         self.decay_inner(root, &mut FxHashMap::default())
     }
 
+    /// A type with the literals decayed that a value of it could be written
+    /// through, as [`Database::decay`] decays them: those at a position that
+    /// isn't covariant. A literal reached only through covariant positions, as a
+    /// scalar, a union's member or a tuple's item is, is kept. A form it can't
+    /// see into decays whole.
+    pub(crate) fn decay_locked(&self, root: TypeId) -> TypeId {
+        let mut memo = FxHashMap::default();
+        self.decay_locked_inner(root, &mut memo)
+    }
+
+    fn decay_locked_inner(&self, id: TypeId, memo: &mut FxHashMap<TypeId, TypeId>) -> TypeId {
+        match self.ty(id) {
+            Type::Fresh(_) | Type::Literal(_) => id,
+            Type::Union(members) => {
+                let members = members
+                    .iter()
+                    .map(|member| match *member {
+                        UnionMember::Type(ty) => member.with(self.decay_locked_inner(ty, memo)),
+                        _ => member.with(self.decay_inner(member.id(), memo)),
+                    })
+                    .collect();
+                self.intern(Type::Union(members))
+            }
+            Type::Schema(items) => {
+                let items = items
+                    .iter()
+                    .map(|item| SchemaItem {
+                        multiplicity: item.multiplicity,
+                        element: match item.element {
+                            Element::Positional(ty) => {
+                                Element::Positional(self.decay_locked_inner(ty, memo))
+                            }
+                            Element::Include(ty) => {
+                                Element::Include(self.decay_locked_inner(ty, memo))
+                            }
+                            Element::Keyed { key, value } => Element::Keyed {
+                                key,
+                                value: self.decay_locked_inner(value, memo),
+                            },
+                        },
+                    })
+                    .collect();
+                self.intern(Type::Schema(items))
+            }
+            &Type::Apply {
+                base,
+                ref args,
+                kind,
+            } => {
+                let binders = match *self.ty(base) {
+                    Type::Decl(decl) if self.declaration(decl).source.kind.nominal() => {
+                        match self.ty(self.declaration(decl).ty) {
+                            Type::Quantified { binders, .. } if binders.len() == args.len() => {
+                                Some(binders.clone())
+                            }
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                let Some(binders) = binders else {
+                    return self.decay_inner(id, memo);
+                };
+                let args = args
+                    .iter()
+                    .zip(binders.iter())
+                    .map(|(arg, binder)| match *arg {
+                        Argument::Positional(ty) if binder.variance == Variance::Covariant => {
+                            Argument::Positional(self.decay_locked_inner(ty, memo))
+                        }
+                        Argument::Positional(ty) => {
+                            Argument::Positional(self.decay_inner(ty, memo))
+                        }
+                        Argument::Keyword(key, ty) => {
+                            Argument::Keyword(key, self.decay_inner(ty, memo))
+                        }
+                        Argument::Expand(ty) => Argument::Expand(self.decay_inner(ty, memo)),
+                    })
+                    .collect();
+                self.intern(Type::Apply { base, args, kind })
+            }
+            // Only the result is covariant
+            Type::Function(function) => {
+                let function = function.clone();
+                let decayed = Function {
+                    params: self.decay_inner(function.params, memo),
+                    result: self.decay_locked_inner(function.result, memo),
+                    input: function.input.map(|ty| self.decay_inner(ty, memo)),
+                    output: function.output.map(|ty| self.decay_inner(ty, memo)),
+                };
+                self.intern(Type::Function(decayed))
+            }
+            _ => self.decay_inner(id, memo),
+        }
+    }
+
     fn decay_inner(&self, id: TypeId, memo: &mut FxHashMap<TypeId, TypeId>) -> TypeId {
         if let Some(result) = memo.get(&id) {
             return *result;
