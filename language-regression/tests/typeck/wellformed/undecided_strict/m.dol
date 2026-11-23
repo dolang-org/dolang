@@ -37,3 +37,18 @@ pub def both[**Xs, **Ys] p @ Keyed[...Xs, ...Ys] -> Tuple[(Int) -> Int, Keyed[..
   #    |
   #    = note: it can't match up these positional items
   #    = note: several alternatives remain possible; an annotation may pick one
+
+# A def's omitted channels are instantiated and settled wherever its value is
+# checked, as for an argument
+@def picked _x @ Int -> Int
+@def picked _x @ Str -> Str
+pub def picked x @ Value -> Value
+  x
+
+def plain x @ Int -> Int
+  x
+
+pub def settled -> ((Int) -> Int)
+  let _p @ ((Int) -> Int) = picked
+  let _q = (plain @ ((Int) -> Int))
+  plain
