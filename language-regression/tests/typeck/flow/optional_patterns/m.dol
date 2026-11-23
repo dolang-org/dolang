@@ -16,7 +16,7 @@ pub def absent()
 pub def positional()
   let p ?(a = "none") = (true,)
   let _ = p
-  #       ^: flow std.Bool
+  #       ^: flow true
   let _ = a
   #       ^: flow std.Str
 
@@ -45,7 +45,7 @@ pub def collapsed()
   #       ^: flow std.Str
   let Int(m = "unused") = 1
   let _ = m
-  #       ^: flow std.Int
+  #       ^: flow 1
 
 pub def alternatives()
   let ?k: (Int(n = 0) | Str(n)) = ()
@@ -69,7 +69,7 @@ pub def vertical()
     ? - a = 1
       - b = a
   let _ = flag
-  #       ^~~~: flow std.Bool
+  #       ^~~~: flow true
   let _ = b
   #       ^: flow std.Int
 
@@ -83,14 +83,14 @@ pub def conditional()
   let result = match (())
     ?k: Int(n = 0) => n
   let _ = result
-  #       ^~~~~~: flow std.Int | std.Nil
+  #       ^~~~~~: flow nil | std.Int
 
 pub def empty_and_constants()
   let ?k: () = ()
   let ?k: 1 = ()
   let reached = "yes"
   let _ = reached
-  #       ^~~~~~~: flow std.Str
+  #       ^~~~~~~: flow "yes"
 
 pub def required_inner()
   let ?k: (j: (a = 1)) = (k: ())

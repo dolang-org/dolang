@@ -66,6 +66,7 @@
 //! [`ExprKind::Never`] to the result before continuing to the exit, so the exit
 //! joins the returned value with the guard point's state.
 
+mod assign;
 #[cfg(feature = "debug")]
 mod dot;
 #[cfg(feature = "debug")]
@@ -259,6 +260,12 @@ bitflags::bitflags! {
         /// Assigned by its owner where it may have escaped, so that the functions
         /// that capture it don't cache it
         const UNCACHED = 1 << 5;
+        /// Holds a `for`'s or comprehension's iteratee, which nothing else
+        /// aliases, so the rule that makes it locks none of its literals in
+        const ITERATEE = 1 << 6;
+        /// Assigned at exactly one site in the unit, counting the functions
+        /// that capture it, so nothing written later widens its binding
+        const ONCE = 1 << 7;
     }
 }
 

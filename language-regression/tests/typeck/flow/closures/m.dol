@@ -17,7 +17,7 @@ pub def fold[T] init @ T f @ ((T, T) -> T) -> T
 
 pub def mapped()
   let ys = map [1, 2] do |x| [x]
-  #                       ^: flow std.Int
+  #                       ^: flow 1 | 2
   let _ = ys
   #       ^~: flow std.Array[std.Array[std.Int]]
 
@@ -43,7 +43,7 @@ pub def bound()
   #           ^~: flow Unknown
   let r = f 2
   let _ = r
-  #       ^: flow std.Int
+  #       ^: flow 1
 
 pub def annotated()
   let f @ ((Int) -> Int) = do |y| y
@@ -58,7 +58,7 @@ pub def mutual()
   let b = do a()
   let c = b()
   let _ = c
-  #       ^: flow std.Int
+  #       ^: flow 1
   let f = do |n @ Int| n
   let g = do |n @ Int| f $n
   f = do |n @ Int| g $n
@@ -346,4 +346,4 @@ pub def never c x @ Int
   else
     "s"
   let _ = y
-  #       ^: flow std.Str
+  #       ^: flow "s"

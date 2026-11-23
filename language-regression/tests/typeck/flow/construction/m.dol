@@ -37,9 +37,9 @@ pub def constructions()
   let _ = Box "a"
   #   ^: flow m.Box[std.Int]
   let _ = Box [1]
-  #   ^: flow m.Box[std.Int]
+  #   ^: flow m.Box[1]
   let _ = Many [1]
-  #   ^: flow m.Many[*std.Int]
+  #   ^: flow m.Many[*1]
   # An inherited `(init)`'s receiver is the superclass, so it gives the class
   let _ = Labeled "a"
   #   ^: flow m.Labeled

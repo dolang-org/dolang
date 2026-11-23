@@ -9,8 +9,10 @@
 //!
 //! A value relates to a function type through its class only if the class
 //! reaches `Func`, which marks it as passable as a function. It's below the type
-//! when one of its own `(call)`'s signatures is, chosen by trials when it has several (see
-//! [`Solver::choose_left`]). A class that doesn't reach `Func`, or none of whose
+//! when one of its own `(call)`'s signatures is, chosen by trials when it has
+//! several. Only the function type's parameters choose, as for an overloaded
+//! function's value: its result never does (see [`Solver::choose_selected`]).
+//! A class that doesn't reach `Func`, or none of whose
 //! signatures fits, isn't below it: some of its values are of the class itself.
 //! That a subclass may reach `Func` where disjointness allows, or widen its
 //! `(call)`'s parameters and narrow its result, matters only to narrowing (see
@@ -329,13 +331,21 @@ impl Solver<'_> {
             true => signatures.implementation.into_iter().collect(),
             false => signatures.overloads,
         };
-        self.choose_left(
-            obligation,
-            signatures,
-            expected,
-            Step::Callable,
-            Issue::Contradiction(Contradiction::NoOverload),
-        )
+        let none = Issue::Contradiction(Contradiction::NoOverload);
+        // Only what's passed chooses among several, as for an overloaded
+        // function's value
+        if signatures.len() > 1 {
+            let selection = self.selection(view)?;
+            return self.choose_selected(
+                obligation,
+                signatures,
+                expected,
+                selection,
+                Step::Callable,
+                none,
+            );
+        }
+        self.choose_left(obligation, signatures, expected, Step::Callable, none)
     }
 
     /// The signatures a nominal value, or a class's metatype, is called with as

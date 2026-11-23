@@ -266,8 +266,13 @@ fn trials_choose_among_overloaded_calls() {
     db.seal();
     assert_eq!(check(&db, pick, int_int).status, Status::Proven);
     assert_eq!(check(&db, pick, str_str).status, Status::Proven);
-    // The implementation isn't an alternative
-    assert!(unfit(&check(&db, pick, int_str)));
+    // The parameter chooses the overload taking an `Int`, whose result doesn't
+    // fit, and the implementation isn't an alternative
+    let outcome = check(&db, pick, int_str);
+    assert!(
+        contradiction(&outcome, Contradiction::UnrelatedNominals),
+        "{outcome:?}"
+    );
 
     // Both fit a function of variables
     let gas = Gas::default();
@@ -278,6 +283,31 @@ fn trials_choose_among_overloaded_calls() {
     let outcome = s.solve().remove(0);
     assert_eq!(outcome.status, Status::Unresolved);
     assert!(has(&outcome, Residual::Ambiguous.into()));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn a_result_never_chooses_among_overloaded_calls() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let func = bare_func(&mut db);
+    let mut same = Class::new(&mut db, "Same", vec![]);
+    let top = db.top();
+    let call = same.function(&mut db, vec![], &[top], top);
+    let to_int = same.function(&mut db, vec![], &[int], int);
+    let to_str = same.function(&mut db, vec![], &[int], str);
+    db.set_overloads(call, vec![to_int, to_str]);
+    same.method(special(&db, "call"), call, Scope::Instance);
+    let same = same.finish(&mut db, vec![func]);
+    let [int_int, int_str] = [int, str].map(|result| function(&db, &[int], result));
+    db.seal();
+    // Both take an `Int`, so neither result picks one
+    for expected in [int_int, int_str] {
+        let outcome = check(&db, same, expected);
+        assert_eq!(outcome.status, Status::Unresolved, "{outcome:?}");
+        assert!(has(&outcome, Residual::Ambiguous.into()), "{outcome:?}");
+    }
 }
 
 #[test]

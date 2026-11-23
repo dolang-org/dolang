@@ -182,6 +182,26 @@ impl<'db> Solver<'db> {
         .unwrap_or_default()
     }
 
+    /// The checked side of each alternative left possible of a judgment that's
+    /// ambiguous, by its index, where the alternatives relate values: an
+    /// overloaded function's overloads, or a callable's signatures
+    pub(crate) fn possible_terms(&self, obligation: ObligationId) -> Vec<(usize, Term)> {
+        self.alternative_record(obligation, |record| {
+            let possible = match record.verdict {
+                Verdict::Ambiguous => &record.possible[..],
+                _ => &[],
+            };
+            possible
+                .iter()
+                .filter_map(|&index| match record.judgments[index] {
+                    Relation::Subtype { actual, .. } => Some((index, actual)),
+                    Relation::Call(_) | Relation::Empty(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
     /// Derive the alternative judgment trials chose, labeled by `step`
     fn choose_judgment(
         &self,

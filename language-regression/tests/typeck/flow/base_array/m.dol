@@ -40,9 +40,9 @@ pub def read view @ BaseArray[Int]
   let _ = view.get 0
   #   ^: flow nil | std.Int
   let _ = view.get 0 default: "missing"
-  #   ^: flow std.Int | std.Str
+  #   ^: flow "missing" | std.Int
   let _ = view.get 0 else: (do "missing")
-  #   ^: flow std.Int | std.Str
+  #   ^: flow "missing" | std.Int
   let _ = view.contains "unrelated"
   #   ^: flow std.Bool
   let _ = view.iter()

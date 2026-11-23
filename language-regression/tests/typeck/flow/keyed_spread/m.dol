@@ -17,24 +17,24 @@ pub def keyed_dict d @ Dict[Sym, Int]
 pub def keyed_record_array()
   let r = (a: 1, 2)
   let _x = [...r]
-  # error: a sequence can't take `a: std.Int`, which `std.Spread[{a: std.Int, std.Int}]` spreads
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   let _x = [...r]
-  #    |                ^
-  #    |
-  #    = help: spread its `.iter()` for `(key, value)` pairs
+# error: a sequence can't take `a: 1`, which `std.Spread[{a: 1, 2}]` spreads
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _x = [...r]
+#    |                ^
+#    |
+#    = help: spread its `.iter()` for `(key, value)` pairs
 
 pub def keyed_record_tuple()
   let r = (a: 1, 2)
   let _x = (...r,)
-  # error: a sequence can't take `a: std.Int`, which `std.Spread[{a: std.Int, std.Int}]` spreads
-  #   --> m.dol:LL:LL
-  #    |
-  # LL |   let _x = (...r,)
-  #    |                ^
-  #    |
-  #    = help: spread its `.iter()` for `(key, value)` pairs
+# error: a sequence can't take `a: 1`, which `std.Spread[{a: 1, 2}]` spreads
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _x = (...r,)
+#    |                ^
+#    |
+#    = help: spread its `.iter()` for `(key, value)` pairs
 
 # Iterating gives the pairs.
 pub def pairs d @ Dict[Sym, Int]

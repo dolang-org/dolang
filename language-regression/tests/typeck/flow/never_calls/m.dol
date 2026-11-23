@@ -22,7 +22,7 @@ pub def branched c @ Bool
   else
     fail "no"
   y
-# ^: flow std.Int
+# ^: flow 1
 
 # A call whose argument never arrives isn't made
 pub def nested c @ Bool

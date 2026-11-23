@@ -32,7 +32,7 @@ pub def joined x @ Int -> Int
         return x
     - do 5
   y
-# ^: flow std.Int
+# ^: flow 5
 
 # A block that's passed a value
 pub def passed x @ Int -> Int

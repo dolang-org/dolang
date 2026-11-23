@@ -125,7 +125,8 @@ use super::{
     },
     elab::{Designated, Tables},
     solver::{
-        Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts, Widening,
+        Diagnostic, Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts,
+        Widening,
     },
     r#type::{
         Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, MemberKey,
@@ -598,6 +599,9 @@ struct Flow<'a, 'u> {
     /// The first call in the running step or terminal that gave bottom, which
     /// ends its path
     diverged: Option<Divergence>,
+    /// The span of the iteratee the running step binds, whose rule locks none
+    /// of its literals in (see [`VarFlags::ITERATEE`])
+    iteratee: Option<Span>,
     /// Filled by the final pass, which leaves states alone
     results: Option<Results>,
     /// Whether the final pass logs facts, for an analysis
@@ -665,6 +669,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             exhausted: FxHashSet::default(),
             defaulting: false,
             diverged: None,
+            iteratee: None,
             results: None,
             logging: false,
             escaped: BitBox::default(),
@@ -896,16 +901,26 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Relate two closed types
-    fn relate(&self, actual: TypeId, expected: TypeId) -> Outcome {
+    /// Relate two closed types, reading the outcome with the solver that
+    /// found it
+    fn relate<R>(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        read: impl FnOnce(&Solver<'_>, Outcome) -> R,
+    ) -> R {
         let gas = Gas::default();
         let mut solver = self.solver(&gas);
+        // Nothing defaults an instantiation's variables after this, so solving
+        // settles them
+        solver.close();
         solver.constrain(
             solver.closed(actual),
             solver.closed(expected),
             Provenance::default(),
         );
-        solver.solve().remove(0)
+        let outcome = solver.solve().remove(0);
+        read(&solver, outcome)
     }
 
     /// Whether one closed type is a subtype of another, where only the status
@@ -966,11 +981,15 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// Relate a value at `span` to the type it's checked against, recording the check
     /// if it can't be decided. A contradiction is the caller's to report.
     fn conform(&mut self, ty: TypeId, expected: TypeId, span: Span) -> Status {
-        let outcome = self.relate(ty, expected);
-        if outcome.status == Status::Unresolved {
-            self.undecided(span, residual(&outcome));
+        let (status, unsettled) = self.relate(ty, expected, |solver, outcome| {
+            let unsettled = (outcome.status == Status::Unresolved)
+                .then(|| self.unsettled(span, solver, &outcome));
+            (outcome.status, unsettled)
+        });
+        if let Some(unsettled) = unsettled {
+            self.settle_unresolved(unsettled);
         }
-        outcome.status
+        status
     }
 
     /// The declared result a function's result variable is checked against: a
@@ -1694,7 +1713,15 @@ impl<'a, 'u> Flow<'a, 'u> {
                     Pattern::Bind(var) => self.annotation(var),
                     Pattern::Unpack { .. } => None,
                 };
+                let iteratee = match *pattern {
+                    Pattern::Bind(var) if self.ir.var(var).flags.contains(VarFlags::ITERATEE) => {
+                        Some(value.span)
+                    }
+                    _ => None,
+                };
+                let outer = mem::replace(&mut self.iteratee, iteratee);
                 let ty = self.expect(at, state, &mut operands, value, expected);
+                self.iteratee = outer;
                 if self.diverged.is_some() {
                     return false;
                 }
@@ -1945,7 +1972,10 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// The type an assignment stores: a literal assigned to a declared local or a
     /// field decays to its class, when that fits the annotation. A field keeps its
     /// annotation instead of a value that doesn't fit, which is reported where it's
-    /// written.
+    /// written. An unannotated local assigned at only one site that no importer
+    /// can assign keeps the literals no write can widen: only those a value of
+    /// its type could be written through decay (see [`Database::decay_locked`]),
+    /// since writing through the value doesn't assign the local.
     fn settle(&mut self, var: VarId, ty: TypeId) -> TypeId {
         let var = self.ir.var(var);
         if let (Origin::Field(_), Some(annotation)) = (var.origin, var.annotation)
@@ -1955,6 +1985,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         if !matches!(var.origin, Origin::Source(..) | Origin::Field(_)) {
             return ty;
+        }
+        if matches!(var.origin, Origin::Source(..))
+            && var.annotation.is_none()
+            && var.flags.contains(VarFlags::ONCE)
+            && !var.flags.contains(VarFlags::EXPORTED)
+        {
+            return self.db.decay_locked(ty);
         }
         let decayed = self.db.decay(ty);
         match var.annotation {
@@ -1979,18 +2016,21 @@ impl<'a, 'u> Flow<'a, 'u> {
         if let Some(Literal::Nil | Literal::Sym(_)) = self.db.literal(ty) {
             return self.lub(annotation, ty);
         }
-        let outcome = self.relate(ty, annotation);
-        match outcome.status {
-            Status::Proven => {}
-            Status::Contradicted => {
-                let (found, annotation) = self.pair(ty, annotation);
-                self.problem(Problem::Default {
-                    span,
-                    found,
-                    annotation,
-                });
-            }
-            Status::Unresolved => self.undecided(span, residual(&outcome)),
+        let (status, unsettled) = self.relate(ty, annotation, |solver, outcome| {
+            let unsettled = (outcome.status == Status::Unresolved)
+                .then(|| self.unsettled(span, solver, &outcome));
+            (outcome.status, unsettled)
+        });
+        if status == Status::Contradicted {
+            let (found, annotation) = self.pair(ty, annotation);
+            self.problem(Problem::Default {
+                span,
+                found,
+                annotation,
+            });
+        }
+        if let Some(unsettled) = unsettled {
+            self.settle_unresolved(unsettled);
         }
         annotation
     }
@@ -2675,16 +2715,24 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
     }
 }
 
-/// Why a check couldn't be decided
-fn residual(outcome: &Outcome) -> Residual {
-    outcome
-        .diagnostics
-        .iter()
-        .find_map(|diagnostic| match diagnostic.issue {
-            super::solver::Issue::Residual(residual) => Some(residual),
-            super::solver::Issue::Contradiction(_) => None,
-        })
-        .unwrap_or(Residual::Unsupported("no reason recorded"))
+/// Why an undecided check's outcome is undecided, each reason once
+fn residuals<'a>(diagnostics: impl IntoIterator<Item = &'a Diagnostic>) -> Vec<Residual> {
+    let mut residuals = Vec::new();
+    for diagnostic in diagnostics {
+        if let super::solver::Issue::Residual(residual) = diagnostic.issue
+            && !residuals.contains(&residual)
+        {
+            residuals.push(residual);
+        }
+    }
+    // Running out of work leaves what it didn't get to undecided too
+    if residuals.contains(&Residual::Exhausted) {
+        return vec![Residual::Exhausted];
+    }
+    if residuals.is_empty() {
+        residuals.push(Residual::Unsupported("no reason recorded"));
+    }
+    residuals
 }
 
 /// How many operand holes an expression has

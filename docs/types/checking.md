@@ -34,6 +34,42 @@ Unknown type information is distinct from [`Value`](std.Value). `Value` admits
 every runtime value, but few operations are available on it. Unknown type
 information allows uses that the checker cannot verify.
 
+### Literal Decay
+
+A literal value has its own type: `1` is `1`, and `:a:` is `:a:`. Where a later
+write could need a wider type, the literal decays to its class, such as `Int` or
+`Sym`. A literal written in a type, as in an annotation, never decays.
+
+A collection's literals decay at a position where its type is invariant, since
+a later write through the collection could widen it there. An array's items
+decay, and a tuple's, at a covariant position, don't:
+
+```
+let xs = [1, 2]       # Array[Int]
+let pair = (1, "a")   # (1, "a")
+```
+
+A local assigned only once keeps its literals, except where its value could be
+written through, as an array's items could be. A local assigned anywhere else
+too, including in a `do` block that captures it, decays. So does an annotated
+local, where its class fits the annotation, and so do fields, parameter
+defaults and module exports.
+
+```
+let mode = :fast:     # :fast:
+let level = 1
+level = 2             # Int
+let tag @ Sym = :a:   # Sym
+```
+
+A `for`'s or comprehension's iteratee keeps all of its literals, since nothing
+else holds it:
+
+```
+for s = [:A:, :B:]
+  echo $s             # s is :A: | :B:
+```
+
 ## Narrowing
 
 Conditions refine a local variable's type on the branches they select. The

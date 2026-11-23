@@ -36,7 +36,7 @@ pub def nested flag@Bool
     for x = ["a"]
       put $x
   let _ = s
-  #       ^: flow strand.Stream[std.Nil, std.Int | std.Str, Value]
+  #       ^: flow strand.Stream[nil, std.Int | std.Str, Value]
   nil
 
 # A block passed to another call writes to what that call gives it
@@ -46,7 +46,7 @@ pub def replaced()
       put 1
     nil
   let _ = s
-  #       ^: flow strand.Stream[std.Nil, Value, Value]
+  #       ^: flow strand.Stream[nil, Value, Value]
   nil
 
 # Nothing infers the output of a block that isn't passed directly

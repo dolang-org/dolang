@@ -432,7 +432,7 @@ pub def dict_methods d @ Dict[{*a: Int, ?b: Str}] k @ (:a: | :b:)
   let _ = d.get :a:
   #   ^: flow nil | std.Int
   let _ = d.get $k default: 0
-  #   ^: flow std.Int | std.Str
+  #   ^: flow 0 | std.Int | std.Str
   let _ = d.pop :b:
   #   ^: flow std.Str
   let _ = d.values :b:

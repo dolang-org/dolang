@@ -15,7 +15,7 @@ pub def joined c @ Bool
   else
     "a"
   let _ = y
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "a" | 1
 
 pub def looped c @ Bool
   let y = 1
@@ -38,9 +38,9 @@ pub class Named
 # A short circuit's value is narrowed by the test it passes
 pub def either v @ (Int | nil) n @ Named
   let _ = (v || "b")
-  #   ^: flow std.Int | std.Str
+  #   ^: flow "b" | std.Int
   let _ = (v && "b")
-  #   ^: flow nil | std.Int | std.Str
+  #   ^: flow "b" | nil | std.Int
   let _ = (n.name || "b")
   #   ^: flow std.Str
 
@@ -149,7 +149,7 @@ pub def finished()
 let n = 0
 pub let reader = do
   let _ = n
-  #       ^: flow std.Int
+  #       ^: flow 0
 
 # A variable a block assigns reads as every value assigned to it, whether or not
 # a call has run the block
@@ -188,10 +188,10 @@ pub def partial_chain c @ Bool d @ Bool
   else if d
     "a"
   let _ = y
-  #       ^: flow std.Int | std.Nil | std.Str
+  #       ^: flow "a" | 1 | nil
 
 pub def partial_narrowed v @ (Int | Str)
   let y = if (type(v, Int))
     v
   let _ = y
-  #       ^: flow std.Int | std.Nil
+  #       ^: flow nil | std.Int

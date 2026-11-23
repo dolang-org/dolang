@@ -3,33 +3,33 @@
 pub def lets()
   let a (b c) = (1, ("x", true))
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = b
-  #       ^: flow std.Str
+  #       ^: flow "x"
   let _ = c
-  #       ^: flow std.Bool
+  #       ^: flow true
   let (_p (q r)) s = ((1, ("x", nil)), true)
   let _ = q
-  #       ^: flow std.Str
+  #       ^: flow "x"
   let _ = r
-  #       ^: flow std.Nil
+  #       ^: flow nil
   let _ = s
-  #       ^: flow std.Bool
+  #       ^: flow true
 
 pub def keyed()
   let k: (x ...rest) :n = (k: (1, "a"), n: true)
   let _ = x
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = rest
-  #       ^~~~: flow std.SeqRest[{std.Str}]
+  #       ^~~~: flow std.SeqRest[{"a"}]
   let _ = n
-  #       ^: flow std.Bool
+  #       ^: flow true
   bind (k: (a: 1, b: "x"))
     k:
       a: _a
       :b
   let _ = b
-  #       ^: flow std.Str
+  #       ^: flow "x"
 
 pub def nested_defaults xs @ Array[Int]
   let _x (d1 d2 = "none") = (1, xs)
@@ -43,7 +43,7 @@ pub def annotated()
   let _ = i
   #       ^: flow std.Int
   let _ = s
-  #       ^: flow std.Str
+  #       ^: flow "a"
   let _y (_j@Str) = (nil, (1,))
 # error: `1` does not fit the annotation `std.Str`
 #   --> m.dol:LL:LL

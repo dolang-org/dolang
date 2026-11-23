@@ -35,3 +35,83 @@ pub def dynamic x @ Unknown -> nil
   #    |
   #    = note: several alternatives remain possible; an annotation may pick one
   nil
+
+# An overloaded value is chosen among by the parameters of the function type
+# it's related to, never by its result, so overloads that only results tell
+# apart are an error wherever it's checked, even when each would fit
+@def same x @ Int -> Int
+@def same x @ Int -> Str
+pub def same x @ Value -> Value
+  x
+
+def apply f @ ((Int) -> Int) -> Int
+  f 1
+
+pub def annotated() -> nil
+  let _int @ ((Int) -> Int) = same
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _int @ ((Int) -> Int) = same
+  #    |                               ^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+  let _sym @ ((Int) -> Sym) = same
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> std.Sym`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _sym @ ((Int) -> Sym) = same
+  #    |                               ^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+  let _value @ ((Int) -> Value) = same
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> Value`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _value @ ((Int) -> Value) = same
+  #    |                                   ^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+  nil
+
+pub def declared -> ((Int) -> Int)
+  same
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   same
+  #    |   ^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+
+pub def passed -> Int
+  apply $same
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   apply $same
+  #    |          ^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+
+# Dynamic parameters are only undecided
+pub def unknown() -> nil
+  let _f @ ((Unknown) -> Int) = same
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _f @ ((Unknown) -> Int) = same
+  #    |                                 ^^^^
+  #    |
+  #    = note: several alternatives remain possible; an annotation may pick one
+  nil

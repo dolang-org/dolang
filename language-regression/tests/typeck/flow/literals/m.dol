@@ -30,7 +30,7 @@ pub def called y @ Sym
 pub def held p @ :a:
   let x = 1
   let _ = x
-  #       ^: flow std.Int
+  #       ^: flow 1
   let y = p
   let _ = y
   #       ^: flow :a:

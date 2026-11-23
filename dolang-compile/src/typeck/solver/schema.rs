@@ -1900,6 +1900,21 @@ impl Solver<'_> {
             }
         }
         if !pairs.is_sorted_by_key(|&(_, j)| j) {
+            // Rigid positional packs in another order can't line up, whatever
+            // they stand for: one's items come before the other's
+            let rigid = |o: &Opaque| matches!(o.opacity, Opacity::Rigid(_)) && o.positional();
+            for (n, &(i, j)) in pairs.iter().enumerate() {
+                for &(k, l) in &pairs[n + 1..] {
+                    if l < j
+                        && [&a.opaque[i], &a.opaque[k], &b.opaque[j], &b.opaque[l]]
+                            .into_iter()
+                            .all(rigid)
+                    {
+                        let (x, y) = (a.opaque[i].item, a.opaque[k].item);
+                        return Err(Issue::Contradiction(Contradiction::Reordered(x, y)));
+                    }
+                }
+            }
             return Err(Residual::Alignment.into());
         }
         Ok(pairs)

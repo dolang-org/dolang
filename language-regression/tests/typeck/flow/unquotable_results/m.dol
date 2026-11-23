@@ -104,7 +104,7 @@ pub def use b @ Box
   let private1 = private_hidden()
   #   ^~~~~~~~: flow m.Secret
   let generic1 = generic("g")
-  #   ^~~~~~~~: flow std.Str
+  #   ^~~~~~~~: flow "g"
   let over1 = over(1)
   #   ^~~~~: flow std.Int
   let kept1 = Kept()
