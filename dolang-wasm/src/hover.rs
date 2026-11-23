@@ -960,7 +960,7 @@ mod tests {
             (line.role, line.name.as_deref()),
             ("variable", Some("count"))
         );
-        assert_eq!(line.ty, "std.Int");
+        assert_eq!(line.ty, "1");
         let [
             Declaration::Local {
                 shape: "value",
