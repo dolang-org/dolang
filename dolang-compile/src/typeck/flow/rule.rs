@@ -1495,7 +1495,7 @@ impl<'a> Flow<'a, '_> {
                         None => self.undecided(span, Residual::Ambiguous),
                     }
                 }
-                (_, Status::Unresolved) => self.undecided(span, super::residual(outcome)),
+                (_, Status::Unresolved) => self.unresolved(span, outcome),
                 (kind, Status::Contradicted) => {
                     // What derives from what's expected of the rule's result is
                     // left to whatever expects it, and what derives from what's

@@ -943,6 +943,13 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
+    /// Record a check left undecided at `span` for each reason its outcome gives
+    fn unresolved(&mut self, span: Span, outcome: &Outcome) {
+        for residual in residuals(outcome) {
+            self.undecided(span, residual);
+        }
+    }
+
     /// Check a value against a variable's annotation, or a function's declared
     /// result, when reporting
     fn check(&mut self, var: VarId, ty: TypeId, span: Span) {
@@ -972,7 +979,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn conform(&mut self, ty: TypeId, expected: TypeId, span: Span) -> Status {
         let outcome = self.relate(ty, expected);
         if outcome.status == Status::Unresolved {
-            self.undecided(span, residual(&outcome));
+            self.unresolved(span, &outcome);
         }
         outcome.status
     }
@@ -2012,7 +2019,7 @@ impl<'a, 'u> Flow<'a, 'u> {
                     annotation,
                 });
             }
-            Status::Unresolved => self.undecided(span, residual(&outcome)),
+            Status::Unresolved => self.unresolved(span, &outcome),
         }
         annotation
     }
@@ -2697,16 +2704,24 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
     }
 }
 
-/// Why a check couldn't be decided
-fn residual(outcome: &Outcome) -> Residual {
-    outcome
-        .diagnostics
-        .iter()
-        .find_map(|diagnostic| match diagnostic.issue {
-            super::solver::Issue::Residual(residual) => Some(residual),
-            super::solver::Issue::Contradiction(_) => None,
-        })
-        .unwrap_or(Residual::Unsupported("no reason recorded"))
+/// Why an undecided check's outcome is undecided, each reason once
+fn residuals(outcome: &Outcome) -> Vec<Residual> {
+    let mut residuals = Vec::new();
+    for diagnostic in &outcome.diagnostics {
+        if let super::solver::Issue::Residual(residual) = diagnostic.issue
+            && !residuals.contains(&residual)
+        {
+            residuals.push(residual);
+        }
+    }
+    // Running out of work leaves what it didn't get to undecided too
+    if residuals.contains(&Residual::Exhausted) {
+        return vec![Residual::Exhausted];
+    }
+    if residuals.is_empty() {
+        residuals.push(Residual::Unsupported("no reason recorded"));
+    }
+    residuals
 }
 
 /// How many operand holes an expression has
