@@ -120,3 +120,24 @@ pub def cannot_widen mapping @ MutMap[Str, Int]
 #    |
 # LL |   let _wide @ MutMap[Str, Value] = mapping
 #    |                                    ^^^^^^^
+
+# The assign protocols only write
+pub def write_only mapping@AssignMap[Str, Int] items@AssignSeq[Int] mixed@AssignMixed[{Int, name: Str}]
+  let _ = mapping.len
+  # error: `std.AssignMap[std.Str, std.Int]` has no member `len`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = mapping.len
+  #    |           ^^^^^^^^^^^
+  let _ = items[0]
+  # error: `std.AssignSeq[std.Int]` has no member `(index)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = items[0]
+  #    |           ^^^^^^^^
+  let _ = mixed[:name:]
+# error: `std.AssignMixed[{std.Int, name: std.Str}]` has no member `(index)`
+#   --> m.dol:LL:LL
+#    |
+# LL |   let _ = mixed[:name:]
+#    |           ^^^^^^^^^^^^^

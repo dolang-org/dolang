@@ -2,7 +2,7 @@
 # A strict module's top level has neither input nor output either.
 
 put 1
-# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+# error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
 #   --> s.dol:LL:LL
 #    |
 # LL | put 1

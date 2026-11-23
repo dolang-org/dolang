@@ -5,11 +5,14 @@ use crate::value::fmt::Format;
 use bitvec::bitbox;
 
 use crate::{
+    arg::Args,
+    call,
     error::{Error, Result},
     gc::{Collect, arena::Visit},
-    object::{sym::SymObj, tuple},
+    object::{BoundMethod, sym::SymObj, tuple},
     strand::Strand,
-    sym::Sym,
+    sym::{self, Sym},
+    unpack,
     value::{Slot, TypeObject, Value},
     vm::AllocExt,
     with_slots,
@@ -74,6 +77,31 @@ fn find_symbol<'v>(symbols: &VecDeque<GcObj<'v, SymObj>>, wanted: Sym<'v, '_>) -
         .ok()
 }
 
+/// The index of the readable member `key` names, if any
+fn find_key<'v>(
+    strand: &Strand<'v, '_>,
+    symbols: &VecDeque<GcObj<'v, SymObj>>,
+    key: &Value<'v>,
+) -> Option<usize> {
+    find_symbol(symbols, key.as_sym(strand)?)
+}
+
+/// Stores an iterator over the pairs of `fields` into `out`.
+fn create_pairs<'v>(strand: &mut Strand<'v, '_>, fields: &FieldProxy<'v>, out: Slot<'v, '_>) {
+    let embryo = strand.builtin_types().field_pairs.embryo(strand);
+    // SAFETY: the symbols and the receiver move straight into the allocated iterator
+    let symbols = fields.symbols.iter().map(|s| unsafe { s.dup() }).collect();
+    let receiver = unsafe { fields.receiver.dup() };
+    embryo.finish(
+        strand,
+        FieldPairs {
+            fields: FieldProxy::new(receiver, symbols),
+            index: 0,
+        },
+        out,
+    );
+}
+
 impl<'v> Protocol<'v> for FieldProxy<'v> {
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -81,17 +109,138 @@ impl<'v> Protocol<'v> for FieldProxy<'v> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::iter::iterable_get(strand, &this, field, out)
+        match field.tag() {
+            sym::LEN => {
+                let len = this.borrow(strand)?.symbols.len();
+                strand.store(out, len);
+                Ok(())
+            }
+            sym::CONTAINS | sym::COUNT | sym::GET | sym::KEYS | sym::VALUES | sym::PAIRS => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
+            }
+            _ => super::iter::iterable_get(strand, &this, field, out),
+        }
     }
 
     async fn op_mcall<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
-        args: crate::arg::Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        args: Args<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        super::iter::iterable_mcall(strand, &this, method, args, out).await
+        match method.tag() {
+            sym::LEN => Err(Error::type_error(
+                strand,
+                "fields len is a field, not a method",
+            )),
+            sym::CONTAINS => {
+                unpack!(strand, args => key, ?value);
+                let fields = this.borrow(strand)?;
+                let found = match find_key(strand, &fields.symbols, &key) {
+                    None => false,
+                    Some(_) if value.is_none() => true,
+                    Some(index) => with_slots!(strand, |mut member| {
+                        resolve(
+                            strand,
+                            &fields.receiver,
+                            &fields.symbols[index],
+                            Slot::reborrow(&mut member),
+                        )?;
+                        member.eq(strand, value.as_deref().unwrap())?
+                    }),
+                };
+                strand.store(out, found);
+                Ok(())
+            }
+            sym::COUNT => {
+                unpack!(strand, args => ?key);
+                let fields = this.borrow(strand)?;
+                let count = match key {
+                    Some(key) => usize::from(find_key(strand, &fields.symbols, &key).is_some()),
+                    None => fields.symbols.len(),
+                };
+                strand.store(out, count);
+                Ok(())
+            }
+            sym::GET => {
+                let default = Sym::well_known(sym::DEFAULT);
+                let else_key = Sym::well_known(sym::ELSE);
+                unpack!(strand, args => key, ?instance, ?:default, ?else_key: or_else);
+                if default.is_some() && or_else.is_some() {
+                    return Err(Error::unexpected_key(strand, else_key));
+                }
+                let instance = match instance {
+                    Some(s) => s.to_i64(strand).map_err(|_| Error::index(strand))?,
+                    None => -1,
+                };
+                // A member has a single value, so only the first or last instance exists
+                let found = {
+                    let fields = this.borrow(strand)?;
+                    match find_key(strand, &fields.symbols, &key) {
+                        Some(index) if matches!(instance, 0 | -1) => {
+                            resolve(
+                                strand,
+                                &fields.receiver,
+                                &fields.symbols[index],
+                                Slot::reborrow(&mut out),
+                            )?;
+                            true
+                        }
+                        _ => false,
+                    }
+                };
+                if found {
+                    Ok(())
+                } else if let Some(mut default) = default {
+                    strand.store(&mut out, &mut default);
+                    Ok(())
+                } else if let Some(or_else) = or_else {
+                    call!(strand, or_else, out)
+                } else {
+                    strand.store(&mut out, Value::NIL);
+                    Ok(())
+                }
+            }
+            sym::KEYS => {
+                unpack!(strand, args =>);
+                let fields = this.borrow(strand)?;
+                strand.new_array(&mut out);
+                let array = out.as_array(strand).unwrap();
+                for symbol in &fields.symbols {
+                    array.push(strand, symbol)?;
+                }
+                Ok(())
+            }
+            sym::VALUES => {
+                unpack!(strand, args => ?key);
+                let fields = this.borrow(strand)?;
+                let range = match key {
+                    Some(key) => match find_key(strand, &fields.symbols, &key) {
+                        Some(index) => index..index + 1,
+                        None => 0..0,
+                    },
+                    None => 0..fields.symbols.len(),
+                };
+                strand.new_array(&mut out);
+                let array = out.as_array(strand).unwrap();
+                with_slots!(strand, |mut value| {
+                    for symbol in fields.symbols.range(range) {
+                        resolve(strand, &fields.receiver, symbol, Slot::reborrow(&mut value))?;
+                        array.push(strand, &value)?;
+                    }
+                    Ok(())
+                })
+            }
+            sym::PAIRS => {
+                unpack!(strand, args =>);
+                let fields = this.borrow(strand)?;
+                create_pairs(strand, &fields, out);
+                Ok(())
+            }
+            _ => super::iter::iterable_mcall(strand, &this, method, args, out).await,
+        }
     }
 
     fn op_index<'a, 's>(
@@ -102,7 +251,7 @@ impl<'v> Protocol<'v> for FieldProxy<'v> {
     ) -> Result<'v, 's, ()> {
         let symbol = index.as_sym(strand).ok_or_else(|| Error::index(strand))?;
         let fields = this.borrow(strand)?;
-        if !fields.symbols.iter().any(|key| key.tag() == symbol.tag()) {
+        if find_symbol(&fields.symbols, symbol).is_none() {
             return Err(Error::index(strand));
         }
         fields.receiver.op_get(strand, symbol, out)
@@ -128,18 +277,7 @@ impl<'v> Protocol<'v> for FieldProxy<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let fields = this.borrow(strand)?;
-        let embryo = strand.builtin_types().field_pairs.embryo(strand);
-        // SAFETY: the symbols and the receiver move straight into the allocated iterator
-        let symbols = fields.symbols.iter().map(|s| unsafe { s.dup() }).collect();
-        let receiver = unsafe { fields.receiver.dup() };
-        embryo.finish(
-            strand,
-            FieldPairs {
-                fields: FieldProxy::new(receiver, symbols),
-                index: 0,
-            },
-            out,
-        );
+        create_pairs(strand, &fields, out);
         Ok(())
     }
 

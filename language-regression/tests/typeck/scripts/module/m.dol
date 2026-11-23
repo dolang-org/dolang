@@ -2,7 +2,7 @@
 # may import it.
 
 put 1
-# error: this call does not fit `@[T1] (T1, >std.Sink[T1]) -> nil`
+# error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
 #   --> m.dol:LL:LL
 #    |
 # LL | put 1

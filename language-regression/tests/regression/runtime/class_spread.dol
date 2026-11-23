@@ -22,3 +22,24 @@ class Numbers
 # `(iter)` alone does not enable spreading.
 assert_throws $std.UnsupportedError do [...Numbers()]
 assert_eq [...std.Iterable.iter(Numbers())] [3, 4]
+
+class Countdown: std.Iter
+  pub field n = 3
+  pub field spreads = 0
+
+  def (next) self
+    if (self.n == 0) => throw std.IterStop()
+    self.n = (self.n - 1)
+    self.n
+
+  def (spread) self
+    self.spreads = (self.spreads + 1)
+    std.Iter.(spread) $self
+
+# An override defers to the inherited `(spread)` without re-entering itself.
+let countdown = Countdown()
+assert_eq [...countdown] [2, 1, 0]
+assert_eq $countdown.spreads 1
+
+# Native iterators return the same proxy.
+assert_eq [...[1, 2].iter().(spread)()] [1, 2]

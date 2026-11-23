@@ -1296,6 +1296,13 @@ impl<'v> Object<'v> for PipeSender {
                     {
                         Ok(())
                     }
+                    // The reader is gone: a program that exited early, or a
+                    // remote session whose transport went away. Stop as a
+                    // closed receiver does, so a pipeline treats it as
+                    // expected downstream termination.
+                    Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                        Err(Error::sink_stop(strand))
+                    }
                     Err(e) => Err(e.into_sys(strand)),
                 };
             }

@@ -1,4 +1,4 @@
-import compress
+import compress proc
 import
   testlib.vfs:
     - vfs
@@ -16,6 +16,7 @@ import
   std:
     - ConcurrencyError
     - RuntimeError
+    - SinkStop
 
 # A program's bytes come through a receiver's stream exactly, without framing.
 #[test]
@@ -145,3 +146,44 @@ def native_consumers_use_byte_io()
     do pack()
     do unpack()
   assert_eq $res "hello"
+
+# Puts lines until the sink stops, then records the error that stopped it.
+def put_until_stopped seen
+  try
+    for _ = 0..100000 => strand.put "x\n"
+  catch err
+    seen.push (type err)
+    throw err
+
+# A program that exits without reading its input stops the sender with
+# `SinkStop`, which the pipeline treats as expected downstream termination.
+#[test]
+#[vfs]
+def early_program_exit_stops_sender()
+  let seen = []
+  let res = pipeline
+    do put_until_stopped $seen
+    do echo done
+    do collect()
+  assert_eq $res ["done\n"]
+  assert_eq $seen [SinkStop]
+
+# A Do receiver that stops early stops the sender the same way.
+#[test]
+def early_receiver_exit_stops_sender()
+  let seen = []
+  let res = pipeline
+    do put_until_stopped $seen
+    do strand.next()
+  assert_eq $res "x\n"
+  assert_eq $seen [SinkStop]
+
+# The sender's stop doesn't hide a failure from the program that stopped it.
+# Whether the sender stops or is canceled first is a race.
+#[test]
+#[vfs]
+def failing_program_still_raises()
+  assert_throws $proc.Error do
+    pipeline
+      do put_until_stopped []
+      do cat does-not-exist

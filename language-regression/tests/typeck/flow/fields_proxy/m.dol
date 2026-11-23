@@ -157,3 +157,26 @@ pub def variance p @ Point
 #    |
 #    = note: `std.Int` doesn't accept `std.Str`
 #    = note: in `{?x: std.Int, ?y: std.Str}`
+
+# A proxy is a `Map` of what it reads
+def read_map[S @ {*(Value): Value}] mapping @ Map[S] -> Int
+  mapping.len
+
+pub def maps p @ Point
+  let view = fields(p)
+  read_map $view
+  let _ = view.get :x:
+  #   ^: flow nil | std.Int
+  let _ = view.keys()
+  #   ^: flow std.Iterable[:label: | :x: | :y:]
+  let _ = view.values()
+  #   ^: flow std.Iterable[std.Int | std.Str]
+  let _ = view.len
+  #   ^: flow std.Int
+
+# A proxy is an `AssignMap` of what it sets, though it reads more
+def write_map mapping @ AssignMap[{?x: Int, ?y: Str}]
+  mapping[:x:] = 1
+
+pub def assign_maps p @ Point
+  write_map $ fields(p)

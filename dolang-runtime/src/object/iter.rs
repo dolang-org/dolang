@@ -1073,6 +1073,15 @@ pub(crate) struct Kv<'v> {
     source: Value<'v>,
 }
 
+/// What `Iter.(spread)` returns: spreads `source`'s items positionally.
+///
+/// A class that overrides `(spread)` defers to the inherited behavior by
+/// returning `Iter.(spread) $self`; handing back the receiver itself would
+/// re-enter the override.
+pub(crate) struct IterSpread<'v> {
+    source: Value<'v>,
+}
+
 unsafe impl<'v> Collect for Take<'v> {
     const CYCLIC: bool = true;
     type Annex = ();
@@ -1119,6 +1128,20 @@ unsafe impl<'v> Collect for Enumerate<'v> {
 }
 
 unsafe impl<'v> Collect for Kv<'v> {
+    const CYCLIC: bool = true;
+    type Annex = ();
+
+    fn accept(&self, visit: &mut dyn Visit) -> ControlFlow<()> {
+        self.source.accept(visit)?;
+        ControlFlow::Continue(())
+    }
+
+    fn clear(&mut self) {
+        self.source.clear();
+    }
+}
+
+unsafe impl<'v> Collect for IterSpread<'v> {
     const CYCLIC: bool = true;
     type Annex = ();
 
@@ -1428,6 +1451,39 @@ impl<'v> Protocol<'v> for Kv<'v> {
     }
 }
 
+impl<'v> Protocol<'v> for IterSpread<'v> {
+    fn op_type<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        out: Slot<'v, 'a>,
+    ) {
+        strand.store(out, TypeObject::Value)
+    }
+
+    fn op_debug<'a, 's>(
+        _this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        crate::fmt!(strand, w, "<spread>")
+    }
+
+    async fn op_spread<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        _context: SpreadContext,
+        sink: &'a mut dyn Spread<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        with_slots!(strand, |mut source| {
+            {
+                let borrow = this.borrow(strand)?;
+                strand.store(&mut source, &borrow.source);
+            }
+            spread_iter(strand, source, sink).await
+        })
+    }
+}
+
 impl<'v> Protocol<'v> for Iter {
     // The default `(iter)` of a class that subclasses `Iter`: an iterator
     // iterates as itself.
@@ -1533,9 +1589,16 @@ impl<'v> Protocol<'v> for Iter {
         let else_key = Sym::well_known(sym::ELSE);
         match method.tag() {
             // Reached only when the class doesn't define its own `(iter)`.
-            sym::SPREAD_METHOD | sym::ITER_METHOD => {
+            sym::ITER_METHOD => {
                 unpack!(strand, args => obj);
                 strand.store(out, obj);
+                Ok(())
+            }
+            // Returning `obj` itself would re-enter an overriding `(spread)`
+            // that defers here, so wrap it in a proxy that spreads its items.
+            sym::SPREAD_METHOD => {
+                unpack!(strand, args => obj);
+                create_iter_spread(strand, &obj, out);
                 Ok(())
             }
             sym::ITER => {
@@ -3043,6 +3106,18 @@ pub(crate) fn create_kv<'v>(strand: &mut Strand<'v, '_>, source: &Value<'v>, out
     embryo.finish(
         strand,
         Kv {
+            source: unsafe { source.dup() },
+        },
+        out,
+    );
+}
+
+fn create_iter_spread<'v>(strand: &mut Strand<'v, '_>, source: &Value<'v>, out: impl Output<'v>) {
+    // SAFETY: the proxy is allocated; the copy moves straight into it
+    let embryo = strand.builtin_types().iter_spread.embryo(strand);
+    embryo.finish(
+        strand,
+        IterSpread {
             source: unsafe { source.dup() },
         },
         out,

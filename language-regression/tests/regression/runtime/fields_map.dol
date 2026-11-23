@@ -1,0 +1,65 @@
+#[final]
+class Point
+  pub field x = 1
+  pub field y = "a"
+  field secret = 0
+
+  #[getter]
+  pub def label _self
+    "L"
+
+  #[setter]
+  pub def write_only _self _value
+    nil
+
+let view = fields(Point())
+
+# `len` and `count()` count readable members, each with one value.
+assert_eq $view.len 3
+assert_eq (view.count()) 3
+assert_eq (view.count :x:) 1
+assert_eq (view.count :secret:) 0
+assert_eq (view.count :write_only:) 0
+
+# Only symbols name members; a value must also match.
+assert (view.contains :label:)
+assert $!(view.contains :secret:)
+assert $!(view.contains "x")
+assert (view.contains :x: 1)
+assert $!(view.contains :x: 2)
+
+# A member's only instance is both the first and the last.
+assert_eq (view.get :x:) 1
+assert_eq (view.get :x: 0) 1
+assert_eq (view.get :x: -1) 1
+assert_eq (view.get :x: 1) nil
+assert_eq (view.get :x: 1 default: 9) 9
+assert_eq (view.get :missing:) nil
+assert_eq (view.get :missing: default: 9) 9
+assert_eq (view.get :missing: else: (do 7)) 7
+let get = view.get
+assert_eq (get :label:) L
+
+# Keys, values and pairs share one order.
+let keys = [...view.keys()]
+assert_eq (Set keys) (Set [:label:, :x:, :y:])
+assert_eq [...view.values()] [for k = keys => view[k]]
+assert_eq [...view.pairs()] [for k = keys => (k, view[k])]
+assert_eq [...view.values :y:] ["a"]
+assert_eq [...view.values :missing:] []
+
+# A rest reads the members left over.
+let x: _ ...rest = view
+assert_eq $rest.len 2
+assert_eq (Set(rest.keys())) (Set [:label:, :y:])
+assert_eq (rest.get :x:) nil
+assert_eq (rest.get :y:) a
+assert (rest.contains :label: "L")
+
+# A proxy can't remove members.
+assert_throws $std.FieldError do
+  view.delete :x:
+assert_throws $std.FieldError do
+  view.pop :x:
+assert_throws $std.FieldError do
+  view.clear()

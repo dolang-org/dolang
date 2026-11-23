@@ -356,10 +356,10 @@ do -> Tuple[Sender[T], Receiver[T]]
   ...
 
 # Collects the strand-local input into a new array.
-@def collect[I] < Iter[I] -> Array[I]
+@def collect[I] < BaseIter[I] -> Array[I]
 
 # Collects the strand-local input into a sink, returning the sink.
-@def collect[I, S @ Sinkable[I]] target@S <Iter[I] -> S
+@def collect[I, S @ Sinkable[I]] target@S <BaseIter[I] -> S
 
 pub def collect ...args @ Value -> Value
   ...
@@ -369,8 +369,8 @@ pub def collect ...args @ Value -> Value
 pub def each[I, O]
   # Function that transforms one value.
   func @ ((I, <Value, >Value) -> O)
-  < Iter[I]
-  > Sink[O]
+  < BaseIter[I]
+  > BaseSink[O]
 do
   ...
 
@@ -385,7 +385,7 @@ do -> Tuple[...Rs]
 pub def from[O]
   # Values to write.
   value @ Iterable[O]
-  > Sink[O]
+  > BaseSink[O]
 do
   ...
 
@@ -401,8 +401,8 @@ pub def input[I] <I -> I
   count @ Int
   # Function applied to each input value.
   func @ ((I, <Value, >Value) -> O)
-  < Iter[I]
-  > Sink[O]
+  < BaseIter[I]
+  > BaseSink[O]
 do -> nil
 
 # Applies a function concurrently to values pulled from an iterable, writing
@@ -414,7 +414,7 @@ do -> nil
   func @ ((I, >Value) -> O)
   # Values to process.
   :input @ Iterable[I]
-  > Sink[O]
+  > BaseSink[O]
 do -> nil
 
 # Applies a function concurrently to values from the strand-local input,
@@ -426,7 +426,7 @@ do -> nil
   func @ ((I, <Value) -> O)
   # Sink to write results to.
   :output @ Sinkable[O]
-  < Iter[I]
+  < BaseIter[I]
 do -> nil
 
 # Applies a function concurrently to values pulled from an iterable, writing
@@ -450,15 +450,15 @@ pub def map count@Int func@Value ...options@Value -> nil
 # ## Errors
 #
 # `std.IterStop` if the input is exhausted.
-@def next[I] <Iter[I] -> I
+@def next[I] <BaseIter[I] -> I
 
 # Reads the next value of the strand-local input, or returns `default` if the
 # input is exhausted.
-@def next[I, D] :default @ D <Iter[I] -> (I | D)
+@def next[I, D] :default @ D <BaseIter[I] -> (I | D)
 
 # Reads the next value of the strand-local input, or returns the result of
 # calling `else` if the input is exhausted.
-@def next[I, E] :else @ (() -> E) <Iter[I] -> (I | E)
+@def next[I, E] :else @ (() -> E) <BaseIter[I] -> (I | E)
 
 pub def next ...args @ Value -> Value
   ...
@@ -498,14 +498,14 @@ do -> nil
   count @ Int
   # Function applied to each input value.
   func @ ((T, <Value) -> nil)
-  < Iter[T]
+  < BaseIter[T]
 do -> nil
 
 pub def pool count@Int ...args@Value -> nil
   ...
 
 # Writes a value to the strand-local output.
-pub def put[T] value@T >Sink[T]
+pub def put[T] value@T >BaseSink[T]
   ...
 
 # Calls a function with the strand-local input and output replaced, returning its
@@ -628,5 +628,5 @@ do -> Never
 
 # Writes the values of the strand-local input that satisfy a predicate to the
 # strand-local output.
-pub def where[T] predicate@((T, <Value, >Value) -> Bool) <Iter[T] >Sink[T]
+pub def where[T] predicate@((T, <Value, >Value) -> Bool) <BaseIter[T] >BaseSink[T]
   ...
