@@ -410,7 +410,7 @@ class Harness
   def status self -> Int
     ((self.#module_failed || self.#counts[:failed:] > 0) && 1 || 0)
 
-  def with_timeout[R] self func @ (() -> R) >Sink[Value] -> R
+  def with_timeout[R] self func @ (() -> R) -> R
     timeout $self.#timeout $func
 
   def record_error
@@ -423,12 +423,13 @@ class Harness
   do
     self.#errors.push $Failure(error, backtrace, path, test, output)
 
-  def with_capture[R] self output @ BinBuf func @ (() -> R) >Sink[Value] -> R
+  # Runs `func`, with `output` in place of the caller's output when redirecting.
+  def with_capture[R, O] self output @ BinBuf func @ ((>(O | BinBuf)) -> R) >O -> R
     if !self.#capture
       return func()
     let console = term.IoConsole $output can_style: $!self.#plain
     if self.#redirect
-      strand.redirect output: $output do term.capture $console $func
+      strand.with_io :output do term.capture $console $func
     else
       term.capture $console $func
 
@@ -472,7 +473,7 @@ class Harness
 
   # Compiles and loads a module, collecting the tests it registers that pass
   # the filter. Loading reads no input, since modules load concurrently.
-  def load_file self path @ Path >Sink[Value] -> ModuleResult
+  def load_file self path @ Path >strand.ScriptOutput -> ModuleResult
     let output = BinBuf()
     try
       let source = path.read_str()
@@ -487,10 +488,7 @@ class Harness
       let cases = collect_key.with (TestCollection path) do
         self.#with_capture $output do
           self.#with_timeout do
-            # The output is the harness's own or a capture buffer, an `Io`
-            # either way, which a script may write
-            let output = (strand.output() !@ strand.ScriptOutput)
-            strand.with_io input: $std.null :output do load.run $compiled.emit()
+            strand.with_io input: $std.null do load.run $compiled.emit()
         collect_key.value.take()
       let result = ModuleResult $path :LOADED:
       result.cases = [...cases.filter(do |case| self.#matches_filter case)]
@@ -506,7 +504,7 @@ class Harness
       result.output = (self.#capture && output.freeze_str() || nil)
       result
 
-  def run_file self path @ Path >Sink[Value]
+  def run_file self path @ Path >strand.ScriptOutput
     self.#emit module-start {path: str(path), module: module_name(path)}
     let result = self.#load_file $path
     self.#emit module-end $(module_record result)
@@ -531,7 +529,7 @@ class Harness
       print " ($skipped " (info_style "skipped") ")"
     echo()
 
-  pub def run self files @ Array[Path] >Sink[Value] -> Int
+  pub def run self files @ Array[Path] >strand.ScriptOutput -> Int
     self.#emit run-start {version: 1, modules: files.len}
     progress.show message: modules total: $files.len do |w|
       strand.fork
@@ -549,7 +547,7 @@ class Harness
 
   # Loads each module without running its tests, giving a `ModuleResult` for
   # each file in order.
-  pub def list self files @ Array[Path] >Sink[Value] -> Array[ModuleResult]
+  pub def list self files @ Array[Path] >strand.ScriptOutput -> Array[ModuleResult]
     let results @ Array[ModuleResult | nil] = []
     for _ = files
       results.push nil
@@ -1136,7 +1134,7 @@ pub def run
   :output @ (Str | Path) = nil
   # Test file or directory.
   *paths @ (Str | Path)
-  >Sink[Value]
+  >strand.ScriptOutput
 do -> Int
   let files = test_files $paths
   if (format != :JSONL:)
@@ -1144,7 +1142,7 @@ do -> Int
     return harness.run $files
   if !capture
     throw std.ValueError "run: progress events require capture"
-  let run_with = do |sink @ Sink[Str] >Sink[Value]|
+  def run_with sink @ Sink[Str] >strand.ScriptOutput -> Int
     let events = EventWriter $sink
     let harness = Harness capture: true redirect: true plain: true events: $events
       :jobs :module_jobs :filter :timeout :diagnose :fail
@@ -1190,7 +1188,7 @@ pub def list
   :output @ (Str | Path) = nil
   # Test file or directory.
   *paths @ (Str | Path)
-  >Sink[Value]
+  >strand.ScriptOutput
 do -> Int
   let harness = Harness jobs: 1 capture: true redirect: true plain: (format == :JSON:)
     :module_jobs :filter :timeout :diagnose :fail
