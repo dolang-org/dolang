@@ -904,6 +904,9 @@ impl<'a, 'u> Flow<'a, 'u> {
     fn relate(&self, actual: TypeId, expected: TypeId) -> Outcome {
         let gas = Gas::default();
         let mut solver = self.solver(&gas);
+        // Nothing defaults an instantiation's variables after this, so solving
+        // settles them
+        solver.close();
         solver.constrain(
             solver.closed(actual),
             solver.closed(expected),
