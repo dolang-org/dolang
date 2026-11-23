@@ -461,7 +461,7 @@ impl Solver<'_> {
 
     /// A closed schema's keyed view, through its transparent declarations, or
     /// `None` for the dynamic schema
-    fn keyed_view(&self, schema: TypeId) -> Result<Option<Promoted>, Issue> {
+    pub(super) fn keyed_view(&self, schema: TypeId) -> Result<Option<Promoted>, Issue> {
         let schema = self.exposed_schema(schema)?.unwrap_or(schema);
         if let Type::Unknown(_) = self.db.ty(schema) {
             return Ok(None);

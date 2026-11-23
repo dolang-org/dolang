@@ -88,7 +88,10 @@ fn a_projection_of_a_rigid_is_below_that_of_its_bound() {
     ));
     // A projection is only ever itself above
     assert_eq!(under(db, decl, keys, keys).status, Status::Proven);
-    assert_eq!(under(db, decl, a, keys).status, Status::Unresolved);
+    // Every schema below the bound admits its required key, but may omit the
+    // optional one
+    assert_eq!(under(db, decl, a, keys).status, Status::Proven);
+    assert_eq!(under(db, decl, b, keys).status, Status::Unresolved);
 }
 
 #[test]

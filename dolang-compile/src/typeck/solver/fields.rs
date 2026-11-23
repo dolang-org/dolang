@@ -17,6 +17,16 @@
 //! required, at the union of its values, and one only some have is optional. Its
 //! set schema is their meet: the keys all of them set, at the meet of their
 //! values, admitting any other key with no value fitting it.
+//!
+//! A rigid or skolem target is any subtype of its bounds, whose members can't
+//! be listed, so its schemas don't reduce and relate only as themselves. Its
+//! first bound still bounds them: `Fields` is covariant, so the bound's read
+//! schema is above the target's, and a projection on the subtype side widens
+//! to it. The override rules keep a subclass from narrowing what it sets at a
+//! key, since fields are invariant and setters contravariant, so the bound's
+//! set schema is below the target's for an assignment, which widens to it on
+//! the supertype side. Neither is an equation, so as an expected type a member
+//! schema of a rigid is still proven only by itself.
 
 use std::ops::ControlFlow;
 
@@ -39,7 +49,8 @@ struct Members {
 impl Solver<'_> {
     /// The schema a closed `Fields` or `MutFields` of `target` stands for. A
     /// rigid or skolem target is every subtype of its bounds, whose members it
-    /// can't list, so it relates only as itself.
+    /// can't list, so it relates only as itself, or as widened to its bound (see
+    /// [`Self::widened_fields`]).
     pub(super) fn fields(&self, target: TypeId, access: FieldAccess) -> Result<TypeId, Issue> {
         // A member's type may mention the schema it's listed in
         if self.fields_active.borrow().contains(&(target, access)) {
@@ -71,6 +82,49 @@ impl Solver<'_> {
             })
         });
         Ok(self.db.intern(Type::Schema(items.chain(rest).collect())))
+    }
+
+    /// A member schema of a rigid or skolem target with `access`, widened to the
+    /// same schema of the target's first bound, with the step that reduces the
+    /// target. `None` if `schema` isn't one, or its target is unbounded. This is
+    /// a bound, not the schema itself, so only a rule on the side it bounds
+    /// widens to it.
+    pub(super) fn widened_fields(
+        &self,
+        schema: Term,
+        access: FieldAccess,
+    ) -> Result<Option<(TypeId, Step)>, Issue> {
+        let view = match self.head(schema) {
+            Ok(Head::Structural(view)) => view,
+            Ok(_) | Err(Issue::Residual(_)) => return Ok(None),
+            Err(issue) => return Err(issue),
+        };
+        match *self.db.ty(view.ty) {
+            Type::Fields {
+                target,
+                access: found,
+            } if found == access => {
+                let bound = self.closed_abstract_bound(view.child(target))?;
+                Ok(bound.map(|(bound, step)| {
+                    let widened = self.db.intern(Type::Fields {
+                        target: bound,
+                        access,
+                    });
+                    (widened, step)
+                }))
+            }
+            // A schema that only includes one is that schema
+            Type::Schema(ref items) => match items[..] {
+                [
+                    SchemaItem {
+                        multiplicity: Multiplicity::Required,
+                        element: Element::Include(inner),
+                    },
+                ] => self.widened_fields(view.child(inner), access),
+                _ => Ok(None),
+            },
+            _ => Ok(None),
+        }
     }
 
     /// What every member schema is below, whatever its target: any number of

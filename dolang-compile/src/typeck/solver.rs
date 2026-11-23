@@ -1186,6 +1186,21 @@ impl<'db> Solver<'db> {
         self.abstract_bounds(of).into_iter().next()
     }
 
+    /// The first bound of a term that is a rigid in scope or a skolem, closed,
+    /// with the step that reduces it, or `None` if it's neither or unbounded
+    fn closed_abstract_bound(&self, term: Term) -> Result<Option<(TypeId, Step)>, Issue> {
+        match self.head(term) {
+            Ok(Head::Skolem(id)) => Ok(self
+                .abstract_bound(Abstract::Skolem(id))
+                .and_then(|(bound, step)| Some((self.reify(bound).ok()?, step)))),
+            Ok(Head::Structural(view)) if matches!(self.rigid(view.ty), Ok(Some(_))) => {
+                Ok(self.rigid_bounds(view.ty).first().cloned())
+            }
+            Ok(_) | Err(Issue::Residual(_)) => Ok(None),
+            Err(issue) => Err(issue),
+        }
+    }
+
     /// Walk a term to the target declaration, carrying substitutions. A rigid in
     /// scope continues through its bound.
     pub(crate) fn reach(&self, term: Term, target: DeclId) -> Result<Reach, Issue> {

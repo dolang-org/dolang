@@ -119,6 +119,17 @@ impl Solver<'_> {
                                 self.db.intern(Type::Union(vec![member.with(bound)].into()));
                             (view.child(projected), Step::RigidBound)
                         }
+                        // A member read through a rigid's member schema is one
+                        // of its bound's
+                        UnionMember::IndexItem(schema, _) | UnionMember::Values(schema)
+                            if let Some((fields, step)) =
+                                self.widened_fields(view.child(schema), FieldAccess::Read)? =>
+                        {
+                            let projected = self
+                                .db
+                                .intern(Type::Union(vec![member.with(fields)].into()));
+                            (view.child(projected), step)
+                        }
                         _ => return Err(Residual::Unsupported("an unevaluated projection").into()),
                     };
                     derived.push((callee, step));

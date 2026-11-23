@@ -132,6 +132,55 @@ pub def generic[T] v @ T
   let _ = { ...view }
   for _key _value = view
     nil
+  let _ = view[:x:]
+  view[:x:] = 1
+
+# A bounded target reads at least what its bound reads, and is set as its bound
+# is, since an override can't narrow what a subclass sets
+pub def bounded[T @ Point] v @ T
+  let view = fields(v)
+  let _ @ Int = view[:x:]
+  let _ @ Str = view[:x:]
+  # error: `std.IndexItem[std.Fields[T], :x:]` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ @ Str = view[:x:]
+  #    |                 ^^^^^^^^^
+  let :x ..._ = fields(v)
+  let _ = x
+  #   ^: flow std.Int
+  let _ @ Dict[Sym, (Int | Str)] = { ...view }
+  view[:x:] = 1
+  view[:x:] = "x"
+  # error: expected `std.AssignItem[std.MutFields[T], :x:]`, found `"x"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   view[:x:] = "x"
+  #    |               ^^^
+  #    |
+  #    = note: `"x"` does not fit `std.Int`
+  view[:label:] = ""
+# error: expected `std.Keys[...std.MutFields[T]]`, found `:label:`
+#   --> m.dol:LL:LL
+#    |
+# LL |   view[:label:] = ""
+#    |        ^^^^^^^
+#    |
+#    = note: `:label:` does not fit `:x: | :y:`
+
+# Another key may be a subclass's member, which a subclass can't be set at
+pub def bounded_open[T @ Open] v @ T
+  let view = fields(v)
+  let _ @ Int = view[:x:]
+  view[:x:] = 1
+  view[:other:] = 1
+# error: expected `std.AssignItem[std.MutFields[T], :other:]`, found `1`
+#   --> m.dol:LL:LL
+#    |
+# LL |   view[:other:] = 1
+#    |                   ^
+#    |
+#    = note: `1` does not fit `Never`
 
 # A built-in value's members are its class's
 pub def literal()
