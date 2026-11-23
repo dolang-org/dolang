@@ -26,7 +26,7 @@ do -> Str
     run.push (shlex.join entry)
   run.push "touch $(shlex.quote READY_PATH)"
 
-  let user_config @ Dict[{**yaml.EncodeValue}] = $
+  let user_config @ Dict[{*(Sym): yaml.EncodeValue}] = $
     name: $user
     groups:
       - wheel

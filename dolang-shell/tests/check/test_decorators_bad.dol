@@ -15,7 +15,7 @@ import test:
   - test
 
 #[fixture]
-def mistyped[R @ {**Value}]
+def mistyped[R @ {*(Sym): Value}]
   func @ TestFn[{extra: Int, ...R}]
   ...args @ R
   <Iter[Never] >Sink[Value]

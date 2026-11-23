@@ -6,7 +6,7 @@ import std:
   - @IndexItem
   - @Keys
 
-pub class Named[S @ {**Value}]
+pub class Named[S @ {*(Sym): Value}]
   field values @ Pack[...S]
 
   def (init) self values @ Pack[...S]

@@ -8,7 +8,7 @@ use rustc_hash::FxHashSet;
 
 use super::{
     Decl, DeclNode, Link, Referent, Shard, Target,
-    surface::{Binder, Member, Name, Ref, Signature, SiteId, TypeExpr},
+    surface::{Binder, Member, Name, Ref, Signature, SiteId, TypeExpr, TypeParam},
 };
 use crate::{
     diag::Span,
@@ -101,8 +101,8 @@ impl Shard<'_> {
                     walk.binders(&class.binders, &user);
                     for supertype in &class.supers {
                         walk.name(&supertype.head, &user);
-                        for arg in &supertype.args {
-                            walk.ty(arg.ty(), &user);
+                        for ty in supertype.args.iter().flat_map(TypeParam::tys) {
+                            walk.ty(ty, &user);
                         }
                     }
                     for member in &class.members {

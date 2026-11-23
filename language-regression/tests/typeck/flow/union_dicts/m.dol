@@ -8,7 +8,7 @@ import std:
 pub def keyed _d @ Dict[{inner: Dict[{a: Str}]}]
   ...
 
-pub def positional _d @ BaseRecord[name: Str, ...BaseDict[{a: Str}]]
+pub def positional _d @ BaseRecord[name: Str, *BaseDict[{a: Str}]]
   ...
 
 pub def text() -> Str

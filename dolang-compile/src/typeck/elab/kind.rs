@@ -13,11 +13,9 @@ use rustc_hash::FxHashMap;
 
 use super::{
     BinderRef, Designated, Head, KindMismatch, KindOf, NotAType, NotGeneric, PatternWithoutPack,
-    Referent, Role, SchemaUse, Site, Tables, TooManyTypeArgs, UnknownTypeKeyword,
-    surface::{
-        Binder, BinderKind, Ref, Super, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
-        TypeQuant,
-    },
+    Referent, Role, SchemaUse, ShorthandItem, Site, Tables, TooManyTypeArgs, UnfilledSchema,
+    UnknownTypeKeyword,
+    surface::{Binder, BinderKind, Ref, Super, Symbol, TypeExpr, TypeKey, TypeParam, TypeQuant},
 };
 use crate::{
     RestKind,
@@ -114,6 +112,7 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
         unit: UnitId::from_index(0),
         packs: None,
         item: false,
+        repeat: None,
         diags,
     };
     for (_, site) in check.tables.sites() {
@@ -270,6 +269,9 @@ struct Check<'a, 't, 'u> {
     packs: Option<usize>,
     /// Whether the type being checked is an item of a variadic class
     item: bool,
+    /// The span of the operand of the `...` among type arguments being checked,
+    /// which a type there was likely meant to repeat
+    repeat: Option<(Span, String)>,
     diags: &'a mut Vec<UnitDiag>,
 }
 
@@ -413,11 +415,18 @@ impl<'t> Check<'_, 't, '_> {
         if let Some(expected) = expected
             && expected != found
         {
+            // A type included as a schema was likely meant to be repeated
+            let schema = match &self.repeat {
+                Some((at, ty)) if expected == Kind::Schema && *at == span => {
+                    Some(SchemaUse::Repeat(ty.clone()))
+                }
+                _ => None,
+            };
             self.diag(KindMismatch {
                 span,
                 expected,
                 declared,
-                schema: None,
+                schema,
             });
         }
     }
@@ -535,7 +544,7 @@ impl<'t> Check<'_, 't, '_> {
                     quant: Some(TypeQuant::Include),
                     ty,
                 } => self.check(ty, Some(Kind::Schema)),
-                TypeParam::Pos { ty, .. } | TypeParam::AnyKey(Some(ty)) => {
+                TypeParam::Pos { ty, .. } | TypeParam::AnyKey(_, Some(ty)) => {
                     self.check(ty, Some(Kind::Type))
                 }
                 TypeParam::Key { key, ty, .. } => {
@@ -544,14 +553,14 @@ impl<'t> Check<'_, 't, '_> {
                     }
                     self.check(ty, Some(Kind::Type));
                 }
-                TypeParam::AnyPos | TypeParam::AnyKey(None) | TypeParam::Open(_) => {}
+                TypeParam::AnyPos(_) | TypeParam::AnyKey(_, None) | TypeParam::Open(_) => {}
             }
         }
     }
 
     /// Check type arguments applied to what `named` names, matching each to the
     /// binder it fills.
-    fn args(&mut self, named: &Named<'t>, args: &'t [TypeArg], span: Span) {
+    fn args(&mut self, named: &Named<'t>, args: &'t [TypeParam], span: Span) {
         match *named {
             Named::Generic(kind, .., binders) if !kind.flexible && !binders.is_empty() => {
                 return self.match_args(named, args);
@@ -566,11 +575,31 @@ impl<'t> Check<'_, 't, '_> {
             _ => {}
         }
         for arg in args {
-            self.check(arg.ty(), None);
+            self.arg(arg, None);
         }
     }
 
-    fn match_args(&mut self, named: &Named<'t>, args: &'t [TypeArg]) {
+    /// Check a type argument. A plain one's type is checked against `expected`, and
+    /// any other is checked as a schema item.
+    fn arg(&mut self, arg: &'t TypeParam, expected: Option<Kind>) {
+        match arg {
+            _ if let Some(ty) = arg.plain() => self.check(ty, expected),
+            // `...T` once repeated a type among type arguments
+            TypeParam::Pos {
+                quant: Some(TypeQuant::Include),
+                ty,
+            } => {
+                let ty = ty.ungrouped();
+                let written = self.tables.print(self.unit, ty);
+                let outer = self.repeat.replace((ty.span(), written));
+                self.check(ty, Some(Kind::Schema));
+                self.repeat = outer;
+            }
+            _ => self.items(std::slice::from_ref(arg)),
+        }
+    }
+
+    fn match_args(&mut self, named: &Named<'t>, args: &'t [TypeParam]) {
         let Named::Generic(_, _, _, decl, _) = *named else {
             unreachable!("only a declaration has binders")
         };
@@ -589,12 +618,40 @@ impl<'t> Check<'_, 't, '_> {
                 Fill::Excess => {
                     if !reported {
                         reported = true;
-                        self.diag(TooManyTypeArgs(arg.ty().span()));
+                        self.diag(TooManyTypeArgs(arg.span()));
                     }
                     None
                 }
+                Fill::Unfit => {
+                    let declared = tables.decl(decl);
+                    self.diag(ShorthandItem {
+                        span: arg.span(),
+                        name: declared
+                            .name
+                            .map_or("?", |name| tables.name(declared.unit, name))
+                            .to_owned(),
+                    });
+                    None
+                }
+                Fill::Included(slot) => {
+                    let declared = tables.decl(decl);
+                    let binder = &tables.binders(decl, 0)[slot];
+                    self.diag(UnfilledSchema {
+                        span: arg.span(),
+                        name: declared
+                            .name
+                            .map_or("?", |name| tables.name(declared.unit, name))
+                            .to_owned(),
+                        binder: tables.name(declared.unit, binder.name).to_owned(),
+                    });
+                    None
+                }
                 Fill::UnknownKeyword => {
-                    let TypeArgKind::Key { name, .. } = &arg.kind else {
+                    let TypeParam::Key {
+                        key: TypeKey::Sym(name),
+                        ..
+                    } = arg
+                    else {
                         unreachable!("only a keyword argument names a keyword")
                     };
                     self.diag(UnknownTypeKeyword {
@@ -605,8 +662,9 @@ impl<'t> Check<'_, 't, '_> {
                 }
             };
             // A positional schema among items was likely meant to be expanded
-            self.item = matches!(fill, Fill::Item(_)) && matches!(arg.kind, TypeArgKind::Pos(_));
-            self.check(arg.ty(), expected);
+            self.item =
+                matches!(fill, Fill::Item(_)) && matches!(arg, TypeParam::Pos { quant: None, .. });
+            self.arg(arg, expected);
         }
     }
 }
@@ -618,15 +676,22 @@ pub(crate) enum Fill {
     Binder(usize),
     /// A type among the items of the schema binder in this slot
     Item(usize),
-    /// An expansion `...X`, into the variadic binder in this slot if it is known to
-    /// reach only that binder
+    /// An item only a variadic binder takes, such as `*T` or `...S`, into the
+    /// variadic binder in this slot if it is known to reach only that binder
     Expand(Option<usize>),
-    /// A positional argument after an expansion, which fills a binder not known
+    /// A positional argument after an item whose placement is unknown, which fills
+    /// a binder not known
     Unknown,
     /// A positional argument beyond the binders
     Excess,
     /// A keyword argument no binder takes
     UnknownKeyword,
+    /// A quantified item, such as `*T`, given for a schema binder that takes
+    /// [shorthand](Tables::shorthand) types
+    Unfit,
+    /// An inclusion given to a declaration whose required schema binder in this
+    /// slot no argument fills, and which its items can't
+    Included(usize),
 }
 
 impl Tables<'_> {
@@ -652,55 +717,96 @@ impl Tables<'_> {
 
     /// Match the type arguments applied, in `unit`, to a declaration to the binders
     /// they fill: positional arguments in order and then to a variadic binder, keyword
-    /// arguments by name, with the [shorthand](Self::shorthand) for a schema.
-    pub(crate) fn fill(&self, unit: UnitId, decl: DeclId, args: &[TypeArg]) -> Vec<Fill> {
+    /// arguments by name, with the [shorthand](Self::shorthand) for a schema. Any
+    /// other item, such as `*T` or `...S`, fills only a variadic binder, and a
+    /// quantified one never a schema the shorthand stands for.
+    pub(crate) fn fill(&self, unit: UnitId, decl: DeclId, args: &[TypeParam]) -> Vec<Fill> {
+        let mut fills = self.placed(unit, decl, args);
+        // An inclusion's items are never schemas, so a declaration takes none while
+        // a required schema binder isn't filled by an argument of its own: one by
+        // key, or by position before any inclusion
+        let required = self
+            .binders(decl, 0)
+            .iter()
+            .enumerate()
+            .position(|(slot, binder)| {
+                !matches!(binder.kind, BinderKind::Rest(_))
+                    && binder.default.is_none()
+                    && !fills.contains(&Fill::Binder(slot))
+                    && self
+                        .binder_kind(BinderRef { decl, sig: 0, slot })
+                        .is_some_and(|kind| kind.kind == Kind::Schema && !kind.flexible)
+            });
+        if let Some(slot) = required {
+            for (arg, fill) in args.iter().zip(&mut fills) {
+                if let TypeParam::Pos {
+                    quant: Some(TypeQuant::Include),
+                    ..
+                } = arg
+                {
+                    *fill = Fill::Included(slot);
+                }
+            }
+        }
+        fills
+    }
+
+    /// Place type arguments without regard to whether an inclusion can fill the
+    /// declaration's binders
+    fn placed(&self, unit: UnitId, decl: DeclId, args: &[TypeParam]) -> Vec<Fill> {
         let binders = self.binders(decl, 0);
         let owner = self.decl(decl).unit;
-        let keyword = |name| {
+        let keyword = |name: Symbol| {
             let text = self.name(unit, name);
             binders.iter().position(|binder| {
                 binder.kind == BinderKind::Key && self.name(owner, binder.name) == text
             })
         };
-
+        // A keyword argument names the binder it fills
+        let named = |arg: &TypeParam| match arg {
+            TypeParam::Key {
+                quant: None,
+                key: TypeKey::Sym(name),
+                ..
+            } => Some(*name),
+            _ => None,
+        };
         if let Some(slot) = self.shorthand(decl) {
-            let mut written = args
-                .iter()
-                .filter(|arg| !matches!(arg.kind, TypeArgKind::Key { .. }));
-            if let (
-                Some(TypeArg {
-                    kind: TypeArgKind::Pos(ty),
-                    ..
-                }),
-                None,
-            ) = (written.next(), written.next())
+            let mut written = args.iter().filter(|arg| named(arg).is_none());
+            if let (Some(TypeParam::Pos { quant: None, ty }), None) =
+                (written.next(), written.next())
                 && self.kind_of(ty) == Some(Kind::Schema)
             {
                 return args
                     .iter()
-                    .map(|arg| match arg.kind {
-                        TypeArgKind::Key { name, .. } => {
-                            keyword(name).map_or(Fill::UnknownKeyword, Fill::Binder)
-                        }
-                        _ => Fill::Binder(slot),
+                    .map(|arg| match named(arg) {
+                        Some(name) => keyword(name).map_or(Fill::UnknownKeyword, Fill::Binder),
+                        None => Fill::Binder(slot),
                     })
                     .collect();
             }
             let mut positional = 0;
             return args
                 .iter()
-                .map(|arg| match arg.kind {
-                    TypeArgKind::Pos(_) => {
+                .map(|arg| match (arg, named(arg)) {
+                    (_, Some(name)) => keyword(name).map_or(Fill::UnknownKeyword, Fill::Binder),
+                    (TypeParam::Pos { quant: None, .. }, _) => {
                         positional += 1;
                         match positional {
                             ..=2 => Fill::Item(slot),
                             _ => Fill::Excess,
                         }
                     }
-                    TypeArgKind::Key { name, .. } => {
-                        keyword(name).map_or(Fill::UnknownKeyword, Fill::Binder)
-                    }
-                    TypeArgKind::Expand { .. } => Fill::Expand(Some(slot)),
+                    // An inclusion reaches no binder known before its schema is
+                    (
+                        TypeParam::Pos {
+                            quant: Some(TypeQuant::Include),
+                            ..
+                        },
+                        _,
+                    ) => Fill::Expand(None),
+                    // The shorthand stands for a schema, so other items are inapt
+                    _ => Fill::Unfit,
                 })
                 .collect();
         }
@@ -717,26 +823,55 @@ impl Tables<'_> {
         };
         let positional_rest = rest(&|kind| matches!(kind, RestKind::Pos | RestKind::Mixed));
         let keyed_rest = rest(&|kind| matches!(kind, RestKind::Key | RestKind::Mixed));
-        let any_rest = rest(&|_| true);
-        // After an expansion, which binders later positional arguments fill is unknown
-        let mut expanded = false;
+        // Items of either kind reach a variadic binder only when it's the only one
+        let rests = binders
+            .iter()
+            .filter(|binder| matches!(binder.kind, BinderKind::Rest(_)))
+            .count();
+        let any_rest = rest(&|_| true).filter(|_| rests == 1);
+        // After an item of unknown arity before the positional binders are filled,
+        // or one no binder is known to take, which binders later positional
+        // arguments fill is unknown
+        let mut unknown = false;
         args.iter()
-            .map(|arg| match &arg.kind {
-                TypeArgKind::Pos(_) => match positional.next() {
-                    _ if expanded => Fill::Unknown,
-                    Some(slot) => Fill::Binder(slot),
-                    None => positional_rest.map_or(Fill::Excess, Fill::Item),
-                },
-                TypeArgKind::Key { name, .. } => keyword(*name)
+            .map(|arg| match (arg, named(arg)) {
+                (_, Some(name)) => keyword(name)
                     .map(Fill::Binder)
                     .or(keyed_rest.map(Fill::Item))
                     .unwrap_or(Fill::UnknownKeyword),
-                // A type expands as a pack of any number of it. It reaches only the
-                // variadic binder once every positional binder is filled.
-                TypeArgKind::Expand { .. } => {
-                    let only_rest = !expanded && positional.clone().next().is_none();
-                    expanded = true;
-                    Fill::Expand(any_rest.filter(|_| only_rest))
+                (TypeParam::Pos { quant: None, .. }, _) => match positional.next() {
+                    _ if unknown => Fill::Unknown,
+                    Some(slot) => Fill::Binder(slot),
+                    None => positional_rest.map_or(Fill::Excess, Fill::Item),
+                },
+                // A keyed item reaches only a keyed variadic binder
+                (TypeParam::Key { .. } | TypeParam::AnyKey(..), _) => {
+                    keyed_rest.map_or(Fill::Excess, |slot| Fill::Expand(Some(slot)))
+                }
+                // Any other may stand for any number of positional items, so it
+                // reaches a variadic binder only once every positional binder is
+                // filled
+                _ => {
+                    let target = match arg {
+                        TypeParam::Pos {
+                            quant: Some(TypeQuant::Include),
+                            ..
+                        }
+                        | TypeParam::Open(_) => any_rest,
+                        _ => positional_rest,
+                    };
+                    if unknown || positional.clone().next().is_some() {
+                        unknown = true;
+                        Fill::Expand(None)
+                    } else if let Some(slot) = target {
+                        Fill::Expand(Some(slot))
+                    } else if rests > 1 {
+                        // Which of several variadic binders it reaches is unknown
+                        unknown = true;
+                        Fill::Expand(None)
+                    } else {
+                        Fill::Excess
+                    }
                 }
             })
             .collect()

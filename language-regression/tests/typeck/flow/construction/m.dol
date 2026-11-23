@@ -22,7 +22,7 @@ pub class Box[T]
 pub class Many[*Ts]
   field items @ std.Phantom[...Ts]
 
-  @def (init)[U] self @ Many[...U] items @ Array[U]
+  @def (init)[U] self @ Many[*U] items @ Array[U]
 
   def (init) _self _items @ Value
     nil
@@ -31,28 +31,28 @@ pub class Labeled: Box[Str]
 
 pub def constructions()
   let _ = Pack()
-  #   ^: flow m.Pack[...Value]
+  #   ^: flow m.Pack[*]
   let _ = Keyed()
-  #   ^: flow m.Keyed[...Value, ...{**Value}]
+  #   ^: flow m.Keyed[...]
   let _ = Box "a"
   #   ^: flow m.Box[std.Int]
   let _ = Box [1]
   #   ^: flow m.Box[std.Int]
   let _ = Many [1]
-  #   ^: flow m.Many[...std.Int]
+  #   ^: flow m.Many[*std.Int]
   # An inherited `(init)`'s receiver is the superclass, so it gives the class
   let _ = Labeled "a"
   #   ^: flow m.Labeled
 
 pub def misfits()
   let _p @ Str = Pack()
-  # error: `m.Pack[...Value]` does not fit the annotation `std.Str`
+  # error: `m.Pack[*]` does not fit the annotation `std.Str`
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _p @ Str = Pack()
   #    |                  ^^^^^^
   let _m @ Many[Int, Int] = Many [1, 2]
-# error: `m.Many[...1 | 2]` does not fit the annotation `m.Many[std.Int, std.Int]`
+# error: `m.Many[*1 | 2]` does not fit the annotation `m.Many[std.Int, std.Int]`
 #   --> m.dol:LL:LL
 #    |
 # LL |   let _m @ Many[Int, Int] = Many [1, 2]

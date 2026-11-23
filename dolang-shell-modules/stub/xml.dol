@@ -85,7 +85,7 @@ pub class EncodeError: std.ValueError
   # document, and each further one an index into the children of the element
   # before.
   #[getter]
-  pub def path self -> Tuple[...Int]
+  pub def path self -> Tuple[*Int]
     ...
 
 # An XML element: a name, attributes, and children.

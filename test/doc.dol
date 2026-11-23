@@ -79,7 +79,7 @@ def std_type name
 
 # A positional type argument.
 def pos_arg ty
-  {"kind": "pos", "type": ty}
+  {"kind": "pos", "quant": nil, "type": ty}
 
 # The `nodes` entry a type tree's name refers to.
 def target_of out tree
@@ -151,7 +151,7 @@ def parameters_and_returns_are_typed()
     "base": {"kind": "name", "name": "std.Dict", "module": "std"}
     "args": [pos_arg(name_type("Str")), pos_arg(std_type("Pack"))]
 
-# A rest parameter whose annotation expands a pack says so, and an expansion
+# A rest parameter whose annotation expands a pack says so, and an inclusion
 # argument is marked as one.
 #[test]
 def rest_annotations_and_expansions()
@@ -165,7 +165,7 @@ def rest_annotations_and_expansions()
   assert_eq (untargeted mapped["returns"]) $
     "kind": app
     "base": (name_type "Tuple")
-    "args": [{"kind": "expand", "type": name_type("Rs")}]
+    "args": [{"kind": "pos", "quant": "include", "type": name_type("Rs")}]
   # A parameter whose annotation doesn't expand has no marker
   assert (!(entity(out, "place")["params"][0].contains("type_spread")))
 
@@ -426,7 +426,7 @@ def remaining_type_forms()
   assert_eq (type_of("Keyed")) $
     "kind": app
     "base": (name_type "Pack")
-    "args": [{"kind": "key", "name": "x", "type": name_type("Int")}]
+    "args": [{"kind": "key", "quant": nil, "key": "x", "type": name_type("Int")}]
   assert_eq (type_of("Wide")) $
     "kind": schema
     "params":

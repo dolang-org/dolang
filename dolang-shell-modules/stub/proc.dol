@@ -194,7 +194,7 @@ pub class Info
   # is split according to typical C runtime conventions;
   # [`cmdline_win`](proc.Info.cmdline_win) is the raw original.
   #[getter]
-  pub def cmdline self -> (Tuple[...Str] | nil)
+  pub def cmdline self -> (Tuple[*Str] | nil)
     ...
 
   # The working directory.

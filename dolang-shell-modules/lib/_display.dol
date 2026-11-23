@@ -24,7 +24,7 @@ import @fs @time @uuid
 pub @let Leaf = (nil | Bool | Int | Float | Str | Sym | term.Text | fs.Path | time.DateTime | uuid.Uuid)
 
 # A dump: a block of keyed entries, a list of items, or one line.
-pub @let Node = (Leaf | BaseDict[Str | Sym, Node] | BaseArray[Node] | Tuple[...Node])
+pub @let Node = (Leaf | BaseDict[Str | Sym, Node] | BaseArray[Node] | Tuple[*Node])
 
 # A rendered line: the column it starts at, and what it shows there.
 @let Row = (Int, term.Text)

@@ -187,8 +187,8 @@ impl Needs<'_, '_> {
             TypeExpr::Const { .. } | TypeExpr::Error { .. } => {}
             TypeExpr::App { base, args, .. } => {
                 self.ty(node, unit, base);
-                for arg in args {
-                    self.ty(node, unit, arg.ty());
+                for ty in args.iter().flat_map(TypeParam::tys) {
+                    self.ty(node, unit, ty);
                 }
             }
             TypeExpr::Schema { params, .. }

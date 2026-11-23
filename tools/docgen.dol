@@ -95,7 +95,7 @@ def type_text ty context
   let text = nil
   let binding = BINDS_COMPACT
   if (kind == "app")
-    text = "$(type_text(ty["base"], BINDS_COMPACT))[$(type_args_text(ty["args"]))]"
+    text = "$(type_text(ty["base"], BINDS_COMPACT))[$(type_params_text(ty["args"]))]"
   else if (kind == "schema")
     text = "{$(type_params_text(ty["params"]))}"
   else if (kind == "union")
@@ -119,20 +119,8 @@ def type_text ty context
   else
     text
 
-# The arguments in the `[]` of an application type tree.
-def type_args_text args
-  let parts = []
-  for arg = args
-    let text = (type_text arg["type"] BINDS_FUNC)
-    let kind = arg["kind"]
-    if (kind == "expand")
-      text = "...$text"
-    else if (kind == "key")
-      text = "$(arg["name"]): $text"
-    parts.push $text
-  ", ".join $parts
-
-# The parameters in the `()` or `{}` of a function or schema type tree.
+# The parameters in the `()`, `{}` or `[]` of a function, schema or application
+# type tree.
 def type_params_text params
   let parts = []
   for param = params

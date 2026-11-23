@@ -24,7 +24,7 @@ pub(crate) enum TypeExpr {
     /// Type arguments applied to a type, e.g. `Array[Int]`
     App {
         base: Box<TypeExpr>,
-        args: Vec<TypeArg>,
+        args: Vec<TypeParam>,
         bracket_span: Option<Span>,
     },
     /// A schema, e.g. `{name: Str, ?port: Int}`
@@ -109,26 +109,6 @@ pub(crate) enum TypeEntry {
     /// Type-only declaration n of a lexical scope, as numbered by
     /// [`Stmt::type_decls`](super::Stmt::type_decls)
     Type(usize),
-}
-
-/// A type argument in a bracketed or vertical application
-pub(crate) struct TypeArg {
-    pub(crate) kind: TypeArgKind,
-    /// The trailing `,`
-    pub(crate) delim_span: Option<Span>,
-}
-
-pub(crate) enum TypeArgKind {
-    /// `T`
-    Pos(TypeExpr),
-    /// `name: T`
-    Key {
-        name: Span,
-        colon_span: Span,
-        ty: TypeExpr,
-    },
-    /// `...T`, expanding a pack into further arguments
-    Expand { ellipsis_span: Span, ty: TypeExpr },
 }
 
 /// An item a schema or a function type's parameters declare
@@ -325,8 +305,8 @@ impl TypeExpr {
             TypeExpr::Const { .. } | TypeExpr::Error => {}
             TypeExpr::App { base, args, .. } => {
                 base.names(f);
-                for arg in args {
-                    arg.ty().names(f);
+                for ty in args.iter().flat_map(TypeParam::tys) {
+                    ty.names(f);
                 }
             }
             TypeExpr::Schema { params, .. } | TypeExpr::Parens { params, .. } => {
@@ -354,30 +334,6 @@ impl TypeExpr {
                     implicit.ty.names(f);
                 }
                 ret.names(f);
-            }
-        }
-    }
-}
-
-impl TypeArg {
-    /// The argument's type.
-    pub(crate) fn ty(&self) -> &TypeExpr {
-        match &self.kind {
-            TypeArgKind::Pos(ty) | TypeArgKind::Key { ty, .. } | TypeArgKind::Expand { ty, .. } => {
-                ty
-            }
-        }
-    }
-
-    fn each_name<F: FnMut(NameMut<'_>)>(&mut self, f: &mut F) {
-        self.ty_mut().each_name(f);
-    }
-
-    /// The argument's type.
-    pub(crate) fn ty_mut(&mut self) -> &mut TypeExpr {
-        match &mut self.kind {
-            TypeArgKind::Pos(ty) | TypeArgKind::Key { ty, .. } | TypeArgKind::Expand { ty, .. } => {
-                ty
             }
         }
     }
@@ -544,39 +500,6 @@ impl Node for TypeExpr {
     }
 }
 
-impl Node for TypeArg {
-    fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
-        match &self.kind {
-            TypeArgKind::Pos(ty) => visit.node(ty)?,
-            TypeArgKind::Key {
-                name,
-                colon_span,
-                ty,
-            } => {
-                // In the `:Name` shorthand the name is the type as well, and is
-                // visited only as the type
-                if colon_span.start > name.start {
-                    visit.token(Token::TypeKey, *name, None)?;
-                }
-                visit.token(Token::Delim, *colon_span, None)?;
-                visit.node(ty)?
-            }
-            TypeArgKind::Expand { ellipsis_span, ty } => {
-                visit.token(Token::Sigil, *ellipsis_span, None)?;
-                visit.node(ty)?
-            }
-        }
-        if let Some(span) = self.delim_span {
-            visit.token(Token::Delim, span, None)?;
-        }
-        ControlFlow::Continue(())
-    }
-
-    fn kind(&self) -> NodeKind {
-        NodeKind::TypeArg
-    }
-}
-
 impl Node for TypeParam {
     fn accept<'a, V: Visit>(&'a self, visit: &'a mut V) -> ControlFlow<V::Break> {
         if let Some(span) = self.dash_span {
@@ -595,6 +518,9 @@ impl Node for TypeParam {
             } => {
                 visit_quant(visit, quant)?;
                 match key {
+                    // In the `:Name` shorthand the name is the type as well, and is
+                    // visited only as the type
+                    TypeKey::Sym(span) if colon_span.start < span.start => {}
                     TypeKey::Sym(span) => visit.token(Token::TypeKey, *span, None)?,
                     TypeKey::Type(key_ty) => visit.node(&**key_ty)?,
                 }

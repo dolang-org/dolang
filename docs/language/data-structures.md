@@ -249,8 +249,8 @@ Equality compares the items in that order, so the same items added in a
 different order are unequal. Hashing follows the same order, as a dict's does.
 
 The type `Record` takes its items as type arguments, as `Pack` does:
-`Record[Str, tag: Str]`. Expand a schema for optional or repeated items, as in
-`Record[Str, ...{*Int, ?tag: Str}]`.
+`Record[Str, tag: Str]`, or with optional and repeated items,
+`Record[Str, *Int, ?tag: Str]`.
 
 `BaseRecord` is the read-only view of a record. A parameter that only reads
 takes a `BaseRecord`, which accepts records with narrower items, as
@@ -296,12 +296,12 @@ if (Struct.contains s :user:)
   echo $s.user
 ```
 
-The type `Struct` takes its items as type arguments, as `Pack` does, with a
-schema expanded for optional items. Reading or writing a name they don't admit
+The type `Struct` takes its items as type arguments, as `Pack` does, including
+optional ones. Reading or writing a name they don't admit
 is an error:
 
 ```
-def connect target @ Struct[host: Str, port: Int, ...{?user: Str}]
+def connect target @ Struct[host: Str, port: Int, ?user: Str]
   echo "$(target.host):$(target.port)"
 ```
 

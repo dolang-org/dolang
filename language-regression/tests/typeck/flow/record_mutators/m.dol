@@ -2,7 +2,7 @@
 # position shifts the ones after it, so inserting or removing one needs a
 # position past the fixed ones, and `push` a rest position.
 
-pub def rest r @ Record[Str, ...Int]
+pub def rest r @ Record[Str, *Int]
   r.pop 1
   r.insert 1 2
   r.delete 2
@@ -98,7 +98,7 @@ pub def constructed()
 
 # Keys are symbols
 pub def bound _r @ Record[...{*(Str): Int}]
-  # error: this does not satisfy `...Ts @ {*Value, **Value}`
+  # error: this does not satisfy `...Ts @ {*Value, *(Sym): Value}`
   #   --> m.dol:LL:LL
   #    |
   # LL | pub def bound _r @ Record[...{*(Str): Int}]
@@ -126,9 +126,9 @@ pub def widened r @ Record[Int, a: Int]
 #    = note: in `{std.Int, a: std.Int}`
 
 # A `BaseRecord` has no mutators
-pub def read_only r @ BaseRecord[Int, ...Int]
+pub def read_only r @ BaseRecord[Int, *Int]
   r.push 1
-# error: `std.BaseRecord[std.Int, ...std.Int]` has no member `push`
+# error: `std.BaseRecord[std.Int, *std.Int]` has no member `push`
 #   --> m.dol:LL:LL
 #    |
 # LL |   r.push 1

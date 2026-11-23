@@ -47,7 +47,7 @@ pub def optional b @ Dict[{x: Int, ?y: Int}]
 # LL |   b.clear()
 #    |   ^^^^^^^^^
 
-pub def positions b @ Record[Int, ...Int]
+pub def positions b @ Record[Int, *Int]
   b.delete 0
   # error: this call removes the required item at `0`
   #   --> m.dol:LL:LL
@@ -69,7 +69,7 @@ pub def positions b @ Record[Int, ...Int]
 # LL |   b.clear()
 #    |   ^^^^^^^^^
 
-pub def varying b @ Record[...Int]
+pub def varying b @ Record[*Int]
   b.clear()
   b.insert 0 1
 

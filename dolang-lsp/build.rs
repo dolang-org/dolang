@@ -131,7 +131,7 @@ enum TypeJson {
     },
     App {
         base: Box<TypeJson>,
-        args: Vec<TypeArgJson>,
+        args: Vec<TypeParamJson>,
     },
     Schema {
         params: Vec<TypeParamJson>,
@@ -164,18 +164,7 @@ enum TypeJson {
     },
 }
 
-/// A type argument in the `[]` of an application
-#[derive(Clone, serde::Deserialize)]
-struct TypeArgJson {
-    kind: String,
-    /// The name of a keyword argument
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(rename = "type")]
-    ty: TypeJson,
-}
-
-/// A parameter of a schema or function type
+/// A parameter of a schema or function type, or a type argument
 #[derive(Clone, serde::Deserialize)]
 struct TypeParamJson {
     kind: String,
@@ -230,7 +219,7 @@ impl TypeJson {
             TypeJson::Name { name } => return name.clone(),
             TypeJson::Const { text } => return text.clone(),
             TypeJson::App { base, args } => (
-                format!("{}[{}]", base.render(Binding::Compact), render_args(args)),
+                format!("{}[{}]", base.render(Binding::Compact), render_params(args)),
                 Binding::Compact,
             ),
             TypeJson::Schema { params } => {
@@ -291,20 +280,6 @@ impl TypeJson {
             text
         }
     }
-}
-
-fn render_args(args: &[TypeArgJson]) -> String {
-    args.iter()
-        .map(|arg| {
-            let ty = arg.ty.render(Binding::Func);
-            match (arg.kind.as_str(), &arg.name) {
-                ("expand", _) => format!("...{ty}"),
-                ("key", Some(name)) => format!("{name}: {ty}"),
-                _ => ty,
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// A function type's parameters, with its implicits after them

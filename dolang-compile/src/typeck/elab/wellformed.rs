@@ -26,7 +26,7 @@ use super::{
     UnitDiag, UnquotableResult, interface,
     quote::Unquotable,
     sig::{self, Form},
-    surface::{Class, Interned, Ref, TypeArg, TypeExpr, TypeParam, TypeQuant},
+    surface::{Class, Interned, Ref, TypeExpr, TypeParam, TypeQuant},
 };
 use crate::{
     diag::Span,
@@ -423,8 +423,8 @@ impl Check<'_, '_> {
             }
             TypeExpr::App { args, interned, .. } => {
                 let phantom = self.application(unit, scope, ty.span(), interned, args) || phantom;
-                for arg in args {
-                    self.ty(unit, scope, arg.ty(), phantom);
+                for ty in args.iter().flat_map(TypeParam::tys) {
+                    self.ty(unit, scope, ty, phantom);
                 }
             }
             TypeExpr::Func {
@@ -455,7 +455,7 @@ impl Check<'_, '_> {
         scope: Option<DeclId>,
         span: Span,
         interned: &Interned,
-        written: &[TypeArg],
+        written: &[TypeParam],
     ) -> bool {
         let span = UnitSpan { unit, span };
         let Some(id) = interned.get() else {
@@ -502,7 +502,7 @@ impl Check<'_, '_> {
                     .filter(|(fill, _)| {
                         matches!(fill, Fill::Binder(s) | Fill::Item(s) | Fill::Expand(Some(s)) if *s == slot)
                     })
-                    .map(|(_, arg)| arg.ty().span())
+                    .map(|(_, arg)| arg.span())
                     .reduce(|first, last| self.tables.info(unit).join(first, last))
             });
             at.map_or(span, |span| UnitSpan { unit, span })
@@ -557,8 +557,9 @@ impl Check<'_, '_> {
                 self.tables.print(site.unit, &site.ty)
             }
             (None, Binding::Rest(Rest::Positional)) => "{*Value}".to_owned(),
-            (None, Binding::Rest(Rest::Keyed)) => "{**Value}".to_owned(),
-            (None, _) => "{...}".to_owned(),
+            // A variadic binder's keys are symbols
+            (None, Binding::Rest(Rest::Keyed)) => "{*(Sym): Value}".to_owned(),
+            (None, _) => "{*, *(Sym): Value}".to_owned(),
         };
         format!("{sigil}{} @ {bound}", self.db.symbol(source.name))
     }
@@ -632,8 +633,8 @@ impl Check<'_, '_> {
             let span = super_ref.head.span;
             let phantom =
                 self.application(unit, Some(decl), span, &super_ref.interned, &super_ref.args);
-            for arg in &super_ref.args {
-                self.ty(unit, Some(decl), arg.ty(), phantom);
+            for ty in super_ref.args.iter().flat_map(TypeParam::tys) {
+                self.ty(unit, Some(decl), ty, phantom);
             }
         }
     }
@@ -819,8 +820,8 @@ impl Check<'_, '_> {
                     !self.tables.alias(target).is_some()
                         && self.db.declaration(target).source.kind.nominal()
                 });
-                for arg in args {
-                    self.guarded(unit, alias, members, arg.ty(), guarded || nominal, found);
+                for ty in args.iter().flat_map(TypeParam::tys) {
+                    self.guarded(unit, alias, members, ty, guarded || nominal, found);
                 }
             }
             TypeExpr::Schema { params, .. } => {

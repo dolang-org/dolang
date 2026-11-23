@@ -31,7 +31,7 @@ pub class Identity
 
   # Supplementary group IDs.
   #[getter]
-  pub def groups self -> Tuple[...Int]
+  pub def groups self -> Tuple[*Int]
     ...
 
 # A symbol naming a bit of a [`Permission`](security.unix.Permission).

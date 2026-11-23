@@ -93,9 +93,9 @@ pub def ranges() -> Range[Int]
 pub def rest()
   let f = do |*xs **kw|
     let _ = xs
-    #       ^~: flow (*Value)
+    #       ^~: flow (*)
     let _ = kw
-    #       ^~: flow (**Value)
+    #       ^~: flow (**)
     nil
   f 1 k: 2
 

@@ -13,7 +13,7 @@ pub @let Encodable = $
   | Int
   | Str
   | BaseArray[Encodable]
-  | Tuple[...Encodable]
+  | Tuple[*Encodable]
   | BaseDict[Str, Encodable]
 
 pub @let Data = (nil | Int | Str | Array[Data] | Dict[Str, Data])

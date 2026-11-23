@@ -53,7 +53,7 @@ export interface BinderJson {
 export type TypeJson =
   | { kind: 'name'; name: string }
   | { kind: 'const'; text: string }
-  | { kind: 'app'; base: TypeJson; args: TypeArgJson[] }
+  | { kind: 'app'; base: TypeJson; args: TypeParamJson[] }
   | { kind: 'schema'; params: TypeParamJson[] }
   /** A parenthesized tuple or record form */
   | { kind: 'parens'; params: TypeParamJson[] }
@@ -61,12 +61,6 @@ export type TypeJson =
   | { kind: 'func'; params: TypeParamJson[]; input?: TypeJson | null; output?: TypeJson | null; ret: TypeJson }
   /** A function type quantified over binders */
   | { kind: 'quant'; binders: BinderJson[]; func: TypeJson };
-export interface TypeArgJson {
-  kind: string;
-  /** The name of a keyword argument */
-  name?: string | null;
-  type: TypeJson;
-}
 export interface TypeParamJson {
   kind: string;
   /** How many of the element the item admits, absent for exactly one */
@@ -116,7 +110,7 @@ export function typeText(type: TypeJson, context: Binding = Binding.Compact): st
     case 'name': return type.name;
     case 'const': return type.text;
     case 'app':
-      text = `${typeText(type.base)}[${argsText(type.args)}]`;
+      text = `${typeText(type.base)}[${paramsText(type.args)}]`;
       binding = Binding.Compact;
       break;
     case 'schema':
@@ -146,15 +140,6 @@ export function typeText(type: TypeJson, context: Binding = Binding.Compact): st
       break;
   }
   return binding < context ? `(${text})` : text;
-}
-
-function argsText(args: TypeArgJson[]): string {
-  return args.map(arg => {
-    const type = typeText(arg.type, Binding.Func);
-    if (arg.kind === 'expand') return `...${type}`;
-    if (arg.kind === 'key' && arg.name) return `${arg.name}: ${type}`;
-    return type;
-  }).join(', ');
 }
 
 // A function type's parameters, with its implicits after them

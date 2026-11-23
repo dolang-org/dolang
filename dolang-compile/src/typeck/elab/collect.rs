@@ -589,7 +589,7 @@ impl<'u> Walk<'_, 'u> {
             ast::TypeExpr::App { base, args, .. } => TypeExpr::App {
                 span,
                 base: Box::new(self.surface(base)),
-                args: args.iter().map(|arg| self.surface_arg(arg)).collect(),
+                args: self.surface_params(args),
                 interned: Interned::default(),
             },
             ast::TypeExpr::Schema {
@@ -648,24 +648,6 @@ impl<'u> Walk<'_, 'u> {
         }
     }
 
-    fn surface_arg(&mut self, arg: &'u ast::TypeArg) -> surface::TypeArg {
-        use ast::TypeArgKind as A;
-        use surface::TypeArgKind;
-
-        surface::TypeArg {
-            kind: match &arg.kind {
-                A::Pos(ty) => TypeArgKind::Pos(self.surface(ty)),
-                A::Key { name, ty, .. } => TypeArgKind::Key {
-                    name: self.symbol(*name),
-                    ty: self.surface(ty),
-                },
-                A::Expand { ty, .. } => TypeArgKind::Expand {
-                    ty: self.surface(ty),
-                },
-            },
-        }
-    }
-
     fn surface_params(&mut self, params: &'u [ast::TypeParam]) -> Vec<surface::TypeParam> {
         use ast::{TypeKey as K, TypeParamKind as P, TypeQuant as Q};
         use surface::{TypeKey, TypeParam, TypeQuant};
@@ -694,8 +676,11 @@ impl<'u> Walk<'_, 'u> {
                     },
                     ty: self.surface(ty),
                 },
-                P::AnyPos { .. } => TypeParam::AnyPos,
-                P::AnyKey { ty, .. } => TypeParam::AnyKey(ty.as_ref().map(|ty| self.surface(ty))),
+                P::AnyPos { star_span } => TypeParam::AnyPos(self.at(*star_span)),
+                P::AnyKey { star_star_span, ty } => TypeParam::AnyKey(
+                    self.at(*star_star_span),
+                    ty.as_ref().map(|ty| self.surface(ty)),
+                ),
                 P::Open { ellipsis_span } => TypeParam::Open(self.at(*ellipsis_span)),
             })
             .collect()
@@ -1468,14 +1453,13 @@ impl<'u> Walk<'_, 'u> {
                 // A supertype that exists at runtime is a value elaboration resolved
                 self.refer(super_ref.ident.span, entry, &super_ref.fields);
             }
-            let mut args = Vec::new();
-            for arg in &super_ref.args {
+            for ty in super_ref.args.iter().flat_map(ast::TypeParam::tys) {
                 // Checked with the supertype, whose binders they fill
                 let outer = std::mem::replace(&mut self.group, self.owner);
-                self.names(&group, arg.ty());
+                self.names(&group, ty);
                 self.group = outer;
-                args.push(self.surface_arg(arg));
             }
+            let args = self.surface_params(&super_ref.args);
             supers.push(surface::Super {
                 head: self.reference(super_ref.ident.span, &super_ref.fields),
                 args,

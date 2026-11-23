@@ -12,8 +12,8 @@ let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
 A schema may appear:
 
 - As the argument for a schema parameter, as in `Dict[{name: Str}]`
-- [Expanded](#expanding-schemas) among type arguments, as in
-  `Record[...{Int, ?tag: Str}]`, or [included](#inclusions) in another schema
+- [Included](#inclusions) in another schema, or among [type
+  arguments](#type-arguments), as in `Record[Int, ...Colors]`
 - As a binder's bound, as in `S @ {...}`
 - As the body of a type alias, as in `@let Colors = {?fg: Color, ?bg: Color}`
 - As the annotation of a [rest binding](./annotations.md#rest-bindings), or the
@@ -27,7 +27,7 @@ that element the schema admits:
 | `T`      | A positional item                            |
 | `key: T` | A keyed item                                 |
 | `(K): T` | A keyed item whose keys type `K`             |
-| `**V`    | Any number of symbol-keyed items of type `V` |
+| `**V`    | Any number of keyed items of type `V`        |
 
 ## Positional Items
 
@@ -70,8 +70,8 @@ Without one it admits exactly one:
 | `...`      | The items of a schema, as an [inclusion](#inclusions) |
 
 An item takes at most one quantifier, so `?` cannot also repeat and an
-inclusion cannot be repeated. `**V` is shorthand for `*(Sym): V` and takes no
-quantifier.
+inclusion cannot be repeated. `**V` is shorthand for `*(Value): V`, a repeat of
+any key, and takes no quantifier.
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
@@ -100,18 +100,42 @@ let anything @ Spread[{...}] = {}
 let positional @ Tuple[...{Str, *}] = ("a", 1)
 ```
 
-## Expanding Schemas
+## Keys by Delimiter
 
-In a list of [type arguments](./syntax.md#type-arguments), `...S` expands the
-schema `S` into further arguments, as an [inclusion](#inclusions) does within a
-schema. This lets a type argument list hold items that need a quantifier, like
-`?port: Int` below. Expanding a type `T` rather than a schema is shorthand for
-`...{*T}`:
+The delimiter a list is written in decides the keys of `**V`, `**`, and `...`.
+In a schema's braces they admit any key. In parentheses, the parameters of a
+[function type](./functions.md) or a [tuple or `Pack`
+type](./syntax.md#tuples-and-packs), and in the brackets of [type
+arguments](#type-arguments), they admit only symbols. Write `*(Sym): V` in a
+schema for symbol keys alone:
 
 ```
-let row @ Tuple[...Str] = Tuple ["id", "name"]
-let conn @ Pack[...{host: Str, ?port: Int}] = (host: "db")
+let counts @ Dict[{**Int}] = {"a": 1, b: 2}
+let named @ Dict[{*(Sym): Int}] = {b: 2}
+let options @ (**Int) = (b: 2)
 ```
+
+An alias keeps the meaning of where it is written. Including `@let Counts =
+{**Int}` in a function type's parameters, as in `((...Counts) -> nil)`, is an
+error, because its keys need not be symbols.
+
+## Type Arguments
+
+[Type arguments](./syntax.md#type-arguments) are the items of a schema, so they
+take quantifiers, and `...S` includes the schema `S`. A type alone fills the
+next positional binder, and `key: T` the key binder of its name. Any other item,
+such as `*Str` or `?port: Int`, goes to the variadic binder:
+
+```
+let row @ Tuple[*Str] = Tuple ["id", "name"]
+let conn @ Pack[host: Str, ?port: Int] = (host: "db")
+let any @ Record[...] = {1, a: 2}
+```
+
+An inclusion's items are types, never schemas, so an inclusion can't fill a
+schema binder. A type with a schema binder that has no default, such as `Dict`,
+takes an inclusion only when another argument fills that binder: by key, or by
+position before the inclusion.
 
 ## Types as Schema Arguments
 
@@ -124,8 +148,9 @@ parameters, which are passed by name as usual:
 | `Spread[T]`  | `Spread[{*T}]`    |
 | `Dict[K, V]` | `Dict[{*(K): V}]` |
 
-An argument that is already a schema, including a binder bounded by one, is
-passed as is:
+The shorthand stands for the schema, so such a type takes no quantified item,
+such as `*T` or `**V`, as an argument. An argument that is already a schema,
+including a binder bounded by one, is passed as is:
 
 ```
 let headers @ Dict[Str, Str] = {}
@@ -181,7 +206,7 @@ alternative starts with `|` and contains one type.
 
 `Type $` applies a vertical schema as one type argument. If the type already
 has arguments in `[]`, the schema is appended to them. `Type ...$` instead
-expands the schema into type arguments, as `Type[...{...}]` does.
+includes the schema among type arguments, as `Type[...{...}]` does.
 
 ```
 @let Pair = Tuple ...$

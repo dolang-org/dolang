@@ -144,7 +144,7 @@ pub class Regex
   # | ----------------------------------------- | ------------------------------------------ |
   # | [`MissingPosError`](std.MissingPosError) | A numbered capture hole cannot be filled   |
   # | [`MissingKeyError`](std.MissingKeyError) | A named capture hole cannot be filled      |
-  pub def replace[S @ {*Str, *(Int): Str, **Str}]
+  pub def replace[S @ {*Str, *(Int): Str, *(Sym): Str}]
     self
     # String to search in.
     haystack @ Str
@@ -290,8 +290,8 @@ pub class Regex
 # let a b :c = rest
 # ```
 pub class Captures:
-  - @Index[{Match, *Match, *(Str): Match, **Match}]
-  - @Unpack[{Match, *Match, **Match}]
+  - @Index[{Match, *Match, *(Str): Match, *(Sym): Match}]
+  - @Unpack[{Match, *Match, *(Sym): Match}]
 do
   # The byte offset of the end of the overall match within the haystack.
   #[getter]
@@ -364,7 +364,7 @@ do
     ...
 
   # Unpacks the positional items by index and the named groups by key.
-  pub def (unpack) self -> Unpack[{Match, *Match, **Match}]
+  pub def (unpack) self -> Unpack[{Match, *Match, *(Sym): Match}]
     ...
 
 # A single matched span within a string.

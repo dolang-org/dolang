@@ -76,7 +76,7 @@ pub class EncodeError: std.ValueError
   # to the `Int`. When the fault is inside a key, the path leads to the mapping
   # holding that key. Each key is the one in the encoded value.
   #[getter]
-  pub def path self -> Tuple[...EncodeValue]
+  pub def path self -> Tuple[*EncodeValue]
     ...
 
 # A value decoded from YAML. A mapping key may be any YAML value.
@@ -98,8 +98,8 @@ pub @let EncodeValue = $
   | Str
   | Sym
   | BaseArray[EncodeValue]
-  | Tuple[...EncodeValue]
-  | BaseStruct[...{*EncodeValue, **EncodeValue}]
+  | Tuple[*EncodeValue]
+  | BaseStruct[*EncodeValue, **EncodeValue]
   | BaseDict[EncodeValue, EncodeValue]
 
 # Parses a YAML string into a Do value.

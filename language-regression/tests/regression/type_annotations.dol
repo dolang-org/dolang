@@ -141,7 +141,7 @@ def forms
   - m @true = 13
   - n @nil = 14
   - o @{"x-custom": Str} = 15
-  - q @Tuple[...Str] = 16
+  - q @Tuple[*Str] = 16
   - r @(
       | Str
       | Path
@@ -227,7 +227,7 @@ assert_eq (mapped 10) (10,)
 def segregate *args **kw
   (args, kw)
 assert_eq (segregate 1 k: 2) ((1,), (k: 2))
-let schema @ Record[name: Str, ...{*Int, **Str}] = {name: "n", 1, x: "y"}
+let schema @ Record[name: Str, ...{*Int, *(Sym): Str}] = {name: "n", 1, x: "y"}
 let callback @ ((Int, *Str, **Bool) -> nil) = nil
 assert_eq [schema[0], callback] [1, nil]
 

@@ -83,6 +83,9 @@ pub @class Shape
 
 pub @let Pair[T @ Int = Int] = Tuple[T, T]
 
+pub class Many[*Ts, **Ks]
+pub @let Items = Many[Int, *Str, ?Int, *, **Int, ?key: Int, *(Str): Int, :Int, **, ...{*Int}]
+
 @def double x@Int -> Int
 @def double x@Str -> Str
 pub def double x

@@ -43,7 +43,6 @@ pub(crate) struct Types<'v> {
     rest_param: Type<'v, NodeObject<RestParamTag>>,
     implicit_param: Type<'v, NodeObject<ImplicitParamTag>>,
     type_expr: Type<'v, NodeObject<TypeExprTag>>,
-    type_arg: Type<'v, NodeObject<TypeArgTag>>,
     type_item: Type<'v, NodeObject<TypeItemTag>>,
     concrete_nodes: ConcreteNodeTypes<'v>,
     diagnostic: Type<'v, Diagnostic>,
@@ -149,9 +148,6 @@ pub(crate) struct ConcreteNodeTypes<'v> {
     union_type: Type<'v, NodeObject<UnionTypeTag>>,
     func_type: Type<'v, NodeObject<FuncTypeTag>>,
     quant_type: Type<'v, NodeObject<QuantTypeTag>>,
-    pos_type_arg: Type<'v, NodeObject<PosTypeArgTag>>,
-    key_type_arg: Type<'v, NodeObject<KeyTypeArgTag>>,
-    expand_type_arg: Type<'v, NodeObject<ExpandTypeArgTag>>,
     pos_type_item: Type<'v, NodeObject<PosTypeItemTag>>,
     key_type_item: Type<'v, NodeObject<KeyTypeItemTag>>,
     any_pos_type_item: Type<'v, NodeObject<AnyPosTypeItemTag>>,
@@ -213,7 +209,6 @@ impl<'v> Global<'v> {
             };
         }
         let type_expr = subtype!(TypeExprTag, node);
-        let type_arg = subtype!(TypeArgTag, node);
         let type_item = subtype!(TypeItemTag, node);
         Self {
             types: Types {
@@ -233,7 +228,6 @@ impl<'v> Global<'v> {
                 rest_param,
                 implicit_param,
                 type_expr,
-                type_arg,
                 type_item,
                 concrete_nodes: ConcreteNodeTypes {
                     root: subtype!(RootTag, node),
@@ -285,9 +279,6 @@ impl<'v> Global<'v> {
                     union_type: subtype!(UnionTypeTag, type_expr),
                     func_type: subtype!(FuncTypeTag, type_expr),
                     quant_type: subtype!(QuantTypeTag, type_expr),
-                    pos_type_arg: subtype!(PosTypeArgTag, type_arg),
-                    key_type_arg: subtype!(KeyTypeArgTag, type_arg),
-                    expand_type_arg: subtype!(ExpandTypeArgTag, type_arg),
                     pos_type_item: subtype!(PosTypeItemTag, type_item),
                     key_type_item: subtype!(KeyTypeItemTag, type_item),
                     any_pos_type_item: subtype!(AnyPosTypeItemTag, type_item),
@@ -517,8 +508,7 @@ node_tags! {
     KeyRestBinderTag=>"KeyRestBinder", TypeExprTag=>"TypeExpr", NameTypeTag=>"NameType",
     ConstTypeTag=>"ConstType", AppTypeTag=>"AppType", SchemaTypeTag=>"SchemaType",
     ParensTypeTag=>"ParensType", UnionTypeTag=>"UnionType",
-    FuncTypeTag=>"FuncType", QuantTypeTag=>"QuantType", TypeArgTag=>"TypeArg", PosTypeArgTag=>"PosTypeArg",
-    KeyTypeArgTag=>"KeyTypeArg", ExpandTypeArgTag=>"ExpandTypeArg", TypeItemTag=>"TypeItem",
+    FuncTypeTag=>"FuncType", QuantTypeTag=>"QuantType", TypeItemTag=>"TypeItem",
     PosTypeItemTag=>"PosTypeItem", KeyTypeItemTag=>"KeyTypeItem",
     AnyPosTypeItemTag=>"AnyPosTypeItem", AnyKeyTypeItemTag=>"AnyKeyTypeItem",
     OpenTypeItemTag=>"OpenTypeItem"
@@ -1950,9 +1940,6 @@ fn create_node<'v, 's>(
         UnionType,
         FuncType,
         QuantType,
-        PosTypeArg,
-        KeyTypeArg,
-        ExpandTypeArg,
         PosTypeItem,
         KeyTypeItem,
         AnyPosTypeItem,
@@ -2042,17 +2029,6 @@ fn create_node<'v, 's>(
             compile::Kind::UnionType { .. } => Which::UnionType,
             compile::Kind::FuncType { .. } => Which::FuncType,
             compile::Kind::QuantType { .. } => Which::QuantType,
-            compile::Kind::TypeArg { kind, .. } => match kind {
-                compile::TypeArgKind::Pos => Which::PosTypeArg,
-                compile::TypeArgKind::Key { .. } => Which::KeyTypeArg,
-                compile::TypeArgKind::Expand => Which::ExpandTypeArg,
-                _ => {
-                    return Err(Error::unsupported(
-                        strand,
-                        "this type argument kind is not representable",
-                    ));
-                }
-            },
             compile::Kind::TypeItem { kind, .. } => match kind {
                 compile::TypeItemKind::Pos { .. } => Which::PosTypeItem,
                 compile::TypeItemKind::Key { .. } => Which::KeyTypeItem,
@@ -2127,9 +2103,6 @@ fn create_node<'v, 's>(
         Which::UnionType => make!(t.union_type, UnionTypeTag),
         Which::FuncType => make!(t.func_type, FuncTypeTag),
         Which::QuantType => make!(t.quant_type, QuantTypeTag),
-        Which::PosTypeArg => make!(t.pos_type_arg, PosTypeArgTag),
-        Which::KeyTypeArg => make!(t.key_type_arg, KeyTypeArgTag),
-        Which::ExpandTypeArg => make!(t.expand_type_arg, ExpandTypeArgTag),
         Which::PosTypeItem => make!(t.pos_type_item, PosTypeItemTag),
         Which::KeyTypeItem => make!(t.key_type_item, KeyTypeItemTag),
         Which::AnyPosTypeItem => make!(t.any_pos_type_item, AnyPosTypeItemTag),
@@ -2370,12 +2343,6 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     node_field!(compile::Kind::Binder { default, .. } => default),
                 );
         }
-        if matches!(T::NAME, "PosTypeArg" | "KeyTypeArg" | "ExpandTypeArg") {
-            builder = builder.get(
-                "ty",
-                node_field!(compile::Kind::TypeArg { ty, .. } => Some(ty)),
-            );
-        }
         if matches!(T::NAME, "PosTypeItem" | "KeyTypeItem") {
             builder = builder.get("quant", |this, strand, out| {
                 let quant = with_node(this, strand, |n, _| match n.kind() {
@@ -2506,17 +2473,6 @@ impl<'v, T: NodeMarker + 'static> Object<'v> for NodeObject<T> {
                     "func",
                     node_field!(compile::Kind::QuantType { func, .. } => Some(func)),
                 ),
-            "KeyTypeArg" => builder.get("name", |this, strand, out| {
-                let name = with_node(this, strand, |n, _| match n.kind() {
-                    compile::Kind::TypeArg {
-                        kind: compile::TypeArgKind::Key { name },
-                        ..
-                    } => name,
-                    _ => unreachable!(),
-                })?;
-                create_span(strand.state::<Tag>(), strand, name, out);
-                Ok(())
-            }),
             "KeyTypeItem" => builder
                 .get("key", |this, strand, out| {
                     let key = with_node(this, strand, |n, _| match n.kind() {
@@ -3232,10 +3188,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
         .value("UnionType", global.types.concrete_nodes.union_type)
         .value("FuncType", global.types.concrete_nodes.func_type)
         .value("QuantType", global.types.concrete_nodes.quant_type)
-        .value("TypeArg", global.types.type_arg)
-        .value("PosTypeArg", global.types.concrete_nodes.pos_type_arg)
-        .value("KeyTypeArg", global.types.concrete_nodes.key_type_arg)
-        .value("ExpandTypeArg", global.types.concrete_nodes.expand_type_arg)
         .value("TypeItem", global.types.type_item)
         .value("PosTypeItem", global.types.concrete_nodes.pos_type_item)
         .value("KeyTypeItem", global.types.concrete_nodes.key_type_item)

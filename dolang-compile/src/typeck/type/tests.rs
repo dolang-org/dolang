@@ -2639,3 +2639,67 @@ fn copies_remember_their_root() {
     assert_eq!(union(&mut into, &[int_a, one_a, three]), both_b);
     into.seal();
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn shorthands_render_by_the_keys_of_their_delimiter() {
+    let mut db = Database::new();
+    let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
+    db.populate(int, definition(int_source, int_ty));
+    let (sym, sym_ty, sym_source) = declare(&mut db, DeclKind::Class, "Sym");
+    db.populate(sym, definition(sym_source, sym_ty));
+    db.set_intrinsic(Intrinsic::Sym, sym_ty);
+    let top = db.top();
+    let repeated = |element| SchemaItem {
+        multiplicity: Multiplicity::Repeated,
+        element,
+    };
+    let keyed = |key, value| repeated(Element::Keyed { key, value });
+    let any = repeated(Element::Positional(top));
+    let cases = [
+        (
+            vec![keyed(top, int_ty)],
+            "{**Int}",
+            "(*(Value): Int) -> Value",
+        ),
+        (vec![keyed(top, top)], "{**}", "(*(Value): Value) -> Value"),
+        (
+            vec![any.clone(), keyed(top, top)],
+            "{...}",
+            "(*, *(Value): Value) -> Value",
+        ),
+        (vec![any.clone()], "{*}", "(*) -> Value"),
+        (
+            vec![keyed(sym_ty, int_ty)],
+            "{*(Sym): Int}",
+            "(**Int) -> Value",
+        ),
+        (vec![keyed(sym_ty, top)], "{*(Sym): Value}", "(**) -> Value"),
+        (
+            vec![any, keyed(sym_ty, top)],
+            "{*, *(Sym): Value}",
+            "(...) -> Value",
+        ),
+    ];
+    let rendered: Vec<_> = cases
+        .into_iter()
+        .map(|(items, schema, function)| {
+            let params = intern(&mut db, Type::Schema(items.into()));
+            let func = intern(
+                &mut db,
+                Type::Function(Function {
+                    params,
+                    result: top,
+                    input: None,
+                    output: None,
+                }),
+            );
+            (params, func, schema, function)
+        })
+        .collect();
+    db.seal();
+    for (params, func, schema, function) in rendered {
+        assert_eq!(db.render(params, &Named(&db), Style::Full), schema);
+        assert_eq!(db.render(func, &Named(&db), Style::Full), function);
+    }
+}

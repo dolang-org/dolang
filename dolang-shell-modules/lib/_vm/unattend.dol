@@ -30,7 +30,7 @@ let WCM_NS = "http://schemas.microsoft.com/WMIConfig/2002/State"
 
 # Every `<component>` in an unattend document carries the same assembly
 # identity; only `name` varies.
-let COMPONENT_ATTRS @ Dict[{**Str}] = $
+let COMPONENT_ATTRS @ Dict[{*(Sym): Str}] = $
   processorArchitecture: amd64
   publicKeyToken: "31bf3856ad364e35"
   language: neutral

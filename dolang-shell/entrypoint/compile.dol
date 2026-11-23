@@ -104,20 +104,11 @@ let KIND_NAMES = $
   $compile.ParensType: "ParensType"
   $compile.UnionType: "UnionType"
   $compile.FuncType: "FuncType"
-  $compile.PosTypeArg: "PosTypeArg"
-  $compile.KeyTypeArg: "KeyTypeArg"
-  $compile.ExpandTypeArg: "ExpandTypeArg"
   $compile.PosTypeItem: "PosTypeItem"
   $compile.KeyTypeItem: "KeyTypeItem"
   $compile.AnyPosTypeItem: "AnyPosTypeItem"
   $compile.AnyKeyTypeItem: "AnyKeyTypeItem"
   $compile.OpenTypeItem: "OpenTypeItem"
-
-# How a type argument is given, as the documentation projection names it.
-let ARG_KINDS = $
-  $compile.PosTypeArg: pos
-  $compile.KeyTypeArg: key
-  $compile.ExpandTypeArg: expand
 
 # How a type item is declared, as the documentation projection names it.
 let ITEM_KINDS = $
@@ -532,7 +523,7 @@ class Document
       $
         kind: "app"
         base: (self.#type_tree(expr.base))
-        args: (self.#type_args(expr.args))
+        args: (self.#type_items(expr.args))
     else if type(expr, compile.SchemaType)
       $
         kind: "schema"
@@ -586,16 +577,6 @@ class Document
         item: (self.#text(target.item))
       if type(target, compile.ImportModule)
         module: (self.#text(target.module))
-
-  def type_args self args
-    let result = []
-    for arg = args
-      result.push $
-        kind: (ARG_KINDS.get (type arg))
-        if type(arg, compile.KeyTypeArg)
-          name: (self.#text(arg.name))
-        type: (self.#type_tree(arg.ty))
-    result
 
   # A list of type items, which the projection calls parameters. An item, like
   # a union member, gives its doc only when it has one.

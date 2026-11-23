@@ -15,6 +15,7 @@
 use std::{
     collections::hash_map::Entry as MapEntry,
     fmt::{self, Write},
+    slice,
 };
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -25,8 +26,7 @@ use super::{
     sig::{self, Form},
     surface::{
         BinderKind, Class, ConstLit, Member as SourceMember, MemberScope, Name, ParamKind, Ref,
-        Signature, SiteId, Super, Symbol, TypeArg, TypeArgKind, TypeExpr, TypeKey, TypeParam,
-        TypeQuant,
+        Signature, SiteId, Super, Symbol, TypeExpr, TypeKey, TypeParam, TypeQuant,
     },
 };
 use crate::{
@@ -459,12 +459,12 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             TypeExpr::Tuple { params, .. } if expected == Kind::Type => {
                 self.keyed_inclusions(group.unit, params);
-                let items = self.items(group, params, false, depth);
+                let items = self.items(group, params, true, depth);
                 let tuple = Designated::Intrinsic(Intrinsic::Tuple);
                 self.collection(tuple, self.schema(items))
             }
             TypeExpr::Pack { params, .. } if expected == Kind::Type => {
-                let items = self.items(group, params, false, depth);
+                let items = self.items(group, params, true, depth);
                 self.collection(Designated::Pack, self.schema(items))
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
@@ -602,12 +602,12 @@ impl<'t, 'u> Populate<'t, 'u> {
             // An application's arguments only fill the alias's binders
             TypeExpr::App { base, .. } => self.may_key(base, aliases),
             TypeExpr::Schema { params, .. } => params.iter().any(|param| match param {
-                TypeParam::Key { .. } | TypeParam::AnyKey(_) | TypeParam::Open(_) => true,
+                TypeParam::Key { .. } | TypeParam::AnyKey(..) | TypeParam::Open(_) => true,
                 TypeParam::Pos {
                     quant: Some(TypeQuant::Include),
                     ty,
                 } => self.may_key(ty, aliases),
-                TypeParam::Pos { .. } | TypeParam::AnyPos => false,
+                TypeParam::Pos { .. } | TypeParam::AnyPos(_) => false,
             }),
             TypeExpr::Name(head) => match tables.linked(head.link) {
                 Some(&Referent::Decl(decl)) => {
@@ -689,19 +689,19 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// The items of a schema or parameter list. A bare `**` or `...` admits any
-    /// keyed item in a schema, but only a named one in a parameter list.
+    /// The items of a schema or parenthesized list. The delimiter decides the
+    /// keys of `**V`, `**` and `...`: any key in a schema's braces, but only a
+    /// symbol in parentheses (function parameters, tuple and `Pack` types).
     fn items(
         &mut self,
         group: Group<'_>,
         params: &[TypeParam],
-        parameters: bool,
+        parenthesized: bool,
         depth: usize,
     ) -> Vec<SchemaItem> {
         let top = self.db.top();
-        let sym = self.sym();
-        let any = match parameters {
-            true => sym,
+        let any = match parenthesized {
+            true => self.sym(),
             false => top,
         };
         let mut items = Vec::new();
@@ -735,18 +735,17 @@ impl<'t, 'u> Populate<'t, 'u> {
                         Element::Keyed { key, value },
                     ));
                 }
-                TypeParam::AnyPos => {
+                TypeParam::AnyPos(_) => {
                     items.push(Self::item(Multiplicity::Repeated, Element::Positional(top)));
                 }
-                // `**V` is `*(Sym): V`
-                TypeParam::AnyKey(Some(ty)) => {
+                TypeParam::AnyKey(_, Some(ty)) => {
                     let value = self.intern(group, ty, Kind::Type, depth);
                     items.push(Self::item(
                         Multiplicity::Repeated,
-                        Element::Keyed { key: sym, value },
+                        Element::Keyed { key: any, value },
                     ));
                 }
-                TypeParam::AnyKey(None) => {
+                TypeParam::AnyKey(_, None) => {
                     items.push(Self::item(
                         Multiplicity::Repeated,
                         Element::Keyed {
@@ -777,7 +776,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         group: Group<'_>,
         head: &Ref,
         span: Span,
-        args: Option<&[TypeArg]>,
+        args: Option<&[TypeParam]>,
         expected: Kind,
         depth: usize,
     ) -> TypeId {
@@ -839,7 +838,7 @@ impl<'t, 'u> Populate<'t, 'u> {
         &mut self,
         group: Group<'_>,
         decl: DeclId,
-        args: Option<&[TypeArg]>,
+        args: Option<&[TypeParam]>,
         (head, span): (&Ref, Span),
         depth: usize,
     ) -> TypeId {
@@ -893,6 +892,14 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
         };
         let fills = tables.fill(group.unit, decl, args);
+        // An item where a schema's shorthand is expected, or an inclusion where a
+        // schema is required, is already diagnosed, and leaves the type unknown
+        if fills
+            .iter()
+            .any(|fill| matches!(fill, super::Fill::Unfit | super::Fill::Included(_)))
+        {
+            return self.unknown(result);
+        }
 
         // Where the arguments after an expansion go is not known until its pack is,
         // so they stay as written
@@ -903,21 +910,28 @@ impl<'t, 'u> Populate<'t, 'u> {
             let mut out = positional(full);
             for arg in args {
                 let kind_of = |ty: &TypeExpr| tables.kind_of(ty).unwrap_or(Kind::Type);
-                out.push(match &arg.kind {
-                    TypeArgKind::Pos(ty) => {
+                out.push(match arg {
+                    TypeParam::Pos { quant: None, ty } => {
                         Argument::Positional(self.intern(group, ty, kind_of(ty), depth))
                     }
-                    TypeArgKind::Key { name, ty } => Argument::Keyword(
+                    TypeParam::Key {
+                        quant: None,
+                        key: TypeKey::Sym(name),
+                        ty,
+                    } => Argument::Keyword(
                         self.db.intern_symbol(tables.name(group.unit, *name)),
                         self.intern(group, ty, kind_of(ty), depth),
                     ),
-                    TypeArgKind::Expand { ty } => {
-                        Argument::Expand(match self.expansion(group, ty, depth) {
-                            SchemaItem {
-                                element: Element::Include(schema),
-                                ..
-                            } => schema,
-                            item => self.schema(vec![item]),
+                    _ => {
+                        let items = self.items(group, slice::from_ref(arg), true, depth);
+                        Argument::Expand(match &items[..] {
+                            [
+                                SchemaItem {
+                                    multiplicity: Multiplicity::Required,
+                                    element: Element::Include(schema),
+                                },
+                            ] => *schema,
+                            _ => self.schema(items),
                         })
                     }
                 });
@@ -934,37 +948,25 @@ impl<'t, 'u> Populate<'t, 'u> {
         for (arg, fill) in args.iter().zip(fills) {
             match fill {
                 super::Fill::Binder(slot) => {
-                    given[slot] =
-                        Some(self.intern(group, arg.ty(), self.kind(binder(slot)), depth));
+                    let ty = arg.plain().expect("only a plain argument fills a binder");
+                    given[slot] = Some(self.intern(group, ty, self.kind(binder(slot)), depth));
                 }
                 super::Fill::Item(slot) => {
-                    let item = match &arg.kind {
-                        TypeArgKind::Pos(ty) if short.is_some() => {
-                            shorthand.push(self.intern(group, ty, Kind::Type, depth));
-                            items[slot].get_or_insert_default();
-                            continue;
-                        }
-                        TypeArgKind::Pos(ty) => Self::item(
-                            Multiplicity::Required,
-                            Element::Positional(self.intern(group, ty, Kind::Type, depth)),
-                        ),
-                        TypeArgKind::Key { name, ty } => Self::item(
-                            Multiplicity::Required,
-                            Element::Keyed {
-                                key: self.symbol(group.unit, *name),
-                                value: self.intern(group, ty, Kind::Type, depth),
-                            },
-                        ),
-                        TypeArgKind::Expand { .. } => unreachable!("an expansion fills a pack"),
-                    };
-                    items[slot].get_or_insert_default().push(item);
+                    if let (TypeParam::Pos { quant: None, ty }, Some(_)) = (arg, short) {
+                        shorthand.push(self.intern(group, ty, Kind::Type, depth));
+                        items[slot].get_or_insert_default();
+                        continue;
+                    }
+                    let item = self.items(group, slice::from_ref(arg), true, depth);
+                    items[slot].get_or_insert_default().extend(item);
                 }
                 super::Fill::Expand(Some(slot)) => {
-                    let item = self.expansion(group, arg.ty(), depth);
-                    items[slot].get_or_insert_default().push(item);
+                    let more = self.items(group, slice::from_ref(arg), true, depth);
+                    items[slot].get_or_insert_default().extend(more);
                 }
                 // Already diagnosed
                 super::Fill::Excess | super::Fill::UnknownKeyword => {}
+                super::Fill::Unfit | super::Fill::Included(_) => unreachable!(),
                 super::Fill::Unknown | super::Fill::Expand(None) => unreachable!(),
             }
         }
@@ -1091,18 +1093,6 @@ impl<'t, 'u> Populate<'t, 'u> {
             .name_span()
             .expect("a designated declaration is named");
         self.complete(group, nominee, Vec::new(), given, items, span)
-    }
-
-    /// An expansion `...X` among type arguments: the items of a schema, or any
-    /// number of a type
-    fn expansion(&mut self, group: Group<'_>, ty: &TypeExpr, depth: usize) -> SchemaItem {
-        if self.tables.kind_of(ty) == Some(Kind::Schema) {
-            let ty = self.intern(group, ty, Kind::Schema, depth);
-            Self::item(Multiplicity::Required, Element::Include(ty))
-        } else {
-            let ty = self.intern(group, ty, Kind::Type, depth);
-            Self::item(Multiplicity::Repeated, Element::Positional(ty))
-        }
     }
 
     /// A binder's default, interned in its declaration's group

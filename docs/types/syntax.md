@@ -62,8 +62,9 @@ def key_of[:Key] x @ Keyed[Str, :Key] -> K
   x.key
 ```
 
-An argument may also [expand a schema](./schemas.md#expanding-schemas) into
-further arguments.
+Arguments are the items of a schema, so they take
+[quantifiers](./schemas.md#type-arguments) and include schemas with `...`, as
+in `Tuple[*Str]` and `Record[Int, ...Fields]`.
 
 ## Unions
 
@@ -116,6 +117,9 @@ a quantifier or trailing comma is merely a grouping.
 | `()`        | The empty tuple     |
 | `(*Int)`    | A tuple of any size |
 | `(Int, **)` | A `Pack`            |
+
+In parentheses, `**V`, `**`, and `...` admit only symbol keys; see [Keys by
+Delimiter](./schemas.md#keys-by-delimiter).
 
 An inclusion `...S` never makes a form a `Pack`. In a tuple, including a schema
 that may admit keyed items is an error; write `Pack[...S]` instead. For a

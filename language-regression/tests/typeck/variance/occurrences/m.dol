@@ -18,8 +18,8 @@ pub @class Each[T]
   #        ^~~~: decl [T +] nominal
   pub def each self f @ (T -> nil)
 
-pub @class Rests[P, K, S @ {*, **Value}]
-  #        ^~~~~: decl [P -, K -, S - @ {*Value, **Value}] nominal
+pub @class Rests[P, K, S @ {*, *(Sym): Value}]
+  #        ^~~~~: decl [P -, K -, S - @ {*, *(std.Sym): Value}] nominal
   pub def take self *items @ P **named @ K ...pack @ S
 
 pub @class Keyed[K @ Sym, V]
