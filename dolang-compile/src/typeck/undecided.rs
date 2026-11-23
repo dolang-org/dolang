@@ -73,6 +73,9 @@ impl Report for Undecided {
                     Residual::Limit => {
                         "it's too complex to check; an annotation may help".to_owned()
                     }
+                    Residual::Exhausted => "checking it takes more work than the checker \
+                                            allows; an annotation may help"
+                        .to_owned(),
                     Residual::Inference => "nothing determines a type here; annotate it".to_owned(),
                     Residual::GenericArguments => "it can't match type arguments past an \
                                                    expansion; put positional arguments first"

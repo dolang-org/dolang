@@ -250,10 +250,13 @@ pub(crate) enum Residual {
     /// cycle through a judgment that is not closed. None establishes a proof. A
     /// limitation of inference: an annotation closes the judgment.
     Cycle,
-    /// A work or traversal-depth limit prevented completion. Also used for
-    /// obligations left pending when solving exhausted its work budget. A
-    /// limitation: an annotation may simplify the work.
+    /// A structural limit prevented completion: traversal or nesting depth, or
+    /// the ways of aligning positional items. A limitation: an annotation may
+    /// simplify the judgment.
     Limit,
+    /// The work budget ran out, leaving this and every obligation still pending
+    /// undecided. A limitation: an annotation may simplify the work.
+    Exhausted,
     /// A rigid of a declaration this solver does not check has escaped its own
     /// check. Internal, as each declaration's rigids stay in its own check.
     Escape,
@@ -290,6 +293,7 @@ impl Residual {
             | Self::GenericArguments
             | Self::Cycle
             | Self::Limit
+            | Self::Exhausted
             | Self::Alignment
             | Self::Ambiguous => ResidualClass::Limitation,
         }
@@ -1847,11 +1851,13 @@ impl<'db> Solver<'db> {
             return Ok((Status::Contradicted, false));
         }
         let result = proof.report().remove(0);
-        if self.gas.is_exhausted()
-            || result
-                .diagnostics
-                .iter()
-                .any(|d| d.issue == Residual::Limit.into())
+        if self.gas.is_exhausted() {
+            return Err(Residual::Exhausted);
+        }
+        if result
+            .diagnostics
+            .iter()
+            .any(|d| d.issue == Residual::Limit.into())
         {
             return Err(Residual::Limit);
         }
@@ -3940,10 +3946,9 @@ impl<'db> Solver<'db> {
                     if self.clean(id) && self.assignment(id).is_none() {
                         match self.try_assign(id) {
                             Ok(changed) => assigned |= changed,
-                            Err(Residual::Limit) => {
-                                self.gas.exhaust();
-                                break;
-                            }
+                            // Spending marked the budget exhausted. A structural
+                            // limit only leaves this variable unassigned.
+                            Err(Residual::Exhausted) => break,
                             Err(_) => {}
                         }
                     }
@@ -4113,7 +4118,7 @@ impl<'db> Solver<'db> {
             steps.push(step);
             match self.progress(id).state.get() {
                 State::Pending => diagnostics.push(Diagnostic {
-                    issue: Residual::Limit.into(),
+                    issue: Residual::Exhausted.into(),
                     path: path.clone(),
                 }),
                 State::Issue(issue) => diagnostics.push(Diagnostic {
@@ -4156,7 +4161,7 @@ impl<'db> Solver<'db> {
             diagnostics.insert(
                 0,
                 Diagnostic {
-                    issue: Residual::Limit.into(),
+                    issue: Residual::Exhausted.into(),
                     path: vec![root],
                 },
             );

@@ -1113,7 +1113,8 @@ pub(super) fn passed_signature(
 /// Whether to hold an item back: if it takes an expectation that its position
 /// doesn't give yet, as a collection literal, range, call or template does. One
 /// in an `if` outside every `for` isn't, since the `if`'s branches are compared
-/// as they're gathered.
+/// as they're gathered. A call that can't use its context is finished once
+/// it's prepared (see [`Flow::held_call`]).
 fn hold(gathering: &Gathering<'_>, place: Place, expected: Option<TypeId>, value: &Expr) -> bool {
     let takes = matches!(
         value.kind,
@@ -1380,6 +1381,15 @@ impl<'a> Flow<'a, '_> {
                 (vec![self.db.bottom(); run.results.len()], false)
             }
         };
+        // What a run that ran out of budget concludes is only what it got to,
+        // and joins what it passes as any run's does, so the final pass reports
+        // that the call couldn't be checked, whichever run ran out
+        if gases[gases.len() - 1].is_exhausted() {
+            self.exhausted.insert(span);
+        }
+        if self.observing() && self.exhausted.contains(&span) {
+            self.undecided(span, Residual::Exhausted);
+        }
         let Run {
             mut solver,
             results,
@@ -2336,10 +2346,70 @@ impl<'a> Flow<'a, '_> {
         }
     }
 
+    /// Whether a call held back can use what its context expects of it. It can
+    /// if anything among its arguments is held back or is a `do` block its rule
+    /// types, if an argument has a literal, which its context decides whether
+    /// to decay, or if its callee's result names a binder that the arguments
+    /// can't fix: one in a position that isn't covariant, which the context
+    /// can raise, or one that no parameter names. Otherwise its result's least
+    /// solution, which its arguments alone give, fits whatever the context
+    /// expects that any solution does. The choice among overloads is made from
+    /// the arguments alone, so a call of them can if one's signature can.
+    fn context_sensitive(&self, call: &PreparedCall) -> bool {
+        if !call.values.held.is_empty() || call.values.lambdas().next().is_some() {
+            return true;
+        }
+        let literal = |ty: TypeId| self.db.decay(ty) != ty;
+        let literals = call.values.values.iter().any(|placed| {
+            let values = match &placed.value {
+                Value::Alike(values, _) => &values[..],
+                value => std::slice::from_ref(value),
+            };
+            values.iter().any(|value| match *value {
+                Value::Pos(ty, _) | Value::Key(_, ty, _) | Value::Spread(ty, _) => literal(ty),
+                Value::Pair(key, ty) => literal(key) || literal(ty),
+                Value::Lambda(..) | Value::Held(..) | Value::Alike(..) => false,
+            })
+        });
+        if literals {
+            return true;
+        }
+        let signature = |ty: TypeId| {
+            let (binders, body) = match self.db.ty(ty) {
+                Type::Quantified { binders, body } => (binders.len(), *body),
+                _ => (0, ty),
+            };
+            let Type::Function(function) = self.db.ty(body) else {
+                return true;
+            };
+            (0..binders).any(|slot| {
+                let slot = u16::try_from(slot).expect("a quantifier's binders fit a group");
+                match self.db.slot_variance(function.result, slot) {
+                    None => false,
+                    Some(Variance::Covariant) => {
+                        self.db.slot_variance(function.params, slot).is_none()
+                    }
+                    Some(Variance::Contravariant | Variance::Invariant) => true,
+                }
+            })
+        };
+        match self.db.ty(call.callee) {
+            Type::Overloaded {
+                overloads,
+                implementation,
+                ..
+            } => overloads
+                .iter()
+                .chain(implementation.iter())
+                .any(|&ty| signature(ty)),
+            _ => signature(call.callee),
+        }
+    }
+
     /// Evaluate an item held back as far as it can be without its expectation.
     /// What's left to finish is held back; anything else is evaluated whole,
-    /// giving its type: a call of a union's alternatives, or one its rule won't
-    /// check, and what's never produced.
+    /// giving its type: a call of a union's alternatives, one its rule won't
+    /// check or one that can't use its context, and what's never produced.
     fn prepare(
         &mut self,
         at: At,
@@ -2396,7 +2466,9 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// A call held back, giving `instance` if it's a constructor with unchecked
-    /// arguments, unless its rule won't check it: then it's finished now
+    /// arguments, unless its rule won't check it or it can't use its context
+    /// (see [`Flow::context_sensitive`]): then it's finished now, and passed
+    /// closed
     fn held_call(
         &mut self,
         at: At,
@@ -2404,12 +2476,27 @@ impl<'a> Flow<'a, '_> {
         instance: Option<TypeId>,
     ) -> Result<Prepared, TypeId> {
         let bottom = self.db.bottom();
-        if call.callee == bottom || call.values.never || !self.callable(call.callee) {
+        let checked = call.callee != bottom && !call.values.never && self.callable(call.callee);
+        let sensitive = checked && self.context_sensitive(&call);
+        if checked && !sensitive {
+            trace!(
+                "{}: {} can't use its context, so it's finished now",
+                self.tables.locate(self.unit, call.span),
+                self.show(call.callee)
+            );
+        }
+        if !sensitive {
+            let (span, logs) = (call.span, call.logs);
             let given = self.finish_prepared(at, call, None);
-            return Err(match instance {
+            let given = match instance {
                 Some(instance) if given != bottom => instance,
                 _ => given,
-            });
+            };
+            // Its value is judged as an argument's that isn't held back is
+            if checked && logs {
+                self.log(span, Role::Value, Seen::ty(given));
+            }
+            return Err(given);
         }
         Ok(Prepared::Call { call, instance })
     }
@@ -2464,7 +2551,8 @@ impl<'a> Flow<'a, '_> {
             return open;
         }
         let solved = {
-            let mut fork = rule.solver.fork(rule.gas);
+            let gas = Gas::default();
+            let mut fork = rule.solver.fork(&gas);
             let raised = fork
                 .raised(raisable)
                 .unwrap_or_else(|_| fork.unresolved().collect());
@@ -2483,7 +2571,10 @@ impl<'a> Flow<'a, '_> {
         expected: Option<Term>,
         shape: Option<Term>,
     ) {
-        let (db, gas) = (rule.db, rule.gas);
+        // A budget of its own, so that what a held argument costs doesn't
+        // leave less for the next. One it runs out of exhausts the rule's.
+        let own = Gas::default();
+        let (db, gas) = (rule.db, &own);
         let lengths = (rule.passed.len(), rule.pending.len());
         let logged = rule.logged.len();
         let delta = {
@@ -2611,6 +2702,9 @@ impl<'a> Flow<'a, '_> {
             ) = (passed, pending, calls, logged, found, isolated);
             fork.commit()
         };
+        if own.is_exhausted() {
+            rule.gas.exhaust();
+        }
         rule.solver.absorb(delta);
     }
 
@@ -3363,7 +3457,8 @@ impl<'a> Flow<'a, '_> {
         alternative: Term,
         bounds: bool,
     ) -> bool {
-        let mut fork = rule.solver.fork(rule.gas);
+        let gas = Gas::default();
+        let mut fork = rule.solver.fork(&gas);
         let (argument, ty) = applied_term(&mut fork, rule.db, class, Kind::Schema);
         fork.constrain(ty, alternative, Provenance::default());
         if fork
@@ -3388,8 +3483,8 @@ impl<'a> Flow<'a, '_> {
     }
 
     /// The candidate a fresh dict with `values` is: the only one, or else the one
-    /// its items fit, or else the one its keys fit. A choice its values don't
-    /// fit is then reported against it.
+    /// its shape fits (see [`Flow::shape_fits`]). A choice its values don't fit
+    /// is then reported against it.
     fn choose<'p>(
         &self,
         rule: &mut Rule<'_, '_, 'p>,
@@ -3405,21 +3500,14 @@ impl<'a> Flow<'a, '_> {
             return None;
         }
         // Two survivors are as many as it takes to choose none
-        let survivors = |rule: &mut Rule<'_, '_, 'p>, keys_only: bool| {
-            let mut found = Vec::new();
-            for &candidate in candidates {
-                if self.items_fit(rule, class, candidate, values, span, keys_only) {
-                    found.push(candidate);
-                    if found.len() == 2 {
-                        break;
-                    }
+        let mut chosen = Vec::new();
+        for &candidate in candidates {
+            if self.shape_fits(rule, class, candidate, values, span) {
+                chosen.push(candidate);
+                if chosen.len() == 2 {
+                    break;
                 }
             }
-            found
-        };
-        let mut chosen = survivors(rule, false);
-        if chosen.is_empty() {
-            chosen = survivors(rule, true);
         }
         trace!(
             "{}: {} candidates, {}",
@@ -3438,45 +3526,71 @@ impl<'a> Flow<'a, '_> {
         }
     }
 
-    /// Whether a fresh dict's items, `values`, fit a candidate, in a fork of the
-    /// rule's solver that's discarded. What it leaves unsolved of its own is
-    /// defaulted, and with `keys_only`, each item's value is a fresh variable,
-    /// so only its key can contradict.
-    fn items_fit<'p>(
+    /// Whether a fresh dict's shape, from `values`, fits a candidate, in a fork
+    /// of the rule's solver that's discarded, with a budget of its own. Each
+    /// item's value is a fresh variable, so what its values are inferred to be
+    /// doesn't choose: only its keys, and its constants that tell candidates
+    /// apart. A constant does where the candidate expects a type of its class,
+    /// as a literal field such as `kind: :FLAG:` is, and it isn't that type. One
+    /// expected to be another class, as `"two"` of `Int`, is left to be reported
+    /// against the candidate.
+    fn shape_fits<'p>(
         &self,
         rule: &mut Rule<'_, '_, 'p>,
         class: DeclId,
         candidate: Candidate,
         values: &'p Values,
         span: Span,
-        keys_only: bool,
     ) -> bool {
         let spread = self.designated(Designated::Spread);
-        let (db, gas) = (rule.db, rule.gas);
+        let (db, gas) = (rule.db, &Gas::default());
         let mut fork = rule.solver.fork(gas);
         let mut probe = Rule::new(&mut fork, db, gas);
-        probe.blind = true;
         let (_, schema) = self.candidate(&mut probe, class, candidate);
         let (mut arguments, _) = probe.arguments(values, spread, span);
-        if keys_only {
-            for (_, argument) in &mut arguments {
-                match argument {
-                    CallArgument::Positional(value)
-                    | CallArgument::Keyword(_, value)
-                    | CallArgument::Pair(_, value) => *value = probe.solver.infer(),
-                    CallArgument::Spread(_) => {}
+        let mut constants = Vec::new();
+        for (_, argument) in &mut arguments {
+            match argument {
+                CallArgument::Positional(value)
+                | CallArgument::Keyword(_, value)
+                | CallArgument::Pair(_, value) => {
+                    let constant = probe
+                        .solver
+                        .reify(*value)
+                        .ok()
+                        .filter(|&ty| db.literal(ty).is_some());
+                    *value = probe.solver.infer();
+                    if let Some(constant) = constant {
+                        constants.push((*value, constant));
+                    }
                 }
+                CallArgument::Spread(_) => {}
             }
         }
         let exact = probe.solver.arguments_schema(&arguments);
         probe.constrain(exact, schema, Provenance::default());
-        let contradicted = |outcomes: &[Outcome]| {
-            outcomes
-                .iter()
-                .any(|outcome| outcome.status == Status::Contradicted)
-        };
         let solver = probe.solver;
-        !contradicted(&solver.solve()) && !contradicted(&default_own(solver, None))
+        if solver
+            .solve()
+            .iter()
+            .any(|outcome| outcome.status == Status::Contradicted)
+        {
+            return false;
+        }
+        let below = |actual, expected| self.below(actual, expected);
+        constants.into_iter().all(|(value, constant)| {
+            let class = db
+                .literal(constant)
+                .and_then(|literal| db.intrinsic(literal.intrinsic()));
+            let expected = expectation(solver, value, below, false)
+                .and_then(|expected| solver.reify(expected).ok());
+            match (class, expected) {
+                (Some(class), Some(expected)) if below(expected, class) => {
+                    below(constant, expected)
+                }
+                _ => true,
+            }
+        })
     }
 
     /// A chosen candidate's type and schema. An open one's schema is what its
@@ -3511,7 +3625,7 @@ impl<'a> Flow<'a, '_> {
         let schema = match candidate {
             Candidate::Closed(_, schema) => Some(schema),
             Candidate::Open(..) => {
-                let (db, gas) = (rule.db, rule.gas);
+                let (db, gas) = (rule.db, &Gas::default());
                 let mut fork = rule.solver.fork(gas);
                 let mut probe = Rule::new(&mut fork, db, gas);
                 probe.blind = true;

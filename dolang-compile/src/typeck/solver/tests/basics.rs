@@ -228,7 +228,7 @@ fn limits_are_residual_not_proof_or_contradiction() {
     s.constrain(s.closed(one), s.closed(one), Provenance::default());
     let result = s.solve().remove(0);
     assert_eq!(result.status, Status::Unresolved);
-    assert!(has(&result, Residual::Limit.into()));
+    assert!(has(&result, Residual::Exhausted.into()));
     let gas = Gas::new(100);
     let mut s = Solver::with_depth(&db, &gas, 0);
     s.constrain(s.closed(one), s.closed(one), Provenance::default());

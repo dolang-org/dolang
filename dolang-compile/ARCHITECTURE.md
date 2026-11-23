@@ -764,12 +764,16 @@ environment. All existing structural forms can be reconstructed; reconstruction
 does not imply subtype support for those forms. An unsolved variable produces an
 inference residual. Solver IDs never enter the canonical database.
 
-Work and depth limits produce residuals. The work budget applies to the solver's
-lifetime; exhaustion prevents a complete proof. Invalid IDs, environments,
-substitution kinds, and unsealed databases are API errors and panic. Transparent
-declaration exposure cycles and generic arity mismatches also panic;
-well-formedness checking diagnoses what causes them. Omitted arguments with
-binder defaults remain residual.
+Work and structural limits produce distinct residuals. The work budget applies
+to the solver's lifetime; exhausting it (`Residual::Exhausted`) stops solving
+and leaves every pending obligation undecided. A structural limit
+(`Residual::Limit`), of traversal or nesting depth or of the ways to align
+positional items, leaves only the judgment that reached it undecided, and a
+variable whose candidate reaches one is left unassigned. Invalid IDs,
+environments, substitution kinds, and unsealed databases are API errors and
+panic. Transparent declaration exposure cycles and generic arity mismatches
+also panic; well-formedness checking diagnoses what causes them. Omitted
+arguments with binder defaults remain residual.
 
 Environments use an immutable `intern::Table`; obligations use stable `MonoVec`
 storage and a `MonoHashMap` relation index. Bound terms, sources, and
@@ -1062,15 +1066,29 @@ The rules are:
   expectation only once the call is solved, so a collection literal, call or
   template passed to it is held back: it's evaluated as far as it can be
   without its expectation (`Prepared`), and the call's rule stands a fresh
-  variable for it. Once what the rule makes is solved, each held argument is a
+  variable for it. A call that can't use its context is finished instead, and
+  passed closed (`Flow::context_sensitive`). That holds when nothing among
+  its arguments is held back, is a `do` block its rule types, or has a
+  literal, and its callee's result names its binders only covariantly and
+  only ones a parameter names. Its result's least solution then fits whatever
+  any solution does. Once what the rule makes is solved, each held argument is a
   sub-rule in a fork of the rule's solver, which the rule then takes over
   (`Flow::release`). Its expectation is what's solved so far expects of its
   variable, open in the binders not yet solved, so what it holds, such as a
   nested handler, raises them with the other arguments; where a variable the
   held arguments can't raise (`Solver::raised`) would solve it once given its
-  least solution, it takes that solved expectation. A dict chooses among an
-  open union's alternatives by probing them in discarded forks. A sub-rule is
-  made once, bounded by its expectation through seed roots (`Solver::seed`).
+  least solution, it takes that solved expectation. Each sub-rule has a budget
+  of its own, so that what one held argument costs leaves no less for the next;
+  one it runs out of exhausts the rule's. A fresh dict expected to be one of
+  several schemas, as a union's members or an open union's alternatives
+  give them, takes the one its shape fits (`Flow::shape_fits`), probed in a
+  discarded fork with a budget of its own. Its values are fresh variables
+  there, so only its keys choose, and its constants where a schema expects
+  values of their class: `:SMALL:` rules out a schema expecting `:NAMED:`, while
+  `"two"` doesn't rule out one expecting `Int`, and is reported against it. What
+  its other values are inferred to be doesn't choose, and with none or several
+  fitting it's unchosen. A sub-rule is made once, bounded by its expectation
+  through seed roots (`Solver::seed`).
   The checks it makes don't report what derives from its seeds, which the
   argument reports itself, and a diagnostic shows a value apart from the
   bounds its seeds impose (`Solver::seeded`). What the call is expected to
@@ -1079,7 +1097,9 @@ The rules are:
   in a run that defaults, each sub-rule first defaults its own variables, as a
   rule of its own would. A held template supplies a cached preliminary type
   with its interpolated values and distinct hole names, and its hole types
-  take its expectation once that's solved.
+  take its expectation once that's solved. A rule a run of which exhausts its
+  budget concludes only what the run got to, and joins it as any run does, so
+  the final pass reports the call as undecided, whichever run ran out.
 - A call through an overloaded function, a def, a method, `(init)` or a
   class-level `(call)`, calls its overloads as a whole (`Type::Overloaded`),
   which the solver chooses among (see "Alternatives and trials"). Every

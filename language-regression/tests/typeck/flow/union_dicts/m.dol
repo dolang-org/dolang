@@ -30,8 +30,9 @@ pub def nested()
 #    |
 #    = note: `1` does not fit `std.Str`
 
-# A union expects several schemas of a dict. It takes the one its items fit, or
-# else the one its keys fit, and is checked against that one.
+# A union expects several schemas of a dict. It takes the one its keys fit,
+# along with the constants that tell members apart, and is checked against that
+# one. What its other values are inferred to be doesn't choose.
 pub @let Flag = BaseDict[{flag: Str, ?help: Str}]
 pub @let Opt = BaseDict[{opt: Str, ?default: Int, ?help: Str}]
 pub @let Cmd = BaseRecord ...$
@@ -76,3 +77,34 @@ pub def by_keys()
 #    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^
 #    |
 #    = note: `"two"` does not fit `std.Int`
+
+# Members with the same keys are told apart by a constant
+pub @let Small = BaseDict[{kind: :SMALL:, size: Int}]
+pub @let Named = BaseDict[{kind: :NAMED:, size: Str}]
+
+pub def sized ...items @ (Small | Named)
+  ...
+
+pub def discriminated()
+  sized {kind: :SMALL:, size: 1} {kind: :NAMED:, size: "big"}
+  let s @ (Small | Named) = {kind: :NAMED:, size: "big"}
+  let _ = s
+  #       ^: flow std.Dict[{kind: :NAMED:, size: std.Str}]
+  sized {kind: :SMALL:, size: "big"}
+# error: expected `{kind: :SMALL:, size: std.Int}`, found `{kind: :SMALL:, size: "big"}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   sized {kind: :SMALL:, size: "big"}
+#    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#    |
+#    = note: `"big"` does not fit `std.Int`
+
+# Members told apart only by what a value's type would be aren't chosen between
+pub @let Count = BaseDict[{x: Int}]
+pub @let Label = BaseDict[{x: Str}]
+
+pub def counted _item @ (Count | Label)
+  ...
+
+pub def by_value n @ Int
+  counted {x: n}

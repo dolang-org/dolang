@@ -272,7 +272,7 @@ fn exhaustion_in_a_trial_is_residual() {
         // A probe that exhausts its share leaves a default untaken, so a short
         // budget can leave the judgment unresolved without a limit of its own
         assert_ne!(outcome.status, Status::Contradicted, "{work}");
-        if has(&outcome, Residual::Limit.into()) {
+        if has(&outcome, Residual::Exhausted.into()) {
             exhausted = true;
             assert_eq!(outcome.status, Status::Unresolved, "{work}");
         }

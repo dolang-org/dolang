@@ -99,7 +99,7 @@ pub def grow g @ Grow[Int]
 # LL |   counted $g
 #    |   ^^^^^^^^^^
 #    |
-#    = note: it's too complex to check; an annotation may help
+#    = note: checking it takes more work than the checker allows; an annotation may help
 
 pub @class Wide[T]
   pub def get self -> Int
@@ -116,7 +116,7 @@ pub def same i @ Ints
 # LL |   wide $i
 #    |   ^^^^^^^
 #    |
-#    = note: it's too complex to check; an annotation may help
+#    = note: checking it takes more work than the checker allows; an annotation may help
 
 # A class naming the protocol conforms through the claim, which its declaration
 # is checked against

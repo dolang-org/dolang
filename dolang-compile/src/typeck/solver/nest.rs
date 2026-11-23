@@ -43,7 +43,7 @@ impl Gas {
     pub(super) fn spend(&self) -> Result<(), Residual> {
         if self.used.get() >= self.limit {
             self.exhausted.set(true);
-            return Err(Residual::Limit);
+            return Err(Residual::Exhausted);
         }
         self.used.set(self.used.get() + 1);
         Ok(())
@@ -59,7 +59,9 @@ impl Gas {
         result
     }
 
-    pub(super) fn exhaust(&self) {
+    /// Mark the budget exhausted, as a budget of its own that a part of the
+    /// work ran out of exhausts the whole's
+    pub(crate) fn exhaust(&self) {
         self.exhausted.set(true);
     }
 
