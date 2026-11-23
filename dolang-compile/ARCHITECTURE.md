@@ -1231,15 +1231,15 @@ units. A module name may be added only once. Adding a source unit collects its
 shard then, so a check knows what each unit needs: `Check::depends` lists the
 modules of its shard's module table, the modules it imports and the prelude
 modules it uses, with `std`, whose designated types every unit has, and for
-`strand`, the modules of the nominated pipe types. `Check::missing` lists what
-the units need that none of them is. A driver adds the units it starts from,
-adds one for each missing module it can find, and repeats until every missing
-module is one it already looked for; the check then reports imports of those as
-not found. `Check::run` consumes the check and returns a `Checked`, which yields
-the type checker's diagnostics. The units' own diagnostics stay with the units.
-A `Checked` borrows none of its units: it keeps each unit's name and path, and
-its diagnostics and undecided checks with their spans already resolved to lines
-and columns.
+`strand`, the modules of the nominated pipe and script channel types.
+`Check::missing` lists what the units need that none of them is. A driver adds
+the units it starts from, adds one for each missing module it can find, and
+repeats until every missing module is one it already looked for; the check then
+reports imports of those as not found. `Check::run` consumes the check and
+returns a `Checked`, which yields the type checker's diagnostics. The units' own
+diagnostics stay with the units. A `Checked` borrows none of its units: it keeps
+each unit's name and path, and its diagnostics and undecided checks with their
+spans already resolved to lines and columns.
 
 A typelib is written from a check. With `Check::typelibs`, the check keeps the
 typelib of each module it checks from source, encoded from the module's shard
@@ -1256,11 +1256,11 @@ interned in one table, and what can be derived from the rest is left out where
 it holds. The surface leaves out private fields, which can decide a class's
 variance, so the typelib records what elaboration concluded of each binder's
 variance as side facts, and a check that loads it takes them as given. A typelib
-whose module is or imports `strand` also records the pipe types the check
-nominated (see `Check::pipes`), since those facts can depend on them: a builder
-nominating others rejects it, and a check without a recorded nominee's module
-reports it as not found. Reading one gives a shard and the facts it records,
-which are linked as any unit's are.
+whose module is or imports `strand` also records the pipe and script channel
+types the check nominated (see `Check::pipes` and `Check::scripts`), since those
+facts can depend on them: a builder nominating others rejects it, and a check
+without a recorded nominee's module reports it as not found. Reading one gives a
+shard and the facts it records, which are linked as any unit's are.
 
 A public `diag::Span` is a line, a column and a length, packed in a `u64`, with
 the column and length counted in characters (Unicode scalar values, a tab as
@@ -1288,9 +1288,12 @@ every location, so one diagnostic can point into several units. Mapping a unit
 to its file and rendering diagnostics belong to callers. Token and document
 spans remain local.
 
-Callers assemble modules and stubs without executing imports.
-Embedding-provided ambient endpoint types will require an explicit
-caller-selected environment on the builder.
+Callers assemble modules and stubs without executing imports. The embedding
+states the environment scripts run in by nominating the types
+`strand.ScriptInput` and `strand.ScriptOutput` stand for, with `Check::scripts`.
+A unit's top level takes its channels from its mode: a module's are `Value`, and
+a script's or REPL turn's are the script channel placeholders, which are
+dynamic when nothing is nominated or `strand` isn't checked.
 
 ## Elaborating declarations
 
@@ -1330,14 +1333,14 @@ in a typelib, which keeps no reference's span, at the import of its module.
 
 Collection fills each unit's shard, and linking moves it and its facts to their
 place in the tables, filling in what only linking can tell. Each later pass
-records what it concludes about a unit's declarations, such as kinds,
-completed signatures, variance and binder groups, in that unit's facts. Only
-what crosses units is global: the database, the designated declarations and the
-pipe placeholders' nominees. Linking numbers each unit's declarations, sites
-and links in one contiguous range, in link order, so an ID's unit is found by a
+records what it concludes about a unit's declarations, such as kinds, completed
+signatures, variance and binder groups, in that unit's facts. Only what crosses
+units is global: the database, the designated declarations and the nominated
+placeholders' nominees. Linking numbers each unit's declarations, sites and
+links in one contiguous range, in link order, so an ID's unit is found by a
 binary search over the ranges' bases. The database declarations of a function's
-signatures other than the one its own ID holds follow its unit's declarations
-in the same range.
+signatures other than the one its own ID holds follow its unit's declarations in
+the same range.
 
 `Checked` drops the tables. An analysis reports what they concluded about each
 span of a unit: what a type name refers to, the type written there and each
@@ -1372,23 +1375,23 @@ an iteratee reads the input through its `(next)`. A method's unannotated
 receiver is its class applied to its own binders, except on a `class` or
 `static` method. A function type written without channels in a def's signature
 shares that def's channels; elsewhere, the def's body included, they are
-`Value`. A closure is populated with its annotations and
-`Unknown` for what it omits, channels included; CFG flow infers the omissions
-separately, without changing the database. Top-level declarations of a checked
-`std` module named `Value`, `Phantom`, `Union`, `Keys`, `Values`, `Entries`,
-`Func`, `Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for
-special treatment; the same name in another module is only a lookalike. So are
-the classes that literal and constructor expressions produce, `Float`, `Bin`,
-`Array`, `Dict`, `Tuple`, `Pack`, `Range` and the `Fmt` classes, which the
-check tables record without the database needing them, except `Tuple`, which
-`Entries` builds. A checked `strand` module's opaque `PipeSender` and
-`PipeReceiver` are designated too: each stands for the class the `Check`
+`Value`. A closure is populated with its annotations and `Unknown` for what it
+omits, channels included; CFG flow infers the omissions separately, without
+changing the database. Top-level declarations of a checked `std` module named
+`Value`, `Phantom`, `Union`, `Keys`, `Values`, `Entries`, `Func`, `Int`, `Bool`,
+`Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special treatment; the
+same name in another module is only a lookalike. So are the classes that literal
+and constructor expressions produce, `Float`, `Bin`, `Array`, `Dict`, `Tuple`,
+`Pack`, `Range` and the `Fmt` classes, which the check tables record without the
+database needing them, except `Tuple`, which `Entries` builds. A checked
+`strand` module's opaque `PipeSender`, `PipeReceiver`, `ScriptInput` and
+`ScriptOutput` are designated too: each stands for the class the `Check`
 nominates, resolved as if the placeholder imported it, and is populated as a
 transparent alias of that class applied to its binders, whose variance it takes.
-A nominee in no checked module leaves the placeholder `Unknown`; one that isn't
-a class, or can't take the placeholder's type arguments positionally, is
-diagnosed on the placeholder. The `kind`, `sig`, `ambient` and `designated`
-judgments report these results.
+A nominee in no checked module, or no nominee, leaves the placeholder `Unknown`;
+one that isn't a class, or can't take the placeholder's type arguments
+positionally, is diagnosed on the placeholder. The `kind`, `sig`, `ambient` and
+`designated` judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested
 declaration uses, before anything is interned, since a quantified type's binders

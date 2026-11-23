@@ -3862,13 +3862,16 @@ pub class Nil
 
 # Acts as an empty iterator and a sink that discards every value.
 #
+# As an [`Io`](io.Io), it reads and writes but doesn't seek: a read is always
+# at the end of the stream, and a write discards its data.
+#
 # The [`std.null`](std.null) singleton is the only `Null` value. Use it to
 # provide an empty input or discard output:
 #
 # ```
 # run tool stdin: $null stdout: $null
 # ```
-pub class Null: Iter[Never] @UnpackIter[Never] Sink[Value]
+pub class Null: Iter[Never] @UnpackIter[Never] Io
   # Ends the iteration immediately without yielding a value.
   pub def (next) self -> Never
     ...

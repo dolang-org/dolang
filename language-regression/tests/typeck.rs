@@ -32,6 +32,7 @@
 //! | `repo-stubs` | Modules to add from the repository's native module stubs | none |
 //! | `prelude` | `default` for the default prelude, `none` for an empty one | `default` |
 //! | `pipes` | The types `strand`'s pipe placeholders stand for, sender then receiver, each `module.Item` | `strand.Sender strand.Receiver` |
+//! | `scripts` | The types `strand`'s script channel placeholders stand for, input then output, each `module.Item` | none (dynamic) |
 //! | `validated` | `true` or `false`: whether the check reports no errors | not asserted |
 //! | `bench` | `false`, `true` (source), or a list of `source`, `typelib`, `compile` | `false` |
 //! | `skip` | `miri` to skip under Miri | none |
@@ -56,6 +57,8 @@ struct Settings {
     prelude_none: bool,
     /// Each nominee's module and item, sender first
     pipes: Option<[(String, String); 2]>,
+    /// Each script channel nominee's module and item, input first
+    scripts: Option<[(String, String); 2]>,
     validated: Option<bool>,
 }
 
@@ -102,18 +105,21 @@ impl Settings {
                         _ => panic!("{}: unknown prelude `{value}`", path.display()),
                     }
                 }
-                "pipes" => {
+                "pipes" | "scripts" => {
                     let nominee = |name: &str| {
                         let (module, item) = name.rsplit_once('.').unwrap_or_else(|| {
                             panic!("{}: expected `module.Item`, found `{name}`", path.display())
                         });
                         (module.to_owned(), item.to_owned())
                     };
-                    let [sender, receiver] = value.split_whitespace().collect::<Vec<_>>()[..]
-                    else {
-                        panic!("{}: expected a sender and a receiver", path.display());
+                    let [first, second] = value.split_whitespace().collect::<Vec<_>>()[..] else {
+                        panic!("{}: expected two nominees", path.display());
                     };
-                    self.pipes = Some([nominee(sender), nominee(receiver)]);
+                    let nominees = Some([nominee(first), nominee(second)]);
+                    match key.trim() {
+                        "pipes" => self.pipes = nominees,
+                        _ => self.scripts = nominees,
+                    }
                 }
                 "validated" => {
                     self.validated = Some(match value {
@@ -299,6 +305,9 @@ impl Case {
         if let Some([(sender_module, sender), (receiver_module, receiver)]) = &self.settings.pipes {
             builder.pipes((sender_module, sender), (receiver_module, receiver));
         }
+        if let Some([(input_module, input), (output_module, output)]) = &self.settings.scripts {
+            builder.scripts((input_module, input), (output_module, output));
+        }
         builder
     }
 }
@@ -451,7 +460,7 @@ fn from_typelibs(
                 if matches!(error.kind(), ErrorKind::MissingImport)
                     && error
                         .to_string()
-                        .ends_with("of a nominated pipe type was not checked") =>
+                        .ends_with("of a nominated type was not checked") =>
             {
                 exportable = false;
                 written.push(None);
@@ -493,6 +502,9 @@ fn from_typelibs(
     checker.analysis(true);
     if let Some([(sender_module, sender), (receiver_module, receiver)]) = &settings.pipes {
         checker.pipes((sender_module, sender), (receiver_module, receiver));
+    }
+    if let Some([(input_module, input), (output_module, output)]) = &settings.scripts {
+        checker.scripts((input_module, input), (output_module, output));
     }
     for (index, unit) in units.iter().enumerate() {
         if ids[index].is_none() {

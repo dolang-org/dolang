@@ -450,6 +450,10 @@ do
     echo "error: $e"
     shell.exit 1
 
+# What a command's handler is passed. Annotated, since the checker can default
+# a handler's parameter before the call it's passed to types it (#1832).
+@let Parsed = args.Args[nil, strand.ScriptInput, strand.ScriptOutput]
+
 # A diagnostic severity level, as `--diagnose` and `--fail` take it.
 def parse_level value @ Str -> compile.Severity
   match value
@@ -479,7 +483,7 @@ args.with
     - opt: json
       default: nil
       help: File to also write the report to, as JSON
-    do |p|
+    do |p @ Parsed|
       let :diagnose :fail :json ... = p.check
       with_project $p.project $json $diagnose $fail do |it| it.check(:fail)
   - cmd: test
@@ -489,7 +493,7 @@ args.with
     - arg: harness
       collect: true
       help: Arguments to `dolang -m test`
-    do |p|
+    do |p @ Parsed|
       let :harness ... = p.test
       with_project $p.project nil :WARNING: :ERROR: do |it| it.test $harness
   - cmd: bundle
@@ -519,7 +523,7 @@ args.with
       default: nil
       help: Interpreter command for a `#!` line, such as `/usr/bin/env dolang`;
         the bundle is then made executable where the platform allows
-    do |p|
+    do |p @ Parsed|
       let :diagnose :fail :no_check :output :shebang :json ... = p.bundle
       if (shebang != nil && shebang.contains("\n"))
         throw args.Error "--shebang must be a single line"

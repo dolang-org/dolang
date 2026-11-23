@@ -1,0 +1,12 @@
+# A script's top level reads and writes the nominated channels.
+
+import load
+
+put 1
+put "x"
+
+for line
+  let _ = line
+  #       ^~~~: flow std.Str
+
+let _ = load.run b""

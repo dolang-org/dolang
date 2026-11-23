@@ -1,0 +1,3 @@
+repo-stubs: std strand shell fs io inspect term load proc security time
+pipes: proc.PipeSender proc.PipeReceiver
+scripts: shell.Input shell.Output

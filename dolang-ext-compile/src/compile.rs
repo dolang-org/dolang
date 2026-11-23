@@ -541,6 +541,10 @@ const CHECKED_INPUTS: usize = 1;
 /// connect stages with `proc`'s pipes
 const PIPES: [(&str, &str); 2] = [("proc", "PipeSender"), ("proc", "PipeReceiver")];
 
+/// The types `strand`'s script channel placeholders stand for: the shell runs
+/// scripts with any input and output its protocols describe
+const SCRIPTS: [(&str, &str); 2] = [("shell", "Input"), ("shell", "Output")];
+
 const TYPELIB_BYTES: usize = 0;
 
 fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> Sym<'v, 'v> {
@@ -866,7 +870,9 @@ fn input_module<'v, 's>(
 /// failed to compile.
 fn depends(taken: &Taken) -> std::result::Result<Option<Vec<String>>, compile::Error> {
     let mut check = compile::typeck::Check::new();
-    check.pipes(PIPES[0], PIPES[1]);
+    check
+        .pipes(PIPES[0], PIPES[1])
+        .scripts(SCRIPTS[0], SCRIPTS[1]);
     let added = match taken {
         Taken::Unit(unit) => check.unit(unit),
         Taken::Typelib(typelib) => check.typelib(typelib),
@@ -926,7 +932,9 @@ fn check_units<'v, 's>(
 
         let checked = outcome.and_then(|()| {
             let mut builder = compile::typeck::Check::new();
-            builder.pipes(PIPES[0], PIPES[1]);
+            builder
+                .pipes(PIPES[0], PIPES[1])
+                .scripts(SCRIPTS[0], SCRIPTS[1]);
             builder.typelibs(typelibs);
             // The units the checker accepted, by unit ID, and the position in
             // `taken` of each

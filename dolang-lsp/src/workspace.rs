@@ -57,6 +57,10 @@ const MAX_INDEXED: usize = 4096;
 /// connect stages with `proc`'s pipes
 pub(crate) const PIPES: [(&str, &str); 2] = [("proc", "PipeSender"), ("proc", "PipeReceiver")];
 
+/// The types `strand`'s script channel placeholders stand for: the shell runs
+/// scripts with any input and output its protocols describe
+pub(crate) const SCRIPTS: [(&str, &str); 2] = [("shell", "Input"), ("shell", "Output")];
+
 /// The live workspaces, by root, and the detached workspace.
 #[derive(Default)]
 pub(crate) struct Workspaces {
@@ -487,7 +491,9 @@ impl Member {
         self.depends
             .get_or_init(|| {
                 let mut check = typeck::Check::new();
-                check.pipes(PIPES[0], PIPES[1]);
+                check
+                    .pipes(PIPES[0], PIPES[1])
+                    .scripts(SCRIPTS[0], SCRIPTS[1]);
                 let id = check.unit(self.compiled()).ok()?;
                 Some(owned(check.depends(id)))
             })
@@ -1245,7 +1251,9 @@ impl Bundled {
                     .inspect_err(|err| log::error!("bundled typelib {name} is unreadable: {err}"))
                     .ok()?;
                 let mut check = typeck::Check::new();
-                check.pipes(PIPES[0], PIPES[1]);
+                check
+                    .pipes(PIPES[0], PIPES[1])
+                    .scripts(SCRIPTS[0], SCRIPTS[1]);
                 let depends = match check.typelib(&typelib) {
                     Ok(id) => owned(check.depends(id)),
                     Err(_) => Vec::new(),

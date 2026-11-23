@@ -1,2 +1,3 @@
-repo-stubs: std strand time load sqlite term
+repo-stubs: std strand time load sqlite term shell fs io inspect
+scripts: shell.Input shell.Output
 validated: false

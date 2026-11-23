@@ -34,7 +34,7 @@ use crate::{
     diag::{Pos, Span},
     typeck::{
         elab::{
-            self, Bases, BinderRef, DeclNode, Referent, Role, Shard, UnitInfo, local,
+            self, Bases, BinderRef, DeclNode, Nominations, Referent, Role, Shard, UnitInfo, local,
             surface::{
                 self, ConstLit, Decorator, LinkId, Member, MemberScope, ModuleId, ParamKind, Ref,
                 SiteId, StrId, Symbol, TypeExpr, TypeKey, TypeParam, TypeQuant,
@@ -72,10 +72,10 @@ pub(super) struct Content<S> {
     exports: Vec<Export>,
     values: Vec<Value>,
     modules: Vec<Module>,
-    /// The types `strand`'s pipe placeholders stand for in the check that wrote
-    /// the typelib, each as its module and item, where the facts can depend on
-    /// them
-    pipes: Option<[(u32, u32); 2]>,
+    /// The types `strand`'s nominated placeholders stand for in the check that
+    /// wrote the typelib, each as its module and item, where the facts can depend
+    /// on them
+    nominations: Option<Nominations<u32>>,
 }
 
 /// A declaration signature
@@ -619,7 +619,7 @@ pub(super) struct Encode<'s, 'u> {
     kept: &'s BitSlice,
     facts: &'s elab::Facts,
     settled: &'s types::Settled,
-    pipes: Option<[(&'s str, &'s str); 2]>,
+    nominations: Option<Nominations<&'s str>>,
     /// The ID of each kept declaration, by its offset in the unit
     decls: Vec<Option<u32>>,
     /// The ID of each site met, by its offset in the unit
@@ -644,14 +644,14 @@ pub(super) struct Encode<'s, 'u> {
 impl<'s, 'u> Encode<'s, 'u> {
     /// An encoder of what `kept` keeps of a shard whose IDs start at `base`, with
     /// the facts concluded about it, what its declarations settled to, and the
-    /// pipe nominations they depend on, if any
+    /// nominations they depend on, if any
     pub(super) fn new(
         shard: &'s Shard<'u>,
         base: &'s Bases,
         kept: &'s BitSlice,
         facts: &'s elab::Facts,
         settled: &'s types::Settled,
-        pipes: Option<[(&'s str, &'s str); 2]>,
+        nominations: Option<Nominations<&'s str>>,
     ) -> Self {
         let mut next = 0;
         let decls = kept
@@ -670,7 +670,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             kept,
             facts,
             settled,
-            pipes,
+            nominations,
             decls,
             site_ids: vec![None; shard.sites.len()],
             sites: Vec::new(),
@@ -763,9 +763,9 @@ impl<'s, 'u> Encode<'s, 'u> {
                 span: self.span(module.span),
             })
             .collect();
-        let pipes = self
-            .pipes
-            .map(|pipes| pipes.map(|(module, item)| (self.text(module), self.text(item))));
+        let nominations = self.nominations.map(|nominations| {
+            nominations.map(|nominee| nominee.map(|(m, i)| (self.text(m), self.text(i))))
+        });
         // A site meets links, which meet no sites
         let mut sites = Vec::new();
         while let Some(&(site, placed)) = self.sites.get(sites.len()) {
@@ -795,7 +795,7 @@ impl<'s, 'u> Encode<'s, 'u> {
             exports,
             values,
             modules,
-            pipes,
+            nominations,
         }
     }
 
@@ -1435,7 +1435,7 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
         exports,
         values,
         modules,
-        pipes,
+        nominations,
     } = content;
     let (Some(&module), Some(&path)) = (strings.get(module as usize), strings.get(path as usize))
     else {
@@ -1627,11 +1627,9 @@ pub(super) fn decode(mut content: Content<&str>) -> Result<(Shard<'_>, elab::Fac
         sig_decls: FxHashMap::default(),
         sig_owners: Vec::new(),
         kept: None,
-        nominations: pipes.map(|pipes| {
-            pipes.map(|(module, item)| {
-                let str = |id: u32| StrId::from_index(id as usize);
-                (str(module), str(item))
-            })
+        nominations: nominations.map(|nominations| {
+            let str = |id: u32| StrId::from_index(id as usize);
+            nominations.map(|nominee| nominee.map(|(m, i)| (str(m), str(i))))
         }),
     };
     Ok((shard, facts))

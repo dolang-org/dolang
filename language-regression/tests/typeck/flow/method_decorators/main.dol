@@ -7,7 +7,7 @@ def use b @ m.Box c @ m.Cell[Int]
   let size = b.size
   #   ^~~~: flow std.Str
   let inner = b.inner
-  #   ^~~~~: flow (<Unknown, >Unknown) -> std.Str
+  #   ^~~~~: flow (<Value, >Value) -> std.Str
   let twice = b.twice(1)
   #   ^~~~~: flow std.Int
   let counted = b.counted()

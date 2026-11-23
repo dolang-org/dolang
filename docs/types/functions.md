@@ -69,6 +69,31 @@ An input or output may be any type, but inputs are conventionally `Iter` and
 outputs `Sink`. A `for` without an iteratee reads the input through its
 `Iter.(next)`, and [`strand.put`](strand.put) requires a `Sink` output.
 
+### Top-Level Code
+
+A unit's top level has an input and output too, decided by how it is compiled.
+A module's top level has neither, as `Value`: any strand may import it, so it
+can't read or write without a downcast. Its `def`s declare their own as usual.
+
+A script's top level, and a REPL line's, has `strand.ScriptInput` and
+`strand.ScriptOutput`, which stand for whatever the embedding runs scripts
+with. In the shell they are [`shell.Input`](shell.Input) and
+[`shell.Output`](shell.Output): a script reads strings and writes any value,
+and each side gives its bytes through `io()`. With no embedding to say, they
+are unchecked.
+
+[`load.run`](load.run) and [`exec.run`](exec.run) run a script with their
+caller's input and output, so they require the script's. Inside
+[`strand.with_io`](strand.with_io), [`std.null`](std.null) serves as both:
+
+```
+def run_quietly code @ Bin -> Value
+  strand.with_io input: $std.null output: $std.null do load.run $code
+```
+
+[`strand.redirect`](strand.redirect) gives its block an `Iter` and a `Sink`,
+which aren't a script's.
+
 ## Generic Function Types
 
 `@[]` before a function type declares binders for it, written as a `def`'s

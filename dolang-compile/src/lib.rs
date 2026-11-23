@@ -136,7 +136,8 @@ pub enum ErrorKind {
     MissingImport,
     /// A typelib is malformed, or of a version this checker doesn't read.
     Typelib,
-    /// A typelib was written by a check that nominated other pipe types.
+    /// A typelib was written by a check that nominated other pipe or script
+    /// channel types.
     Pipes,
 }
 
@@ -192,14 +193,14 @@ impl Display for Error {
                 write!(f, "imported module `{name}` was not checked")
             }
             ErrorInfo::MissingNominee(name) => {
-                write!(
-                    f,
-                    "module `{name}` of a nominated pipe type was not checked"
-                )
+                write!(f, "module `{name}` of a nominated type was not checked")
             }
             ErrorInfo::Typelib(invalid) => invalid.fmt(f),
             ErrorInfo::Pipes(module) => {
-                write!(f, "typelib of `{module}` was written with other pipe types")
+                write!(
+                    f,
+                    "typelib of `{module}` was written with other nominated types"
+                )
             }
         }
     }

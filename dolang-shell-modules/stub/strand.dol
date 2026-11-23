@@ -26,6 +26,14 @@ pub @let PipeSender[I] = ...
 # [`Receiver`](strand.Receiver).
 pub @let PipeReceiver[I] = ...
 
+# The input a script runs with, which its top level reads. In the shell, this is
+# [`shell.Input`](shell.Input). A module's top level has no input.
+pub @let ScriptInput = ...
+
+# The output a script runs with, which its top level writes. In the shell, this
+# is [`shell.Output`](shell.Output). A module's top level has no output.
+pub @let ScriptOutput = ...
+
 # The stages of a [`pipeline`](strand.pipeline) giving `R`. No other type fits
 # it: the checker types a call's stages by a rule of its own. Each stage reads
 # what the one before it writes, every stage but the last returns `nil`, and

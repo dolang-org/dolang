@@ -92,6 +92,7 @@ well_known_symbols! {
     (Graphemes, "graphemes", GRAPHEMES),
     (Get, "get", GET),
     (Intersect, "intersect", INTERSECT),
+    (Io, "io", IO),
     (Iter, "iter", ITER),
     (IterMethod, "(iter)", ITER_METHOD),
     (Insert, "insert", INSERT),

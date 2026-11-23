@@ -32,7 +32,7 @@ use crate::{
     lookup::{self, Modules, Name, Target},
     settings::{CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     signature,
-    workspace::{Check, Key, Member, PIPES, Round, Typelibs, Workspace, Workspaces},
+    workspace::{Check, Key, Member, PIPES, Round, SCRIPTS, Typelibs, Workspace, Workspaces},
 };
 
 const TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
@@ -1860,7 +1860,9 @@ pub(crate) fn check_units(
     }
     let mut builder = typeck::Check::new();
     builder.analysis(true).typelibs(true);
-    builder.pipes(PIPES[0], PIPES[1]);
+    builder
+        .pipes(PIPES[0], PIPES[1])
+        .scripts(SCRIPTS[0], SCRIPTS[1]);
     let ids: Vec<_> = check
         .members()
         .iter()

@@ -237,6 +237,10 @@ pub class Io: Sink[Value]
   do -> Iter[Bin]
     ...
 
+  # Returns the stream as its own byte view.
+  pub def io self -> Io
+    ...
+
   # Returns the stream as its own sink.
   pub def (sink) self -> Io
     ...

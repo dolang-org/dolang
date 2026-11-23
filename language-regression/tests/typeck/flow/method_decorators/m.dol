@@ -80,7 +80,7 @@ pub class Box
   #[strs]
   #[getter]
   pub def inner _self -> Int
-    # error: expected `(m.Box, <Unknown, >Unknown) -> std.Int`, found `std.Getter[m.Box, std.Int]`
+    # error: expected `(m.Box) -> std.Int`, found `std.Getter[m.Box, std.Int]`
     #   --> m.dol:LL:LL
     #    |
     # LL |   #[getter]
@@ -135,7 +135,7 @@ pub class Box
   #[same]
   #[strs]
   pub def wrong _self -> Str
-    # error: expected `(m.Box, <Unknown, >Unknown) -> std.Int`, found `(m.Box) -> std.Str`
+    # error: expected `(m.Box) -> std.Int`, found `(m.Box) -> std.Str`
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def wrong _self -> Str
@@ -167,7 +167,7 @@ pub def use b @ Box c @ Cell[Int]
   let bad = b.bad
   #   ^~~: flow Unknown
   let inner = b.inner
-  #   ^~~~~: flow (<Unknown, >Unknown) -> std.Str
+  #   ^~~~~: flow (<Value, >Value) -> std.Str
   let pending = b.pending
   #   ^~~~~~~: flow Unknown
   let twice = b.twice(1)

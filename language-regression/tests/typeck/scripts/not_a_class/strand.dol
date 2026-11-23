@@ -1,0 +1,24 @@
+# A script channel's nominee must be a class or protocol.
+
+pub @let ScriptInput = ...
+# error: `strand.send` must be a class to stand for `ScriptInput`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let ScriptInput = ...
+#    |          ^^^^^^^^^^^
+# ...
+# LL | pub def send()
+#    |         ---- declared here
+pub @let ScriptOutput = ...
+# error: `strand.Receiving` must be a class to stand for `ScriptOutput`
+#   --> strand.dol:LL:LL
+#    |
+# LL | pub @let ScriptOutput = ...
+#    |          ^^^^^^^^^^^^
+# ...
+# LL | pub @let Receiving = Int
+#    |          --------- declared here
+
+pub def send()
+  nil
+pub @let Receiving = Int

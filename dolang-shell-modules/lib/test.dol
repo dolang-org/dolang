@@ -487,7 +487,10 @@ class Harness
       let cases = collect_key.with (TestCollection path) do
         self.#with_capture $output do
           self.#with_timeout do
-            strand.redirect input: $std.null do load.run $compiled.emit()
+            # The output is the harness's own or a capture buffer, an `Io`
+            # either way, which a script may write
+            let output = (strand.output() !@ strand.ScriptOutput)
+            strand.with_io input: $std.null :output do load.run $compiled.emit()
         collect_key.value.take()
       let result = ModuleResult $path :LOADED:
       result.cases = [...cases.filter(do |case| self.#matches_filter case)]

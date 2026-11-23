@@ -134,7 +134,9 @@ mod tests {
             })
             .collect();
         let mut builder = typeck::Check::new();
-        builder.pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"));
+        builder
+            .pipes(("proc", "PipeSender"), ("proc", "PipeReceiver"))
+            .scripts(("shell", "Input"), ("shell", "Output"));
         for typelib in &typelibs {
             builder.typelib(typelib).unwrap();
         }
