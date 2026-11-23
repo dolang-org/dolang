@@ -675,7 +675,7 @@ impl Solver<'_> {
     /// What an overloaded function's overloads are tried against in place of
     /// `function`, a function type: it with its result `Value`, since only what's
     /// passed chooses
-    fn selection(&self, function: TypeView) -> Result<Term, Issue> {
+    pub(super) fn selection(&self, function: TypeView) -> Result<Term, Issue> {
         let Type::Function(function_type) = self.db.ty(function.ty) else {
             unreachable!("a function type")
         };

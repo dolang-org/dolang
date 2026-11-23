@@ -2841,8 +2841,30 @@ impl<'db> Solver<'db> {
                 causes.push(cause);
             }
         }
-        let provenance = &outcome.provenance;
         let mut found = FxHashMap::default();
+        causes
+            .into_iter()
+            .map(|(path, contradiction)| Contradicted {
+                contradiction,
+                path: self.trace(outcome, &path, &mut found),
+            })
+            .collect()
+    }
+
+    /// A path of an outcome's diagnostic from its root, resolved as diagnostics
+    /// read it, carrying what's found of each node's sides in `found`
+    pub(crate) fn trace(
+        &self,
+        outcome: &Outcome,
+        path: &[ObligationId],
+        found: &mut FxHashMap<ObligationId, Option<Provenance>>,
+    ) -> alias::Box<[Node]> {
+        let step = |parent: ObligationId, child: ObligationId| {
+            self.dependencies(parent)
+                .into_iter()
+                .find(|dependency| dependency.obligation == child)
+                .map(|dependency| dependency.step)
+        };
         // A value is shown apart from the bounds an argument held back takes
         // from what's expected of it
         let seeded = self.seeded();
@@ -2850,35 +2872,28 @@ impl<'db> Solver<'db> {
             let solved = self.reify(term).ok()?;
             Some(self.reify_apart(term, &seeded).unwrap_or(solved))
         };
-        causes
-            .into_iter()
-            .map(|(path, contradiction)| Contradicted {
-                contradiction,
-                path: path
-                    .iter()
-                    .zip(self.carry(provenance.clone(), &path, &mut found))
-                    .enumerate()
-                    .map(|(index, (&obligation, origins))| Node {
-                        obligation,
-                        step: index
-                            .checked_sub(1)
-                            .and_then(|parent| step(path[parent], obligation)),
-                        sides: self
-                            .relation(obligation)
-                            .sides()
-                            .map(|(term, expected)| (actual(term), self.reify(expected).ok())),
-                        found: self
-                            .relation(obligation)
-                            .sides()
-                            .filter(|&(actual, _)| self.reify(actual).is_err())
-                            .and_then(|(actual, _)| {
-                                self.reify_apart(actual, &seeded)
-                                    .or_else(|_| self.reify_found(actual))
-                                    .ok()
-                            }),
-                        origins,
-                    })
-                    .collect(),
+        path.iter()
+            .zip(self.carry(outcome.provenance.clone(), path, found))
+            .enumerate()
+            .map(|(index, (&obligation, origins))| Node {
+                obligation,
+                step: index
+                    .checked_sub(1)
+                    .and_then(|parent| step(path[parent], obligation)),
+                sides: self
+                    .relation(obligation)
+                    .sides()
+                    .map(|(term, expected)| (actual(term), self.reify(expected).ok())),
+                found: self
+                    .relation(obligation)
+                    .sides()
+                    .filter(|&(actual, _)| self.reify(actual).is_err())
+                    .and_then(|(actual, _)| {
+                        self.reify_apart(actual, &seeded)
+                            .or_else(|_| self.reify_found(actual))
+                            .ok()
+                    }),
+                origins,
             })
             .collect()
     }

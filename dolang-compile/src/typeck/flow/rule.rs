@@ -1374,7 +1374,8 @@ impl<'a> Flow<'a, '_> {
                 if others && !recorded && open.clone().next().is_some() {
                     for outcome in &run.outcomes {
                         if outcome.status == Status::Unresolved {
-                            self.unresolved(span, outcome);
+                            let unsettled = self.unsettled(span, &run.solver, outcome);
+                            self.settle_unresolved(unsettled);
                         }
                     }
                 }
@@ -1494,21 +1495,10 @@ impl<'a> Flow<'a, '_> {
             match (kind, outcome.status) {
                 // Its rule reports it left undecided
                 (OriginKind::Empty, Status::Unresolved) | (_, Status::Proven) => {}
-                (OriginKind::Call { callee, .. }, Status::Unresolved)
-                    if let Some(survivors) = self.ambiguous(solver, outcome) =>
-                {
-                    match survivors {
-                        Some(survivors) => self.problem(Problem::AmbiguousCall {
-                            span,
-                            callee: callee.as_deref().map(str::to_owned),
-                            survivors,
-                        }),
-                        // What would tell them apart may be unknown, so it's
-                        // only undecided
-                        None => self.undecided(span, Residual::Ambiguous),
-                    }
+                (_, Status::Unresolved) => {
+                    let unsettled = self.unsettled(span, solver, outcome);
+                    self.settle_unresolved(unsettled);
                 }
-                (_, Status::Unresolved) => self.unresolved(span, outcome),
                 (kind, Status::Contradicted) => {
                     // What derives from what's expected of the rule's result is
                     // left to whatever expects it, and what derives from what's
@@ -1665,27 +1655,92 @@ impl<'a> Flow<'a, '_> {
         notes
     }
 
-    /// Whether a call's check is left unresolved only by an ambiguous choice of
-    /// overload, and if so, the overloads left possible, unless what it's
-    /// passed is partly dynamic. Several may then fit only for lack of what
-    /// would tell them apart, so the call is only undecided.
-    fn ambiguous(&self, solver: &Solver<'_>, outcome: &Outcome) -> Option<Option<Vec<String>>> {
-        let mut overloaded = None;
+    /// What an unresolved outcome at `span` comes to: an error for each choice
+    /// of overload trials left ambiguous with nothing dynamic to excuse it, and
+    /// what's undecided besides
+    pub(super) fn unsettled(
+        &self,
+        span: Span,
+        solver: &Solver<'_>,
+        outcome: &Outcome,
+    ) -> Unsettled {
+        let root = diagnosed(&outcome.provenance).map(|(_, kind)| kind);
+        let mut problems = Vec::new();
+        let mut rest = Vec::new();
+        let mut found = FxHashMap::default();
         for diagnostic in &outcome.diagnostics {
-            match (diagnostic.issue, &diagnostic.path[..]) {
-                (Issue::Residual(Residual::Ambiguous), &[obligation]) => {
-                    overloaded = Some(obligation)
+            let ambiguous = match (diagnostic.issue, &diagnostic.path[..]) {
+                (Issue::Residual(Residual::Ambiguous), [.., leaf]) => *leaf,
+                _ => {
+                    rest.push(diagnostic);
+                    continue;
                 }
-                _ => return None,
+            };
+            let problem = match solver.relation(ambiguous) {
+                // A call is only placed at its own span
+                Relation::Call(_) => match (root, &diagnostic.path[..]) {
+                    (Some(OriginKind::Call { callee, .. }), [_]) => self
+                        .ambiguous_call(solver, ambiguous)
+                        .map(|survivors| Problem::AmbiguousCall {
+                            span,
+                            callee: callee.as_deref().map(str::to_owned),
+                            survivors,
+                        }),
+                    _ => None,
+                },
+                Relation::Subtype { .. } => {
+                    self.ambiguous_value(solver, ambiguous)
+                        .map(|(value, expected, survivors)| {
+                            // A value passed is placed at its argument
+                            let path = solver.trace(outcome, &diagnostic.path, &mut found);
+                            let span = call_argument(&found_origins(&path))
+                                .map_or(span, |(_, argument)| argument);
+                            Problem::AmbiguousValue {
+                                span,
+                                value,
+                                expected,
+                                survivors,
+                            }
+                        })
+                }
+                Relation::Empty(_) => None,
+            };
+            match problem {
+                Some(problem) => problems.push(problem),
+                None => rest.push(diagnostic),
             }
         }
-        let overloaded = overloaded?;
+        let residuals = match (problems.is_empty(), rest.is_empty()) {
+            (false, true) => Vec::new(),
+            _ => super::residuals(rest),
+        };
+        Unsettled {
+            span,
+            problems,
+            residuals,
+        }
+    }
+
+    /// Report what an unresolved outcome comes to (see [`Flow::unsettled`])
+    pub(super) fn settle_unresolved(&mut self, unsettled: Unsettled) {
+        for problem in unsettled.problems {
+            self.problem(problem);
+        }
+        for residual in unsettled.residuals {
+            self.undecided(unsettled.span, residual);
+        }
+    }
+
+    /// The overloads left possible of an overloaded call trials left ambiguous,
+    /// unless what it's passed is partly dynamic. Several may then fit only for
+    /// lack of what would tell them apart, so the call is only undecided.
+    fn ambiguous_call(&self, solver: &Solver<'_>, overloaded: ObligationId) -> Option<Vec<String>> {
         let possible = solver.possible(overloaded);
         if possible.is_empty() {
             return None;
         }
         let Relation::Call(call) = solver.relation(overloaded) else {
-            return Some(None);
+            return None;
         };
         // What chooses: the arguments' twin and the ambient channels
         let selection = [Some(solver.twin(call.arguments)), call.input, call.output];
@@ -1695,7 +1750,7 @@ impl<'a> Flow<'a, '_> {
                 .map_or(true, |ty| self.db.contains_unknown(ty))
         });
         if gradual {
-            return Some(None);
+            return None;
         }
         let overloads = match solver.reify(call.callee).map(|ty| self.db.ty(ty)) {
             Ok(Type::Overloaded { overloads, .. }) => overloads.clone(),
@@ -1705,14 +1760,67 @@ impl<'a> Flow<'a, '_> {
                 .iter()
                 .map(|&overload| self.db.declaration(overload).ty)
                 .collect(),
-            _ => return Some(None),
+            _ => return None,
         };
         let survivors = possible
             .into_iter()
             .filter_map(|index| Some((index, *overloads.get(index)?)))
             .map(|(index, overload)| self.overload(solver, overloaded, index, overload))
             .collect();
-        Some(Some(survivors))
+        Some(survivors)
+    }
+
+    /// An overloaded value, or a callable with several signatures, related to
+    /// a function type whose parameters trials left several of them taking:
+    /// the value's name, if it has one, the function type, and the overloads
+    /// left possible. `None` if what would tell them apart is partly dynamic,
+    /// or the judgment's alternatives aren't overloads.
+    fn ambiguous_value(
+        &self,
+        solver: &Solver<'_>,
+        judgment: ObligationId,
+    ) -> Option<(Option<String>, Shown, Vec<String>)> {
+        let Relation::Subtype {
+            actual, expected, ..
+        } = solver.relation(judgment)
+        else {
+            return None;
+        };
+        // Only the parameters and channels choose
+        let expected = solver.reify(expected).ok()?;
+        let Type::Function(function) = self.db.ty(expected) else {
+            return None;
+        };
+        let selection = [Some(function.params), function.input, function.output];
+        if selection
+            .into_iter()
+            .flatten()
+            .any(|ty| self.db.contains_unknown(ty))
+        {
+            return None;
+        }
+        let possible = solver.possible_terms(judgment);
+        if possible.len() < 2 {
+            return None;
+        }
+        let survivors = possible
+            .into_iter()
+            .map(|(index, term)| {
+                let ty = solver.reify(term).ok()?;
+                Some(self.overload(solver, judgment, index, ty))
+            })
+            .collect::<Option<_>>()?;
+        // A callable's signatures are its class's, not its own
+        let value = solver
+            .reify(actual)
+            .ok()
+            .filter(|&ty| match self.db.ty(ty) {
+                Type::Overloaded { .. } => true,
+                &Type::Decl(decl) => !self.db.overloads(decl).is_empty(),
+                _ => false,
+            });
+        let value = value.map(|ty| self.shown(ty));
+        Some((value, self.subject(expected), survivors))
     }
 
     /// An overload of the overloaded callee of `overloaded`'s judgment, by its
@@ -1773,30 +1881,7 @@ impl<'a> Flow<'a, '_> {
             callee: callee.clone().unwrap_or_else(|| "?".to_owned()),
         };
         let origins = found_origins(path);
-        // The first node whose found side is one of the call's arguments,
-        // whether the path narrows the arguments to it or meets it as a
-        // partner, as through a channel
-        let arguments = match origins.first() {
-            Some(Some(Origin {
-                kind: OriginKind::Call { arguments, .. },
-                ..
-            })) => &arguments[..],
-            _ => &[],
-        };
-        let argument = origins
-            .iter()
-            .enumerate()
-            .find_map(|(index, origin)| match origin {
-                Some(Origin {
-                    kind: OriginKind::Call { .. } | OriginKind::Arguments(_),
-                    ..
-                }) => None,
-                Some(Origin {
-                    site: Site::Local(site),
-                    ..
-                }) if arguments.contains(site) => Some((index, *site)),
-                _ => None,
-            });
+        let argument = call_argument(&origins);
         let Some((mut root, arg)) = argument else {
             return match (contradiction, origins.last()) {
                 (Contradiction::Excess(index), Some(Some(origin)))
@@ -4434,6 +4519,40 @@ fn found_origins(path: &[Node]) -> Vec<Option<Origin>> {
             }
         })
         .collect()
+}
+
+/// The first node of a path from a call whose found side is one of the call's
+/// arguments, whether the path narrows the arguments to it or meets it as a
+/// partner, as through a channel: its index, and the argument's span
+fn call_argument(origins: &[Option<Origin>]) -> Option<(usize, Span)> {
+    let arguments = match origins.first() {
+        Some(Some(Origin {
+            kind: OriginKind::Call { arguments, .. },
+            ..
+        })) => &arguments[..],
+        _ => &[],
+    };
+    origins
+        .iter()
+        .enumerate()
+        .find_map(|(index, origin)| match origin {
+            Some(Origin {
+                kind: OriginKind::Call { .. } | OriginKind::Arguments(_),
+                ..
+            }) => None,
+            Some(Origin {
+                site: Site::Local(site),
+                ..
+            }) if arguments.contains(site) => Some((index, *site)),
+            _ => None,
+        })
+}
+
+/// What an unresolved outcome comes to (see [`Flow::unsettled`])
+pub(super) struct Unsettled {
+    span: Span,
+    problems: Vec<Problem>,
+    residuals: Vec<Residual>,
 }
 
 /// Add a problem to a call's, as a note on the one already reported for its

@@ -125,7 +125,8 @@ use super::{
     },
     elab::{Designated, Tables},
     solver::{
-        Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts, Widening,
+        Diagnostic, Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts,
+        Widening,
     },
     r#type::{
         Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, MemberKey,
@@ -900,8 +901,14 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Relate two closed types
-    fn relate(&self, actual: TypeId, expected: TypeId) -> Outcome {
+    /// Relate two closed types, reading the outcome with the solver that
+    /// found it
+    fn relate<R>(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        read: impl FnOnce(&Solver<'_>, Outcome) -> R,
+    ) -> R {
         let gas = Gas::default();
         let mut solver = self.solver(&gas);
         // Nothing defaults an instantiation's variables after this, so solving
@@ -912,7 +919,8 @@ impl<'a, 'u> Flow<'a, 'u> {
             solver.closed(expected),
             Provenance::default(),
         );
-        solver.solve().remove(0)
+        let outcome = solver.solve().remove(0);
+        read(&solver, outcome)
     }
 
     /// Whether one closed type is a subtype of another, where only the status
@@ -946,13 +954,6 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// Record a check left undecided at `span` for each reason its outcome gives
-    fn unresolved(&mut self, span: Span, outcome: &Outcome) {
-        for residual in residuals(outcome) {
-            self.undecided(span, residual);
-        }
-    }
-
     /// Check a value against a variable's annotation, or a function's declared
     /// result, when reporting
     fn check(&mut self, var: VarId, ty: TypeId, span: Span) {
@@ -980,11 +981,15 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// Relate a value at `span` to the type it's checked against, recording the check
     /// if it can't be decided. A contradiction is the caller's to report.
     fn conform(&mut self, ty: TypeId, expected: TypeId, span: Span) -> Status {
-        let outcome = self.relate(ty, expected);
-        if outcome.status == Status::Unresolved {
-            self.unresolved(span, &outcome);
+        let (status, unsettled) = self.relate(ty, expected, |solver, outcome| {
+            let unsettled = (outcome.status == Status::Unresolved)
+                .then(|| self.unsettled(span, solver, &outcome));
+            (outcome.status, unsettled)
+        });
+        if let Some(unsettled) = unsettled {
+            self.settle_unresolved(unsettled);
         }
-        outcome.status
+        status
     }
 
     /// The declared result a function's result variable is checked against: a
@@ -2011,18 +2016,21 @@ impl<'a, 'u> Flow<'a, 'u> {
         if let Some(Literal::Nil | Literal::Sym(_)) = self.db.literal(ty) {
             return self.lub(annotation, ty);
         }
-        let outcome = self.relate(ty, annotation);
-        match outcome.status {
-            Status::Proven => {}
-            Status::Contradicted => {
-                let (found, annotation) = self.pair(ty, annotation);
-                self.problem(Problem::Default {
-                    span,
-                    found,
-                    annotation,
-                });
-            }
-            Status::Unresolved => self.unresolved(span, &outcome),
+        let (status, unsettled) = self.relate(ty, annotation, |solver, outcome| {
+            let unsettled = (outcome.status == Status::Unresolved)
+                .then(|| self.unsettled(span, solver, &outcome));
+            (outcome.status, unsettled)
+        });
+        if status == Status::Contradicted {
+            let (found, annotation) = self.pair(ty, annotation);
+            self.problem(Problem::Default {
+                span,
+                found,
+                annotation,
+            });
+        }
+        if let Some(unsettled) = unsettled {
+            self.settle_unresolved(unsettled);
         }
         annotation
     }
@@ -2708,9 +2716,9 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
 }
 
 /// Why an undecided check's outcome is undecided, each reason once
-fn residuals(outcome: &Outcome) -> Vec<Residual> {
+fn residuals<'a>(diagnostics: impl IntoIterator<Item = &'a Diagnostic>) -> Vec<Residual> {
     let mut residuals = Vec::new();
-    for diagnostic in &outcome.diagnostics {
+    for diagnostic in diagnostics {
         if let super::solver::Issue::Residual(residual) = diagnostic.issue
             && !residuals.contains(&residual)
         {

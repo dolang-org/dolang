@@ -2,6 +2,9 @@
 # A strict unit is warned where the checker can't verify a check, with a note
 # giving the reason.
 
+import std:
+  - @Unknown
+
 pub class Num
 
 pub class Split[*Ts, U @ Num]
@@ -17,6 +20,8 @@ pub def split[*Xs] _x @ Split[...Xs, Num]
   #    = note: it can't match type arguments past an expansion; put positional arguments first
   ...
 
+# Nothing tells apart overloads expected to take `Unknown`, so which one fits
+# is undecided
 @def o _x @ Int -> Int
 @def o _x @ Int -> Str
 pub def o x @ Value -> Value
@@ -26,7 +31,7 @@ pub def o x @ Value -> Value
 pub class Keyed[**Ks]
   field items @ std.Phantom[...Ks] = ...
 
-pub def both[**Xs, **Ys] p @ Keyed[...Xs, ...Ys] -> Tuple[(Int) -> Int, Keyed[...Ys, ...Xs]]
+pub def both[**Xs, **Ys] p @ Keyed[...Xs, ...Ys] -> Tuple[(Unknown) -> Int, Keyed[...Ys, ...Xs]]
   let t = (o, p)
   t
   # warning: the checker can't verify this
@@ -55,7 +60,7 @@ pub def settled -> ((Int) -> Int)
 
 # A literal whose items are left undecided against what's expected of it is
 # undecided where it's checked, as a value bound first is
-pub def literal -> Tuple[(Int) -> Int]
+pub def literal -> Tuple[(Unknown) -> Int]
   (o,)
   # warning: the checker can't verify this
   #   --> m.dol:LL:LL
@@ -65,7 +70,7 @@ pub def literal -> Tuple[(Int) -> Int]
   #    |
   #    = note: nothing determines a type here; annotate it
 
-pub def elements -> Array[(Int) -> Int]
+pub def elements -> Array[(Unknown) -> Int]
   [o]
   # warning: the checker can't verify this
   #   --> m.dol:LL:LL

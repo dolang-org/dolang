@@ -54,6 +54,14 @@ pub(crate) enum Problem {
         callee: Option<String>,
         survivors: Vec<String>,
     },
+    /// An overloaded value related to a function type whose parameters several
+    /// of its overloads take, with nothing dynamic in them to excuse it
+    AmbiguousValue {
+        span: Span,
+        value: Option<String>,
+        expected: Shown,
+        survivors: Vec<String>,
+    },
     /// A call whose types index a schema with a key that may be one of its
     /// positions' indexes
     Conflict(Span),
@@ -239,6 +247,7 @@ impl Report for Problem {
             | Problem::Call { span, .. }
             | Problem::NoOverload { span, .. }
             | Problem::AmbiguousCall { span, .. }
+            | Problem::AmbiguousValue { span, .. }
             | Problem::Conflict(span)
             | Problem::Unadmitted { span, .. }
             | Problem::Required { span, .. }
@@ -327,6 +336,15 @@ impl Report for Problem {
                 .iter()
                 .map(|survivor| (NoteKind::Info, format!("`{survivor}` accepts them")))
                 .collect(),
+            Problem::AmbiguousValue { survivors, .. } => survivors
+                .iter()
+                .map(|survivor| (NoteKind::Info, format!("`{survivor}` takes them")))
+                .chain([(
+                    NoteKind::Help,
+                    "only its parameters choose an overload, never the result expected of it"
+                        .to_owned(),
+                )])
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -362,6 +380,19 @@ impl Report for Problem {
             Problem::AmbiguousCall { callee: None, .. } => {
                 write!(w, "several overloads accept these arguments")
             }
+            Problem::AmbiguousValue {
+                value: Some(value),
+                expected,
+                ..
+            } => write!(
+                w,
+                "several overloads of `{value}` take the parameters of {expected}"
+            ),
+            Problem::AmbiguousValue {
+                value: None,
+                expected,
+                ..
+            } => write!(w, "several overloads take the parameters of {expected}"),
             Problem::Conflict(_) => write!(
                 w,
                 "this call indexes a schema with a key that may be one of its positions' indexes"

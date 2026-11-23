@@ -252,3 +252,50 @@ pub def sequences _s @ Seq[(Int | Str)]
 pub def tuples t @ Tuple[Int, Str]
   indexes $t
   sequences $t
+
+# Only the parameters of a function type choose among an overloaded value's
+# overloads, or a callable's `(call)` signatures, never its result
+@def same x @ Int -> Int
+@def same x @ Int -> Str
+pub def same x
+  x
+
+pub def same_value()
+  let _f @ ((Int) -> Int) = same
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _f @ ((Int) -> Int) = same
+  #    |                             ^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+
+pub class Same: Func
+  @def (call) _self x @ Int -> Int
+  @def (call) _self x @ Int -> Str
+  pub def (call) _self x
+    x
+
+pub def same_callable s @ Same
+  let _int @ ((Int) -> Int) = s
+  # error: several overloads take the parameters of `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _int @ ((Int) -> Int) = s
+  #    |                               ^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+  let _str @ ((Int) -> Str) = s
+  # error: several overloads take the parameters of `(std.Int) -> std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _str @ ((Int) -> Str) = s
+  #    |                               ^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
