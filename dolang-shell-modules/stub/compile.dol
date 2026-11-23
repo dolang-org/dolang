@@ -45,7 +45,7 @@ pub @let Prelude = $
   | Sym
   | BaseArray[Str | Sym]
   | BaseDict[Str | Sym, PreludeBinding]
-  | BaseRecord[...{*(Str | Sym), **PreludeBinding}]
+  | BaseRecord[...{*(Str | Sym), *(Sym): PreludeBinding}]
 
 # A staged compilation unit.
 #

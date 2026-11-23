@@ -22,7 +22,8 @@ pub @let Unknown = ...
 
 # The union of a schema's keys, as a collection indexes it: positional items
 # are indexed by `Int`. `Keys[{a: Int, b: Str}]` is `(:a: | :b:)`,
-# `Keys[{**Int}]` is `Sym`, and `Keys[{Int, Str}]` and `Keys[{*Int}]` are `Int`.
+# `Keys[{*(Sym): Int}]` is `Sym`, and `Keys[{Int, Str}]` and `Keys[{*Int}]`
+# are `Int`.
 pub @let Keys[S @ {...}] = ...
 
 # The union of the values of a schema's items, positional or keyed.
@@ -122,7 +123,7 @@ pub def dbg value @ Value -> Str
 # dictionary literal](../../language/data-structures.md#literals) or [vertical
 # data](../../language/vertical-layout.md#vertical-data) instead. A positional
 # argument raises [`UnexpectedPosError`](std.UnexpectedPosError).
-pub def dict[...Ts @ {**Value}] ...pairs @ Ts -> Dict[Ts]
+pub def dict[...Ts @ {*(Sym): Value}] ...pairs @ Ts -> Dict[Ts]
   ...
 
 # Makes a proxy for a value's public fields and properties.
@@ -2482,7 +2483,7 @@ pub class Dict[S @ {*(Value): Value}]: BaseDict[S] @MutMap[S] @Assign[S]
 # records with narrower items.
 #
 # `BaseRecord` is `Record` at runtime, so only a record is a `BaseRecord`.
-pub class BaseRecord[...Ts @ {*Value, **Value}]:
+pub class BaseRecord[...Ts @ {*Value, *(Sym): Value}]:
   @Mixed[Ts] Iterable[Entries[Ts]]
 do
   # Returns the number of items, counting each value of a repeated key.
@@ -2601,7 +2602,7 @@ do
 # for each keyed item, in the order they were added. Spreading and unpacking
 # give positional items positionally and keyed items as keys. Equality and
 # hashing follow the same order.
-pub class Record[...Ts @ {*Value, **Value}]: BaseRecord[...Ts] @MutMixed[Ts] @Assign[Ts]
+pub class Record[...Ts @ {*Value, *(Sym): Value}]: BaseRecord[...Ts] @MutMixed[Ts] @Assign[Ts]
   # Builds a record by spreading one source, whose keys must be symbols.
   pub def (init) self source @ Spread[Ts]
     ...
@@ -3387,7 +3388,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   pub def len self -> Int
     ...
 
-  @def format[B @ {*Value, **Value}] self @ Fmt[V, B] ...bindings @ B -> Str
+  @def format[B @ {*Value, *(Sym): Value}] self @ Fmt[V, B] ...bindings @ B -> Str
 
   # Expands the sequence and returns the result: literal text as it stands, and
   # each interpolation through its own specification. This is the only way to get
@@ -5033,7 +5034,7 @@ pub class StrBuf: @Index[Range[Int], Str] @Assign[Range[Int], Str] Sink[Value]
 # reads a struct takes a `BaseStruct`, so it accepts structs with narrower items.
 #
 # `BaseStruct` is `Struct` at runtime, so only a struct is a `BaseStruct`.
-pub class BaseStruct[...Ts @ {*Value, **Value}]:
+pub class BaseStruct[...Ts @ {*Value, *(Sym): Value}]:
   @BaseIterable[Entries[Ts]] @Index[Ts] @Spread[Ts]
   - @Unpack[Ts, Rest: MixedRest[Ts], Pos: SeqRest[Ts]]
 do
@@ -5045,7 +5046,7 @@ do
   # assert_eq (Struct.get s :port: default: 22) 22
   # ```
   #[class]
-  pub def get[T @ {*Value, **Value}, K, D = nil]
+  pub def get[T @ {*Value, *(Sym): Value}, K, D = nil]
     self
     target @ BaseStruct[...T]
     key @ K
@@ -5062,7 +5063,7 @@ do
   # assert (!Struct.contains(s, :port:))
   # ```
   #[class]
-  pub def contains self target @ BaseStruct[...{*Value, **Value}] key @ (Int | Sym) -> Bool
+  pub def contains self target @ BaseStruct[...{*Value, *(Sym): Value}] key @ (Int | Sym) -> Bool
     ...
 
   # Reads the item a name keys, as in `s.name`.
@@ -5114,7 +5115,7 @@ do
 #
 # The type arguments type each item, so the type checker reports reading or
 # writing a name the schema lacks.
-pub class Struct[...Ts @ {*Value, **Value}]: BaseStruct[...Ts] @Assign[Ts]
+pub class Struct[...Ts @ {*Value, *(Sym): Value}]: BaseStruct[...Ts] @Assign[Ts]
   # Builds a struct from one spreadable source of key-value pairs.
   #
   # ```

@@ -6,7 +6,7 @@ pub def positional_dict()
 
 pub def keyed_dict d @ Dict[Sym, Int]
   let _x = [...d]
-  # error: a sequence can't take `**std.Int`, which `std.Spread[std.Sym, std.Int]` spreads
+  # error: a sequence can't take `*(std.Sym): std.Int`, which `std.Spread[std.Sym, std.Int]` spreads
   #   --> m.dol:LL:LL
   #    |
   # LL |   let _x = [...d]

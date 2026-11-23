@@ -7,7 +7,7 @@ def opts[T @ BaseDict[{mode: (:A: | :B:)}]] x @ T -> T
   x
 def fixed[T @ Dict[{mode: (:A: | :B:)}]] x @ T -> T
   x
-def keep[T @ BaseDict[{**Value}]] x @ T -> T
+def keep[T @ BaseDict[{*(Sym): Value}]] x @ T -> T
   x
 def table[T @ Dict[Str, Int]] x @ T -> T
   x

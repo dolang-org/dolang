@@ -27,7 +27,7 @@ that element the schema admits:
 | `T`      | A positional item                            |
 | `key: T` | A keyed item                                 |
 | `(K): T` | A keyed item whose keys type `K`             |
-| `**V`    | Any number of symbol-keyed items of type `V` |
+| `**V`    | Any number of keyed items of type `V`        |
 
 ## Positional Items
 
@@ -70,8 +70,8 @@ Without one it admits exactly one:
 | `...`      | The items of a schema, as an [inclusion](#inclusions) |
 
 An item takes at most one quantifier, so `?` cannot also repeat and an
-inclusion cannot be repeated. `**V` is shorthand for `*(Sym): V` and takes no
-quantifier.
+inclusion cannot be repeated. `**V` is shorthand for `*(Value): V`, a repeat of
+any key, and takes no quantifier.
 
 ```
 let options @ Dict[{name: Str, ?port: Int}] = {name: "db"}
@@ -99,6 +99,24 @@ alone admit any further item of their own kind:
 let anything @ Spread[{...}] = {}
 let positional @ Tuple[...{Str, *}] = ("a", 1)
 ```
+
+## Keys by Delimiter
+
+The delimiter a list is written in decides the keys of `**V`, `**`, and `...`.
+In a schema's braces they admit any key. In parentheses, the parameters of a
+[function type](./functions.md) or a [tuple or `Pack`
+type](./syntax.md#tuples-and-packs), they admit only symbols. Write `*(Sym): V`
+in a schema for symbol keys alone:
+
+```
+let counts @ Dict[{**Int}] = {"a": 1, b: 2}
+let named @ Dict[{*(Sym): Int}] = {b: 2}
+let options @ (**Int) = (b: 2)
+```
+
+An alias keeps the meaning of where it is written. Including `@let Counts =
+{**Int}` in a function type's parameters, as in `((...Counts) -> nil)`, is an
+error, because its keys need not be symbols.
 
 ## Expanding Schemas
 

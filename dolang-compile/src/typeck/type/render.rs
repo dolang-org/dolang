@@ -536,7 +536,7 @@ impl Renderer<'_> {
             }
             Type::Function(func) => {
                 out.push('(');
-                self.items(func.params, naming, out);
+                self.items(func.params, Keys::Sym, naming, out);
                 for (sigil, channel) in [('<', func.input), ('>', func.output)] {
                     if let Some(channel) = channel
                         && !self.omits(channel)
@@ -554,7 +554,7 @@ impl Renderer<'_> {
             }
             Type::Schema(_) => {
                 out.push('{');
-                self.items(ty, naming, out);
+                self.items(ty, Keys::Value, naming, out);
                 out.push('}');
             }
             Type::Quantified { binders, body } => self.quantified(binders, *body, &[], naming, out),
@@ -719,7 +719,7 @@ impl Renderer<'_> {
             Collection::Pack => return false,
         };
         out.push_str(open);
-        self.item_list(&items, naming, out);
+        self.item_list(&items, Keys::Sym, naming, out);
         out.push_str(close);
         true
     }
@@ -767,7 +767,7 @@ impl Renderer<'_> {
         let flush = |rest: &mut Vec<SchemaItem>, args: &mut Vec<String>| {
             if !rest.is_empty() {
                 let mut out = String::from("...{");
-                self.item_list(rest, naming, &mut out);
+                self.item_list(rest, Keys::Value, naming, &mut out);
                 out.push('}');
                 args.push(out);
                 rest.clear();
@@ -782,15 +782,16 @@ impl Renderer<'_> {
                 (Multiplicity::Required, Element::Keyed { key, .. })
                     if matches!(db.ty(*key), Type::Literal(Literal::Sym(_))) =>
                 {
-                    self.item(item, naming, &mut out)
+                    self.item(item, Keys::Value, naming, &mut out)
                 }
-                (Multiplicity::Repeated, Element::Positional(_))
-                | (Multiplicity::Required, Element::Include(_)) => {
-                    self.item(item, naming, &mut out);
-                    // `*T` is given as `...T`
-                    if out.starts_with('*') {
-                        out.replace_range(..1, "...");
-                    }
+                // `*T` is given as `...T`, even for `Value`: a bare `...` would
+                // be an open rest
+                (Multiplicity::Repeated, Element::Positional(ty)) => {
+                    out.push_str("...");
+                    self.render_into(*ty, naming, &mut out);
+                }
+                (Multiplicity::Required, Element::Include(_)) => {
+                    self.item(item, Keys::Value, naming, &mut out)
                 }
                 _ => {
                     rest.push(item.clone());
@@ -821,10 +822,10 @@ impl Renderer<'_> {
         self.render_into(pattern, naming.within(&group), out);
     }
 
-    /// The items of a schema, or what stands for one
-    fn items(&self, ty: TypeId, naming: Naming<'_>, out: &mut String) {
+    /// The items of a schema, or what stands for one, in a list keyed by `keys`
+    fn items(&self, ty: TypeId, keys: Keys, naming: Naming<'_>, out: &mut String) {
         match self.flat(ty) {
-            Some(items) => self.item_list(&items, naming, out),
+            Some(items) => self.item_list(&items, keys, naming, out),
             None => {
                 out.push_str("...");
                 self.render_into(ty, naming, out);
@@ -832,25 +833,63 @@ impl Renderer<'_> {
         }
     }
 
-    fn item_list(&self, items: &[SchemaItem], naming: Naming<'_>, out: &mut String) {
-        for (index, item) in items.iter().enumerate() {
-            if index != 0 {
+    /// A list's items, written with the shorthands of a list keyed by `keys`
+    fn item_list(&self, items: &[SchemaItem], keys: Keys, naming: Naming<'_>, out: &mut String) {
+        let mut rest = items;
+        let mut first = true;
+        while let [item, after @ ..] = rest {
+            if !first {
                 out.push_str(", ");
             }
-            self.item(item, naming, out);
+            first = false;
+            // `*, **` together are `...`
+            if let [next, after @ ..] = after
+                && self.any_positional(item)
+                && self.any_keyed(next, keys) == Some(true)
+            {
+                out.push_str("...");
+                rest = after;
+                continue;
+            }
+            self.item(item, keys, naming, out);
+            rest = after;
         }
     }
 
-    fn item(&self, item: &SchemaItem, naming: Naming<'_>, out: &mut String) {
+    /// Whether `item` is `*Value`
+    fn any_positional(&self, item: &SchemaItem) -> bool {
+        item.multiplicity == Multiplicity::Repeated
+            && item.element == Element::Positional(self.db.top())
+    }
+
+    /// Whether `item` is `**V` in a list keyed by `keys`, and if so whether `V`
+    /// is `Value`
+    fn any_keyed(&self, item: &SchemaItem, keys: Keys) -> Option<bool> {
         let db = self.db;
-        // `*(Sym): V` is written as its shorthand, the only spelling a
-        // function's parameters accept
-        if let (Multiplicity::Repeated, &Element::Keyed { key, value }) =
-            (&item.multiplicity, &item.element)
-            && Some(key) == db.intrinsic(Intrinsic::Sym)
-        {
+        let key = match keys {
+            Keys::Value => Some(db.top()),
+            Keys::Sym => db.intrinsic(Intrinsic::Sym),
+        };
+        match (item.multiplicity, &item.element) {
+            (Multiplicity::Repeated, &Element::Keyed { key: k, value }) if Some(k) == key => {
+                Some(value == db.top())
+            }
+            _ => None,
+        }
+    }
+
+    fn item(&self, item: &SchemaItem, keys: Keys, naming: Naming<'_>, out: &mut String) {
+        let db = self.db;
+        // A repeat of the list's own keys is written `**V`, or `**` for any value
+        if let Some(any) = self.any_keyed(item, keys) {
             out.push_str("**");
-            self.render_into(value, naming, out);
+            if !any && let Element::Keyed { value, .. } = item.element {
+                self.render_into(value, naming, out);
+            }
+            return;
+        }
+        if self.any_positional(item) {
+            out.push('*');
             return;
         }
         out.push_str(match item.multiplicity {
@@ -886,6 +925,14 @@ impl Renderer<'_> {
             }
         }
     }
+}
+
+/// The keys `**V`, `**` and `...` stand for in a rendered list: any key in a
+/// schema's braces, a symbol in parentheses
+#[derive(Clone, Copy)]
+enum Keys {
+    Value,
+    Sym,
 }
 
 /// How the references of a rendered type are named

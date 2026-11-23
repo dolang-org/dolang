@@ -98,7 +98,7 @@ pub def constructed()
 
 # Keys are symbols
 pub def bound _r @ Record[...{*(Str): Int}]
-  # error: this does not satisfy `...Ts @ {*Value, **Value}`
+  # error: this does not satisfy `...Ts @ {*Value, *(Sym): Value}`
   #   --> m.dol:LL:LL
   #    |
   # LL | pub def bound _r @ Record[...{*(Str): Int}]

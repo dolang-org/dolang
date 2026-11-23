@@ -16,7 +16,7 @@ import test:
 
 # Supplies `extra`, forwarding the rest
 #[fixture]
-def inject[R @ {**Value}]
+def inject[R @ {*(Sym): Value}]
   func @ TestFn[{extra: Str, ...R}]
   ...args @ R
   <Iter[Never] >Sink[Value]

@@ -47,10 +47,10 @@ pub class Marked[T]
 
 # Each axis's union is judged within the trial of an overload, beside the
 # others, whose variables stay undecided there
-@def axes[A @ {**Value}]
+@def axes[A @ {*(Sym): Value}]
   **axes @ ...Iterable[A | Marked[A]]
 do -> Int
-@def axes[A @ {**Value}, S @ {**Value}]
+@def axes[A @ {*(Sym): Value}, S @ {*(Sym): Value}]
   func @ ((...A, ...S) -> nil)
   **axes @ ...Iterable[A | Marked[A]]
 do -> ((...S) -> nil)

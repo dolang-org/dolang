@@ -3,23 +3,23 @@
 # forwards the keys it doesn't use is solved through a combinator that
 # interposes it on a test function's call.
 
-pub def apply_fixture[Ts @ {**Value}, Us @ {**Value}]
+pub def apply_fixture[Ts @ {*(Sym): Value}, Us @ {*(Sym): Value}]
   wrap @ ((((...Ts, <Value, >Value) -> nil), ...Us, <Value, >Value) -> nil)
   func @ ((...Ts, <Value, >Value) -> nil)
 do -> ((...Us, <Value, >Value) -> nil)
   do |...args @ Us| wrap $func ...args
 
 # A rank-2 form takes the fixture once, for any test function it then wraps
-pub def curry[K @ {**Value}]
-  wrap @ (@[R @ {**Value}] (((...K, ...R, <Value, >Value) -> nil), ...R, <Value, >Value) -> nil)
-do -> (@[R @ {**Value}] (((...K, ...R, <Value, >Value) -> nil)) -> ((...R, <Value, >Value) -> nil))
-  def curried[R @ {**Value}]
+pub def curry[K @ {*(Sym): Value}]
+  wrap @ (@[R @ {*(Sym): Value}] (((...K, ...R, <Value, >Value) -> nil), ...R, <Value, >Value) -> nil)
+do -> (@[R @ {*(Sym): Value}] (((...K, ...R, <Value, >Value) -> nil)) -> ((...R, <Value, >Value) -> nil))
+  def curried[R @ {*(Sym): Value}]
     func @ ((...K, ...R, <Value, >Value) -> nil)
   do -> ((...R, <Value, >Value) -> nil)
     do |...args @ R| wrap $func ...args
   curried
 
-pub def inject[R @ {**Value}]
+pub def inject[R @ {*(Sym): Value}]
   func @ ((extra: Str, ...R, <Value, >Value) -> nil)
   ...args @ R
 do

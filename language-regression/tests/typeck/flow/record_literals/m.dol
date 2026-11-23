@@ -4,7 +4,7 @@
 pub def inferred()
   let r = {1, a: "x", 2}
   let _ = r
-  #       ^: flow std.Record[...std.Int, ...{**std.Str}]
+  #       ^: flow std.Record[...std.Int, ...{*(std.Sym): std.Str}]
 
 pub def takes r @ Record[Str, ...{*Int, ?tag: Str}]
   let _ = r

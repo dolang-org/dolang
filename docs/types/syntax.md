@@ -117,6 +117,9 @@ a quantifier or trailing comma is merely a grouping.
 | `(*Int)`    | A tuple of any size |
 | `(Int, **)` | A `Pack`            |
 
+In parentheses, `**V`, `**`, and `...` admit only symbol keys; see [Keys by
+Delimiter](./schemas.md#keys-by-delimiter).
+
 An inclusion `...S` never makes a form a `Pack`. In a tuple, including a schema
 that may admit keyed items is an error; write `Pack[...S]` instead. For a
 tuple of any items, write `(*)` rather than `(...)`.

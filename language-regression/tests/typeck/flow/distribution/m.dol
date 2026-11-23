@@ -54,9 +54,9 @@ pub def destructured r @ Unpack[{key: Int, *key: Str}]
   let _ = rest
   #       ^~~~: flow std.UnpackRest[:key:, std.Str]
 
-pub def domain_first r @ Unpack[{**Str, key: Int}]
+pub def domain_first r @ Unpack[{*(Sym): Str, key: Int}]
   let :key ...rest = r
   let _ = key
   #       ^~~: flow std.Int | std.Str
   let _ = rest
-  #       ^~~~: flow std.UnpackRest[{**std.Str, ?key: std.Int}]
+  #       ^~~~: flow std.UnpackRest[{*(std.Sym): std.Str, ?key: std.Int}]

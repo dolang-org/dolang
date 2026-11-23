@@ -90,7 +90,7 @@ pub def inferred n @ Int text @ Str
   #       ^~~~~~~: flow std.FmtSpec
   let built = Fmt ["text", value]
   let _ = built
-  #       ^~~~~: flow std.Fmt[std.Int, {*Value, *(std.Int | std.Sym): Value}]
+  #       ^~~~~: flow std.Fmt[std.Int, {*, *(std.Int | std.Sym): Value}]
   built.format anything: true
 
 def typed template @ Fmt[Int, {Int, name: Str}] -> Fmt[Int, {Int, name: Str}]

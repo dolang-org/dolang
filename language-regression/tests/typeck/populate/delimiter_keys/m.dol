@@ -1,0 +1,32 @@
+# The delimiter decides the keys of `**V`, `**` and `...`: a schema's braces
+# admit any key, and parentheses only symbols.
+
+pub let any_values @ Dict[{**Int}] = ...
+#                    ^~~~~~~~~~~~~: type std.Dict[Value, std.Int]
+pub let sym_values @ Dict[{*(Sym): Int}] = ...
+#                    ^~~~~~~~~~~~~~~~~~~: type std.Dict[std.Sym, std.Int]
+pub let any_keys @ Dict[{**}] = ...
+#                  ^~~~~~~~~~: type std.Dict[Value, Value]
+pub let open @ Spread[{...}] = ...
+#              ^~~~~~~~~~~~~: type std.Spread[{...}]
+pub let sym_open @ Spread[{*, *(Sym): Value}] = ...
+#                  ^~~~~~~~~~~~~~~~~~~~~~~~~~: type std.Spread[{*, *(std.Sym): Value}]
+
+pub let pack_values @ (Int, **Bool) = ...
+#                     ^~~~~~~~~~~~~: type (std.Int, **std.Bool)
+pub let pack_any @ (Int, **) = ...
+#                  ^~~~~~~~~: type (std.Int, **)
+pub let callback @ ((...) -> nil) = ...
+#                  ^~~~~~~~~~~~~~: type (..., <Value, >Value) -> nil
+
+# A string key fits a schema's `**V`, but not a symbol-keyed repeat
+pub def string_keys()
+  let _any @ Dict[{**Int}] = {"a": 1}
+  let _sym @ Dict[{*(Sym): Int}] = {"a": 1}
+  # error: expected `{*(std.Sym): std.Int}`, found `{"a": 1}`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _sym @ Dict[{*(Sym): Int}] = {"a": 1}
+  #    |                                    ^^^^^^^^
+  #    |
+  #    = note: `"a"` does not fit `std.Sym`

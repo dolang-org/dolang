@@ -8,7 +8,7 @@ pub def bind[P @ {*Value}, S @ {*Value}]
 do -> ((...S, <Value, >Value) -> nil)
   do |...rest @ S| func ...bound ...rest
 
-pub def bind_keys[P @ {**Value}, S @ {**Value}]
+pub def bind_keys[P @ {*(Sym): Value}, S @ {*(Sym): Value}]
   func @ ((...P, ...S, <Value, >Value) -> nil)
   ...bound @ P
 do -> ((...S, <Value, >Value) -> nil)

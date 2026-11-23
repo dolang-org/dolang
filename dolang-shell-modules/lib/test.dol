@@ -19,7 +19,7 @@ let note_style = term.Style bold: true
 # The type of a test function under any layer of decorators: it takes the
 # arguments that no layer below it supplies. A test reads no input, since tests
 # run concurrently, and writes to its captured output.
-pub @let TestFn[S @ {**Value}] = ((...S, <Iter[Never], >Sink[Value]) -> nil)
+pub @let TestFn[S @ {*(Sym): Value}] = ((...S, <Iter[Never], >Sink[Value]) -> nil)
 
 # A registered test case: its metadata and the function that runs it.
 #[final]
@@ -67,7 +67,7 @@ let collect_key @ strand.Key[TestCollection] = strand.Key(TestCollection nil)
 
 # A pending test case: the `parametrize` axes chosen for it as name parts, the
 # tags they contribute, and the test function with those axes bound.
-class Pending[S @ {**Value}]: Struct[params: Tuple[...Tuple[Str, Str]], tags: Tuple[...Str], func: TestFn[S]]
+class Pending[S @ {*(Sym): Value}]: Struct[params: Tuple[...Tuple[Str, Str]], tags: Tuple[...Str], func: TestFn[S]]
 
 # A test function under decorators, as the pending cases that `test` registers.
 # Each decorator applies as a layer over the one below: `parametrize` fans the
@@ -76,7 +76,7 @@ class Pending[S @ {**Value}]: Struct[params: Tuple[...Tuple[Str, Str]], tags: Tu
 #
 # The name and location come from the function the first decorator received.
 #[final]
-class TestDef[S @ {**Value}]: Func
+class TestDef[S @ {*(Sym): Value}]: Func
   pub field base @ Str
   pub field location @ (inspect.Location | nil)
   pub field cases @ Array[Pending[S]]
@@ -101,13 +101,13 @@ class TestDef[S @ {**Value}]: Func
     self.base
 
   # A layer that wraps each case's function, keeping its axes and tags.
-  pub def map[S2 @ {**Value}] self f @ (TestFn[S] -> TestFn[S2]) -> TestDef[S2]
+  pub def map[S2 @ {*(Sym): Value}] self f @ (TestFn[S] -> TestFn[S2]) -> TestDef[S2]
     let cases @ Array[Pending[S2]] = []
     for case = self.cases
       cases.push $ Pending {params: case.params, tags: case.tags, func: f(case.func)}
     TestDef $self.base $self.location $cases
 
-def to_test_def[S @ {**Value}] func @ TestFn[S] -> TestDef[S]
+def to_test_def[S @ {*(Sym): Value}] func @ TestFn[S] -> TestDef[S]
   if (type func TestDef)
     # Only a layer makes a `TestDef`, as the function its result says it is,
     # so its cases take what `func` does
@@ -747,12 +747,12 @@ def test_files paths @ Iterable[Str | Path] -> Array[Path]
 # def example_test()
 #   do_something()
 # ```
-pub def fixture[K @ {**Value}]
+pub def fixture[K @ {*(Sym): Value}]
   # The fixture, which calls the test function with the keys it injects and
   # the arguments it was given.
-  wrap @ (@[R @ {**Value}] (TestFn[{...K, ...R}], ...R, <Iter[Never], >Sink[Value]) -> nil)
-do -> (@[R @ {**Value}] TestFn[{...K, ...R}] -> TestFn[R])
-  def wrapped[R @ {**Value}] func @ TestFn[{...K, ...R}] -> TestFn[R]
+  wrap @ (@[R @ {*(Sym): Value}] (TestFn[{...K, ...R}], ...R, <Iter[Never], >Sink[Value]) -> nil)
+do -> (@[R @ {*(Sym): Value}] TestFn[{...K, ...R}] -> TestFn[R])
+  def wrapped[R @ {*(Sym): Value}] func @ TestFn[{...K, ...R}] -> TestFn[R]
     let test_def = to_test_def $func
     test_def.map do |f @ TestFn[{...K, ...R}]| -> TestFn[R]
       do |...args @ R <Iter[Never] >Sink[Value]| wrap $f ...args
@@ -829,15 +829,15 @@ def register name @ (Str | nil) tags @ Tuple[...Str] func @ TestFn[{}] -> TestFn
 # def connects :backend
 #   backend.ping()
 # ```
-@def parametrize[A @ {**Value}]
+@def parametrize[A @ {*(Sym): Value}]
   # Each axis, as the values to pass under its name, raw or wrapped by
   # `tagged(value, ...tags)`.
   **axes @ ...Iterable[A | Tagged[A]]
-do -> (@[S @ {**Value}] TestFn[{...A, ...S}] -> TestFn[S])
+do -> (@[S @ {*(Sym): Value}] TestFn[{...A, ...S}] -> TestFn[S])
 
 # Runs a test function once for each combination of values of one or more
 # axes, returning the decorated test for [`test`](test.test).
-@def parametrize[A @ {**Value}, S @ {**Value}]
+@def parametrize[A @ {*(Sym): Value}, S @ {*(Sym): Value}]
   # Test function, or a test already decorated with
   # `parametrize` or a fixture.
   func @ TestFn[{...A, ...S}]
@@ -847,7 +847,7 @@ do -> (@[S @ {**Value}] TestFn[{...A, ...S}] -> TestFn[S])
 do -> TestFn[S]
 
 pub def parametrize
-  func @ TestFn[{**Value}] = nil
+  func @ TestFn[{*(Sym): Value}] = nil
   **axes @ Iterable[Value]
 do -> Value
   let normalized @ Array[(Sym, Array[Tagged[Value]])] = []
@@ -859,17 +859,17 @@ do -> Value
       throw std.ValueError "parametrize: '$name' has no values"
     normalized.push (name, tagged_values)
   if (func == nil)
-    return do |func @ TestFn[{**Value}] <Value >Value| expand $func $normalized
+    return do |func @ TestFn[{*(Sym): Value}] <Value >Value| expand $func $normalized
   expand $func $normalized
 
 # Each case of a test function for each combination of axis values, with the
 # values bound.
 def expand
-  func @ TestFn[{**Value}]
+  func @ TestFn[{*(Sym): Value}]
   axes @ Array[(Sym, Array[Tagged[Value]])]
-do -> TestDef[{**Value}]
+do -> TestDef[{*(Sym): Value}]
   let test_def = to_test_def $func
-  let cases @ Array[Pending[{**Value}]] = []
+  let cases @ Array[Pending[{*(Sym): Value}]] = []
   for case = test_def.cases
     let no_kwargs @ Dict[Sym, Value] = {}
     let no_tags @ Array[Str] = []

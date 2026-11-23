@@ -55,7 +55,7 @@ def cache_usable cache @ fs.Path path @ fs.Path -> Bool
 
 # Values a script reads as the fields of an imported module.
 class Namespace
-  field values @ Pack[...{**Value}]
+  field values @ Pack[...{*(Sym): Value}]
 
   def (init) self values @ BaseDict[Value, Value]
     let fields @ Dict[Sym, Value] = {}

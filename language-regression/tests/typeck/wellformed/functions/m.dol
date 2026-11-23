@@ -5,10 +5,11 @@ import std:
   - @Iter
   - @Sink
   - @Phantom
+  - @Sym
 
 pub class Int
 
-pub def named[S @ {**Int}] f @ ((...S) -> nil)
+pub def named[S @ {*(Sym): Int}] f @ ((...S) -> nil)
   f
 
 pub def numbered[S @ {*(Int): Int}] f @ ((...S) -> nil)
@@ -17,6 +18,29 @@ pub def numbered[S @ {*(Int): Int}] f @ ((...S) -> nil)
   #    |
   # LL | pub def numbered[S @ {*(Int): Int}] f @ ((...S) -> nil)
   #    |                                          ^^^^^^^^^^^^^
+  f
+
+# A schema's `**V` admits any key, so it doesn't fit parameters
+pub def any_keys[S @ {**Int}] f @ ((...S) -> nil)
+  # error: function parameters must have symbol keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def any_keys[S @ {**Int}] f @ ((...S) -> nil)
+  #    |                                    ^^^^^^^^^^^^^
+  f
+
+# An alias keeps the meaning of where it was written
+pub @let AnyKeys = {**Int}
+pub def aliased f @ ((...AnyKeys) -> nil)
+  # error: function parameters must have symbol keys
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def aliased f @ ((...AnyKeys) -> nil)
+  #    |                      ^^^^^^^^^^^^^^^^^^^
+  f
+
+# In parentheses, `**V` is symbol-keyed
+pub def parenthesized f @ ((**Int) -> nil)
   f
 
 # `Phantom` only marks variance, so it takes any schema, and a function type

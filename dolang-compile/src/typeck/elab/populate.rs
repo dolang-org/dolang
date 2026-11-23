@@ -459,12 +459,12 @@ impl<'t, 'u> Populate<'t, 'u> {
             }
             TypeExpr::Tuple { params, .. } if expected == Kind::Type => {
                 self.keyed_inclusions(group.unit, params);
-                let items = self.items(group, params, false, depth);
+                let items = self.items(group, params, true, depth);
                 let tuple = Designated::Intrinsic(Intrinsic::Tuple);
                 self.collection(tuple, self.schema(items))
             }
             TypeExpr::Pack { params, .. } if expected == Kind::Type => {
-                let items = self.items(group, params, false, depth);
+                let items = self.items(group, params, true, depth);
                 self.collection(Designated::Pack, self.schema(items))
             }
             TypeExpr::Union { members, .. } if expected == Kind::Type => {
@@ -689,19 +689,19 @@ impl<'t, 'u> Populate<'t, 'u> {
         }
     }
 
-    /// The items of a schema or parameter list. A bare `**` or `...` admits any
-    /// keyed item in a schema, but only a named one in a parameter list.
+    /// The items of a schema or parenthesized list. The delimiter decides the
+    /// keys of `**V`, `**` and `...`: any key in a schema's braces, but only a
+    /// symbol in parentheses (function parameters, tuple and `Pack` types).
     fn items(
         &mut self,
         group: Group<'_>,
         params: &[TypeParam],
-        parameters: bool,
+        parenthesized: bool,
         depth: usize,
     ) -> Vec<SchemaItem> {
         let top = self.db.top();
-        let sym = self.sym();
-        let any = match parameters {
-            true => sym,
+        let any = match parenthesized {
+            true => self.sym(),
             false => top,
         };
         let mut items = Vec::new();
@@ -738,12 +738,11 @@ impl<'t, 'u> Populate<'t, 'u> {
                 TypeParam::AnyPos => {
                     items.push(Self::item(Multiplicity::Repeated, Element::Positional(top)));
                 }
-                // `**V` is `*(Sym): V`
                 TypeParam::AnyKey(Some(ty)) => {
                     let value = self.intern(group, ty, Kind::Type, depth);
                     items.push(Self::item(
                         Multiplicity::Repeated,
-                        Element::Keyed { key: sym, value },
+                        Element::Keyed { key: any, value },
                     ));
                 }
                 TypeParam::AnyKey(None) => {
