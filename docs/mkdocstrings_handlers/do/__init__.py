@@ -489,7 +489,7 @@ def _render_type(
         return escape(ty.get("text", ""))
     if kind == "app":
         base = _render_type(ty["base"], scope, _BINDS_COMPACT, plain, code=code)
-        args = _render_type_args(ty["args"], scope, plain, code=code)
+        args = _render_type_params(ty["args"], scope, plain, code=code)
         rendered = f"{base}[{args}]" if plain or code else f"{base}\\[{args}\\]"
         binding = _BINDS_COMPACT
     elif kind == "schema":
@@ -532,22 +532,6 @@ def _render_type(
     return f"({rendered})" if binding < context else rendered
 
 
-def _render_type_args(
-    args: list[dict], scope: _TypeScope, plain: bool = False, *, code: bool = False,
-) -> str:
-    escape = (lambda text: text) if plain else (html.escape if code else _escape_type_text)
-    rendered = []
-    for arg in args:
-        text = _render_type(arg["type"], scope, _BINDS_FUNC, plain, code=code)
-        if arg.get("kind") == "expand":
-            text = "..." + text
-        elif arg.get("kind") == "key":
-            name = arg.get("name", "")
-            text = f"{escape(name)}: {text}"
-        rendered.append(text)
-    return ", ".join(rendered)
-
-
 def _render_type_params(
     params: list[dict], scope: _TypeScope, plain: bool = False, *, code: bool = False,
 ) -> str:
@@ -585,7 +569,7 @@ def _layout_schema(ty: dict) -> dict | None:
         return ty if ty["params"] else None
     if ty.get("kind") == "app" and ty["args"]:
         last = ty["args"][-1]
-        if last.get("kind") in ("pos", "expand"):
+        if last.get("kind") == "pos" and last.get("quant") in (None, "include"):
             schema = last["type"]
             if schema.get("kind") == "schema" and schema["params"]:
                 return schema
@@ -595,7 +579,7 @@ def _layout_schema(ty: dict) -> dict | None:
 def _has_schema_application(ty: dict) -> bool:
     if ty.get("kind") == "app":
         return _layout_schema(ty) is not None or any(
-            _has_schema_application(arg["type"]) for arg in ty["args"]
+            _has_schema_application(arg.get("type") or {}) for arg in ty["args"]
         )
     if ty.get("kind") == "union":
         return any(_has_schema_application(member) for member in ty["members"])
@@ -616,7 +600,7 @@ def _has_docs(ty: dict) -> bool:
             for param in ty["params"]
         )
     if kind == "app":
-        return any(_has_docs(arg["type"]) for arg in ty["args"])
+        return any(_has_docs(arg.get("type") or {}) for arg in ty["args"])
     if kind == "quant":
         return _has_docs(ty["func"])
     return False
@@ -683,7 +667,7 @@ def _alias_type_lines(
     if ty["kind"] == "app":
         args = ty["args"][:-1]
         head = compact({**ty, "args": args}) if args else compact(ty["base"])
-        head += " ..." if ty["args"][-1]["kind"] == "expand" else " "
+        head += " ..." if ty["args"][-1].get("quant") == "include" else " "
     lines = [prefix + head + "$"]
     for param in schema["params"]:
         item_indent = indent + 2
@@ -757,7 +741,7 @@ def _alias_rows(ty: dict, scope: _TypeScope) -> list[dict] | None:
     schema = _layout_schema(ty)
     if schema is None or not _has_docs(schema):
         return None
-    if kind == "app" and any(_has_docs(arg["type"]) for arg in ty["args"][:-1]):
+    if kind == "app" and any(_has_docs(arg.get("type") or {}) for arg in ty["args"][:-1]):
         return None
     if any(_has_docs(item.get("type") or {}) for item in schema["params"]):
         return None
@@ -787,8 +771,8 @@ def _alias_rows(ty: dict, scope: _TypeScope) -> list[dict] | None:
 def _schema_head(ty: dict, scope: _TypeScope) -> str:
     """An applied type with its last argument, a schema, elided"""
     base = _render_type(ty["base"], scope, _BINDS_COMPACT)
-    args = _render_type_args(ty["args"][:-1], scope)
-    schema = ("..." if ty["args"][-1]["kind"] == "expand" else "") + "{…}"
+    args = _render_type_params(ty["args"][:-1], scope)
+    schema = ("..." if ty["args"][-1].get("quant") == "include" else "") + "{…}"
     return f"{base}\\[{', '.join(filter(None, [args, schema]))}\\]"
 
 
