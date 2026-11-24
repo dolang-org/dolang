@@ -220,10 +220,14 @@ impl Solver<'_> {
                 self.add_bound(a, Term::Infer(b), false, j.obligation)?;
                 self.add_bound(b, Term::Infer(a), true, j.obligation)?;
             }
-            (&Head::Infer(id), _) => self.add_bound(id, j.expected, false, j.obligation)?,
+            (&Head::Infer(id), _) => {
+                let expected = self.shape_evaluated(j.expected, false)?;
+                self.add_bound(id, expected, false, j.obligation)?;
+            }
             (_, &Head::Infer(id)) => {
-                self.occupy(id, j.actual, j.obligation);
-                self.add_bound(id, j.actual, true, j.obligation)?;
+                let actual = self.shape_evaluated(j.actual, true)?;
+                self.occupy(id, actual, j.obligation);
+                self.add_bound(id, actual, true, j.obligation)?;
             }
             _ => return Ok(Continue(())),
         }
