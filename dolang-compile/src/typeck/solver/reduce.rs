@@ -404,10 +404,25 @@ impl Solver<'_> {
             {
                 Ok(Some((view.child(union(member.with(fields))), step)))
             }
-            UnionMember::IndexItem(schema, key) => Ok(self.widened_key(key)?.map(|(key, step)| {
-                let projected = union(UnionMember::IndexItem(schema, key));
-                (view.child(projected), step)
-            })),
+            UnionMember::IndexItem(schema, key) => {
+                // A skolem key widens to its one closed bound, which selects as
+                // much
+                if let Term::Skolem(id) = self.resolve(view.child(key))? {
+                    let bounds = self.abstract_bounds(Abstract::Skolem(id));
+                    let [(bound, step)] = &bounds[..] else {
+                        return Ok(None);
+                    };
+                    let Ok(bound) = self.reify(*bound) else {
+                        return Ok(None);
+                    };
+                    let projected = union(UnionMember::IndexItem(schema, bound));
+                    return Ok(Some((view.child(projected), step.clone())));
+                }
+                Ok(self.widened_key(key)?.map(|(key, step)| {
+                    let projected = union(UnionMember::IndexItem(schema, key));
+                    (view.child(projected), step)
+                }))
+            }
             _ => Ok(None),
         }
     }
