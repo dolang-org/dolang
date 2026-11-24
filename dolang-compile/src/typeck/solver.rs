@@ -3568,7 +3568,7 @@ impl<'db> Solver<'db> {
     /// Whether a key is shown to be an index, an `Int`: a skolem or an unsolved
     /// variable by one of its (upper) bounds, and a `Keys` projection by its
     /// schema's shape if its items' types are unsolved
-    fn index_key(&self, key: Term) -> Result<bool, Residual> {
+    pub(super) fn index_key(&self, key: Term) -> Result<bool, Residual> {
         self.spend()?;
         let Some(int) = self.db.intrinsic(Intrinsic::Int) else {
             return Ok(false);
