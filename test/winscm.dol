@@ -59,7 +59,7 @@ def scm_crud_round_trips()
   # Every service created below is unique to this run and cleaned up at the
   # end, so this never touches persistent machine state beyond the scratch
   # service's own lifetime.
-  let name = "dolang-vfs-winscm-ext-test-$(rand.string 8)"
+  let name = "dolang-vfs-winscm-ext-test-$(rand.str 8)"
   let display_name = "dolang-vfs-winscm ext test $name"
   let binary_path = "$(shell.env["SystemRoot"])\\System32\\cmd.exe /c exit 0"
 
@@ -127,7 +127,7 @@ def scratch_service block ...rest
   if (sys.os_info().family != :WINDOWS:)
     ignore "requires a real Windows SCM"
   winscm.open access: [:SC_MANAGER_CREATE_SERVICE:, :SC_MANAGER_CONNECT:] do |manager|
-    let name = "do-notify-$(rand.string 16)"
+    let name = "do-notify-$(rand.str 16)"
     let binary_path = "$(shell.env["SystemRoot"])\\System32\\cmd.exe /c exit 0"
     let service = try
       manager.create_service $name :binary_path

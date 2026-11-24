@@ -311,7 +311,7 @@ pub class Vfs
   # Authenticated, with a freshly generated key:
   #
   # ```
-  # let key = rand.string 32
+  # let key = rand.str 32
   # let a = Vfs.unix_socket /tmp/agent/socket :key
   # ```
   #[class]
@@ -332,7 +332,7 @@ pub class Vfs
     # without one, and an agent expecting one refuses a connection without it.
     # Keys must be at least 16 bytes and must carry sufficient entropy on their
     # own, so generate one with
-    # [`rand.string`](rand.string) rather than choosing it.
+    # [`rand.str`](rand.str) rather than choosing it.
     #
     # This authenticates the connection; it does not encrypt or
     # integrity-protect the session that follows.

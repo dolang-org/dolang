@@ -86,7 +86,7 @@ def artifacts_are_fetched_before_anything_is_created()
   require_programs ["virsh", "libvirtd"]
   with_temp_dir do |dir|
     env XDG_CACHE_HOME: (dir / "cache") XDG_DATA_HOME: (dir / "data") do
-      let name = "dolang-libvirt-artifact-$(rand.string 8)"
+      let name = "dolang-libvirt-artifact-$(rand.str 8)"
       let workdir = (dir / "data" / APP / "libvirt" / "domains" / name)
       let image = (dir / "image.qcow2")
       image.write ""
@@ -310,7 +310,7 @@ def windows_media()
 # The bundle goes under `CACHE_DIR` rather than a temp directory: it is
 # gigabytes, and `/tmp` is commonly a tmpfs.
 def export_and_restore domain :sentinel :bundle_name :command :expect :memory = nil :vcpus = nil
-  let token = (rand.string 16)
+  let token = (rand.str 16)
   domain.with do
     Path(sentinel).write $token
 

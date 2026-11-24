@@ -46,7 +46,7 @@ def registry_crud_round_trips()
   # touches real machine state.
   let root = winreg.open :CURRENT_USER: access: :READ_WRITE:
   let parent = root.create r"Software\dolang-vfs-winreg-tests" access: :READ_WRITE:
-  let name = "run-$(rand.string 8)"
+  let name = "run-$(rand.str 8)"
   let scratch = parent.create $name access: [:READ_WRITE:, :CREATE_LINK:, :READ_CONTROL:, :WRITE_DAC:, :WRITE_OWNER:]
 
   # Enumerate on an empty key.
