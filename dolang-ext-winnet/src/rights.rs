@@ -3,7 +3,6 @@
 use dolang::runtime::AllocExt;
 use dolang::runtime::{
     Args, Error, Instance, Object, Result, Slot, Strand, object::TypeBuilder, unpack, value::Nil,
-    with_slots,
 };
 use dolang_ext_shell::ResultExt;
 use dolang_winterop::security::Sid;
@@ -36,21 +35,14 @@ fn right_arg<'v, 's>(strand: &mut Strand<'v, 's>, args: Args<'v, '_>) -> Result<
         .to_string())
 }
 
-/// Builds an array of right names.
+/// Builds a tuple of right names.
 fn make_rights<'v, 's>(
     strand: &mut Strand<'v, 's>,
     rights: Vec<String>,
-    mut out: Slot<'v, '_>,
+    out: Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
-    with_slots!(strand, |mut item| {
-        strand.new_array(&mut out);
-        let array = out.as_array(strand).unwrap();
-        for right in rights {
-            strand.store(&mut item, right.as_str());
-            array.push(strand, &item)?;
-        }
-        Ok(())
-    })
+    strand.tuple(rights.iter().map(String::as_str), out);
+    Ok(())
 }
 
 /// Registers the account-rights methods on a principal type.

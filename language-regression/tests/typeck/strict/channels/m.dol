@@ -29,7 +29,7 @@ pub def reads()
   #    |             ^^^^^^^^^^^^^^^^
   #    |
   #    = note: `@[I] (<std.BaseIter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.BaseIter[I]) -> std.Array[I]`
-  #    = note: `@[I, S] (S, <std.BaseIter[I]) -> S`: this call does not fit `@[I, S] (S, <std.BaseIter[I]) -> S`; this call is missing an argument
+  #    = note: `@[I, S @ std.Sinkable[I]] (S, <std.BaseIter[I]) -> S`: this call does not fit `@[I, S @ std.Sinkable[I]] (S, <std.BaseIter[I]) -> S`; this call is missing an argument
   nil
 
 pub def reads_declared <Iter[Int]
@@ -142,7 +142,7 @@ pub def map_disconnected <Iter[Int] >Sink[Int]
     #    |             ^^^^^^^^^^^^^^^^
     #    |
     #    = note: `@[I] (<std.BaseIter[I]) -> std.Array[I]`: this call does not fit `@[I] (<std.BaseIter[I]) -> std.Array[I]`
-    #    = note: `@[I, S] (S, <std.BaseIter[I]) -> S`: this call does not fit `@[I, S] (S, <std.BaseIter[I]) -> S`; this call is missing an argument
+    #    = note: `@[I, S @ std.Sinkable[I]] (S, <std.BaseIter[I]) -> S`: this call does not fit `@[I, S @ std.Sinkable[I]] (S, <std.BaseIter[I]) -> S`; this call is missing an argument
     strand.put 1
     # error: this call does not fit `@[T1] (T1, >std.BaseSink[T1]) -> nil`
     #   --> m.dol:LL:LL

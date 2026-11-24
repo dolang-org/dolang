@@ -81,6 +81,9 @@ impl Report for Undecided {
                                                    expansion; put positional arguments first"
                         .to_owned(),
                     Residual::Alignment => "it can't match up these positional items".to_owned(),
+                    Residual::KeyedOrder => "these keyed packs come in a different order on \
+                                             each side; write them in the same order"
+                        .to_owned(),
                     Residual::Ambiguous => {
                         "several alternatives remain possible; an annotation may pick one"
                             .to_owned()

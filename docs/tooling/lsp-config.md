@@ -60,6 +60,16 @@ geometry = ["@Point"]
 "@Sequence" = "Seq"
 ```
 
+A `prelude` table replaces the prelude it would otherwise get: `dolang`'s at
+the root, and the enclosing configuration's below it. Set `"$inherit" = true`
+to keep that prelude and add the table's imports to it:
+
+```toml
+[prelude]
+"$inherit" = true
+my_module = true
+```
+
 ## Module Path
 
 A `modules` table at the root replaces `lib/` with the directories it lists,

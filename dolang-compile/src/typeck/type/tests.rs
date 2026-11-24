@@ -2773,3 +2773,32 @@ fn shorthands_render_by_the_keys_of_their_delimiter() {
         assert_eq!(db.render(func, &Named(&db), Style::Full), function);
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn made_up_binder_names_follow_their_kind_and_show_bounds() {
+    let mut db = Database::new();
+    let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
+    db.populate(int, definition(int_source, int_ty));
+    // A bound may refer to an earlier binder of the same group
+    let first = reference(&mut db, 0, 0, Kind::Type);
+    let second = reference(&mut db, 0, 2, Kind::Type);
+    let body = function(&mut db, &[first, second], first);
+    let binders = vec![
+        Binder {
+            bound: Some(int_ty),
+            ..binder(Kind::Type)
+        },
+        binder(Kind::Schema),
+        Binder {
+            bound: Some(first),
+            ..binder(Kind::Type)
+        },
+    ];
+    let quantified = quantify(&mut db, binders, body);
+    db.seal();
+    assert_eq!(
+        db.render(quantified, &Named(&db), Style::Full),
+        "@[T1 @ Int, S1, T2 @ T1] (T1, T2) -> T1"
+    );
+}

@@ -428,6 +428,14 @@ struct UnitDiagnostics;
 /// The array view of a check's diagnostics
 struct CheckedDiagnostics;
 
+/// The array views of a diagnostic's annotations, notes and patches
+struct DiagAnnotations;
+struct DiagNotes;
+struct DiagPatches;
+
+/// The array view of a list of a unit's nodes, each created when read
+struct NodeList(Vec<compile::NodeId>);
+
 /// Units and typelibs to check together, and the modules they need
 pub(crate) struct CheckObject {
     /// Whether the check keeps what it writes its modules' typelibs from
@@ -524,10 +532,7 @@ pub(crate) struct Patch;
 const OWNER: usize = 0;
 const UNIT_SOURCE: usize = 0;
 
-const DIAG_ANNOTATIONS: usize = 0;
-const DIAG_NOTES: usize = 1;
-const DIAG_PATCHES: usize = 2;
-const DIAG_SOURCE: usize = 3;
+const DIAG_SOURCE: usize = 0;
 
 /// The inputs added to a check
 const CHECK_INPUTS: usize = 0;
@@ -736,9 +741,6 @@ fn create_diagnostic<'v, 's>(
         |inst| {
             {
                 let mut borrow = inst.borrow_mut_unwrap();
-                strand.new_array(Mut::slot_mut::<DIAG_ANNOTATIONS>(&mut borrow));
-                strand.new_array(Mut::slot_mut::<DIAG_NOTES>(&mut borrow));
-                strand.new_array(Mut::slot_mut::<DIAG_PATCHES>(&mut borrow));
                 match sources {
                     DiagSources::Unit(..) => {
                         strand.new_array(Mut::slot_mut::<DIAG_SOURCE>(&mut borrow))
@@ -749,32 +751,12 @@ fn create_diagnostic<'v, 's>(
                 }
             }
 
-            let borrow = inst.borrow(strand)?;
-            let annotations = Ref::slot::<DIAG_ANNOTATIONS>(&borrow)
-                .as_array(strand)
-                .unwrap();
-            let notes = Ref::slot::<DIAG_NOTES>(&borrow).as_array(strand).unwrap();
-            let patches = Ref::slot::<DIAG_PATCHES>(&borrow).as_array(strand).unwrap();
-
             if let DiagSources::Unit(_, source) = sources {
+                let borrow = inst.borrow(strand)?;
                 let source_array = Ref::slot::<DIAG_SOURCE>(&borrow).as_array(strand).unwrap();
                 source_array.push(strand, source)?;
             }
-            with_slots!(strand, |mut item| {
-                for annotation in inst.annex().diag.annotations() {
-                    create_annotation(global, strand, annotation, Slot::reborrow(&mut item));
-                    annotations.push(strand, &mut item)?;
-                }
-                for note in inst.annex().diag.notes() {
-                    create_note(global, strand, note, Slot::reborrow(&mut item));
-                    notes.push(strand, &mut item)?;
-                }
-                for patch in inst.annex().diag.patches() {
-                    create_patch(global, strand, patch, Slot::reborrow(&mut item));
-                    patches.push(strand, &mut item)?;
-                }
-                Ok(())
-            })
+            Ok(())
         }
     )
 }
@@ -1700,6 +1682,68 @@ impl<'v> ArrayLike<'v> for CheckedDiagnostics {
     }
 }
 
+/// Implements [`ArrayLike`] for a view of one of a diagnostic's lists, whose
+/// items are created by `$create` when read
+macro_rules! diagnostic_list {
+    ($view:ident, $name:literal, $list:ident, $create:ident) => {
+        impl<'v> ArrayLike<'v> for $view {
+            type Object = Diagnostic;
+            const MODULE: &'v str = "compile";
+            const NAME: &'v str = $name;
+
+            fn len(
+                &self,
+                this: Instance<'v, '_, Diagnostic>,
+                _strand: &mut Strand<'v, '_>,
+            ) -> usize {
+                this.annex().diag.$list().count()
+            }
+
+            fn get<'a, 's>(
+                &self,
+                this: Instance<'v, '_, Diagnostic>,
+                strand: &'a mut Strand<'v, 's>,
+                index: usize,
+                out: Slot<'v, 'a>,
+            ) -> Result<'v, 's, ()> {
+                let annex = this.annex();
+                let item = annex.diag.$list().nth(index).expect("index is within len");
+                $create(annex.global, strand, item, out);
+                Ok(())
+            }
+        }
+    };
+}
+
+diagnostic_list!(
+    DiagAnnotations,
+    "DiagnosticAnnotations",
+    annotations,
+    create_annotation
+);
+diagnostic_list!(DiagNotes, "DiagnosticNotes", notes, create_note);
+diagnostic_list!(DiagPatches, "DiagnosticPatches", patches, create_patch);
+
+impl<'v> ArrayLike<'v> for NodeList {
+    type Object = UnitObject<'v>;
+    const MODULE: &'v str = "compile";
+    const NAME: &'v str = "NodeList";
+
+    fn len(&self, _this: Instance<'v, '_, UnitObject<'v>>, _strand: &mut Strand<'v, '_>) -> usize {
+        self.0.len()
+    }
+
+    fn get<'a, 's>(
+        &self,
+        this: Instance<'v, '_, UnitObject<'v>>,
+        strand: &'a mut Strand<'v, 's>,
+        index: usize,
+        mut out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        create_node(strand, this, self.0[index], &mut out)
+    }
+}
+
 impl<'v> Object<'v> for NodeIter {
     const NAME: &'v str = "NodeIter";
     const MODULE: &'v str = "compile";
@@ -2552,15 +2596,8 @@ impl ProjectNodes for Vec<compile::NodeId> {
         owner: Instance<'v, '_, UnitObject<'v>>,
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        strand.new_array(&mut *out);
-        with_slots!(strand, |mut item| {
-            let array = out.as_array(strand).unwrap();
-            for id in self {
-                create_node(strand, owner, id, &mut item)?;
-                array.push(strand, &mut item)?;
-            }
-            Ok(())
-        })
+        strand.array_view(owner, NodeList(self), out);
+        Ok(())
     }
 }
 
@@ -2744,7 +2781,7 @@ fn project_type_only<'v, 's, T: NodeMarker + 'static>(
 impl<'v> Object<'v> for Diagnostic {
     const NAME: &'v str = "Diagnostic";
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 4;
+    const SLOTS: usize = 1;
     type Annex = DiagnosticAnnex<'v>;
     type Type = ();
     type TypeAnnex = ();
@@ -2842,18 +2879,15 @@ impl<'v> Object<'v> for Diagnostic {
                 Ok(())
             })
             .get("annotations", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                strand.store(out, Ref::slot::<DIAG_ANNOTATIONS>(&borrow));
+                strand.array_view(this, DiagAnnotations, out);
                 Ok(())
             })
             .get("notes", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                strand.store(out, Ref::slot::<DIAG_NOTES>(&borrow));
+                strand.array_view(this, DiagNotes, out);
                 Ok(())
             })
             .get("patches", |this, strand, out| {
-                let borrow = this.borrow(strand)?;
-                strand.store(out, Ref::slot::<DIAG_PATCHES>(&borrow));
+                strand.array_view(this, DiagPatches, out);
                 Ok(())
             })
     }

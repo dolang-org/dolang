@@ -39,11 +39,38 @@ impl Import {
     }
 }
 
+/// The key in a `prelude` table that keeps the prelude the table would
+/// replace.  A module name can't start with `$`.
+const INHERIT_KEY: &str = "$inherit";
+
 /// The tables a configuration sets, each `None` when it leaves the table out.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Settings {
     pub(crate) prelude: Option<Vec<Import>>,
+    /// Whether `prelude` adds to the prelude it would replace
+    pub(crate) inherit_prelude: bool,
     pub(crate) modules: Option<Arc<ModulePath>>,
+}
+
+impl Settings {
+    /// The prelude these settings give, where `base` is the one they would
+    /// replace, or `None` when they leave it out
+    pub(crate) fn prelude_over(
+        &self,
+        base: impl FnOnce() -> Arc<[Import]>,
+    ) -> Option<Arc<[Import]>> {
+        let own = self.prelude.as_deref()?;
+        if !self.inherit_prelude {
+            return Some(own.into());
+        }
+        let mut prelude = base().to_vec();
+        for import in own {
+            if !prelude.contains(import) {
+                prelude.push(import.clone());
+            }
+        }
+        Some(prelude.into())
+    }
 }
 
 /// Reads the configuration at `path`.  At a workspace's root, `root` is the
@@ -68,11 +95,14 @@ fn parse(value: &TomlValue, root: Option<&Path>) -> Result<Settings, String> {
         .as_table()
         .ok_or_else(|| "settings are not a table as expected".to_owned())?;
     let mut prelude = None;
+    let mut inherit_prelude = false;
     let mut modules = None;
 
     for (key, value) in table {
         match key.as_str() {
-            "prelude" => parse_prelude_table(value, prelude.insert(Vec::new()))?,
+            "prelude" => {
+                inherit_prelude = parse_prelude_table(value, prelude.insert(Vec::new()))?;
+            }
             "modules" => {
                 let root = root.ok_or_else(|| {
                     "a modules table is allowed only in the configuration at the workspace root"
@@ -84,7 +114,11 @@ fn parse(value: &TomlValue, root: Option<&Path>) -> Result<Settings, String> {
         }
     }
 
-    Ok(Settings { prelude, modules })
+    Ok(Settings {
+        prelude,
+        inherit_prelude,
+        modules,
+    })
 }
 
 fn parse_modules_table(value: &TomlValue, dir: &Path) -> Result<ModulePath, String> {
@@ -119,16 +153,24 @@ fn parse_modules_table(value: &TomlValue, dir: &Path) -> Result<ModulePath, Stri
     ModulePath::load(dir, &path, bundled)
 }
 
-fn parse_prelude_table(value: &TomlValue, prelude: &mut Vec<Import>) -> Result<(), String> {
+/// Parses a `prelude` table into `prelude`, returning whether it inherits
+fn parse_prelude_table(value: &TomlValue, prelude: &mut Vec<Import>) -> Result<bool, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "prelude is not a table as expected".to_owned())?;
+    let mut inherit = false;
 
     for (module, value) in table {
+        if module == INHERIT_KEY {
+            inherit = value
+                .as_bool()
+                .ok_or_else(|| format!("prelude.{INHERIT_KEY} is not a boolean as expected"))?;
+            continue;
+        }
         parse_prelude_entry(module, value, prelude)?;
     }
 
-    Ok(())
+    Ok(inherit)
 }
 
 fn parse_prelude_entry(
@@ -366,15 +408,36 @@ mod tests {
     #[test]
     fn missing_tables_are_left_out() {
         let settings = parse_value(&parse_toml("")).unwrap();
-        assert_eq!(
-            settings,
-            Settings {
-                prelude: None,
-                modules: None
-            }
-        );
+        assert_eq!(settings, Settings::default());
         let settings = parse_value(&parse_toml("[prelude]\n")).unwrap();
         assert_eq!(settings.prelude, Some(vec![]));
+    }
+
+    #[test]
+    fn inherited_prelude_adds_to_its_base() {
+        let base = || Arc::from(default_prelude());
+        let settings = parse_value(&parse_toml(
+            "[prelude]\n\"$inherit\" = true\nshell = true\nsys = true\n",
+        ))
+        .unwrap();
+        assert!(settings.inherit_prelude);
+        let mut expected = default_prelude();
+        expected.push(Import::Module("sys".into()));
+        assert_eq!(settings.prelude_over(base).as_deref(), Some(&expected[..]));
+
+        let settings =
+            parse_value(&parse_toml("[prelude]\n\"$inherit\" = false\nsys = true\n")).unwrap();
+        assert_eq!(
+            settings.prelude_over(base).as_deref(),
+            Some(&[Import::Module("sys".into())][..])
+        );
+        assert_eq!(Settings::default().prelude_over(base), None);
+    }
+
+    #[test]
+    fn reject_non_boolean_inherit() {
+        let error = parse_value(&parse_toml("[prelude]\n\"$inherit\" = \"yes\"\n")).unwrap_err();
+        assert!(error.contains("not a boolean"));
     }
 
     #[test]

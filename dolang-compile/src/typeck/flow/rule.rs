@@ -170,8 +170,9 @@ enum Pending {
     /// A `do` block's or an argument held back's value, by the variable
     /// standing for it
     Value(Term, Span),
-    /// A call's callee, by its constraint's obligation
-    Callee(ObligationId, Span),
+    /// A call's callee, by its constraint's obligation, with the overload a
+    /// callee standing for one is of
+    Callee(ObligationId, Span, Option<usize>),
     /// What an argument found exactly logs
     Seen(Span, Role, Seen),
 }
@@ -186,8 +187,9 @@ impl Pending {
     ) -> Option<(Span, Role, Seen)> {
         match self {
             Pending::Value(term, span) => Some((span, Role::Value, Seen::ty(reify(term)?))),
-            Pending::Callee(obligation, span) => {
+            Pending::Callee(obligation, span, stands_for) => {
                 let (callee, overload) = solver.called(obligation)?;
+                let overload = overload.or(stands_for);
                 let mut seen = Seen::ty(reify(callee)?);
                 if let Some(index) = overload {
                     let index = u32::try_from(index).expect("an overload's index fits");
@@ -4810,7 +4812,8 @@ fn received(values: &mut Values, receivers: &[(TypeId, Span)], bottom: TypeId) {
 /// callee's overloads are tried against what the arguments alone say, with each
 /// `do` block's result hidden as it is from other alternatives (see
 /// [`Solver::blind`]), and the result `Value`. A call of `strand.pipeline` is
-/// checked against the signature [`pipeline_signature`] builds for its arguments.
+/// checked against the signature [`pipeline_signature`] builds for its
+/// arguments, which stands for the stub's only overload.
 fn call_constraint<'p>(
     rule: &mut Rule<'_, '_, 'p>,
     values: &'p Values,
@@ -4822,6 +4825,7 @@ fn call_constraint<'p>(
 ) -> Term {
     let (arguments, spans) = rule.arguments(values, spread, span);
     // A pipeline's signature mirrors what it's passed
+    let stands_for = pipeline.is_some().then_some(0);
     let callee = match pipeline {
         Some(roles) => pipeline_signature(rule.db, roles, &arguments),
         None => callee,
@@ -4878,7 +4882,8 @@ fn call_constraint<'p>(
     }
     if rule.logging && logs {
         let obligation = rule.solver.obligation(constraint);
-        rule.logged.push(Pending::Callee(obligation, span));
+        rule.logged
+            .push(Pending::Callee(obligation, span, stands_for));
     }
     result
 }

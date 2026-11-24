@@ -12,6 +12,11 @@ pub class Bag
   def (set) _self _name @ Sym _value @ Str
     nil
 
+#[final]
+pub class Final
+  pub field x @ Int = 0
+  pub field s @ Str = ""
+
 pub class Plain
   pub field x @ Int = 0
 
@@ -82,6 +87,43 @@ pub def unbound p @ Plain
   #    |                       ^
   let _ = type(Plain).(get) $Plain :m:
   #   ^: flow (m.Plain) -> std.Str
+
+# Read without a call, they're a function of the name it's called with, which
+# reads or writes the member it names, never the class's own `(get)` or `(set)`
+pub def read f @ Final
+  let get = f.(get)
+  let _ = get
+  #       ^~~: flow @[T1 @ std.Sym] (T1) -> std.IndexItem[std.Fields[m.Final], T1]
+  let _ = get :x:
+  #   ^: flow std.Int
+  let _ = get :s:
+  #   ^: flow std.Str
+  let _ = get :missing:
+  # error: expected `:s: | :x:`, found `:missing:`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ = get :missing:
+  #    |               ^^^^^^^^^
+  #    |
+  #    = note: `:missing:` does not fit `:s: | :x:`
+  let set = f.(set)
+  set :x: 1
+  set :x: "s"
+  # error: expected `std.Int`, found `"s"`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   set :x: "s"
+  #    |           ^^^
+  let unbound = Final.(get)
+  let _ = unbound $f :s:
+  #   ^: flow std.Str
+  let _ = [1, 2].(get) :len:
+  #   ^: flow std.Int
+
+pub def read_fallback b @ Bag
+  let get = b.(get)
+  let _ = get :x:
+  #   ^: flow std.Int
 
 pub def union v @ (Bag | Plain)
   let _ = v.(get) :x:

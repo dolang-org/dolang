@@ -104,6 +104,20 @@ pub def passed -> Int
   #    = note: `(std.Int) -> std.Str` takes them
   #    = help: only its parameters choose an overload, never the result expected of it
 
+# So is one that a literal's item holds, though it's chosen only once the
+# literal's type settles
+pub def held -> Tuple[(Int) -> Int]
+  (same,)
+  # error: several overloads of `m.same` take the parameters of `(std.Int) -> std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   (same,)
+  #    |   ^^^^^^^
+  #    |
+  #    = note: `(std.Int) -> std.Int` takes them
+  #    = note: `(std.Int) -> std.Str` takes them
+  #    = help: only its parameters choose an overload, never the result expected of it
+
 # Dynamic parameters are only undecided
 pub def unknown() -> nil
   let _f @ ((Unknown) -> Int) = same

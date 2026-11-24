@@ -310,7 +310,19 @@ fn literal_comparisons_strip_other_literals() {
         value(&s, union(&w.db, &[w.base, nil]), false, nil),
         union(&w.db, &[w.base, nil])
     );
-    assert_eq!(value(&s, w.bool, false, w.bool_lit(true)), w.bool);
+    // A final built-in class compares by built-in equality: it becomes the
+    // literal, or is dropped by another class's
+    let truth = w.bool_lit(true);
+    assert_eq!(value(&s, w.bool, false, truth), truth);
+    assert_eq!(value(&s, w.nil, false, nil), nil);
+    assert_eq!(
+        value(&s, union(&w.db, &[w.bool, w.nil, w.base]), false, one),
+        w.base
+    );
+    assert_eq!(
+        value(&s, union(&w.db, &[w.bool, w.nil, w.base]), false, truth),
+        union(&w.db, &[truth, w.base])
+    );
     assert_eq!(value(&s, w.db.unknown(), false, one), w.db.unknown());
     assert_eq!(value(&s, w.db.top(), false, one), w.db.top());
     assert_eq!(value(&s, two, false, one), bottom);

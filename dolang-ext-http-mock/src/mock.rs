@@ -11,7 +11,7 @@ use dolang::runtime::{
     object::{DictLike, DictViewSink, Instance, Mut, Ref, TypeBuilder},
     strand::InterruptMask,
     unpack,
-    value::{Array, Dict, TypeObject},
+    value::{Array, Dict, Nil, TypeObject},
     vm::Register,
     with_instance, with_interrupt_mask, with_slots,
 };
@@ -162,6 +162,22 @@ impl<'v> DictLike<'v> for Headers {
             })?;
         }
         Ok(())
+    }
+}
+
+/// Stores a tuple of the items now in the array in `src` into `out`, so the
+/// caller gets a snapshot of a live array.
+fn snapshot<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    src: &Value<'v>,
+    out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    match src.as_array(strand) {
+        Some(src) => src.to_tuple(strand, out),
+        None => {
+            strand.tuple([Nil; 0], out);
+            Ok(())
+        }
     }
 }
 
@@ -997,7 +1013,7 @@ impl<'v> Object<'v> for Server {
                 unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
                 borrow.check_open(strand)?;
-                copy_array(strand, Ref::slot::<2>(&borrow), out)
+                snapshot(strand, Ref::slot::<2>(&borrow), out)
             })
             .get("address", |this, strand, out| {
                 let borrow = this.borrow(strand)?;
@@ -1164,7 +1180,7 @@ impl<'v> Object<'v> for MockObject {
             .method("received", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
                 let borrow = this.borrow(strand)?;
-                copy_array(strand, Ref::slot::<2>(&borrow), out)
+                snapshot(strand, Ref::slot::<2>(&borrow), out)
             })
             .method("verify", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);

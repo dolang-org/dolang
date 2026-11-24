@@ -91,7 +91,7 @@ pub class Mock
   #     assert_eq $reqs.len 1
   #     assert_eq $reqs[0].method "POST"
   # ```
-  pub def received self -> Array[Request]
+  pub def received self -> Seq[Request]
     ...
 
   # Re-checks every `expect:` this handle's items carry against the requests
@@ -302,7 +302,7 @@ pub class Server: Func
   # Every request the server received, whichever mock matched it -- or none.
   #
   # Use [`Mock.received`](http.mock.Mock.received) to scope this to one `mock` call.
-  pub def received_requests self -> Array[Request]
+  pub def received_requests self -> Seq[Request]
     ...
 
   # Unmounts every mock registered on the server, scoped or not, and forgets

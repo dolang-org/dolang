@@ -1360,6 +1360,12 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        // `(get)` and `(set)` are field access by name, taking the instance
+        // first, as a call of them is; never the class's own fallback
+        if matches!(field.tag(), sym::GET_METHOD | sym::SET_METHOD) {
+            BoundMethod::create(strand, &this, field, out);
+            return Ok(());
+        }
         let me = this.annex();
         // Instance methods take priority, unbound
         match me.entry(field) {

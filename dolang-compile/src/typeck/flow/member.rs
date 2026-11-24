@@ -31,7 +31,11 @@ use crate::{
             Access, Constructor, FoundKind, Gas, Issue, Lookup, Residual, Signature, Signatures,
             bound_method,
         },
-        r#type::{Argument, DeclId, Intrinsic, Literal, MemberKey, Scope, Type, TypeId},
+        r#type::{
+            Argument, Binder, Binding, BoundRef, DeclId, Element, FieldAccess, Function, Intrinsic,
+            Kind, Literal, MemberKey, Multiplicity, SchemaItem, Scope, Type, TypeId, UnionMember,
+            Variance,
+        },
     },
 };
 
@@ -594,6 +598,13 @@ impl Flow<'_, '_> {
             unreachable!("a member read")
         };
         let receiver = self.eval(at, state, operands, object);
+        if member.class.is_none() {
+            for (name, set) in [("get", false), ("set", true)] {
+                if member.key == self.special(name).key {
+                    return self.accessor(receiver, set, expr.span);
+                }
+            }
+        }
         let call = Call {
             args: &[],
             expected,
@@ -880,6 +891,75 @@ impl Flow<'_, '_> {
             }
         }
         self.nil()
+    }
+
+    /// `x.(get)` or `x.(set)` read without a call: a function of the name it's
+    /// called with that reads or writes the member it names, as a call of them
+    /// does (see [`Self::computed_access`]), never the class's own `(get)` or
+    /// `(set)`. Through a class object, it takes the instance first.
+    fn accessor(&mut self, receiver: TypeId, set: bool, span: Span) -> TypeId {
+        if receiver == self.db.bottom() || matches!(self.db.ty(receiver), Type::Unknown(_)) {
+            return receiver;
+        }
+        let (instance, unbound) = match self.unbound_instance(receiver) {
+            Some(Some(instance)) => (instance, true),
+            Some(None) => {
+                return self.gap(
+                    span,
+                    "a generic class object's `(get)` or `(set)` read without a call",
+                );
+            }
+            None => (receiver, false),
+        };
+        let Some(sym) = self.db.intrinsic(Intrinsic::Sym) else {
+            return self.db.unknown();
+        };
+        // `@[K @ Sym] (K) -> IndexItem[Fields[T], K]`, or
+        // `@[K @ Sym] (K, AssignItem[MutFields[T], K]) -> nil`
+        let key = self.db.intern(Type::Bound {
+            reference: BoundRef::new(0, 0),
+            kind: Kind::Type,
+        });
+        let access = match set {
+            false => FieldAccess::Read,
+            true => FieldAccess::Write,
+        };
+        let fields = self.db.intern(Type::Fields {
+            target: instance,
+            access,
+        });
+        let item = match set {
+            false => UnionMember::IndexItem(fields, key),
+            true => UnionMember::AssignItem(fields, key),
+        };
+        let item = self.db.intern(Type::Union(vec![item].into()));
+        let params = unbound
+            .then_some(instance)
+            .into_iter()
+            .chain([key])
+            .chain(set.then_some(item))
+            .map(|ty| SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Positional(ty),
+            })
+            .collect();
+        let body = self.db.intern(Type::Function(Function {
+            params: self.db.intern(Type::Schema(params)),
+            result: if set { self.nil() } else { item },
+            input: None,
+            output: None,
+        }));
+        self.db.intern(Type::Quantified {
+            binders: vec![Binder {
+                kind: Kind::Type,
+                binding: Binding::Positional,
+                bound: Some(sym),
+                default: None,
+                variance: Variance::Invariant,
+            }]
+            .into(),
+            body,
+        })
     }
 
     /// The instance a class object takes first when calling `(get)` or `(set)`,

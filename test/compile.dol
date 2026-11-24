@@ -90,9 +90,25 @@ def error()
   let span = diag.span.span
   let equal_span = diag.span.span
   assert_span_contract $span $equal_span
-  assert_type $Array $diag.annotations
-  assert_type $Array $diag.notes
-  assert_type $Array $diag.patches
+  assert_eq [...diag.annotations, ...diag.notes, ...diag.patches] []
+
+#[test]
+def diagnostic_lists()
+  let source = "def f x\n  let y = x + 1\n  y\n"
+  let unit = compile.compile "lists.dol" $source recover: true
+  let diag = unit.diagnostics.find(do |d| d.patches.len > 0)
+  assert_eq $diag.annotations.len 1
+  assert_type $compile.Annotation $diag.annotations[0]
+  assert_type $compile.Patch $diag.patches[0]
+  # Each read gives the same items
+  assert_eq $diag.patches[0].sub $diag.patches[0].sub
+  assert_eq [...diag.annotations.map(do |a| a.message)] [...diag.annotations.map(do |a| a.message)]
+  # Read-only views of the diagnostic, not arrays it shares
+  assert_throws $std.ImmutableError do
+    diag.annotations[0] = nil
+  assert_throws $std.ImmutableError do
+    diag.patches[0] = nil
+  assert_eq $diag.patches.len 1
 
 #[test]
 def source_must_be_text()
@@ -1180,7 +1196,7 @@ def type_forms_are_nodes_of_what_refers_to_them()
   let ty = (types_of(nodes, value[0])[0][1])
   let schema = ty.expr
   assert_eq $schema.parent $ty.id
-  assert_eq $ty.children [schema]
+  assert_eq [...ty.children] [schema]
   for item = schema.items
     assert_eq $item.parent $schema.id
     assert_eq $item.ty.parent $item.id
@@ -1242,7 +1258,7 @@ def an_unreadable_type_leaves_no_nodes()
   let unit = compile.compile "unreadable.dol" $source document: true recover: true
   let nodes = [...unit.nodes()]
   let x = (named_node unit nodes compile.Bind "x")
-  assert_eq $x[1].children []
+  assert_eq [...x[1].children] []
   let forms = nodes.filter(do |pair| (type(pair[1], compile.Type) || type(pair[1], compile.TypeExpr)))
   assert_eq ([...forms].len) 0
 

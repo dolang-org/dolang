@@ -1,0 +1,41 @@
+# `Nil`, `Bool` and `Sym` are final and compare by built-in equality, so a
+# literal comparison reduces them to the literal or drops them. An open class
+# may define its own equality, and stays whole.
+
+pub class Open
+  pub field value = nil
+
+pub def equal x @ (Bool | Sym | nil | Open)
+  if (x == true)
+    let _ = x
+    #       ^: flow m.Open | true
+  if (x == :a:)
+    let _ = x
+    #       ^: flow :a: | m.Open
+  if (x == nil)
+    let _ = x
+    #       ^: flow m.Open | nil
+  if (x == 1)
+    let _ = x
+    #       ^: flow m.Open
+
+pub def unequal x @ (Bool | Sym | nil | Open)
+  if (x != false)
+    let _ = x
+    #       ^: flow m.Open | nil | std.Sym | true
+  if (x != :a:)
+    let _ = x
+    #       ^: flow false | m.Open | nil | std.Sym | true
+  else
+    let _ = x
+    #       ^: flow :a: | m.Open
+
+pub def arms x @ (:a: | :b: | Bool | Open)
+  match x
+    true
+      let _ = x
+      #       ^: flow m.Open | true
+    :b:
+      let _ = x
+      #       ^: flow :b: | m.Open
+    _ => nil

@@ -40,8 +40,32 @@ pub def both[**Xs, **Ys] p @ Keyed[...Xs, ...Ys] -> Tuple[(Unknown) -> Int, Keye
   # LL |   t
   #    |   ^
   #    |
-  #    = note: it can't match up these positional items
+  #    = note: these keyed packs come in a different order on each side; write them in the same order
   #    = note: several alternatives remain possible; an annotation may pick one
+
+# Keyed packs in another order on each side don't pair, though none is
+# positional
+pub def swap[**Xs, **Ys] p @ Keyed[...Xs, ...Ys] -> Keyed[...Ys, ...Xs]
+  p
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p
+  #    |   ^
+  #    |
+  #    = note: these keyed packs come in a different order on each side; write them in the same order
+
+# An optional item ahead of a positional pack leaves where the pack starts
+# unknown
+pub def optional_ahead[*Xs] p @ Tuple[Int, ...Xs] -> Tuple[?Int, ...Xs]
+  p
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   p
+  #    |   ^
+  #    |
+  #    = note: it can't match up these positional items
 
 # A def's omitted channels are instantiated and settled wherever its value is
 # checked, as for an argument
@@ -68,7 +92,7 @@ pub def literal -> Tuple[(Unknown) -> Int]
   # LL |   (o,)
   #    |   ^^^^
   #    |
-  #    = note: nothing determines a type here; annotate it
+  #    = note: several alternatives remain possible; an annotation may pick one
 
 pub def elements -> Array[(Unknown) -> Int]
   [o]
@@ -78,4 +102,4 @@ pub def elements -> Array[(Unknown) -> Int]
   # LL |   [o]
   #    |   ^^^
   #    |
-  #    = note: nothing determines a type here; annotate it
+  #    = note: several alternatives remain possible; an annotation may pick one
