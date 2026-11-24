@@ -3464,6 +3464,57 @@ impl<'db> Solver<'db> {
         Ok((args, environment))
     }
 
+    /// A lone `Keys` projection in `view` evaluated by the shape of its schema,
+    /// whose items' types may be unsolved: `Int` for a schema of positions only,
+    /// or the closed keys of one with keyed items only. `None` if it has both,
+    /// as a key may then be an index, or the shape isn't known. A rigid schema
+    /// has its bound's shape, so it's `Int` if its bound is of positions only;
+    /// a rigid narrower than a keyed bound may have fewer keys.
+    fn keys_by_shape(&self, view: TypeView) -> Result<Option<TypeId>, Residual> {
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(None);
+        };
+        let &[UnionMember::Keys(schema)] = &members[..] else {
+            return Ok(None);
+        };
+        let mut positions = false;
+        let mut rigid = false;
+        let mut keys = Vec::new();
+        let mut pending = vec![view.child(schema)];
+        while let Some(schema) = pending.pop() {
+            self.spend()?;
+            let Term::View(schema) = self.resolve(schema)? else {
+                return Ok(None);
+            };
+            if self.rigid(schema.ty)?.is_some() {
+                let Some(&(bound, _)) = self.rigid_bounds(schema.ty).first() else {
+                    return Ok(None);
+                };
+                rigid = true;
+                pending.push(self.closed(bound));
+                continue;
+            }
+            let Type::Schema(items) = self.db.ty(schema.ty) else {
+                return Ok(None);
+            };
+            for item in items.iter() {
+                match item.element {
+                    Element::Positional(_) => positions = true,
+                    Element::Keyed { key, .. } => match self.reify(schema.child(key)) {
+                        Ok(key) => keys.push(UnionMember::Type(key)),
+                        Err(_) => return Ok(None),
+                    },
+                    Element::Include(inner) => pending.push(schema.child(inner)),
+                }
+            }
+        }
+        Ok(match (positions, keys.is_empty()) {
+            (true, true) => self.db.intrinsic(Intrinsic::Int),
+            (false, _) if !rigid => Some(self.db.intern(Type::Union(keys.into()))),
+            _ => None,
+        })
+    }
+
     /// Expose the head form of a solver term. Well-formedness rejects cycles of
     /// transparent declarations, but this doesn't rely on it: exposing the same
     /// declaration or application twice is recursive.
@@ -3595,6 +3646,12 @@ impl<'db> Solver<'db> {
                             Some(evaluated) => term = self.closed(evaluated),
                             None => return Ok(Head::Structural(view)),
                         },
+                        // `Keys` depends only on its schema's shape, which may be
+                        // known before its items' types are
+                        Err(Residual::Inference) => match self.keys_by_shape(view)? {
+                            Some(keys) => term = self.closed(keys),
+                            None => return Err(Residual::Inference.into()),
+                        },
                         Err(residual) => return Err(residual.into()),
                     }
                 }
@@ -3643,6 +3700,11 @@ impl<'db> Solver<'db> {
                     // exposed
                     if let Some(exposed) = self.exposed_projections(members)? {
                         term = self.closed(exposed);
+                        continue;
+                    }
+                    // A rigid schema's keys are known by its bound's shape
+                    if let Some(keys) = self.keys_by_shape(view)? {
+                        term = self.closed(keys);
                         continue;
                     }
                     // An item projection takes the solver to select by its key.
