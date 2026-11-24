@@ -253,7 +253,7 @@ def reset_unmounts_persistent_mocks()
     server.reset()
     let after = http.get (server.url / "/reset") status: :IGNORE:
     assert_eq $after.status 404
-    assert_eq $handle.received() []
+    assert_eq $handle.received() ()
     let err = assert_throws $Assert do
       handle.verify()
     assert ((err.message.contains "mock: unmounted"))
@@ -268,7 +268,7 @@ def reset_inside_scoped_mock()
           status: 200
       do |handle|
         server.reset()
-        assert_eq $handle.received() []
+        assert_eq $handle.received() ()
 
     let err = assert_throws $Assert do
       server.mock
