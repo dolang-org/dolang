@@ -43,7 +43,8 @@
 //! `{*(K): V, ...}` does, an item belongs to the narrowest domain that admits
 //! its key, as a literal key owns its items, rather than to any domain that
 //! would take it: otherwise a domain of every key would leave the others
-//! nothing to check.
+//! nothing to check. A domain counts the items it owns as a literal key does,
+//! so `{(Str): V}` takes exactly one item with a `Str` key.
 
 use bitvec::{bitbox, boxed::BitBox};
 
@@ -2312,6 +2313,10 @@ impl Solver<'_> {
     /// `overflow`, the items that no literal key claims go there instead of to a
     /// domain, as do domain items, after counting toward the literal keys they
     /// may hold, and the items of a key past those its literal admits.
+    ///
+    /// A domain's multiplicity counts its items as a literal's does: a required
+    /// or optional domain takes at most one item, and a required one with none
+    /// is missing. One beside a literal of a key it admits is residual.
     fn keyed(
         &self,
         xs: &[KeyedAtom],
@@ -2363,7 +2368,39 @@ impl Solver<'_> {
                 None => chains.push(vec![y]),
             }
         }
+        // A bounded domain counts its items, which a literal of a key it admits
+        // could take some of first
+        for domain in &domains {
+            if domain.multiplicity == Multiplicity::Repeated {
+                continue;
+            }
+            for chain in &chains {
+                if self.admits(domain.key, chain[0].key)? {
+                    return Err(Residual::Unsupported(
+                        "a bounded key domain beside a literal it admits",
+                    )
+                    .into());
+                }
+            }
+        }
         let mut claimed = vec![false; xs.len()];
+        // The actual domains that may hold a key an expected literal takes, so
+        // that no expected domain is sure of their items
+        let mut overlaps = vec![false; xs.len()];
+        let bounded = domains
+            .iter()
+            .any(|d| d.multiplicity != Multiplicity::Repeated);
+        for (i, x) in xs.iter().enumerate() {
+            if !bounded || self.literal(x.key)? {
+                continue;
+            }
+            for chain in &chains {
+                if self.admits(x.key, chain[0].key)? {
+                    overlaps[i] = true;
+                    break;
+                }
+            }
+        }
         for chain in &chains {
             let y = match chain[..] {
                 [y] => y,
@@ -2395,12 +2432,14 @@ impl Solver<'_> {
                     continue;
                 }
                 contributing.push((x, low, high));
+                // A domain may or may not hold the key, as many times as its
+                // multiplicity admits
                 let (lo, hi) = match is_literal {
                     true => {
                         claimed[i] = true;
                         range(x.multiplicity)
                     }
-                    false => (0, None),
+                    false => (0, range(x.multiplicity).1),
                 };
                 low += lo;
                 high = high.zip(hi).map(|(a, b)| a + b);
@@ -2426,10 +2465,7 @@ impl Solver<'_> {
                 if max.is_none_or(|max| before_low < max) {
                     self.derive(obligation, x.value, y.value, Step::Item(x.item));
                 }
-                let (_, hi) = match self.literal(x.key)? {
-                    true => range(x.multiplicity),
-                    false => (0, None),
-                };
+                let (_, hi) = range(x.multiplicity);
                 let past = before_high.zip(hi).map(|(a, b)| a + b);
                 if max.is_some_and(|max| past.is_none_or(|past| past > max)) {
                     for d in &absorbing {
@@ -2459,6 +2495,10 @@ impl Solver<'_> {
                 return Err(Issue::Contradiction(Contradiction::Excess(last.item)));
             }
         }
+        // The fewest and most items each domain owns, and the first actual
+        // item that may take it past its count
+        let mut counts = vec![(0, Some(0)); domains.len()];
+        let mut excess = vec![None; domains.len()];
         for (i, x) in xs.iter().enumerate() {
             if claimed[i] {
                 continue;
@@ -2467,28 +2507,47 @@ impl Solver<'_> {
                 overflow.push(*x);
                 continue;
             }
-            match domains[..] {
-                [] if open_expected => {}
+            let (reached, sole) = match domains[..] {
+                [] if open_expected => continue,
                 [] if self.literal(x.key)? || self.nominal_head(x.key)? => {
                     return Err(Issue::Contradiction(Contradiction::Excess(x.item)));
                 }
-                [domain] if domain.multiplicity == Multiplicity::Repeated => {
+                [] => {
+                    return Err(
+                        Residual::Unsupported("a key no domain of a closed schema owns").into(),
+                    );
+                }
+                [domain] => {
                     self.derive(obligation, x.key, domain.key, Step::Key(x.item));
                     self.derive(obligation, x.value, domain.value, Step::Item(x.item));
+                    (vec![0], Some(0))
                 }
-                [_, _, ..]
-                    if domains
-                        .iter()
-                        .all(|d| d.multiplicity == Multiplicity::Repeated) =>
+                [_, _, ..] => self.owners(x, &domains, open_expected, obligation)?,
+            };
+            let (lo, hi) = range(x.multiplicity);
+            for d in reached {
+                let (low, high) = &mut counts[d];
+                if sole == Some(d) && !overlaps[i] {
+                    *low += lo;
+                }
+                *high = high.zip(hi).map(|(a, b)| a + b);
+                let (_, max) = range(domains[d].multiplicity);
+                if excess[d].is_none() && max.is_some_and(|max| high.is_none_or(|high| high > max))
                 {
-                    self.owners(x, &domains, open_expected, obligation)?;
+                    excess[d] = Some(x.item);
                 }
-                _ => {
-                    return Err(Residual::Unsupported(
-                        "several key domains that aren't all repeated",
-                    )
-                    .into());
-                }
+            }
+        }
+        if open_expected {
+            return Ok(());
+        }
+        for (d, domain) in domains.iter().enumerate() {
+            if let Some(item) = excess[d] {
+                return Err(Issue::Contradiction(Contradiction::Excess(item)));
+            }
+            let (min, _) = range(domain.multiplicity);
+            if counts[d].0 < min && !open_actual {
+                return Err(Issue::Contradiction(Contradiction::Missing(domain.item)));
             }
         }
         Ok(())
@@ -2521,7 +2580,10 @@ impl Solver<'_> {
                     claimed[i] = true;
                     x.multiplicity
                 }
-                false if self.admits(x.key, key)? => Multiplicity::Repeated,
+                false if self.admits(x.key, key)? => match x.multiplicity {
+                    Multiplicity::Repeated => Multiplicity::Repeated,
+                    _ => Multiplicity::Optional,
+                },
                 _ => continue,
             };
             atoms.push(Atom {
@@ -2575,22 +2637,36 @@ impl Solver<'_> {
     /// Give an actual keyed atom to the expected domains that own its keys. Each
     /// member of its key goes to the narrowest domain that admits it, and to any
     /// domain lying inside it, which owns part of it; its value must fit each.
+    /// Returns the domains it reaches, and the one that owns its whole key, if
+    /// any, which is sure to take its items.
     fn owners(
         &self,
         x: &KeyedAtom,
         domains: &[&KeyedAtom],
         open_expected: bool,
         obligation: ObligationId,
-    ) -> Result<(), Issue> {
+    ) -> Result<(Vec<usize>, Option<usize>), Issue> {
         let keys: Vec<TypeId> = domains
             .iter()
             .map(|domain| self.reify(domain.key))
             .collect::<Result<_, _>>()?;
+        let mut reached = Vec::new();
+        // `None` before any member, then the domain owning every member whole
+        let mut sole = None;
         for member in self.union_members(self.reify(x.key)?) {
             let UnionMember::Type(member) = member else {
                 return Err(Residual::Unsupported("a key with projections").into());
             };
             let owning = self.owning(member, &keys)?;
+            let only = match owning[..] {
+                [(d, true)] => Some(d),
+                _ => None,
+            };
+            sole = match sole {
+                None => Some(only),
+                Some(sole) if sole == only => Some(sole),
+                Some(_) => Some(None),
+            };
             if owning.is_empty() {
                 let view = self.closed(member);
                 if open_expected {
@@ -2606,9 +2682,12 @@ impl Solver<'_> {
             for (d, _) in owning {
                 let item = Step::Item(x.item);
                 self.derive(obligation, x.value, domains[d].value, item);
+                if !reached.contains(&d) {
+                    reached.push(d);
+                }
             }
         }
-        Ok(())
+        Ok((reached, sole.flatten()))
     }
 
     /// The domains among `keys` that own a key: the narrowest that admits it

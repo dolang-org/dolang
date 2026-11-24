@@ -1,0 +1,69 @@
+# dolang: strict
+# A protocol named more than once with different arguments has each instance's
+# signatures as overloads, and a value is judged below it by its members.
+import std:
+  - @Index
+
+pub @class Both[T]: Index[T] Index[{*(Range[Int]): Both[T]}]
+  #[getter]
+  pub def len self -> Int
+
+pub def both xs @ Both[Str] -> (Str, Both[Str])
+  (xs[0], xs[1..])
+
+# `Seq` is an `Index` by integers and by ranges
+pub def seq xs @ Seq[Str] -> (Str, Seq[Str])
+  (xs[0], xs[1..])
+
+pub def by_integer xs @ Seq[Str] -> Index[{*Str}]
+  xs
+
+pub def by_range xs @ Seq[Str] -> Index[{*(Range[Int]): Seq[Str]}]
+  xs
+
+pub def array xs @ Array[Str] -> Index[{*(Range[Int]): Seq[Str]}]
+  xs
+
+def first[T] xs @ Index[{*T}] -> T
+  xs[0]
+
+pub def solved xs @ Seq[Str] -> Str
+  first $xs
+
+pub def wrong xs @ Seq[Str] -> Index[{*(Range[Int]): Str}]
+  xs
+# error: `std.Seq[std.Str]` does not fit the declared result `std.Index[std.Range[std.Int], std.Str]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   xs
+#    |   ^^
+
+# A field has one type, so its instances must agree on it
+pub @class Holder[T]
+  pub field value @ T
+
+pub @class Holders: Holder[Int] Holder[Str]
+# warning: the checker can't verify this
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @class Holders: Holder[Int] Holder[Str]
+#    |                     ^^^^^^
+#    |
+#    = note: it doesn't handle a field of a protocol reached as several instances
+# warning: the checker can't verify this
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @class Holders: Holder[Int] Holder[Str]
+#    |                                 ^^^^^^
+#    |
+#    = note: it doesn't handle a field of a protocol reached as several instances
+
+pub def held h @ Holders -> Int
+  h.value
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   h.value
+  #    |   ^^^^^^^
+  #    |
+  #    = note: it doesn't handle a field of a protocol reached as several instances

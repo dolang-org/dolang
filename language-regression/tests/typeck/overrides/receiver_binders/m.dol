@@ -1,0 +1,71 @@
+# A receiver taken through a binder bounded by its class keeps the binder in an
+# override, whose bound is narrowed to the subclass where the binder occurs
+# elsewhere only positively.
+
+pub class Base
+  pub def copy[X @ Base] self @ X -> X
+    self
+
+  pub def many[X @ Base] self @ X -> (X, X)
+    (self, self)
+
+  pub def arr[X @ Base] self @ X -> Array[X]
+    [self]
+
+  pub def pair[X @ Base] _self @ X other @ X -> X
+    other
+
+  #[class]
+  pub def make[X @ Base] cls @ Type[X] -> X
+    cls.make()
+
+pub class Sub: Base
+  pub def only _self -> Int
+    1
+
+  pub def copy[X @ Sub] self @ X -> X
+    self.only()
+    self
+
+  pub def many[X @ Sub] self @ X -> (X, X)
+    (self, self)
+
+  # `Array` is invariant, so its argument isn't positive
+  pub def arr[X @ Sub] self @ X -> Array[X]
+    # error: `arr` does not match `Base.arr`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def arr[X @ Sub] self @ X -> Array[X]
+    #    |           ^^^
+    [self]
+
+  # A `Base` passed as `other` through a `Base` receiver isn't a `Sub`
+  pub def pair[X @ Sub] _self @ X other @ X -> X
+    # error: `pair` does not match `Base.pair`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pair[X @ Sub] _self @ X other @ X -> X
+    #    |           ^^^^
+    other
+
+  #[class]
+  pub def make[X @ Sub] cls @ Type[X] -> X
+    cls.make()
+
+pub def copied s @ Sub -> Sub
+  s.copy()
+
+pub class Box[T]
+  pub def get[X @ Box[T]] self @ X -> X
+    self
+
+pub class Kept[T]: Box[T]
+  pub def get[X @ Kept[T]] self @ X -> X
+    self
+
+pub @class Copyable
+  pub def copy[X @ Copyable] self @ X -> X
+
+pub class Doc: @Copyable
+  pub def copy[X @ Doc] self @ X -> X
+    self

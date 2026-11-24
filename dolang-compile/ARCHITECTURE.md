@@ -336,14 +336,18 @@ can fall outside its item's multiplicity, where a domain on the actual side may
 hold the key any number of times, unless a repeated domain beside the literal
 admits the key. An actual item that may come before the literal is full must fit
 it, and one that may come after must fit that domain. Keys not named on the
-expected side go to its single repeated domain. Several repeated domains own
-keys as a literal key does: each member of an actual item's key goes to the
-narrowest domain admitting it, and to any domain lying inside it, and its value
-must fit each. So a lookup bound `{*(K): V, ...}` isn't vacuous, though its
-`...` admits every key. A domain key still to be inferred waits for its
-solution, and one whose relation to an item's key can't be decided is residual.
-When several expected repeated items could take the overflow, the judgment is
-residual.
+expected side go to its domains. Several domains own keys as a literal key does:
+each member of an actual item's key goes to the narrowest domain admitting it,
+and to any domain lying inside it, and its value must fit each. So a lookup
+bound `{*(K): V, ...}` isn't vacuous, though its `...` admits every key. A
+domain counts the items it owns as a literal does: a required or optional one
+admits at most one, and a required one with none is missing. An actual item
+counts toward a domain's fewest items only if that domain owns its whole key and
+no expected literal could take it. A bounded domain that admits an expected
+literal's key is residual, since the literal takes that key's first items. A
+domain key still to be inferred waits for its solution, and one whose relation
+to an item's key can't be decided is residual. When several expected repeated
+items could take the overflow, the judgment is residual.
 
 Subtyping never admits a positional item as an `Int`-keyed item; only the
 projections key positions by their indexes. Positional items against an expected

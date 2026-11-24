@@ -209,6 +209,7 @@ impl<'db> Solver<'db> {
             constructors: RefCell::default(),
             default_constructions: RefCell::default(),
             generic_members: RefCell::default(),
+            repeated: RefCell::default(),
             fields_active: RefCell::default(),
             inherits: true,
             generation: Cell::new(self.generation.get()),
@@ -232,7 +233,7 @@ impl<'db> Solver<'db> {
     }
 
     /// The solver this one is nested in, if any
-    fn parent(&self) -> Option<&'db Solver<'db>> {
+    pub(super) fn parent(&self) -> Option<&'db Solver<'db>> {
         self.parent.as_ref().map(|parent| parent.solver)
     }
 

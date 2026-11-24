@@ -1,0 +1,52 @@
+# A class or protocol may name a protocol more than once, with arguments that
+# don't agree: each instance only adds signatures to its members, as overloads,
+# and none is an ancestor.
+
+pub class Int
+pub class Str
+pub class Other
+
+pub @class Source[K, V]
+  pub def get self key @ K -> V
+
+pub @class Both: Source[Int, Int] Source[Str, Other]
+
+# A protocol inherits the instances and their overloads
+pub @class More: Both
+
+pub class Impl: @Both
+  @def get _self key @ Int -> Int
+  @def get _self key @ Str -> Other
+  pub def get _self key @ (Int | Str) -> (Int | Other)
+    ...
+
+pub class MoreImpl: @More
+  @def get _self key @ Str -> Other
+  @def get _self key @ Int -> Int
+  pub def get _self key @ (Int | Str) -> (Int | Other)
+    ...
+
+pub class Partial: @Both
+  pub def get _self key @ Int -> Int
+    # error: `get` does not match `Source.get`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def get _self key @ Int -> Int
+    #    |           ^^^
+    ...
+
+# A class may claim a protocol more than once too
+pub class Twice: @Source[Int, Int] @Source[Str, Other]
+  @def get _self key @ Int -> Int
+  @def get _self key @ Str -> Other
+  pub def get _self key @ (Int | Str) -> (Int | Other)
+    ...
+
+pub class Short: @Source[Int, Int] @Source[Str, Other]
+  pub def get _self key @ Int -> Int
+    # error: `get` does not match `Source.get`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def get _self key @ Int -> Int
+    #    |           ^^^
+    ...

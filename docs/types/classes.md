@@ -94,6 +94,39 @@ A protocol may name a runtime class as a supertype, but claiming the protocol
 doesn't inherit it; a class claiming the protocol must inherit that class
 itself. Protocols are never [disjoint](#disjoint-classes).
 
+A class or protocol may name a generic protocol more than once with different
+arguments. Each instance adds its members' signatures as overloads, so a `Seq`
+is indexed both by integers and by ranges:
+
+```
+pub @class Seq[T]: Index[T] Index[{*(Range[Int]): Seq[T]}]
+```
+
+Such a protocol isn't an ancestor of the declaration naming it: a value is below
+it by its members. A generic class reached more than once is reached as its
+first instance, which must be below the others.
+
+## Receiver Binders
+
+A method may take its receiver through a binder bounded by its class. An
+override, or a method meeting a protocol's, may bound that binder by its own
+class instead, provided the binder appears elsewhere in the signature only in
+positive positions, such as the result:
+
+```
+class Base
+  pub def copy[X @ Base] self @ X -> X
+    self
+
+class Sub: Base
+  pub def copy[X @ Sub] self @ X -> X
+    self
+```
+
+With a parameter `other @ X`, a call through a `Base` could pass any `Base` as
+`other`, so the override can't narrow the bound. A class method's binder is
+narrowed the same way inside `Type`, as in `cls @ Type[X]`.
+
 ## Disjoint Classes
 
 Every class is disjoint unless it is decorated with the prelude's

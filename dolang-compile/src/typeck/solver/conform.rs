@@ -10,7 +10,9 @@
 //! each compared as accessors that read and set the field. The supertype's
 //! signature takes the conforming declaration's own type as its receiver, or
 //! `Type` of it for a class method, since only calls on its instances or its
-//! object matter.
+//! object matter. A receiver that is one of the signature's own binders keeps
+//! the binder, whose bound is narrowed instead, provided the binder occurs
+//! elsewhere only in positive positions.
 //!
 //! A method is called with its overloads, or its implementation's signature if
 //! it has none: an implementation behind overloads is never what callers see.
@@ -22,7 +24,10 @@
 //!
 //! A generic class reached more than once in a declaration's ancestry is reached
 //! only as its first instance, so that instance must be below the others it
-//! masks, by the class's variances, for the ancestor walk to stop there.
+//! masks, by the class's variances, for the ancestor walk to stop there. A
+//! protocol reached as several instances isn't an ancestor at all: each
+//! instance only adds signatures to its members, merged as overloads, which
+//! conformance to each instance relates as it does any member's.
 //!
 //! A class that doesn't name a protocol is judged below it by the same
 //! requirements, with its own type as each required signature's receiver.
@@ -292,7 +297,7 @@ impl Solver<'_> {
             let Some(actual) = self.overload_set(actual)? else {
                 return Ok::<_, Issue>(());
             };
-            for signature in interface(required) {
+            for signature in required.interface() {
                 let expected = self.rewrite(signature, receiver, None, None)?;
                 pairs.push((actual, expected, false));
             }
@@ -393,42 +398,48 @@ impl Solver<'_> {
         Ok(RequirementKind::Relate(pairs))
     }
 
-    /// Whether a provided member is the required one, with the same types: the
-    /// declaration inherits it as the supertype has it
+    /// Whether a provided member is the required one as the supertype has it:
+    /// the same class's member, with each signature the required one is called
+    /// with, or its field's type, among the provided one's. A member merged from
+    /// a protocol's instances has each instance's.
     fn same_member(&self, provided: &Found, required: &Found) -> bool {
-        fn terms(kind: &FoundKind) -> Option<Vec<Term>> {
-            fn signatures(signatures: &Signatures) -> impl Iterator<Item = Term> + '_ {
-                let overloads = signatures.overloads.iter().copied();
-                overloads.chain(signatures.implementation)
-            }
-            Some(match kind {
-                &FoundKind::Field(ty) => vec![ty],
-                FoundKind::Method(method) => signatures(method).collect(),
-                FoundKind::Property { getter, setter } => [getter, setter]
-                    .into_iter()
-                    .flatten()
-                    .flat_map(signatures)
-                    .collect(),
-                FoundKind::Unknown(_) => return None,
-            })
-        }
         if provided.class != required.class || provided.bound != required.bound {
             return false;
         }
-        let (Some(provided), Some(required)) = (terms(&provided.kind), terms(&required.kind))
-        else {
-            return false;
+        let same = |provided: Term, required: Term| {
+            matches!(
+                (self.reify(provided), self.reify(required)),
+                (Ok(provided), Ok(required)) if provided == required
+            )
         };
-        provided.len() == required.len()
-            && provided
+        let covers = |provided: &Signatures, required: &Signatures| {
+            let provided = provided.interface();
+            required
+                .interface()
                 .into_iter()
-                .zip(required)
-                .all(|(provided, required)| {
-                    matches!(
-                        (self.reify(provided), self.reify(required)),
-                        (Ok(provided), Ok(required)) if provided == required
-                    )
-                })
+                .all(|required| provided.iter().any(|&provided| same(provided, required)))
+        };
+        let accessor = |provided: &Option<Signatures>, required: &Option<Signatures>| match (
+            provided, required,
+        ) {
+            (Some(provided), Some(required)) => covers(provided, required),
+            (None, None) => true,
+            _ => false,
+        };
+        match (&provided.kind, &required.kind) {
+            (&FoundKind::Field(provided), &FoundKind::Field(required)) => same(provided, required),
+            (FoundKind::Method(provided), FoundKind::Method(required)) => {
+                covers(provided, required)
+            }
+            (
+                FoundKind::Property { getter, setter },
+                FoundKind::Property {
+                    getter: required_getter,
+                    setter: required_setter,
+                },
+            ) => accessor(getter, required_getter) && accessor(setter, required_setter),
+            _ => false,
+        }
     }
 
     /// What a provided member is called as: its one signature, or its overloads
@@ -518,8 +529,9 @@ impl Solver<'_> {
     }
 
     /// A method signature with its receiver narrowed as [`Self::narrowed`] does,
-    /// or its first parameter after the receiver or its result replaced by
-    /// closed types
+    /// or through its bound if it's one of the signature's own binders (see
+    /// [`Self::narrowed_binder`]), or its first parameter after the receiver or
+    /// its result replaced by closed types
     fn rewrite(
         &self,
         signature: Term,
@@ -539,7 +551,7 @@ impl Solver<'_> {
             ) => (view.ty, Some(view.environment)),
             _ => (self.reify(signature)?, None),
         };
-        let (binders, body) = match self.db.ty(ty) {
+        let (mut binders, body) = match self.db.ty(ty) {
             Type::Quantified { binders, body } => (Some(binders.clone()), *body),
             _ => (None, ty),
         };
@@ -549,6 +561,13 @@ impl Solver<'_> {
         // The depth the signature's scope refers to its class's binders at
         let outer = usize::from(binders.is_some());
         let mut function = function.clone();
+        if let (Some(narrowing), Some(group)) = (receiver, &mut binders)
+            && let Some((slot, bound)) = self.narrowed_binder(group, &function, narrowing, outer)?
+        {
+            let mut narrowed = group.to_vec();
+            narrowed[usize::from(slot)].bound = Some(bound);
+            *group = narrowed.into();
+        }
         if receiver.is_some() || value.is_some() {
             let Type::Schema(items) = self.db.ty(function.params) else {
                 return Err(Residual::Unsupported("a method without a parameter list").into());
@@ -652,6 +671,88 @@ impl Solver<'_> {
         })))
     }
 
+    /// A signature's receiver that is one of its own binders, `X` or `Type[X]`
+    /// for a class method's, narrowed through `X`'s bound: its slot and the bound
+    /// narrowed as [`Self::narrowed_receiver`] narrows a receiver. A call through
+    /// the supertype's receiver chooses some `X` holding the receiver, and the
+    /// narrowed signature can be instantiated at the receiver's own class
+    /// instead, so its results are still below that `X`. That holds only while
+    /// `X` occurs nowhere else but in positive positions: with `other @ X`, the
+    /// narrowed signature would assume `other` is an instance of the conforming
+    /// class. `None` leaves the bound as written.
+    fn narrowed_binder(
+        &self,
+        binders: &[Binder],
+        function: &Function,
+        narrowing: Narrowing,
+        outer: usize,
+    ) -> Result<Option<(u16, TypeId)>, Issue> {
+        let Type::Schema(items) = self.db.ty(function.params) else {
+            return Ok(None);
+        };
+        let Some(index) = items
+            .iter()
+            .position(|item| matches!(item.element, Element::Positional(_)))
+        else {
+            return Ok(None);
+        };
+        let Element::Positional(mut receiver) = items[index].element else {
+            unreachable!()
+        };
+        if narrowing.object {
+            let class_type = self.db.intrinsic(Intrinsic::Type);
+            match self.db.ty(receiver) {
+                Type::Apply { base, args, .. } if Some(*base) == class_type => match &args[..] {
+                    &[Argument::Positional(inner)] => receiver = inner,
+                    _ => return Ok(None),
+                },
+                _ => return Ok(None),
+            }
+        }
+        let &Type::Bound { reference, .. } = self.db.ty(receiver) else {
+            return Ok(None);
+        };
+        let slot = reference.slot;
+        let Some(bound) = binders
+            .get(usize::from(slot))
+            .and_then(|binder| binder.bound)
+        else {
+            return Ok(None);
+        };
+        if reference.depth != 0 {
+            return Ok(None);
+        }
+        // `X` elsewhere in the signature, without its receiver
+        let mut rest = items.to_vec();
+        rest.remove(index);
+        let rest = self.db.intern(Type::Function(Function {
+            params: self.db.intern(Type::Schema(rest.into())),
+            ..function.clone()
+        }));
+        if !matches!(
+            self.db.slot_variance(rest, slot),
+            None | Some(Variance::Covariant)
+        ) {
+            return Ok(None);
+        }
+        // A binder's bound or default naming `X`, including its own
+        let mentioned = binders
+            .iter()
+            .flat_map(|binder| [binder.bound, binder.default])
+            .flatten()
+            .any(|ty| self.db.slot_variance(ty, slot).is_some());
+        if mentioned {
+            return Ok(None);
+        }
+        let instance = Narrowing {
+            object: false,
+            ..narrowing
+        };
+        Ok(self
+            .narrowed_receiver(bound, instance, outer)?
+            .map(|bound| (slot, bound)))
+    }
+
     /// Whether a receiver is its class applied to its own binders, which the
     /// signature's scope refers to at depth `outer`, or every value's
     fn own_receiver(&self, receiver: TypeId, outer: usize) -> bool {
@@ -717,8 +818,27 @@ impl Solver<'_> {
         if !self.db.declaration(class).source.kind.nominal() {
             return Ok(None);
         }
-        let Reach::Reached(reached) = self.reach(through, class)? else {
-            return Ok(None);
+        let reached = match self.reach(through, class)? {
+            Reach::Reached(reached) => reached,
+            // A protocol reached as several instances is reached as the one the
+            // receiver names
+            Reach::Unreached => match self.head(through)? {
+                Head::Nominal(nominal) => {
+                    let mut reached = None;
+                    for found in self.instances(nominal, class)? {
+                        if self.applied(class, &found.arguments)? == receiver {
+                            reached = Some(found.arguments);
+                            break;
+                        }
+                    }
+                    let Some(reached) = reached else {
+                        return Ok(None);
+                    };
+                    reached
+                }
+                _ => return Ok(None),
+            },
+            Reach::Dynamic => return Ok(None),
         };
         if reached.len() != args.len() {
             return Ok(None);
@@ -797,7 +917,9 @@ impl Solver<'_> {
 
     /// The instances of generic classes in the ancestry of the declaration whose
     /// instances have the closed type `instance` that the first instance of
-    /// each class masks, which the first must be below. With
+    /// each class masks, which the first must be below. A protocol's instances
+    /// mask nothing, as none is reached as an ancestor (see
+    /// [`Self::repeated`]). With
     /// `runtime`, as for a class, a claimed instance masked by one the runtime
     /// inherits is left to [`Self::claimed_classes`]. Instances reached through
     /// the same supertype were checked at it, so only pairs reached through
@@ -850,7 +972,10 @@ impl Solver<'_> {
             )?;
         }
         let mut masked = Vec::new();
-        for (_, instances) in reached {
+        for (class, instances) in reached {
+            if self.repeated(declaration, class) {
+                continue;
+            }
             let Some((first, rest)) = instances.split_first() else {
                 continue;
             };
@@ -872,7 +997,7 @@ impl Solver<'_> {
     }
 
     /// `class` applied to `args`
-    fn applied(&self, class: DeclId, args: &[Term]) -> Result<TypeId, Issue> {
+    pub(super) fn applied(&self, class: DeclId, args: &[Term]) -> Result<TypeId, Issue> {
         let args = args
             .iter()
             .map(|&arg| self.reify(arg).map(Argument::Positional))
@@ -884,17 +1009,8 @@ impl Solver<'_> {
         }))
     }
 
-    fn is_protocol(&self, decl: DeclId) -> bool {
+    pub(super) fn is_protocol(&self, decl: DeclId) -> bool {
         self.db.declaration(decl).source.kind == DeclKind::Protocol
-    }
-}
-
-/// The signatures a member is called with: its overloads, or its
-/// implementation's signature if it has none
-fn interface(signatures: &Signatures) -> Vec<Term> {
-    match signatures.overloads.is_empty() {
-        true => signatures.implementation.into_iter().collect(),
-        false => signatures.overloads.clone(),
     }
 }
 

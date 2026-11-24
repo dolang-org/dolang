@@ -1,0 +1,46 @@
+# dolang: strict
+# A key domain without a quantifier admits exactly one item with a key in it,
+# and one marked `?` at most one
+
+pub def one -> Dict[{(Str): Int}]
+  {"a": 1}
+
+pub def two -> Dict[{(Str): Int}]
+  {"a": 1, "b": 2}
+# error: expected `{(std.Str): std.Int}`, found `{"a": 1, "b": 2}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   {"a": 1, "b": 2}
+#    |   ^^^^^^^^^^^^^^^^
+#    |
+#    = note: `{(std.Str): std.Int}` doesn't admit `"b": 2`
+
+pub def none -> Dict[{(Str): Int}]
+  {}
+# error: expected `{(std.Str): std.Int}`, found `{}`
+#   --> m.dol:LL:LL
+#    |
+# LL |   {}
+#    |   ^^
+#    |
+#    = note: `{}` may be missing `(std.Str): std.Int`
+
+pub def maybe -> Dict[{?(Str): Int}]
+  {}
+
+# `Dict` is invariant, and neither form admits the other's items
+pub def widened d @ Dict[{*(Str): Int}] -> Dict[{(Str): Int}]
+  d
+# error: `std.Dict[std.Str, std.Int]` does not fit the declared result `std.Dict[{(std.Str): std.Int}]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d
+#    |   ^
+
+pub def narrowed d @ Dict[{(Str): Int}] -> Dict[{*(Str): Int}]
+  d
+# error: `std.Dict[{(std.Str): std.Int}]` does not fit the declared result `std.Dict[std.Str, std.Int]`
+#   --> m.dol:LL:LL
+#    |
+# LL |   d
+#    |   ^

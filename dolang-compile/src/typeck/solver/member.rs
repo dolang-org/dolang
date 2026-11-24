@@ -2,7 +2,10 @@
 //!
 //! A receiver's member is found as the runtime finds it: in the receiver's class
 //! and then its ancestors in MRO order, left to right and depth first, the first
-//! member of the name winning. Instance members and type-object members are
+//! member of the name winning. A protocol the ancestry reaches as several
+//! instances only adds to what its members require, so its member is each
+//! instance's: a method's or accessor's signatures are all the instances',
+//! in MRO order, as overloads, and a field must have one type in all of them. Instance members and type-object members are
 //! separate namespaces. An instance falls back to its class's `(get)` and `(set)`
 //! methods when it has no member of an ordinary name. A class object, whose type
 //! is `Type[C]`, has `C`'s class members, its static members only on `C` itself,
@@ -74,6 +77,17 @@ pub(crate) struct Signatures {
     pub(crate) implementation: Option<Term>,
     /// The method they're the signatures of, if any
     pub(crate) function: Option<DeclId>,
+}
+
+impl Signatures {
+    /// The signatures it is called with: its overloads, or its implementation's
+    /// signature if it has none
+    pub(super) fn interface(&self) -> Vec<Term> {
+        match self.overloads.is_empty() {
+            true => self.implementation.into_iter().collect(),
+            false => self.overloads.clone(),
+        }
+    }
 }
 
 /// Where a receiver's members are looked up
@@ -620,6 +634,7 @@ impl Solver<'_> {
         admits: impl Fn(DeclId, &Member) -> bool,
     ) -> Result<Lookup, Issue> {
         let class = nominal.declaration;
+        let start = nominal.clone();
         let found = self.mro(
             nominal,
             runtime,
@@ -638,7 +653,12 @@ impl Solver<'_> {
             },
         )?;
         if let Some(found) = found {
-            return Ok(found);
+            return match found {
+                Lookup::Found(found) if self.repeated(class, found.class) => {
+                    self.merged(start, key, found).map(Lookup::Found)
+                }
+                found => Ok(found),
+            };
         }
         // Every class inherits `Value`'s members last, as a lookup's tail rather
         // than a supertype, so ancestry and subtyping never see it
@@ -657,6 +677,75 @@ impl Solver<'_> {
             .map_or(Lookup::Missing, |(_, member)| {
                 Lookup::Found(self.found(&value, member))
             }))
+    }
+
+    /// A member `first` of a protocol that `start`'s ancestry reaches as several
+    /// instances, as each instance has it: a method's or accessor's signatures
+    /// merged as overloads, in MRO order. The merge has no one function whose
+    /// overloads they are, and no implementation. A field must have the same
+    /// type in every instance.
+    fn merged(&self, start: Nominal, key: MemberKey, first: Found) -> Result<Found, Issue> {
+        let instances = self.instances(start, first.class)?;
+        let found = |nominal: &Nominal| {
+            self.members(nominal)
+                .find(|&(found, member)| found == key && member.scope() == first.scope)
+                .map(|(_, member)| self.found(nominal, member))
+                .expect("each instance of a class has its members")
+        };
+        let founds: Vec<Found> = instances.iter().map(found).collect();
+        let merge = |signatures: Vec<&Signatures>| Signatures {
+            overloads: signatures
+                .into_iter()
+                .flat_map(Signatures::interface)
+                .collect(),
+            implementation: None,
+            function: None,
+        };
+        let accessor = |part: fn(&FoundKind) -> Option<&Signatures>| {
+            founds
+                .iter()
+                .map(|found| part(&found.kind))
+                .collect::<Option<Vec<_>>>()
+                .map(merge)
+        };
+        let kind = match &first.kind {
+            FoundKind::Method(_) => FoundKind::Method(merge(
+                founds
+                    .iter()
+                    .filter_map(|found| match &found.kind {
+                        FoundKind::Method(signatures) => Some(signatures),
+                        _ => None,
+                    })
+                    .collect(),
+            )),
+            FoundKind::Property { .. } => FoundKind::Property {
+                getter: accessor(|kind| match kind {
+                    FoundKind::Property { getter, .. } => getter.as_ref(),
+                    _ => None,
+                }),
+                setter: accessor(|kind| match kind {
+                    FoundKind::Property { setter, .. } => setter.as_ref(),
+                    _ => None,
+                }),
+            },
+            &FoundKind::Field(ty) => {
+                let ty = self.reify(ty)?;
+                for found in &founds {
+                    let FoundKind::Field(other) = found.kind else {
+                        unreachable!("each instance's member is the same field")
+                    };
+                    if self.reify(other)? != ty {
+                        return Err(Residual::Unsupported(
+                            "a field of a protocol reached as several instances",
+                        )
+                        .into());
+                    }
+                }
+                FoundKind::Field(self.closed(ty))
+            }
+            FoundKind::Unknown(_) => return Ok(first),
+        };
+        Ok(Found { kind, ..first })
     }
 
     pub(super) fn members(&self, nominal: &Nominal) -> impl Iterator<Item = (MemberKey, &Member)> {

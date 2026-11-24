@@ -82,7 +82,8 @@ let flags @ Dict[{**Bool}] = {}
 
 Since a `Dict` is a multi-map, a quantifier gives a literal key an exact
 multiplicity: `key: V` admits one, `?key: V` at most one, and `*key: V` any
-number.
+number. A key type counts the same way: `(Str): V` admits exactly one item with
+a `Str` key, and `?(Str): V` at most one.
 
 ## Open Items
 
