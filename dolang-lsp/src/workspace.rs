@@ -133,22 +133,21 @@ impl Workspaces {
                     log::error!("failed to load configuration {}: {err}", config.display())
                 })
                 .ok(),
-            false => Some(settings::Settings {
-                prelude: None,
-                modules: None,
-            }),
+            false => Some(settings::Settings::default()),
         };
         // An unreadable configuration leaves the workspace with nothing
         let (prelude, modules) = match settings {
             Some(settings) => {
+                let prelude = settings
+                    .prelude_over(|| settings::default_prelude().into())
+                    .unwrap_or_else(|| settings::default_prelude().into());
                 let modules = settings.modules.or_else(|| {
                     ModulePath::convention(&root)
                         .inspect_err(|err| log::error!("no module path: {err}"))
                         .ok()
                         .map(Arc::new)
                 });
-                let prelude = settings.prelude.unwrap_or_else(settings::default_prelude);
-                (prelude.into(), modules)
+                (prelude, modules)
             }
             None => (Arc::default(), None),
         };
@@ -562,7 +561,7 @@ impl Workspace {
         let config = dir.join(CONFIG_FILE_NAME);
         let prelude = match config.is_file() {
             true => match settings::read(&config, None) {
-                Ok(settings) => settings.prelude.map(Arc::from),
+                Ok(settings) => settings.prelude_over(|| self.prelude(dir)),
                 Err(err) => {
                     log::error!("failed to load configuration {}: {err}", config.display());
                     Some(Arc::default())
@@ -1571,6 +1570,26 @@ mod tests {
         let workspace = Workspaces::default().open(&tree.0.join("main.dol"));
         assert_eq!(&*workspace.prelude(&tree.0.join("other/z.dol")), []);
         assert_eq!(&*workspace.prelude(&tree.0.join("tests/x.dol")), foo);
+    }
+
+    #[test]
+    fn inheriting_preludes_add_to_the_enclosing_one() {
+        let tree = Directory::repo();
+        tree.write(
+            CONFIG_FILE_NAME,
+            "[prelude]\n\"$inherit\" = true\nfoo = true\n",
+        );
+        tree.write(
+            &format!("tests/{CONFIG_FILE_NAME}"),
+            "[prelude]\n\"$inherit\" = true\nbar = true\n",
+        );
+        let workspace = Workspaces::default().open(&tree.0.join("main.dol"));
+        let mut root = settings::default_prelude();
+        root.push(Import::Module("foo".into()));
+        assert_eq!(&*workspace.prelude(&tree.0.join("main.dol")), root);
+        let mut tests = root;
+        tests.push(Import::Module("bar".into()));
+        assert_eq!(&*workspace.prelude(&tree.0.join("tests/x.dol")), tests);
     }
 
     #[test]
