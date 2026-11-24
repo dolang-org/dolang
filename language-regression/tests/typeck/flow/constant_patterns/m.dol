@@ -9,7 +9,7 @@ pub def integer value @ Int
 pub def boolean value @ Bool
   if let false = value
     let _ = value
-    #       ^~~~~: flow std.Bool
+    #       ^~~~~: flow false
   else
     let _ = value
     #       ^~~~~: flow true
@@ -33,7 +33,7 @@ pub def symbol value @ (:ok: | :error:)
 pub def asserted value @ Bool
   let false = value
   let _ = value
-  #       ^~~~~: flow std.Bool
+  #       ^~~~~: flow false
 
 pub def nested value @ Tuple[Int, Str, Bool]
   if let 200 name false = value
@@ -43,7 +43,7 @@ pub def nested value @ Tuple[Int, Str, Bool]
 pub def typed value @ (Bool | Str)
   if let Bool(false) = value
     let _ = value
-    #       ^~~~~: flow std.Bool
+    #       ^~~~~: flow false
   else
     let _ = value
     #       ^~~~~: flow std.Str | true

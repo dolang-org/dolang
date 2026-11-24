@@ -91,7 +91,7 @@ pub def defaulted p @ ((:a:, Int) | (:b:,))
     #       ^: flow :a: | :b:
   if (k == :b:)
     let _ = v
-    #       ^: flow std.Nil
+    #       ^: flow nil
 
 # An unpacked variable lies in its alternative's column too, so a later arm sees
 # it without the alternatives an earlier arm's failed item tests dropped

@@ -22,9 +22,11 @@
 //! `X`, and a negative one keeps it, since the object may be a subclass's.
 //!
 //! A class's `(==)` may be user-defined, so a literal comparison strips only
-//! other literals and never reduces a class to the literal. Only a `Nil` or a
-//! `Bool` member, whose values are all literals, loses the literal it's unequal
-//! to.
+//! other literals and keeps a class whole. `Nil`, `Bool` and `Sym` are the
+//! exception: they're final and compare by built-in equality, so equality
+//! reduces one of them to the literal, or drops it when the literal is of
+//! another class. Inequality removes the literal from a `Nil` or `Bool` member,
+//! whose values are all literals; `Sym` has no complement to narrow to.
 //!
 //! A destructuring pattern's mismatch drops each member the pattern always
 //! matches, by the schema it unpacks as. Nothing is subtracted from a member's
@@ -290,6 +292,20 @@ impl Solver<'_> {
                         Some(self.db.intern(Type::Literal(Literal::Bool(!value))))
                     }
                     _ => Some(kept),
+                }
+            }
+            // A final built-in class's values compare by built-in equality, so
+            // only the literal itself can equal one of them
+            Member::Class(nominal) => {
+                let builtin = [Intrinsic::Nil, Intrinsic::Bool, Intrinsic::Sym]
+                    .into_iter()
+                    .find(|&intrinsic| self.intrinsic_decl(intrinsic) == Some(nominal.declaration));
+                match builtin {
+                    Some(intrinsic) if intrinsic == target.intrinsic() => {
+                        Some(self.db.intern(Type::Literal(target.clone())))
+                    }
+                    Some(_) => None,
+                    None => Some(kept),
                 }
             }
             _ => Some(kept),

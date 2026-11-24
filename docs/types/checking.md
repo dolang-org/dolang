@@ -89,6 +89,19 @@ def describe value @ (Str | nil) -> Str
     value
 ```
 
+A comparison with a literal keeps a member of most classes whole, since a
+class can define its own equality. `Nil`, `Bool` and `Sym` are final and
+compare by built-in equality, so on the equal branch a member of one of them
+becomes the literal, or is dropped when the literal is of another class. On the
+unequal branch, `Bool` loses the literal and `Nil` is dropped.
+
+```
+def show x @ (Bool | Sym | Str)
+  if (x == true)
+    # x is true | Str
+    echo $x
+```
+
 A type test drops a union member that is a
 [final](../language/classes.md#final-classes) class not inheriting from the
 tested class, and a member [disjoint](./classes.md#disjoint-classes) from it.
