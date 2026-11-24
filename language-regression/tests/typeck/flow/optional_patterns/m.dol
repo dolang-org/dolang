@@ -4,45 +4,45 @@
 pub def present()
   let ?k: (a = "none") = (k: (1,))
   let _ = a
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "none" | 1
 
 pub def absent()
   let ?"k": (a = 1 b = a) ... = ()
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = b
-  #       ^: flow std.Int
+  #       ^: flow 1
 
 pub def positional()
   let p ?(a = "none") = (true,)
   let _ = p
   #       ^: flow true
   let _ = a
-  #       ^: flow std.Str
+  #       ^: flow "none"
 
 pub def mixed value @ (Pack[...{?k: Tuple[Int]}])
   let ?k: (a = "none") = value
   let _ = a
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "none" | std.Int
 
 pub def nested()
   let ?k: (a = 1 j: (?z: Int(b = "fallback"))) = ()
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = b
-  #       ^: flow std.Str
+  #       ^: flow "fallback"
 
 pub def inner_absent()
   let ?k: (a = 1 ?j: (b = "fallback")) = (k: (2,))
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1 | 2
   let _ = b
-  #       ^: flow std.Str
+  #       ^: flow "fallback"
 
 pub def collapsed()
   let ?k: Int(n = "fallback") = ()
   let _ = n
-  #       ^: flow std.Str
+  #       ^: flow "fallback"
   let Int(m = "unused") = 1
   let _ = m
   #       ^: flow 1
@@ -50,18 +50,18 @@ pub def collapsed()
 pub def alternatives()
   let ?k: (Int(n = 0) | Str(n)) = ()
   let _ = n
-  #       ^: flow std.Int
+  #       ^: flow 0
   let ?j: ((a = 1) | (a = "later")) = ()
   let _ = a
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "later" | 1
   let ?i: ((1 a = "first") | (2 a = false)) = ()
   let _ = a
-  #       ^: flow std.Bool | std.Str
+  #       ^: flow "first" | false
 
 pub def second_alternative()
   let ?k: (Int(n = 0) | Str(n)) = (k: "present")
   let _ = n
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "present" | 0
 
 pub def vertical()
   bind (true,)
@@ -71,19 +71,19 @@ pub def vertical()
   let _ = flag
   #       ^~~~: flow true
   let _ = b
-  #       ^: flow std.Int
+  #       ^: flow 1
 
 pub def conditional()
   if let ?k: Int(n = 0) = ()
     let _ = n
-    #       ^: flow std.Int
+    #       ^: flow 0
   if let ?k: ((a = "first") | (a = false)) = ()
     let _ = a
-    #       ^: flow std.Bool | std.Str
+    #       ^: flow "first" | false
   let result = match (())
     ?k: Int(n = 0) => n
   let _ = result
-  #       ^~~~~~: flow nil | std.Int
+  #       ^~~~~~: flow 0 | nil
 
 pub def empty_and_constants()
   let ?k: () = ()
@@ -115,12 +115,12 @@ pub def captured()
   let get = do cap
   let result = get()
   let _ = result
-  #       ^~~~~~: flow std.Int
+  #       ^~~~~~: flow 42
 
 pub def loops values @ Array[Pack[...{?k: Tuple[Int]}]]
   for ?k: (a = "none") = values
     let _ = a
-    #       ^: flow std.Int | std.Str
+    #       ^: flow "none" | std.Int
   let xs = $
     for ?k: (a = "none") = values
       - $a
@@ -133,7 +133,7 @@ pub def accepts block @ ((?k: Tuple[Int]) -> (Int | Str))
 pub def lambda()
   accepts do |?k: (a = "none")|
     let _ = a
-    #       ^: flow std.Int | std.Str
+    #       ^: flow "none" | std.Int
     a
 
 pub def annotated()
@@ -154,7 +154,7 @@ pub def annotated()
 pub def closed_dict value @ Dict[{}]
   let ?"key": (a = 1 b = a) ... = value
   let _ = b
-  #       ^: flow std.Int
+  #       ^: flow 1
 
 pub def dynamic_dict()
   let ?k: (Int(n = 0) | Str(n)) = {}
@@ -169,7 +169,7 @@ pub def mixed_alternatives value @ Pack[...{?k: (Int | Str)}]
 pub def dependent_alternative()
   let ?k: (a: a = 1 j: (Int(b = a) | Str(b))) = ()
   let _ = b
-  #       ^: flow std.Int
+  #       ^: flow 1
 
 pub def lambda_signatures()
   let f = do |?k: (a = 1)| -> Int a
@@ -194,18 +194,18 @@ pub def string_key value @ Dict[{?"key": Tuple[Bool]}]
     ?"key":
       - a = "missing"
   let _ = a
-  #       ^: flow std.Bool | std.Str
+  #       ^: flow "missing" | std.Bool
 
 pub def while_pattern value @ Pack[...{?k: Tuple[Int]}]
   while let ?k: (n = "missing") = value
     let _ = n
-    #       ^: flow std.Int | std.Str
+    #       ^: flow "missing" | std.Int
     break
 
 pub def nested_alternatives()
   let ?k: (Int(a = 1) | Str(a = "dead")) = ()
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let ?k: (j: (Int(b = 2) | Str(b = "dead"))) = ()
   let _ = b
-  #       ^: flow std.Int
+  #       ^: flow 2

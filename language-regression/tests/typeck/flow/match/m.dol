@@ -54,4 +54,4 @@ pub def defaults value @ Array[Int]
   match value
     _a b = "none"
       let _ = b
-      #       ^: flow std.Int | std.Str
+      #       ^: flow "none" | std.Int

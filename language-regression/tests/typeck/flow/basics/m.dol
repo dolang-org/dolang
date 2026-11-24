@@ -22,7 +22,7 @@ pub def looped c @ Bool
   while c
     y = :k:
   let _ = y
-  #       ^: flow std.Int | std.Sym
+  #       ^: flow 1 | :k:
 
 pub def truthy v @ (Int | nil)
   if v
@@ -130,9 +130,9 @@ pub def caught()
     y = :k:
   catch _
     let _ = y
-    #       ^: flow std.Str
+    #       ^: flow "a"
   let _ = y
-  #       ^: flow std.Str | std.Sym
+  #       ^: flow "a" | :k:
 
 pub def finished()
   let y = 1
@@ -142,9 +142,9 @@ pub def finished()
     y = :k:
   finally
     let _ = y
-    #       ^: flow std.Str | std.Sym
+    #       ^: flow "a" | :k:
   let _ = y
-  #       ^: flow std.Sym
+  #       ^: flow :k:
 
 let n = 0
 pub let reader = do
@@ -157,10 +157,10 @@ let m = 1
 pub let setter = do
   m = "a"
 let _ = m
-#       ^: flow std.Int | std.Str
+#       ^: flow "a" | 1
 setter()
 let _ = m
-#       ^: flow std.Int | std.Str
+#       ^: flow "a" | 1
 
 pub let id = do |a| a
 #                ^: flow Unknown
@@ -176,11 +176,11 @@ pub def partial c @ Bool
   let y = if c
     1
   let _ = y
-  #       ^: flow std.Int | std.Nil
+  #       ^: flow 1 | nil
   y = if c
     "a"
   let _ = y
-  #       ^: flow std.Nil | std.Str
+  #       ^: flow "a" | nil
 
 pub def partial_chain c @ Bool d @ Bool
   let y = if c

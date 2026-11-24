@@ -228,7 +228,6 @@ impl<'t, 'u> Lower<'t, 'u> {
         }
         let mut ir = self.graph.freeze();
         ir.settle_escapes();
-        ir.settle_assignments();
         ir
     }
 

@@ -59,7 +59,7 @@ pub def handler value
       x = "failed"
   catch _
     x
-#   ^: flow std.Int | std.Str
+#   ^: flow "failed" | 1
 
 pub def nested_scope value
   let n = "outer"

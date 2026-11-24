@@ -73,7 +73,7 @@ pub def captured()
   v = "a"
   let w = read()
   let _ = w
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "a" | 1
 
 # A variable a block assigns is volatile: its owner reads it as every value
 # assigned to it too, and a test doesn't narrow it. A copy of it narrows.
@@ -82,11 +82,11 @@ pub def volatile()
   let set = do v = "a"
   if v
     let _ = v
-    #       ^: flow std.Nil | std.Str
+    #       ^: flow "a" | nil
   let c = v
   if c
     let _ = c
-    #       ^: flow std.Str
+    #       ^: flow "a"
   set()
 
 # Until a block that assigns it is created, its owner holds what it assigned, and
@@ -98,10 +98,10 @@ pub def volatile_before_escape v @ (Str | nil)
     #       ^: flow std.Str
   w = 1
   let _ = w
-  #       ^: flow std.Int
+  #       ^: flow 1
   let set = do w = nil
   let _ = w
-  #       ^: flow std.Int | std.Nil
+  #       ^: flow 1 | nil
   set()
 
 # A variable only its owner assigns stays narrowed across a call, even once a
@@ -138,7 +138,7 @@ pub def looped()
   while true
     let read = do
       let _ = v
-      #       ^: flow std.Int | std.Str
+      #       ^: flow "a" | 1
       nil
     read()
     v = "a"
@@ -148,7 +148,7 @@ pub def handled()
   try
     apply 1 do |_x|
       let _ = v
-      #       ^: flow std.Int | std.Str
+      #       ^: flow "a" | 1
       nil
   catch _
     v = "a"
@@ -231,7 +231,7 @@ pub def thawed_volatile()
   let read = do
     if v
       let _ = v
-      #       ^: flow std.Nil | std.Str
+      #       ^: flow "a" | nil
     nil
   set()
   read()
@@ -262,9 +262,9 @@ let later = 1
 
 pub def reads()
   let _ = shared
-  #       ^~~~~~: flow std.Str
+  #       ^~~~~~: flow "a"
   let _ = later
-  #       ^~~~~: flow std.Int | std.Str
+  #       ^~~~~: flow "a" | 1
 
 later = "a"
 

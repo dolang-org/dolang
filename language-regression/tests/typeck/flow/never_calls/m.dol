@@ -38,7 +38,7 @@ pub def nested c @ Bool
   #    |          |
   #    |          any code after this call is unreachable
   y
-# ^: flow std.Int
+# ^: flow 1
 
 pub def bound c @ Bool
   let y = 1
@@ -51,7 +51,7 @@ pub def bound c @ Bool
   # LL |     let _ = fail "no"
   #    |             ^^^^^^^^^
   y
-# ^: flow std.Int
+# ^: flow 1
 
 # Neither edge of a `match` or `for` is taken
 pub def matched c @ Bool
@@ -66,7 +66,7 @@ pub def matched c @ Bool
       _
         y = "s"
   y
-# ^: flow std.Int
+# ^: flow 1
 
 pub def looped c @ Bool
   let y = 1
@@ -80,7 +80,7 @@ pub def looped c @ Bool
       y = "s"
     y = :k:
   y
-# ^: flow std.Int
+# ^: flow 1
 
 # The handler is still reached, from the state before the call
 pub def caught()
@@ -99,7 +99,7 @@ pub def caught()
   catch _
     nil
   y
-# ^: flow std.Str
+# ^: flow "s"
 
 # One alternative that never returns doesn't end the path
 pub class Stops

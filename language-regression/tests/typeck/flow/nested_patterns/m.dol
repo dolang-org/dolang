@@ -36,7 +36,7 @@ pub def nested_defaults xs @ Array[Int]
   let _ = d1
   #       ^~: flow std.Int
   let _ = d2
-  #       ^~: flow std.Int | std.Str
+  #       ^~: flow "none" | std.Int
 
 pub def annotated()
   let _x (i@Int s) = (nil, (1, "a"))

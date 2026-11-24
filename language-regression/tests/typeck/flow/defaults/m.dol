@@ -1,6 +1,7 @@
 # A default keeps its variable's annotation when it fits it. A `nil` or symbol
 # literal is a sentinel instead, joined into the annotation for the body to
-# narrow away. Any other default is an error. A default's literals decay.
+# narrow away. Any other default is an error. Without an annotation, a default
+# keeps its literals, as an assignment does.
 
 pub def apply[T] x @ T f @ ((T) -> nil) -> nil
   ...
@@ -27,7 +28,7 @@ pub def symbol :mode @ Str = :auto:
 pub def lambda()
   apply 1 do |x = "a"|
     let _ = x
-    #       ^: flow std.Int | std.Str
+    #       ^: flow "a" | std.Int
     nil
 
 pub def pattern xs @ Array[Int]

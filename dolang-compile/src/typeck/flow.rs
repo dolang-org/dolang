@@ -1972,10 +1972,11 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// The type an assignment stores: a literal assigned to a declared local or a
     /// field decays to its class, when that fits the annotation. A field keeps its
     /// annotation instead of a value that doesn't fit, which is reported where it's
-    /// written. An unannotated local assigned at only one site that no importer
-    /// can assign keeps the literals no write can widen: only those a value of
-    /// its type could be written through decay (see [`Database::decay_locked`]),
-    /// since writing through the value doesn't assign the local.
+    /// written. An unannotated local no importer can assign keeps the literals no write can widen: each
+    /// assignment is a strong update, and a join covers them all, so only those a
+    /// value of its type could be written through decay (see
+    /// [`Database::decay_locked`]), since writing through the value doesn't
+    /// assign the local.
     fn settle(&mut self, var: VarId, ty: TypeId) -> TypeId {
         let var = self.ir.var(var);
         if let (Origin::Field(_), Some(annotation)) = (var.origin, var.annotation)
@@ -1988,7 +1989,6 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
         if matches!(var.origin, Origin::Source(..))
             && var.annotation.is_none()
-            && var.flags.contains(VarFlags::ONCE)
             && !var.flags.contains(VarFlags::EXPORTED)
         {
             return self.db.decay_locked(ty);
@@ -2001,14 +2001,15 @@ impl<'a, 'u> Flow<'a, 'u> {
         }
     }
 
-    /// The type a default at `span` joins into its variable. Its literals decay.
-    /// An annotated variable keeps its annotation when the default fits it, and
-    /// otherwise takes a `nil` or symbol literal as a sentinel, which the body
-    /// narrows away; any other default is reported.
+    /// The type a default at `span` joins into its variable. Without an
+    /// annotation, it keeps the literals no write can widen, as an assignment
+    /// does (see [`Flow::settle`]). An annotated variable keeps its annotation
+    /// when the default fits it, and otherwise takes a `nil` or symbol literal as
+    /// a sentinel, which the body narrows away; any other default is reported.
     fn default(&mut self, var: VarId, ty: TypeId, span: Span) -> TypeId {
         let decayed = self.db.decay(ty);
         let Some(annotation) = self.annotation(var) else {
-            return decayed;
+            return self.db.decay_locked(ty);
         };
         if ty == self.db.bottom() || self.below(decayed, annotation) {
             return annotation;
