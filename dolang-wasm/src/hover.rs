@@ -217,6 +217,12 @@ pub(crate) fn hover(
             Some(Kind::ImportModule { .. } | Kind::PreludeModule { .. })
         )
     });
+    // An item a type names has no node, so what the check concluded at it is
+    // about what encloses it
+    let type_item = reference
+        .is_none()
+        .then(|| type_item_at(unit, start, end))
+        .flatten();
     let node = checked.and_then(|checked| {
         let range = unit.locate(start..end);
         let (start, end) = (range.start(), unit.end(range));
@@ -224,16 +230,25 @@ pub(crate) fn hover(
         node.ancestors()
             .find(|node| node.span().start() <= start && end <= node.end())
     });
-    let types = node.filter(|_| !module).and_then(|node| {
-        let span = node.span();
-        let range = unit.byte_range(span);
-        let spans = reference.map(|reference| (reference.start, reference.end));
-        let named = (spans == Some((range.start, range.end))).then(|| unit.text(span));
-        Some((range, type_lines(node, named)?))
-    });
-    let (targets, chosen) = match checked {
-        Some(checked) => targets(unit, checked, node, reference.map(|reference| reference.id)),
-        None => (Vec::new(), None),
+    let types = node
+        .filter(|_| !module && type_item.is_none())
+        .and_then(|node| {
+            let span = node.span();
+            let range = unit.byte_range(span);
+            let spans = reference.map(|reference| (reference.start, reference.end));
+            let named = (spans == Some((range.start, range.end))).then(|| unit.text(span));
+            Some((range, type_lines(node, named)?))
+        });
+    let (targets, chosen) = match (checked, &type_item) {
+        (_, Some((module, item, _))) => {
+            let own = checked.map_or("", |checked| &checked.name[..]);
+            let target = item_target(unit, own, module, item);
+            (target.into_iter().collect(), None)
+        }
+        (Some(checked), None) => {
+            targets(unit, checked, node, reference.map(|reference| reference.id))
+        }
+        (None, None) => (Vec::new(), None),
     };
     // What a check found has its own docs, each union alternative's in turn;
     // any other reference's are its declaration's
@@ -251,7 +266,9 @@ pub(crate) fn hover(
             (declared.unwrap_or_default(), true)
         }
     };
-    let reference = reference.map(|reference| (reference.start, reference.end));
+    let reference = reference
+        .map(|reference| (reference.start, reference.end))
+        .or(type_item.map(|(.., item)| (item.start, item.end)));
     let ((start, end), types) = match types {
         None if declarations.is_empty() => return None,
         None => (reference?, Vec::new()),
@@ -263,6 +280,48 @@ pub(crate) fn hover(
         types,
         declarations,
         complete,
+    })
+}
+
+/// The item a path through a module names as a type, as `json.DecodeValue`
+/// does, at the bytes `start` to `end` of the source: a position in the item's
+/// name, or a range that is exactly it. Gives the module, the item, and where
+/// its name is.
+fn type_item_at<'u>(
+    unit: &'u Unit<'_>,
+    start: usize,
+    end: usize,
+) -> Option<(&'u str, &'u str, Range<usize>)> {
+    unit.nodes().find_map(|(_, node)| {
+        let Kind::NameType {
+            head,
+            target: Some(target),
+        } = node.kind()
+        else {
+            return None;
+        };
+        let source = unit.source();
+        let dot = unit.byte_range(head).end;
+        // The span covers any grouping parentheses
+        let path = source.get(dot..unit.byte_range(node.span()?).end)?;
+        let rest = path.strip_prefix('.')?;
+        let len = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        let item = dot + 1..dot + 1 + len;
+        let under = match start == end {
+            true => (item.start..=item.end).contains(&start),
+            false => (item.start, item.end) == (start, end),
+        };
+        if !under {
+            return None;
+        }
+        let module = match unit.node(target)?.kind() {
+            Kind::ImportModule { module, .. } => unit.text(module),
+            Kind::PreludeModule { module, .. } => module,
+            _ => return None,
+        };
+        Some((module, &source[item.clone()], item))
     })
 }
 
@@ -1121,6 +1180,26 @@ let f = twice";
         let at = last(source, "upper");
         let hover = checked(source).hover(at, at).unwrap();
         assert_eq!(bundled(&hover), [("std", "Str.upper", None)]);
+    }
+
+    #[wasm_bindgen_test]
+    fn type_item_through_a_module_names_a_bundled_item() {
+        let source = "import json: j\ndef f() -> std.Never\n  throw std.ValueError \"x\"\ndef g _v@(j.DecodeValue | nil)\n  nil\n";
+        let analyzed = checked(source);
+        // Through the prelude's module, and through an import inside a group
+        for (needle, module, item) in [
+            ("Never", "std", "Never"),
+            ("DecodeValue", "json", "DecodeValue"),
+        ] {
+            let at = last(source, needle);
+            let hover = analyzed.hover(at + 2, at + 2).unwrap();
+            assert_eq!(bundled(&hover), [(module, item, None)]);
+            assert_eq!((hover.from, hover.to), (at, at + needle.len()));
+            assert!(hover.types.is_empty(), "{:?}", hover.types);
+            // A range that is exactly the item's name
+            let hover = analyzed.hover(at, at + needle.len()).unwrap();
+            assert_eq!(bundled(&hover), [(module, item, None)]);
+        }
     }
 
     #[wasm_bindgen_test]

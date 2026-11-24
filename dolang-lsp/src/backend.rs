@@ -854,6 +854,40 @@ impl Document {
             .then(|| self.unit.locate(offset..offset).start())
     }
 
+    /// The item a path through a module names as a type, as `json.DecodeValue`
+    /// does, when the byte `offset` falls in the item's name: the module, the
+    /// item, and where its name is
+    fn type_item_at(&self, offset: usize) -> Option<(&str, &str, ops::Range<usize>)> {
+        let unit = &self.unit;
+        unit.nodes().find_map(|(_, node)| {
+            let Kind::NameType {
+                head,
+                target: Some(target),
+            } = node.kind()
+            else {
+                return None;
+            };
+            let source = unit.source();
+            let dot = unit.byte_range(head).end;
+            // The span covers any grouping parentheses
+            let path = source.get(dot..unit.byte_range(node.span()?).end)?;
+            let rest = path.strip_prefix('.')?;
+            let len = rest
+                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                .unwrap_or(rest.len());
+            let item = dot + 1..dot + 1 + len;
+            if !(item.start..=item.end).contains(&offset) {
+                return None;
+            }
+            let module = match unit.node(target)?.kind() {
+                Kind::ImportModule { module, .. } => unit.text(module),
+                Kind::PreludeModule { module, .. } => module,
+                _ => return None,
+            };
+            Some((module, &source[item.clone()], item))
+        })
+    }
+
     /// The declaration named by the token under `pos`, if any.
     ///
     /// `refs` is sorted by where each token starts, so the only candidate is
@@ -876,6 +910,15 @@ impl Document {
         reference: Option<NodeId>,
     ) -> (Vec<Target<'a>>, Option<u32>) {
         let modules = &analyzed.modules;
+        // The check sees no use of an item a type names
+        if reference.is_none()
+            && let Some((module, item, _)) = self.type_item_at(offset)
+        {
+            return (
+                lookup::item(modules, module, item).into_iter().collect(),
+                None,
+            );
+        }
         let node = self
             .pos(offset)
             .and_then(|pos| analyzed.analysis.at(analyzed.unit, pos));
@@ -2880,10 +2923,17 @@ impl LanguageServer for Backend {
                 Some(Kind::ImportModule { .. } | Kind::PreludeModule { .. })
             )
         });
+        // An item a type names has no node, so what the check concluded at it
+        // is about what encloses it
+        let type_item = (reference.is_none())
+            .then(|| index.offset_from_position(pos))
+            .flatten()
+            .and_then(|offset| document.type_item_at(offset))
+            .map(|(.., item)| index.range_from_offsets(item.start, item.end));
         let (checked, (targets, chosen)) =
             match (analyzed.as_deref(), index.offset_from_position(pos)) {
                 (Some(analyzed), Some(offset)) => (
-                    (!module)
+                    (!module && type_item.is_none())
                         .then(|| document.checked_at(analyzed, offset, referenced))
                         .flatten(),
                     document.targets(analyzed, offset, reference.map(|(_, id, _)| id)),
@@ -2915,7 +2965,7 @@ impl LanguageServer for Backend {
             let docs: Vec<_> = docs.iter().filter_map(|doc| doc.render(typed)).collect();
             (!docs.is_empty()).then(|| docs.join("\n\n---\n\n"))
         };
-        let reference = reference.map(|(range, ..)| range);
+        let reference = reference.map(|(range, ..)| range).or(type_item);
         let (range, value) = match checked {
             None => match (reference, render(false)) {
                 (Some(range), Some(markdown)) => (range, markdown),
@@ -3809,6 +3859,42 @@ let f = twice
         assert_eq!(y, "```dolang\nlet y @ std.Int = ...\n```");
         // A keyword has no node
         assert_eq!(hover_text(&mut harness, uri, 3, 1).await, None);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_resolves_an_item_a_type_names_through_a_module() {
+        // Only `dodo lsp-test` builds with the bundled typelibs
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let mut harness = Harness::checking(Duration::from_millis(10));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///type-item-hover.dol".parse().unwrap();
+        let text = "\
+import std: s
+def fail() -> std.Never
+  throw std.ValueError \"failed\"
+def g x@(s.Never | nil)
+  x
+";
+        harness.open(uri.clone(), text, 1).await;
+        harness.next_publish().await;
+        // Through the prelude's module, and through an import inside a group
+        for (line, start) in [(1, 18), (3, 11)] {
+            let hover = hover_at(&mut harness, uri.clone(), line, start + 2).await;
+            let hover = hover.unwrap_or_else(|| panic!("no hover on line {line}"));
+            let HoverContents::Markup(content) = hover.contents else {
+                panic!("expected markup")
+            };
+            assert!(
+                content.value.starts_with("```dolang\n# module std\n"),
+                "{}",
+                content.value
+            );
+            assert!(content.value.contains("no values"), "{}", content.value);
+            let range = Range::new(Position::new(line, start), Position::new(line, start + 5));
+            assert_eq!(hover.range, Some(range));
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
