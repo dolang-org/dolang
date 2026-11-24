@@ -5,13 +5,20 @@
 //! declared in it, or what it inherits. A class's members are what the runtime
 //! inherits, so a member it only claims through a protocol is missing. Members
 //! are compared by kind: fields invariantly, as they are mutable, methods and
-//! property accessors by their implementations' signatures. A field is also
+//! property accessors by the signatures they're called with. A field is also
 //! upheld by a property with a getter and a setter, and a property by a field,
-//! each compared as accessors that read and set the field. An overload below a
-//! required signature satisfies it in place of the implementation, as overloads
-//! are unchecked assertions narrowing it. The supertype's signature
-//! takes the conforming declaration's own type as its receiver, or `Type` of it
-//! for a class method, since only calls on its instances or its object matter.
+//! each compared as accessors that read and set the field. The supertype's
+//! signature takes the conforming declaration's own type as its receiver, or
+//! `Type` of it for a class method, since only calls on its instances or its
+//! object matter.
+//!
+//! A method is called with its overloads, or its implementation's signature if
+//! it has none: an implementation behind overloads is never what callers see.
+//! So each required signature must be below one provided signature, chosen by
+//! trials as when an overloaded function is passed as a function. A required
+//! signature covered only by several provided ones together, such as
+//! `(Int | Str) -> (Int | Str)` by `(Int) -> Int` and `(Str) -> Str`, is not
+//! covered.
 //!
 //! A generic class reached more than once in a declaration's ancestry is reached
 //! only as its first instance, so that instance must be below the others it
@@ -155,6 +162,11 @@ impl Solver<'_> {
                 structural,
             });
             let kind = match &provided {
+                // A class's member is upheld by being below the class, which a
+                // structural judgment derives for each class the protocol names
+                _ if structural && !self.is_protocol(required.class) => continue,
+                // The member required, as the supertype has it, meets itself
+                Some(provided) if self.same_member(provided, &required) => continue,
                 Some(provided) => self
                     .requirement(provided, &required, receiver)
                     .unwrap_or_else(RequirementKind::Undecided),
@@ -197,6 +209,13 @@ impl Solver<'_> {
             let key = requirement.key;
             match requirement.kind {
                 RequirementKind::Missing => {
+                    trace!(
+                        self,
+                        "{} lacks `{}` of {}",
+                        self.render(self.closed(actual)),
+                        self.db.member_name(key),
+                        self.render(protocol)
+                    );
                     return Err(Issue::Contradiction(Contradiction::MissingMember(key)));
                 }
                 RequirementKind::Changed { provided, required } => {
@@ -260,35 +279,23 @@ impl Solver<'_> {
         required: &Found,
         receiver: Option<Narrowing>,
     ) -> Result<RequirementKind, Issue> {
-        // The required signature, called on the conforming declaration's instances
-        let expected = |signatures: &Signatures| match signatures.implementation {
-            Some(signature) => self.rewrite(signature, receiver, None, None).map(Some),
-            None => Ok(None),
-        };
         let changed = || RequirementKind::Changed {
             provided: describe(&provided.kind),
             required: describe(&required.kind),
         };
+        let accessor = |signatures: &Signatures| accessor_signature(signatures);
         let mut pairs = Vec::new();
-        // An overload below the required signature satisfies it, since an
-        // overload is an unchecked assertion that narrows the implementation.
-        // Otherwise the implementation must be below it.
-        // A required signature with unsolved arguments has no closed form to
-        // probe the overloads with.
-        let relate = |pairs: &mut Vec<_>, actual: &Signatures, expected: Option<Term>| {
-            let (Some(implementation), Some(expected)) = (actual.implementation, expected) else {
+        // Each required signature, called on the conforming declaration's
+        // instances, must be below what the provided member is called as: one
+        // of its overloads, chosen by trials as for any overloaded function
+        let relate = |pairs: &mut Vec<_>, actual: &Signatures, required: &Signatures| {
+            let Some(actual) = self.overload_set(actual)? else {
                 return Ok::<_, Issue>(());
             };
-            if !actual.overloads.is_empty()
-                && let Ok(required) = self.reify(expected)
-            {
-                for &overload in &actual.overloads {
-                    if self.probe(self.reify(overload)?, required) == Ok(Status::Proven) {
-                        return Ok(());
-                    }
-                }
+            for signature in interface(required) {
+                let expected = self.rewrite(signature, receiver, None, None)?;
+                pairs.push((actual, expected, false));
             }
-            pairs.push((implementation, expected, false));
             Ok(())
         };
         match (&provided.kind, &required.kind) {
@@ -298,7 +305,7 @@ impl Solver<'_> {
                 pairs.push((expected, actual, true));
             }
             (FoundKind::Method(actual), FoundKind::Method(required)) => {
-                relate(&mut pairs, actual, expected(required)?)?;
+                relate(&mut pairs, actual, required)?;
             }
             (
                 FoundKind::Property { getter, setter },
@@ -314,7 +321,7 @@ impl Solver<'_> {
                 }
                 for (actual, required) in [(getter, required_getter), (setter, required_setter)] {
                     if let (Some(actual), Some(required)) = (actual, required) {
-                        relate(&mut pairs, actual, expected(required)?)?;
+                        relate(&mut pairs, actual, required)?;
                     }
                 }
             }
@@ -331,24 +338,25 @@ impl Solver<'_> {
                 // A field whose type isn't solved yet, as a structural judgment
                 // leaves its protocol's arguments, is related to what the getter
                 // returns and what the setter takes
+                let (getter, setter) = (accessor(getter)?, accessor(setter)?);
                 let field = match self.reify(field) {
                     Ok(field) => field,
                     Err(Residual::Inference) => {
-                        if let Some(getter) = getter.implementation {
+                        if let Some(getter) = getter {
                             pairs.push((self.accessor_part(getter, false)?, field, false));
                         }
-                        if let Some(setter) = setter.implementation {
+                        if let Some(setter) = setter {
                             pairs.push((field, self.accessor_part(setter, true)?, true));
                         }
                         return Ok(RequirementKind::Relate(pairs));
                     }
                     Err(residual) => return Err(residual.into()),
                 };
-                if let Some(getter) = getter.implementation {
+                if let Some(getter) = getter {
                     let expected = self.rewrite(getter, None, None, Some(field))?;
                     pairs.push((getter, expected, false));
                 }
-                if let Some(setter) = setter.implementation {
+                if let Some(setter) = setter {
                     let expected = self.rewrite(setter, None, Some(field), None)?;
                     pairs.push((setter, expected, false));
                 }
@@ -364,7 +372,11 @@ impl Solver<'_> {
             ) => {
                 let field = self.reify(field)?;
                 for (accessor, value) in [(required_getter, false), (required_setter, true)] {
-                    let Some(signature) = accessor.as_ref().and_then(|s| s.implementation) else {
+                    let Some(signature) = accessor.as_ref().map(accessor_signature).transpose()?
+                    else {
+                        continue;
+                    };
+                    let Some(signature) = signature else {
                         continue;
                     };
                     let (value, result) = match value {
@@ -379,6 +391,83 @@ impl Solver<'_> {
             _ => return Ok(changed()),
         }
         Ok(RequirementKind::Relate(pairs))
+    }
+
+    /// Whether a provided member is the required one, with the same types: the
+    /// declaration inherits it as the supertype has it
+    fn same_member(&self, provided: &Found, required: &Found) -> bool {
+        fn terms(kind: &FoundKind) -> Option<Vec<Term>> {
+            fn signatures(signatures: &Signatures) -> impl Iterator<Item = Term> + '_ {
+                let overloads = signatures.overloads.iter().copied();
+                overloads.chain(signatures.implementation)
+            }
+            Some(match kind {
+                &FoundKind::Field(ty) => vec![ty],
+                FoundKind::Method(method) => signatures(method).collect(),
+                FoundKind::Property { getter, setter } => [getter, setter]
+                    .into_iter()
+                    .flatten()
+                    .flat_map(signatures)
+                    .collect(),
+                FoundKind::Unknown(_) => return None,
+            })
+        }
+        if provided.class != required.class || provided.bound != required.bound {
+            return false;
+        }
+        let (Some(provided), Some(required)) = (terms(&provided.kind), terms(&required.kind))
+        else {
+            return false;
+        };
+        provided.len() == required.len()
+            && provided
+                .into_iter()
+                .zip(required)
+                .all(|(provided, required)| {
+                    matches!(
+                        (self.reify(provided), self.reify(required)),
+                        (Ok(provided), Ok(required)) if provided == required
+                    )
+                })
+    }
+
+    /// What a provided member is called as: its one signature, or its overloads
+    /// as an overloaded function without its implementation, which callers
+    /// don't see. `None` if it has neither.
+    fn overload_set(&self, signatures: &Signatures) -> Result<Option<Term>, Issue> {
+        let overloads = &signatures.overloads;
+        let (&first, rest) = match overloads.split_first() {
+            Some(split) => split,
+            None => return Ok(signatures.implementation),
+        };
+        if rest.is_empty() {
+            return Ok(Some(first));
+        }
+        let shared = match first {
+            Term::View(view) => overloads
+                .iter()
+                .all(|overload| {
+                    matches!(overload, Term::View(other) if other.environment == view.environment)
+                })
+                .then_some(view.environment),
+            _ => None,
+        };
+        let types = overloads
+            .iter()
+            .map(|&overload| match (overload, shared) {
+                (Term::View(view), Some(_)) => Ok(view.ty),
+                _ => self.reify(overload),
+            })
+            .collect::<Result<_, _>>()?;
+        let ty = self.db.intern(Type::Overloaded {
+            overloads: types,
+            implementation: None,
+            function: signatures.function,
+        });
+        Ok(Some(match shared {
+            Some(environment) => self.view(ty, environment),
+            None => self.closed(ty),
+        }))
     }
 
     /// A provided accessor's result, or with `value` a setter's value
@@ -457,6 +546,8 @@ impl Solver<'_> {
         let Type::Function(function) = self.db.ty(body) else {
             return Err(Residual::Unsupported("a method that isn't a function").into());
         };
+        // The depth the signature's scope refers to its class's binders at
+        let outer = usize::from(binders.is_some());
         let mut function = function.clone();
         if receiver.is_some() || value.is_some() {
             let Type::Schema(items) = self.db.ty(function.params) else {
@@ -471,7 +562,7 @@ impl Solver<'_> {
                 let Some(ty) = positions.next() else {
                     return Err(Residual::Unsupported("a method without a receiver").into());
                 };
-                if let Some(narrowed) = self.narrowed_receiver(*ty, receiver)? {
+                if let Some(narrowed) = self.narrowed_receiver(*ty, receiver, outer)? {
                     *ty = narrowed;
                 }
             } else if value.is_some() {
@@ -502,11 +593,15 @@ impl Solver<'_> {
     }
 
     /// A receiver narrowed as [`Self::narrowed`] does, inside `Type` for a class
-    /// method's. `None` leaves it as written.
+    /// method's. `None` leaves it as written. A structural receiver is the
+    /// instance in place of the class's own receiver, written in a scope that
+    /// refers to the class's binders at depth `outer`; an overload's specialized
+    /// receiver is left as written, as it describes only some instances.
     fn narrowed_receiver(
         &self,
         receiver: TypeId,
         narrowing: Narrowing,
+        outer: usize,
     ) -> Result<Option<TypeId>, Issue> {
         let Narrowing {
             instance,
@@ -516,6 +611,17 @@ impl Solver<'_> {
         } = narrowing;
         let class_type = self.db.intrinsic(Intrinsic::Type);
         if structural {
+            let own = match (object, self.db.ty(receiver)) {
+                (false, _) => self.own_receiver(receiver, outer),
+                (true, Type::Apply { base, args, .. }) if Some(*base) == class_type => {
+                    matches!(&args[..], &[Argument::Positional(inner)]
+                        if self.own_receiver(inner, outer))
+                }
+                (true, _) => false,
+            };
+            if !own {
+                return Ok(None);
+            }
             return Ok(Some(match (object, class_type) {
                 (false, _) => instance,
                 (true, Some(class_type)) => self.db.intern(Type::Apply {
@@ -544,6 +650,25 @@ impl Solver<'_> {
             args: vec![Argument::Positional(narrowed)].into(),
             kind: Kind::Type,
         })))
+    }
+
+    /// Whether a receiver is its class applied to its own binders, which the
+    /// signature's scope refers to at depth `outer`, or every value's
+    fn own_receiver(&self, receiver: TypeId, outer: usize) -> bool {
+        let own = |slot: usize, ty: TypeId| {
+            matches!(self.db.ty(ty), Type::Bound { reference, .. }
+                if usize::from(reference.depth) == outer && usize::from(reference.slot) == slot)
+        };
+        match self.db.ty(receiver) {
+            Type::Decl(_) => true,
+            Type::Apply { base, args, .. } if matches!(self.db.ty(*base), Type::Decl(_)) => {
+                args.iter().enumerate().all(|(slot, arg)| match *arg {
+                    Argument::Positional(ty) | Argument::Expand(ty) => own(slot, ty),
+                    Argument::Keyword(_, ty) => own(slot, ty),
+                })
+            }
+            _ => receiver == self.db.top(),
+        }
     }
 
     /// A receiver `C[a…]`, written in a signature's scope, narrowed to instances
@@ -761,6 +886,24 @@ impl Solver<'_> {
 
     fn is_protocol(&self, decl: DeclId) -> bool {
         self.db.declaration(decl).source.kind == DeclKind::Protocol
+    }
+}
+
+/// The signatures a member is called with: its overloads, or its
+/// implementation's signature if it has none
+fn interface(signatures: &Signatures) -> Vec<Term> {
+    match signatures.overloads.is_empty() {
+        true => signatures.implementation.into_iter().collect(),
+        false => signatures.overloads.clone(),
+    }
+}
+
+/// An accessor's one signature, related to a field's type as it reads or sets
+/// it. An overloaded accessor has no one signature to relate.
+fn accessor_signature(signatures: &Signatures) -> Result<Option<Term>, Issue> {
+    match signatures.overloads.is_empty() {
+        true => Ok(signatures.implementation),
+        false => Err(Residual::Unsupported("an overloaded accessor beside a field").into()),
     }
 }
 

@@ -126,6 +126,8 @@ pub class ManagerAccessMask: AccessMask
   @def (call) cls ...flags@ManagerAccessRight -> ManagerAccessMask
 
   # Constructs a flag set from one iterable of symbols.
+  #
+  # A generic mask converts with the bits this type does not name kept.
   @def (call) cls flags@Iterable[ManagerAccessRight] -> ManagerAccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
@@ -135,9 +137,6 @@ pub class ManagerAccessMask: AccessMask
   # let value = ManagerAccessMask 0xf003f
   # ```
   @def (call) cls value@Int -> ManagerAccessMask
-
-  # Converts a generic mask, keeping bits this type does not name.
-  @def (call) cls mask@AccessMask -> ManagerAccessMask
 
   #[class]
   pub def (call) cls ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight] | Int | AccessMask) -> ManagerAccessMask
@@ -204,6 +203,8 @@ pub class ServiceAccessMask: AccessMask
   @def (call) cls ...flags@ServiceAccessRight -> ServiceAccessMask
 
   # Constructs a flag set from one iterable of symbols.
+  #
+  # A generic mask converts with the bits this type does not name kept.
   @def (call) cls flags@Iterable[ServiceAccessRight] -> ServiceAccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
@@ -213,9 +214,6 @@ pub class ServiceAccessMask: AccessMask
   # let value = ServiceAccessMask 0xf01ff
   # ```
   @def (call) cls value@Int -> ServiceAccessMask
-
-  # Converts a generic mask, keeping bits this type does not name.
-  @def (call) cls mask@AccessMask -> ServiceAccessMask
 
   #[class]
   pub def (call) cls ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight] | Int | AccessMask) -> ServiceAccessMask

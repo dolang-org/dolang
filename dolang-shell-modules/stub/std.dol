@@ -2749,15 +2749,21 @@ pub class Num
   pub def clamp[N @ Num] self@N lower@N upper@N -> N
     ...
 
+  @def (add) self other@Int -> Num
+  @def (add) self other@Float -> Float
   pub def (add) self other @ Num -> Num
     ...
 
   pub def (radd) self other @ Num -> Num
     ...
 
+  @def (sub) self other@Int -> Num
+  @def (sub) self other@Float -> Float
   pub def (sub) self other @ Num -> Num
     ...
 
+  @def (mul) self other@Int -> Num
+  @def (mul) self other@Float -> Float
   pub def (mul) self other @ Num -> Num
     ...
 
@@ -2770,6 +2776,8 @@ pub class Num
   pub def (ediv) self other @ Num -> Int
     ...
 
+  @def (mod) self other@Int -> Num
+  @def (mod) self other@Float -> Float
   pub def (mod) self other @ Num -> Num
     ...
 

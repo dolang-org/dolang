@@ -138,6 +138,8 @@ pub class AccessMask: WindowsAccessMask
   @def (call) cls ...flags@AccessRight -> AccessMask
 
   # Constructs a flag set from one iterable of symbols.
+  #
+  # A generic mask converts with the bits this type does not name kept.
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
@@ -147,9 +149,6 @@ pub class AccessMask: WindowsAccessMask
   # let value = AccessMask 0x20019
   # ```
   @def (call) cls value@Int -> AccessMask
-
-  # Converts a generic mask, keeping bits this type does not name.
-  @def (call) cls mask@WindowsAccessMask -> AccessMask
 
   #[class]
   pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight] | Int | WindowsAccessMask) -> AccessMask

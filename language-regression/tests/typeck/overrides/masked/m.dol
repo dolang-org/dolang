@@ -138,11 +138,6 @@ pub @class Numbered: Source[Num]
 pub @class Precise: Source[Int]
 
 pub class Claimed: @Numbered Ints
-# error: `get` from `Source` does not match `Source.get`
-#   --> m.dol:LL:LL
-#    |
-# LL | pub class Claimed: @Numbered Ints
-#    |                              ^^^^
 # error: `m.Source[m.Num]` from `Numbered` is not below `m.Source[m.Int]` from `Ints`; name `Ints` before `Numbered`
 #   --> m.dol:LL:LL
 #    |

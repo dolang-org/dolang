@@ -220,10 +220,14 @@ impl Solver<'_> {
                 self.add_bound(a, Term::Infer(b), false, j.obligation)?;
                 self.add_bound(b, Term::Infer(a), true, j.obligation)?;
             }
-            (&Head::Infer(id), _) => self.add_bound(id, j.expected, false, j.obligation)?,
+            (&Head::Infer(id), _) => {
+                let expected = self.shape_evaluated(j.expected, false)?;
+                self.add_bound(id, expected, false, j.obligation)?;
+            }
             (_, &Head::Infer(id)) => {
-                self.occupy(id, j.actual, j.obligation);
-                self.add_bound(id, j.actual, true, j.obligation)?;
+                let actual = self.shape_evaluated(j.actual, true)?;
+                self.occupy(id, actual, j.obligation);
+                self.add_bound(id, actual, true, j.obligation)?;
             }
             _ => return Ok(Continue(())),
         }
@@ -337,8 +341,10 @@ impl Solver<'_> {
     /// A union of projections on the left. A projection is of a rigid's schema,
     /// or can't be evaluated. The former is below the same projection of the
     /// rigid's bound. A read of a rigid's member schema is below the same read
-    /// of its bound's (see [`Self::widened_fields`]). An item projection is also below one whose key selects as
-    /// much and whose schema is wider, or for `AssignItem`, one of the same
+    /// of its bound's (see [`Self::widened_fields`]). An `IndexItem` is below
+    /// its schema's values (see [`Self::among_values`]). An item projection is
+    /// also below one whose key selects as much and whose schema is wider, or
+    /// for `AssignItem`, one of the same
     /// schema whose key selects as little. An `IndexItem` with a rigid in its
     /// key is below the one with that key widened toward its bound (see
     /// [`Self::widened_key`]), after its schema is widened; `AssignItem` is
@@ -357,6 +363,7 @@ impl Solver<'_> {
                 UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
                 _ if self.shares(*view, member, &j.b)? => continue,
                 _ if self.congruent(*view, member, &j.b)? => continue,
+                _ if self.among_values(*view, member, &j.b)? => continue,
                 _ => self
                     .widened_projection(*view, member)?
                     .ok_or(Residual::Unsupported("an unevaluated projection"))?,
@@ -404,10 +411,25 @@ impl Solver<'_> {
             {
                 Ok(Some((view.child(union(member.with(fields))), step)))
             }
-            UnionMember::IndexItem(schema, key) => Ok(self.widened_key(key)?.map(|(key, step)| {
-                let projected = union(UnionMember::IndexItem(schema, key));
-                (view.child(projected), step)
-            })),
+            UnionMember::IndexItem(schema, key) => {
+                // A skolem key widens to its one closed bound, which selects as
+                // much
+                if let Term::Skolem(id) = self.resolve(view.child(key))? {
+                    let bounds = self.abstract_bounds(Abstract::Skolem(id));
+                    let [(bound, step)] = &bounds[..] else {
+                        return Ok(None);
+                    };
+                    let Ok(bound) = self.reify(*bound) else {
+                        return Ok(None);
+                    };
+                    let projected = union(UnionMember::IndexItem(schema, bound));
+                    return Ok(Some((view.child(projected), step.clone())));
+                }
+                Ok(self.widened_key(key)?.map(|(key, step)| {
+                    let projected = union(UnionMember::IndexItem(schema, key));
+                    (view.child(projected), step)
+                }))
+            }
             _ => Ok(None),
         }
     }
@@ -1144,6 +1166,43 @@ impl Solver<'_> {
             if std::mem::discriminant(&member) == std::mem::discriminant(&other)
                 && self.same(left, other_view.child(single(other)))?
             {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Whether an `IndexItem` on the left is below a union on the right that
+    /// lists all of its schema's values, whatever its key selects: the same
+    /// schema's `Values`, or its `Expand` if the key is an index, which selects
+    /// only positions. It holds without evaluating either, so an item of a rigid
+    /// schema is among its values without widening the schema to its bound.
+    fn among_values(&self, view: TypeView, member: UnionMember, b: &Head) -> Result<bool, Issue> {
+        let (UnionMember::IndexItem(schema, key), Head::Structural(other_view)) = (member, b)
+        else {
+            return Ok(false);
+        };
+        let Type::Union(others) = self.db.ty(other_view.ty) else {
+            return Ok(false);
+        };
+        let schema = view.child(schema);
+        let mut index = None;
+        for &other in others.iter() {
+            let other_schema = match other {
+                UnionMember::Values(other) => other,
+                UnionMember::Expand(other) => {
+                    let index = match index {
+                        Some(index) => index,
+                        None => *index.insert(self.index_key(view.child(key))?),
+                    };
+                    if !index {
+                        continue;
+                    }
+                    other
+                }
+                _ => continue,
+            };
+            if self.same(schema, other_view.child(other_schema))? {
                 return Ok(true);
             }
         }

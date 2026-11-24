@@ -20,9 +20,6 @@ pub @class Indexable[T]: Index[T]
   #[getter]
   pub def len self -> Int
 
-  # Returns the item at an index.
-  pub def (index) self index@Int -> T
-
 # Samples a uniformly distributed integer from `range`.
 #
 # An omitted start is the smallest `Int`, and an omitted end includes the
