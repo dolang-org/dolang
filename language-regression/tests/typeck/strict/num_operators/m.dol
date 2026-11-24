@@ -1,0 +1,33 @@
+# dolang: strict
+# `Num`'s arithmetic takes an `Int` or a `Float`, which `Int` and `Float` each
+# meet with one of their own overloads.
+
+import std:
+  - @Num
+
+pub def ints a @ Int b @ Int -> Int
+  (a + b * a - b % a)
+
+pub def mixed a @ Int b @ Float -> Float
+  (a + b)
+
+pub def floats a @ Float b @ Int -> Float
+  (a * b)
+
+pub def by_int[N @ Num] n @ N -> Num
+  (n + 1)
+
+pub def by_float[N @ Num] n @ N -> Float
+  (n - 1.5)
+
+# Only an `Int` or a `Float` is an operand
+pub def nums a @ Num b @ Num -> Num
+  (a + b)
+# error: no overload of `(add)` accepts these arguments
+#   --> m.dol:LL:LL
+#    |
+# LL |   (a + b)
+#    |    ^^^^^
+#    |
+#    = note: `(std.Num, std.Int) -> std.Num`: expected `std.Int`, found `std.Num`
+#    = note: `(std.Num, std.Float) -> std.Float`: expected `std.Float`, found `std.Num`

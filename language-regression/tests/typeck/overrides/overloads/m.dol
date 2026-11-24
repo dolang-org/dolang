@@ -1,6 +1,7 @@
-# Overrides compare implementations; overloads narrow calls where they're made.
-# An overload below a required signature satisfies it in the implementation's
-# place, as an assertion the checker can't prove otherwise.
+# A method is called with its overloads, or its implementation's signature if
+# it has none, so an override or a protocol's member is compared by those: each
+# required signature must be below one provided signature. An implementation
+# behind overloads isn't what callers see, so it never meets a requirement.
 
 pub class Num
 pub class Int: Num
@@ -12,9 +13,30 @@ pub class Base
   pub def pick _self x @ Num -> Num
     ...
 
+# Each of `Base.pick`'s overloads is covered by one of these
+pub class Covered: Base
+  @def pick _self x @ Int -> Int
+  @def pick _self x @ Num -> Num
+  @def pick _self x @ Other -> Other
+  pub def pick _self x @ (Num | Other) -> (Num | Other)
+    ...
+
+# Order doesn't matter: each overload is covered by whichever one fits
+pub class Reordered: Base
+  @def pick _self x @ Num -> Num
+  @def pick _self x @ Int -> Int
+  pub def pick _self x @ Num -> Num
+    ...
+
+# Neither of `Base.pick`'s overloads is covered, whatever the implementation
 pub class Same: Base
   @def pick _self x @ Other -> Other
   pub def pick _self x @ Num -> Num
+    # error: `pick` does not match `Base.pick`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pick _self x @ Num -> Num
+    #    |           ^^^^
     ...
 
 pub class Narrow: Base
@@ -44,8 +66,44 @@ pub class Unasserted: @Picks
     #    |           ^^^^
     ...
 
-# A specialized receiver is on an overload, so a subclass that inherits the
-# method conforms through the unspecialized implementation.
+# A protocol's overloads are each required
+pub @class Converts
+  @def convert self x @ Int -> Int
+  @def convert self x @ Other -> Other
+  pub def convert self x @ (Int | Other) -> (Int | Other)
+
+pub class Converter: @Converts
+  @def convert _self x @ Int -> Int
+  @def convert _self x @ Other -> Other
+  pub def convert _self x @ (Int | Other) -> (Int | Other)
+    ...
+
+pub class HalfConverter: @Converts
+  pub def convert _self x @ Int -> Int
+    # error: `convert` does not match `Converts.convert`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def convert _self x @ Int -> Int
+    #    |           ^^^^^^^
+    ...
+
+# A requirement met only by several overloads together isn't met
+pub @class Either
+  pub def either self x @ (Int | Other) -> (Int | Other)
+
+pub class Split: @Either
+  @def either _self x @ Int -> Int
+  @def either _self x @ Other -> Other
+  pub def either _self x @ (Int | Other) -> (Int | Other)
+    # error: `either` does not match `Either.either`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def either _self x @ (Int | Other) -> (Int | Other)
+    #    |           ^^^^^^
+    ...
+
+# A subclass that inherits a method with a specialized receiver on an overload
+# has the method as its class does.
 pub class Pair[K, V]
   pub field key @ K = ...
   pub field value @ V = ...

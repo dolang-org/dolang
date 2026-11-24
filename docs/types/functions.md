@@ -167,6 +167,13 @@ At a call, the checker uses an overload if exactly one is compatible with the
 arguments; the implementation is not considered. Failure to select an overload
 is an error.
 
+A method that overrides another or meets a protocol's member is compared by the
+signatures it's called with in the same way: each of the required method's
+overloads, or its signature if it has none, must be met by one of the method's
+own overloads, or its signature if it has none. A required signature that only
+several overloads meet together, such as `(Int | Str) -> (Int | Str)` by
+`(Int) -> Int` and `(Str) -> Str`, isn't met.
+
 Overloads do not dispatch at runtime or have any runtime effect*; every call
 runs the same implementation. Their signatures are trusted assertions about the
 implementation's behavior that the checker does not verify, so an incorrectly

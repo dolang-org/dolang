@@ -1,0 +1,62 @@
+# dolang: strict
+# A protocol's arguments are solved through the overloads that meet its
+# members, which are judged by the overloads a value is called with, never an
+# implementation behind them.
+import std:
+  - @Index
+  - @Union
+
+def first[T] xs @ Seq[T] -> T
+  xs[0]
+
+pub def nominal arr @ Array[Str] -> Str
+  first $arr
+
+# A tuple is a `Seq` of the union of its items
+pub def claimed t @ Tuple[Int, Str] -> (Int | Str)
+  first $t
+
+# The claim holds for any items, as an item of a schema is among its values
+pub def generic[*Ts] t @ Tuple[...Ts] -> Union[...Ts]
+  first $t
+
+# `Index[T]` for a type `T` is `Index[{*T}]`
+@class Indexed[T]: Index[T]
+  #[getter]
+  pub def len self -> Int
+
+def at[T] xs @ Indexed[T] -> T
+  xs[0]
+
+pub def array names @ Array[Str] -> Str
+  at $names
+
+pub def tuple t @ Tuple[Int, Str] -> (Int | Str)
+  at $t
+
+pub def narrowed t @ Tuple[Int, Str] -> Int
+  at $t
+# error: `std.Int | std.Str` does not fit the declared result `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   at $t
+#    |   ^^^^^
+
+# Without an expected type, an item is known by its schema's shape: one
+# repeated position is its type, and a tuple's index is any of its positions
+pub def inferred names @ Array[Str] -> Str
+  let name = at $names
+  name
+
+pub def inferred_tuple t @ Tuple[Int, Str] -> (Int | Str)
+  let item = at $t
+  item
+
+pub def inferred_narrowed t @ Tuple[Int, Str] -> Int
+  let item = at $t
+  item
+# error: `std.Int | std.Str` does not fit the declared result `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   item
+#    |   ^^^^
