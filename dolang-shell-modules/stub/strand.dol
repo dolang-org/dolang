@@ -18,7 +18,7 @@
 # [`stream`](strand.stream) strand's output. In the shell, this is
 # [`proc.PipeSender`](proc.PipeSender); otherwise it is a
 # [`Sender`](strand.Sender).
-pub @let PipeSender[I] = ...
+pub @let PipeSender[O] = ...
 
 # The receiving end of a pipe between strands, as a
 # [`stream`](strand.stream) strand's input. In the shell, this is
