@@ -140,7 +140,7 @@ do -> Str
 #
 # ```
 # let item = pick [1, 2, 3]
-# assert ([1, 2, 3].contains $item)
+# assert ([1, 2, 3].contains item)
 # ```
 pub def pick[T]
   # Sequence to select from.
@@ -160,7 +160,7 @@ do -> T
 # ```
 # let hosts = sample ["a", "b", "c", "d"] 2
 # assert_eq $hosts.len 2
-# assert ($hosts[0] != $hosts[1])
+# assert (hosts[0] != hosts[1])
 # ```
 pub def sample[T]
   # Sequence to select from.
