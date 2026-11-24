@@ -403,6 +403,10 @@ pub class AccessMask: Iterable[AccessRight]
   @def (call) cls ...flags@AccessRight -> AccessMask
 
   # Constructs a flag set from one iterable of symbols.
+  #
+  # A mask of a subtype, such as
+  # [`fs.windows.AccessMask`](fs.windows.AccessMask), converts with every bit
+  # kept.
   @def (call) cls flags@Iterable[AccessRight] -> AccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
@@ -412,10 +416,6 @@ pub class AccessMask: Iterable[AccessRight]
   # let value = AccessMask 0x120089
   # ```
   @def (call) cls value@Int -> AccessMask
-
-  # Converts a mask of a subtype, such as
-  # [`fs.windows.AccessMask`](fs.windows.AccessMask), keeping every bit.
-  @def (call) cls mask@AccessMask -> AccessMask
 
   #[class]
   pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight] | Int) -> AccessMask
