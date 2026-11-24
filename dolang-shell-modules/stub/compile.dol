@@ -243,7 +243,7 @@ pub class Node
   # The nodes whose parent is this one, in no particular order. Sort them by
   # [`span`](compile.Node.span) for source order.
   #[getter]
-  pub def children self -> Array[Node]
+  pub def children self -> Seq[Node]
     ...
 
   # The span of the comment block documenting the node, or `nil` where none
@@ -641,7 +641,7 @@ pub class ConstType: TypeExpr
 pub class AppType: TypeExpr
   # The type arguments, in the order written.
   #[getter]
-  pub def args self -> Array[TypeItem]
+  pub def args self -> Seq[TypeItem]
     ...
 
   # The type the arguments apply to.
@@ -653,28 +653,28 @@ pub class AppType: TypeExpr
 pub class SchemaType: TypeExpr
   # The items, in the order written.
   #[getter]
-  pub def items self -> Array[TypeItem]
+  pub def items self -> Seq[TypeItem]
     ...
 
 # A tuple or `Pack` type, such as `(Int, Str)` or `(name: Str)`.
 pub class ParensType: TypeExpr
   # The items, in the order written.
   #[getter]
-  pub def items self -> Array[TypeItem]
+  pub def items self -> Seq[TypeItem]
     ...
 
 # A union, such as `(Str | Path)`.
 pub class UnionType: TypeExpr
   # The members, in the order written.
   #[getter]
-  pub def members self -> Array[TypeExpr]
+  pub def members self -> Seq[TypeExpr]
     ...
 
 # A function type, such as `(Int, ?Int) -> Int`.
 pub class FuncType: TypeExpr
   # The items of the parameter list, in the order written.
   #[getter]
-  pub def items self -> Array[TypeItem]
+  pub def items self -> Seq[TypeItem]
     ...
 
   # The return type.
@@ -696,7 +696,7 @@ pub class FuncType: TypeExpr
 pub class QuantType: TypeExpr
   # The binders, children of the quantified type, in the order written.
   #[getter]
-  pub def binders self -> Array[Binder]
+  pub def binders self -> Seq[Binder]
     ...
 
   # The function type the binders quantify.
@@ -857,7 +857,7 @@ pub class Token
 pub class Diagnostic
   # Additional highlighted source regions.
   #[getter]
-  pub def annotations self -> Array[Annotation]
+  pub def annotations self -> Seq[Annotation]
     ...
 
   # The primary diagnostic message.
@@ -867,12 +867,12 @@ pub class Diagnostic
 
   # Notes with extra context or help.
   #[getter]
-  pub def notes self -> Array[Note]
+  pub def notes self -> Seq[Note]
     ...
 
   # Suggested edits.
   #[getter]
-  pub def patches self -> Array[Patch]
+  pub def patches self -> Seq[Patch]
     ...
 
   # The severity.
