@@ -20,15 +20,15 @@ pub def catches()
     y = :k:
   catch error.Type: _
     let _ = y
-    #       ^: flow std.Str
+    #       ^: flow "a"
   catch error.Value: _
     let _ = y
-    #       ^: flow std.Str
+    #       ^: flow "a"
   catch _
     let _ = y
-    #       ^: flow std.Str
+    #       ^: flow "a"
   let _ = y
-  #       ^: flow std.Str | std.Sym
+  #       ^: flow "a" | :k:
 
 # A class that isn't a path is still tried in order
 pub def dynamic_class()
@@ -41,12 +41,12 @@ pub def dynamic_class()
     y = :k:
   catch (a || error.Type): _
     let _ = y
-    #       ^: flow std.Int
+    #       ^: flow 1
   catch _
     let _ = y
-    #       ^: flow std.Int
+    #       ^: flow 1
   let _ = y
-  #       ^: flow std.Int | std.Str | std.Sym
+  #       ^: flow "a" | 1 | :k:
 
 # An exception is a class's instance when its clause names the class, and
 # otherwise dynamic, whatever was thrown
@@ -75,9 +75,9 @@ pub def finally_from_clause()
     y = :k:
   finally
     let _ = y
-    #       ^: flow std.Str | std.Sym
+    #       ^: flow "a" | :k:
   let _ = y
-  #       ^: flow std.Str | std.Sym
+  #       ^: flow "a" | :k:
 
 pub def returning x @ Int
   let y = 1
@@ -88,9 +88,9 @@ pub def returning x @ Int
     nil
   finally
     let _ = y
-    #       ^: flow std.Str
+    #       ^: flow "a"
   let _ = y
-  #       ^: flow std.Str
+  #       ^: flow "a"
 
 # Leaving two `finally`s runs each in turn, and the loop's exit sees the state
 pub def nested_finally xs
@@ -104,9 +104,9 @@ pub def nested_finally xs
         y = :k:
     finally
       let _ = y
-      #       ^: flow std.Sym
+      #       ^: flow :k:
   let _ = y
-  #       ^: flow std.Int | std.Sym
+  #       ^: flow 1 | :k:
 
 pub def formatted x @ Int w @ Int
   let s = "a${x:$w.2}b"
@@ -197,7 +197,7 @@ pub def destructuring()
     - _
     - e = 3
   let _ = e
-  #       ^: flow std.Int
+  #       ^: flow 2 | 3
   for f g = [[1, 2]]
     let _ = f
     #       ^: flow std.Int
@@ -219,15 +219,15 @@ pub def nested_tests v @ Tuple[Int, Array[Int]]
 pub def optional_defaults()
   let ?k: (a: a = 1 j: (Int(b = a) | Str(b = "dead"))) = ()
   let _ = a
-  #       ^: flow std.Int
+  #       ^: flow 1
   let _ = b
-  #       ^: flow std.Int
+  #       ^: flow 1
   let Int(c = "dead") = 2
   let _ = c
   #       ^: flow 2
   if let ?k: Int(n = 0) = ()
     let _ = n
-    #       ^: flow std.Int
+    #       ^: flow 0
 
 # A variable a closure assigns reads as every value assigned to it, even once captured
 pub def captures()
@@ -236,7 +236,7 @@ pub def captures()
     m = "s"
   m = :k:
   let _ = m
-  #       ^: flow std.Int | std.Str | std.Sym
+  #       ^: flow "s" | 1 | :k:
   inc()
 
 # A `do` block's parameters are typed by their annotations
@@ -265,7 +265,7 @@ pub def nonlocal_jumps xs
         break
       return z
   let _ = y
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "a" | 1
 
 pub class Members
   pub field a = 1
@@ -285,7 +285,7 @@ pub def loops()
     y = :k:
     break
   let _ = y
-  #       ^: flow std.Int | std.Str | std.Sym
+  #       ^: flow "a" | 1 | :k:
 
 # A rest binds a tuple or `Pack` of the items its declared schema leaves it
 pub def rests a @ Int *pos @ Int **kw @ Str

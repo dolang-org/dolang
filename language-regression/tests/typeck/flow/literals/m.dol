@@ -1,5 +1,6 @@
-# A literal term's type decays to its class where a variable or collection holds
-# it. A literal written in a type is exact, and never decays.
+# A literal term's type decays to its class where an annotated variable, a field
+# or a collection's invariant position holds it. A literal written in a type is
+# exact, and never decays.
 
 def plain x @ (:a: | :b:)
   ...

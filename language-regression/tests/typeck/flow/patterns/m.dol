@@ -60,9 +60,9 @@ pub def defaults xs @ Array[Int]
     a = "none"
     :b = nil
   let _ = a
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "none" | std.Int
   let _ = b
-  #       ^: flow std.Nil
+  #       ^: flow nil
 
 pub def unions c @ Bool
   let v = if c

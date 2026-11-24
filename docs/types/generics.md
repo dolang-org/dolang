@@ -15,10 +15,10 @@ class Table[K, V]
 ```
 
 A use of the declaration supplies the binders' types. A class or alias takes
-them as [type arguments](./syntax.md#type-arguments), as in `Table[Str, Int]`.
-A call of a generic function infers them from its arguments; see
-[Inference](./checking.md#inference). How a class's binders affect which of its
-types fit each other is described under
+them as [type arguments](./syntax.md#type-arguments), as in `Table[Str, Int]`. A
+call of a generic function infers them from its arguments; see
+[Inference](./checking.md#inference-rules). How a class's binders affect which
+of its types fit each other is described under
 [Generic Variance](./checking.md#generic-variance).
 
 ## Binder Forms

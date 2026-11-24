@@ -27,9 +27,9 @@ pub def shapes value @ (Tuple[Int] | Tuple[Str, Bool])
 pub def defaults value @ Array[Int]
   let (1 a b = "none" | 2 b a = nil) = value
   let _ = a
-  #       ^: flow std.Int | std.Nil
+  #       ^: flow nil | std.Int
   let _ = b
-  #       ^: flow std.Int | std.Str
+  #       ^: flow "none" | std.Int
 
 pub def nested value @ Tuple[Sym, (1 | 2 | 3)]
   if let (k (1 | 2) | k _) = value

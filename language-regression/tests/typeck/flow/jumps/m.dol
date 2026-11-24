@@ -9,7 +9,7 @@ pub def broken xs
       break
     y = "s"
   let _ = y
-  #       ^: flow std.Int | std.Str | std.Sym
+  #       ^: flow "s" | 1 | :k:
 
 pub def listed xs
   $

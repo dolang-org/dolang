@@ -46,9 +46,9 @@ pub def sentinels d @ Dict[Str, Array[Int]]
     "c": c = [nil]
     ..._
   let _ = a
-  #       ^: flow std.Array[std.Int] | std.Nil
+  #       ^: flow nil | std.Array[std.Int]
   let _ = b
-  #       ^: flow std.Array[std.Int] | std.Str
+  #       ^: flow "none" | std.Array[std.Int]
   let _ = c
   #       ^: flow std.Array[std.Int] | std.Array[std.Nil]
   nil

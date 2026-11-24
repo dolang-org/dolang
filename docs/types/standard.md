@@ -50,18 +50,17 @@ Projections are aliases that compute a type or schema from their arguments:
 | [`Fields`](std.Fields)         | The schema of a class's readable public members                            |
 | [`MutFields`](std.MutFields)   | The schema of a class's settable public members                            |
 
-The item projections take a positional item's key to be its index. The standard
-collection protocols use them in their signatures: `Index[S]` reads a key `K` as
-`IndexItem[S, K]`, and `MutMixed[S]`'s `delete` requires `Deletable[S, K]`. See
-[Computing Types from Schemas](./schemas.md#computing-types-from-schemas) for an
-example.
+The standard collection protocols use them in their signatures: `Index[S]`
+reads a key `K` as `IndexItem[S, K]`, and `MutMixed[S]`'s `delete` requires
+`Deletable[S, K]`. See [Computing Types from
+Schemas](./schemas.md#computing-types-from-schemas) for an example.
 
 ## Protocols
 
-The language's
-[special methods](../language/classes.md#special-method-reference) each have a
-protocol describing a value that implements them. These protocols are generic in
-what the method produces or accepts:
+Some of the language's [special
+methods](../language/classes.md#special-method-reference) have a protocol
+describing a value that implements them. These protocols are generic in what
+the method produces or accepts:
 
 | Protocol                              | Special method | Required by                   |
 | ------------------------------------- | -------------- | ----------------------------- |
@@ -75,22 +74,20 @@ what the method produces or accepts:
 | [`Unpack[S]`](std.Unpack)             | `(unpack)`     | Destructuring patterns        |
 
 `Index`, `Assign`, `Spread`, and `Unpack` take a [schema](./schemas.md) of the
-items the value has, so `Index[{name: Str, ?port: Int}]` reads `name` as a
-`Str`. As a [schema argument](./schemas.md#types-as-schema-arguments), a type
-`T` stands for any number of `T`, so `Spread[Int]` spreads as integers.
+available item, so `Index[{name: Str, ?port: Int}]` reads `name` as a
+`Str`.
 
 [`Iterable`](std.Iterable), [`Iter`](std.Iter), [`Sinkable`](std.Sinkable), and
-[`Sink`](std.Sink) are ordinary mixable classes that implement the first four
-protocols and supply methods such as `map` and `premap` in terms of them. A
-class gets those methods by inheriting one; a class that only implements
-`(iter)` is a `BaseIterable` but not an `Iterable`.
+[`Sink`](std.Sink) are ordinary mixable classes that supply methods such as
+`map` and `premap` in terms of the base protocol. A class that only implements
+`(iter)` is a `BaseIterable` but not an `Iterable` unless it explicitly
+inherits from `Iterable`.
 
-### Collection Protocols
+### Abstract Collection Protocols
 
-Further protocols describe what a user of a collection can rely on. Each
-combines the item protocols above. A reading protocol has an assigning
-counterpart, which only writes, and a mutable one, which reads, assigns,
-inserts and removes:
+These protocols describe operations available on a collection type. A read-only
+protocol has an assigning counterpart, which only assigns, and a mutable one,
+which reads, assigns, inserts and removes:
 
 | Reads                   | Assigns                             | Mutable                       |
 | ----------------------- | ----------------------------------- | ----------------------------- |
@@ -110,23 +107,15 @@ inserts and removes:
 The rest that a pattern captures is a [`SeqRest`](std.SeqRest) when it iterates
 as values, and a [`MixedRest`](std.MixedRest) when it iterates as entries.
 
-### Collection Classes
+### Covariant Collections
 
-Each mutable collection class has a read-only view, which is the same class at
-runtime. A view holds its items covariantly, so `Array[Str]` is a
-`BaseArray[Str | Sym]` although it isn't an `Array[Str | Sym]`:
+Each mutable collection class has a read-only view which is the same class at
+runtime. A view is covariant in its type parameters, so `Array[Str]` is a
+`BaseArray[Str | Sym]` but not an `Array[Str | Sym]`:
 
-| Class                        | Read-only view                       | Implements                                        |
-| ---------------------------- | ------------------------------------ | ------------------------------------------------- |
-| [`Array[T]`](std.Array)      | [`BaseArray[T]`](std.BaseArray)      | `MutSeq[T]`                                       |
-| [`Dict[S]`](std.Dict)        | [`BaseDict[S]`](std.BaseDict)        | `MutMap[S]`                                       |
-| [`Record[...S]`](std.Record) | [`BaseRecord[...S]`](std.BaseRecord) | `MutMixed[S]`                                     |
-| [`Struct[...S]`](std.Struct) | [`BaseStruct[...S]`](std.BaseStruct) | `Index[S]`, `Assign[S]`, `Spread[S]`, `Unpack[S]` |
-
-The immutable [`Tuple[*S]`](std.Tuple) is a `Seq` of its items' union, and
-[`Pack[...S]`](std.Pack) is a `Mixed[S]`. [`Set[T]`](std.Set) and
-[`Range[T]`](std.Range) are `Iterable[T]` and `Spread[T]`.
-
-A parameter should name the least specific type it needs: `BaseIterable[T]` or
-`Iterable[T]` to iterate, `Seq[T]` or `Map[S]` to read, and `BaseArray[T]` or
-`BaseDict[S]` only when it requires an actual array or dictionary.
+| Class                        | Read-only view                       |
+| ---------------------------- | ------------------------------------ |
+| [`Array[T]`](std.Array)      | [`BaseArray[T]`](std.BaseArray)      |
+| [`Dict[S]`](std.Dict)        | [`BaseDict[S]`](std.BaseDict)        |
+| [`Record[...S]`](std.Record) | [`BaseRecord[...S]`](std.BaseRecord) |
+| [`Struct[...S]`](std.Struct) | [`BaseStruct[...S]`](std.BaseStruct) |

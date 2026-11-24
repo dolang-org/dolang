@@ -1,7 +1,7 @@
 # dolang: strict
 # A literal stays precise where nothing written later can widen it: as a `for`'s
-# or comprehension's iteratee, and bound to a local assigned only once, where
-# no write through the value could widen it either.
+# or comprehension's iteratee, and bound to an unannotated local, where no
+# write through the value could widen it either.
 
 @let Well = (:A: | :B:)
 @let Item = BaseDict[{allow: (Str | Well)}]
@@ -34,12 +34,12 @@ pub def once()
   let _ = p
   #       ^: flow (:A:, :B:)
 
-# A local assigned again, or with an annotation, still decays
+# A local assigned again takes each value's type, and an annotated one decays
 pub def reassigned()
   let x = :a:
   x = :b:
   let _ = x
-  #       ^: flow std.Sym
+  #       ^: flow :b:
 
 pub def annotated()
   let m @ Sym = :a:
