@@ -94,6 +94,18 @@ A protocol may name a runtime class as a supertype, but claiming the protocol
 doesn't inherit it; a class claiming the protocol must inherit that class
 itself. Protocols are never [disjoint](#disjoint-classes).
 
+A class or protocol may name a generic protocol more than once with different
+arguments. Each instance adds its members' signatures as overloads, so a `Seq`
+is indexed both by integers and by ranges:
+
+```
+pub @class Seq[T]: Index[T] Index[{*(Range[Int]): Seq[T]}]
+```
+
+Such a protocol isn't an ancestor of the declaration naming it: a value is below
+it by its members. A generic class reached more than once is reached as its
+first instance, which must be below the others.
+
 ## Disjoint Classes
 
 Every class is disjoint unless it is decorated with the prelude's

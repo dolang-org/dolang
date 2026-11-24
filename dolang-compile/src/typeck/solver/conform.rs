@@ -22,7 +22,10 @@
 //!
 //! A generic class reached more than once in a declaration's ancestry is reached
 //! only as its first instance, so that instance must be below the others it
-//! masks, by the class's variances, for the ancestor walk to stop there.
+//! masks, by the class's variances, for the ancestor walk to stop there. A
+//! protocol reached as several instances isn't an ancestor at all: each
+//! instance only adds signatures to its members, merged as overloads, which
+//! conformance to each instance relates as it does any member's.
 //!
 //! A class that doesn't name a protocol is judged below it by the same
 //! requirements, with its own type as each required signature's receiver.
@@ -292,7 +295,7 @@ impl Solver<'_> {
             let Some(actual) = self.overload_set(actual)? else {
                 return Ok::<_, Issue>(());
             };
-            for signature in interface(required) {
+            for signature in required.interface() {
                 let expected = self.rewrite(signature, receiver, None, None)?;
                 pairs.push((actual, expected, false));
             }
@@ -393,42 +396,48 @@ impl Solver<'_> {
         Ok(RequirementKind::Relate(pairs))
     }
 
-    /// Whether a provided member is the required one, with the same types: the
-    /// declaration inherits it as the supertype has it
+    /// Whether a provided member is the required one as the supertype has it:
+    /// the same class's member, with each signature the required one is called
+    /// with, or its field's type, among the provided one's. A member merged from
+    /// a protocol's instances has each instance's.
     fn same_member(&self, provided: &Found, required: &Found) -> bool {
-        fn terms(kind: &FoundKind) -> Option<Vec<Term>> {
-            fn signatures(signatures: &Signatures) -> impl Iterator<Item = Term> + '_ {
-                let overloads = signatures.overloads.iter().copied();
-                overloads.chain(signatures.implementation)
-            }
-            Some(match kind {
-                &FoundKind::Field(ty) => vec![ty],
-                FoundKind::Method(method) => signatures(method).collect(),
-                FoundKind::Property { getter, setter } => [getter, setter]
-                    .into_iter()
-                    .flatten()
-                    .flat_map(signatures)
-                    .collect(),
-                FoundKind::Unknown(_) => return None,
-            })
-        }
         if provided.class != required.class || provided.bound != required.bound {
             return false;
         }
-        let (Some(provided), Some(required)) = (terms(&provided.kind), terms(&required.kind))
-        else {
-            return false;
+        let same = |provided: Term, required: Term| {
+            matches!(
+                (self.reify(provided), self.reify(required)),
+                (Ok(provided), Ok(required)) if provided == required
+            )
         };
-        provided.len() == required.len()
-            && provided
+        let covers = |provided: &Signatures, required: &Signatures| {
+            let provided = provided.interface();
+            required
+                .interface()
                 .into_iter()
-                .zip(required)
-                .all(|(provided, required)| {
-                    matches!(
-                        (self.reify(provided), self.reify(required)),
-                        (Ok(provided), Ok(required)) if provided == required
-                    )
-                })
+                .all(|required| provided.iter().any(|&provided| same(provided, required)))
+        };
+        let accessor = |provided: &Option<Signatures>, required: &Option<Signatures>| match (
+            provided, required,
+        ) {
+            (Some(provided), Some(required)) => covers(provided, required),
+            (None, None) => true,
+            _ => false,
+        };
+        match (&provided.kind, &required.kind) {
+            (&FoundKind::Field(provided), &FoundKind::Field(required)) => same(provided, required),
+            (FoundKind::Method(provided), FoundKind::Method(required)) => {
+                covers(provided, required)
+            }
+            (
+                FoundKind::Property { getter, setter },
+                FoundKind::Property {
+                    getter: required_getter,
+                    setter: required_setter,
+                },
+            ) => accessor(getter, required_getter) && accessor(setter, required_setter),
+            _ => false,
+        }
     }
 
     /// What a provided member is called as: its one signature, or its overloads
@@ -717,8 +726,27 @@ impl Solver<'_> {
         if !self.db.declaration(class).source.kind.nominal() {
             return Ok(None);
         }
-        let Reach::Reached(reached) = self.reach(through, class)? else {
-            return Ok(None);
+        let reached = match self.reach(through, class)? {
+            Reach::Reached(reached) => reached,
+            // A protocol reached as several instances is reached as the one the
+            // receiver names
+            Reach::Unreached => match self.head(through)? {
+                Head::Nominal(nominal) => {
+                    let mut reached = None;
+                    for found in self.instances(nominal, class)? {
+                        if self.applied(class, &found.arguments)? == receiver {
+                            reached = Some(found.arguments);
+                            break;
+                        }
+                    }
+                    let Some(reached) = reached else {
+                        return Ok(None);
+                    };
+                    reached
+                }
+                _ => return Ok(None),
+            },
+            Reach::Dynamic => return Ok(None),
         };
         if reached.len() != args.len() {
             return Ok(None);
@@ -797,7 +825,9 @@ impl Solver<'_> {
 
     /// The instances of generic classes in the ancestry of the declaration whose
     /// instances have the closed type `instance` that the first instance of
-    /// each class masks, which the first must be below. With
+    /// each class masks, which the first must be below. A protocol's instances
+    /// mask nothing, as none is reached as an ancestor (see
+    /// [`Self::repeated`]). With
     /// `runtime`, as for a class, a claimed instance masked by one the runtime
     /// inherits is left to [`Self::claimed_classes`]. Instances reached through
     /// the same supertype were checked at it, so only pairs reached through
@@ -850,7 +880,10 @@ impl Solver<'_> {
             )?;
         }
         let mut masked = Vec::new();
-        for (_, instances) in reached {
+        for (class, instances) in reached {
+            if self.repeated(declaration, class) {
+                continue;
+            }
             let Some((first, rest)) = instances.split_first() else {
                 continue;
             };
@@ -872,7 +905,7 @@ impl Solver<'_> {
     }
 
     /// `class` applied to `args`
-    fn applied(&self, class: DeclId, args: &[Term]) -> Result<TypeId, Issue> {
+    pub(super) fn applied(&self, class: DeclId, args: &[Term]) -> Result<TypeId, Issue> {
         let args = args
             .iter()
             .map(|&arg| self.reify(arg).map(Argument::Positional))
@@ -884,17 +917,8 @@ impl Solver<'_> {
         }))
     }
 
-    fn is_protocol(&self, decl: DeclId) -> bool {
+    pub(super) fn is_protocol(&self, decl: DeclId) -> bool {
         self.db.declaration(decl).source.kind == DeclKind::Protocol
-    }
-}
-
-/// The signatures a member is called with: its overloads, or its
-/// implementation's signature if it has none
-fn interface(signatures: &Signatures) -> Vec<Term> {
-    match signatures.overloads.is_empty() {
-        true => signatures.implementation.into_iter().collect(),
-        false => signatures.overloads.clone(),
     }
 }
 

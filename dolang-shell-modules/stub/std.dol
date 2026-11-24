@@ -716,16 +716,13 @@ pub @class MutMap[S @ {*(Value): Value}]: Map[S] AssignMap[S] MutMixed[S]
 
 # An iterable sequence of `T`, which integers index, slices, spreads, and
 # destructures.
-pub @class Seq[T]: Iterable[T] Spread[T] Unpack[T, Rest: SeqRest[T]] Index[T]
+pub @class Seq[T]:
+  Iterable[T] Spread[T] Unpack[T, Rest: SeqRest[T]] Index[T]
+  - Index[{*(Range[Int]): Seq[T]}]
+do
   # The number of items.
   #[getter]
   pub def len self -> Int
-
-  @def (index)[K] self key@K -> IndexItem[{*T}, K]
-  @def (index) self range@Range[Int] -> Seq[T]
-
-  # Returns the item at an index, or the items in a range.
-  pub def (index)[K] self key@K -> IndexItem[{*T}, K]
 
 
 # Replaces the items of a sequence by integer index. It need not support reading,

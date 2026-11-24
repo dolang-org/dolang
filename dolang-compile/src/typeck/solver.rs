@@ -820,6 +820,10 @@ pub(crate) struct Solver<'db> {
     default_constructions: RefCell<FxHashMap<DeclId, Option<Option<Signature>>>>,
     /// Each member of a generic class's object, once found
     generic_members: RefCell<FxHashMap<GenericMember, Result<Lookup, Issue>>>,
+    /// Whether each declaration's ancestry reaches each protocol as several
+    /// instances, once found. It depends on declarations alone, so only the
+    /// outermost solver keeps it (see [`Solver::repeated`]).
+    repeated: RefCell<FxHashMap<(DeclId, DeclId), bool>>,
     /// The member schemas being found, whose members' types may mention them
     fields_active: RefCell<Vec<(TypeId, FieldAccess)>>,
     /// Whether it makes the assumptions its parent does, so their caches
@@ -925,6 +929,7 @@ impl<'db> Solver<'db> {
             constructors: RefCell::new(FxHashMap::default()),
             default_constructions: RefCell::new(FxHashMap::default()),
             generic_members: RefCell::new(FxHashMap::default()),
+            repeated: RefCell::default(),
             fields_active: RefCell::default(),
             inherits: true,
             tracks: false,
@@ -1209,7 +1214,8 @@ impl<'db> Solver<'db> {
     }
 
     /// Walk a term to the target declaration, carrying substitutions. A rigid in
-    /// scope continues through its bound.
+    /// scope continues through its bound. A protocol reached as several
+    /// instances is unreached (see [`Self::repeated`]).
     pub(crate) fn reach(&self, term: Term, target: DeclId) -> Result<Reach, Issue> {
         self.reach_in(term, target, false)
     }
@@ -1219,6 +1225,67 @@ impl<'db> Solver<'db> {
     /// protocol reaches only what it inherits
     pub(crate) fn inherits(&self, term: Term, target: DeclId) -> Result<Reach, Issue> {
         self.reach_in(term, target, true)
+    }
+
+    /// The distinct instances of `class` in `current`'s ancestry, `current`
+    /// included, in MRO order. Instances with the same arguments are one.
+    fn instances(&self, current: Nominal, class: DeclId) -> Result<Vec<Nominal>, Issue> {
+        let mut instances: Vec<(TypeId, Nominal)> = Vec::new();
+        self.preorder(current, &mut FxHashSet::default(), 0, &mut |visited| {
+            if let Visited::Nominal(found) = visited
+                && found.declaration == class
+            {
+                let ty = self.applied(class, &found.arguments)?;
+                if !instances.iter().any(|&(other, _)| other == ty) {
+                    instances.push((ty, found.clone()));
+                }
+            }
+            Ok(None::<()>)
+        })?;
+        Ok(instances.into_iter().map(|(_, found)| found).collect())
+    }
+
+    /// Whether `decl`'s ancestry reaches the generic protocol `class` as
+    /// several instances, as `Seq[T]` reaches `Index[{*T}]` and
+    /// `Index[{(Range[Int]): Seq[T]}]`. Each instance only adds to what its
+    /// members require, so such a protocol isn't an ancestor to reach: a
+    /// member is found as each instance's merged, and `decl` is judged below
+    /// the protocol by its members. Instances that `decl`'s own arguments make
+    /// the same are one. A walk that can't decide leaves it reached.
+    pub(super) fn repeated(&self, decl: DeclId, class: DeclId) -> bool {
+        let db = self.db;
+        if decl == class
+            || !self.is_protocol(class)
+            || !matches!(db.ty(db.declaration(class).ty), Type::Quantified { .. })
+        {
+            return false;
+        }
+        let mut root = self;
+        while let Some(parent) = root.parent() {
+            root = parent;
+        }
+        if let Some(&repeated) = root.repeated.borrow().get(&(decl, class)) {
+            return repeated;
+        }
+        let several = {
+            let solver = self.side_query(decl);
+            let group = db
+                .rigids(decl)
+                .into_iter()
+                .map(|ty| solver.closed(ty))
+                .collect();
+            let environment = solver.intern_environment(solver.empty_environment(), group);
+            let instance = solver.view(solver.instance(decl), environment);
+            let Ok(Head::Nominal(nominal)) = solver.head(instance) else {
+                return false;
+            };
+            let Ok(instances) = solver.instances(nominal, class) else {
+                return false;
+            };
+            instances.len() > 1
+        };
+        root.repeated.borrow_mut().insert((decl, class), several);
+        several
     }
 
     fn reach_in(&self, mut term: Term, target: DeclId, runtime: bool) -> Result<Reach, Issue> {
@@ -3986,7 +4053,9 @@ impl<'db> Solver<'db> {
 
     /// Walk supertypes in MRO order, carrying substitutions through each edge.
     /// A failed first match is final. Earlier incomplete branches also stop the
-    /// search: skipping one could choose an ancestor out of MRO order.
+    /// search: skipping one could choose an ancestor out of MRO order. A
+    /// protocol reached as several instances isn't found (see
+    /// [`Self::repeated`]).
     fn ancestor(
         &self,
         current: Nominal,
@@ -4007,6 +4076,9 @@ impl<'db> Solver<'db> {
         path: &mut FxHashSet<DeclId>,
         depth: usize,
     ) -> Result<Option<Nominal>, Issue> {
+        if self.repeated(current.declaration, target) {
+            return Ok(None);
+        }
         self.mro(
             current,
             runtime,

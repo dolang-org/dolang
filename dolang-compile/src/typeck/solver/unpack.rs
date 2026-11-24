@@ -361,7 +361,9 @@ impl Solver<'_> {
     }
 
     /// Walk the supertypes of `current` in MRO order, as [`Self::ancestor`] does,
-    /// to the edge that reaches `unpack`: the `Unpack` found there, and the edge
+    /// to the edge that reaches `unpack`: the `Unpack` found there, and the edge.
+    /// Each instance of a protocol reached as several is a claim the value
+    /// upholds, so the first is found even then (see [`Self::repeated`]).
     fn unpack_edge(
         &self,
         current: Nominal,
