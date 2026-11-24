@@ -155,6 +155,11 @@ impl Solver<'_> {
                 structural,
             });
             let kind = match &provided {
+                // A class's member is upheld by being below the class, which a
+                // structural judgment derives for each class the protocol names
+                _ if structural && !self.is_protocol(required.class) => continue,
+                // The member required, as the supertype has it, meets itself
+                Some(provided) if self.same_member(provided, &required) => continue,
                 Some(provided) => self
                     .requirement(provided, &required, receiver)
                     .unwrap_or_else(RequirementKind::Undecided),
@@ -381,6 +386,41 @@ impl Solver<'_> {
         Ok(RequirementKind::Relate(pairs))
     }
 
+    /// Whether a provided member is the required one, with the same types: the
+    /// declaration inherits it as the supertype has it
+    fn same_member(&self, provided: &Found, required: &Found) -> bool {
+        fn terms(kind: &FoundKind) -> Option<Vec<Term>> {
+            fn signatures(signatures: &Signatures) -> impl Iterator<Item = Term> + '_ {
+                let overloads = signatures.overloads.iter().copied();
+                overloads.chain(signatures.implementation)
+            }
+            Some(match kind {
+                &FoundKind::Field(ty) => vec![ty],
+                FoundKind::Method(method) => signatures(method).collect(),
+                FoundKind::Property { getter, setter } => [getter, setter]
+                    .into_iter()
+                    .flatten()
+                    .flat_map(signatures)
+                    .collect(),
+                FoundKind::Unknown(_) => return None,
+            })
+        }
+        if provided.class != required.class || provided.bound != required.bound {
+            return false;
+        }
+        let (Some(provided), Some(required)) = (terms(&provided.kind), terms(&required.kind))
+        else {
+            return false;
+        };
+        provided.len() == required.len()
+            && provided.into_iter().zip(required).all(|(provided, required)| {
+                matches!(
+                    (self.reify(provided), self.reify(required)),
+                    (Ok(provided), Ok(required)) if provided == required
+                )
+            })
+    }
+
     /// A provided accessor's result, or with `value` a setter's value
     /// parameter. An accessor may be generic, as in its ambient channels, in
     /// what it neither reads nor sets.
@@ -457,6 +497,8 @@ impl Solver<'_> {
         let Type::Function(function) = self.db.ty(body) else {
             return Err(Residual::Unsupported("a method that isn't a function").into());
         };
+        // The depth the signature's scope refers to its class's binders at
+        let outer = usize::from(binders.is_some());
         let mut function = function.clone();
         if receiver.is_some() || value.is_some() {
             let Type::Schema(items) = self.db.ty(function.params) else {
@@ -471,7 +513,7 @@ impl Solver<'_> {
                 let Some(ty) = positions.next() else {
                     return Err(Residual::Unsupported("a method without a receiver").into());
                 };
-                if let Some(narrowed) = self.narrowed_receiver(*ty, receiver)? {
+                if let Some(narrowed) = self.narrowed_receiver(*ty, receiver, outer)? {
                     *ty = narrowed;
                 }
             } else if value.is_some() {
@@ -502,11 +544,15 @@ impl Solver<'_> {
     }
 
     /// A receiver narrowed as [`Self::narrowed`] does, inside `Type` for a class
-    /// method's. `None` leaves it as written.
+    /// method's. `None` leaves it as written. A structural receiver is the
+    /// instance in place of the class's own receiver, written in a scope that
+    /// refers to the class's binders at depth `outer`; an overload's specialized
+    /// receiver is left as written, as it describes only some instances.
     fn narrowed_receiver(
         &self,
         receiver: TypeId,
         narrowing: Narrowing,
+        outer: usize,
     ) -> Result<Option<TypeId>, Issue> {
         let Narrowing {
             instance,
@@ -516,6 +562,17 @@ impl Solver<'_> {
         } = narrowing;
         let class_type = self.db.intrinsic(Intrinsic::Type);
         if structural {
+            let own = match (object, self.db.ty(receiver)) {
+                (false, _) => self.own_receiver(receiver, outer),
+                (true, Type::Apply { base, args, .. }) if Some(*base) == class_type => {
+                    matches!(&args[..], &[Argument::Positional(inner)]
+                        if self.own_receiver(inner, outer))
+                }
+                (true, _) => false,
+            };
+            if !own {
+                return Ok(None);
+            }
             return Ok(Some(match (object, class_type) {
                 (false, _) => instance,
                 (true, Some(class_type)) => self.db.intern(Type::Apply {
@@ -544,6 +601,25 @@ impl Solver<'_> {
             args: vec![Argument::Positional(narrowed)].into(),
             kind: Kind::Type,
         })))
+    }
+
+    /// Whether a receiver is its class applied to its own binders, which the
+    /// signature's scope refers to at depth `outer`, or every value's
+    fn own_receiver(&self, receiver: TypeId, outer: usize) -> bool {
+        let own = |slot: usize, ty: TypeId| {
+            matches!(self.db.ty(ty), Type::Bound { reference, .. }
+                if usize::from(reference.depth) == outer && usize::from(reference.slot) == slot)
+        };
+        match self.db.ty(receiver) {
+            Type::Decl(_) => true,
+            Type::Apply { base, args, .. } if matches!(self.db.ty(*base), Type::Decl(_)) => {
+                args.iter().enumerate().all(|(slot, arg)| match *arg {
+                    Argument::Positional(ty) | Argument::Expand(ty) => own(slot, ty),
+                    Argument::Keyword(_, ty) => own(slot, ty),
+                })
+            }
+            _ => receiver == self.db.top(),
+        }
     }
 
     /// A receiver `C[a…]`, written in a signature's scope, narrowed to instances
