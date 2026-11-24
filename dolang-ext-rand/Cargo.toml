@@ -15,6 +15,7 @@ doctest = false
 
 [dependencies.rand]
 workspace = true
+features = ["chacha"]
 
 [dependencies.dolang]
 workspace = true

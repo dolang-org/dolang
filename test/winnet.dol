@@ -47,7 +47,7 @@ def serialized_accounts block ...rest
 # Guarantee all four character categories without randomly including words
 # from the account's name or full name, which Windows complexity checks reject.
 def scratch_password()
-  "Aa!$(rand.string 16 alphabet: "0123456789")z"
+  "Aa!$(rand.str 16 alphabet: "0123456789")z"
 
 #[fixture]
 def scratch_user block ...rest
@@ -58,7 +58,7 @@ def scratch_user block ...rest
 
   # NetAPI user names are limited to 20 characters. A random suffix keeps
   # concurrent test variants from sharing an account.
-  let name = "do-test-$(rand.string 10)"
+  let name = "do-test-$(rand.str 10)"
   let password = scratch_password()
   let user = try
     winnet.create_user $name
@@ -230,7 +230,7 @@ def domain_join_lifecycle :domain :account :password
 def offline_join_provisioning :domain ..._credentials
   # NetProvisionComputerAccount runs as the calling user, so the fixture's
   # credentials do not apply here.
-  let machine = "DO-$(rand.string(8).upper())"
+  let machine = "DO-$(rand.str(8).upper())"
   let blob = try
     winnet.provision_computer $domain machine: $machine
   catch PermissionDeniedError: _
@@ -245,7 +245,7 @@ def scratch_share block ...rest
   if sys.os_info().is_wine
     ignore "Wine does not implement a credible SMB server service"
   with_temp_dir do |dir|
-    let name = "do-share-$(rand.string 8)"
+    let name = "do-share-$(rand.str 8)"
     let share = try
       winnet.create_share $name
         path: $dir
@@ -390,7 +390,7 @@ def local_share_delete()
   if sys.os_info().is_wine
     ignore "Wine does not implement a credible SMB server service"
   with_temp_dir do |dir|
-    let name = "do-share-$(rand.string 8)"
+    let name = "do-share-$(rand.str 8)"
     let share = try
       winnet.create_share $name path: $dir
     catch PermissionDeniedError: _
@@ -488,7 +488,7 @@ def local_user_lifecycle :user
   assert_eq $updated.password_cannot_change true
 
   # Earlier attributes remain applied when the final rename conflicts.
-  let conflict_name = "do-hit-$(rand.string 10)"
+  let conflict_name = "do-hit-$(rand.str 10)"
   let conflict = winnet.create_user $conflict_name
     password: $scratch_password()
   try
@@ -500,7 +500,7 @@ def local_user_lifecycle :user
   assert_eq $user.info().full_name "Applied before conflict"
 
   # Rename is applied last and refreshes both the snapshot and handle cache.
-  let renamed = "do-test-$(rand.string 10)"
+  let renamed = "do-test-$(rand.str 10)"
   let renamed_info = user.update
     full_name: "Renamed Do user"
     name: $renamed
@@ -519,7 +519,7 @@ def local_user_delete()
     ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
     ignore "Wine does not implement NetUserGetInfo level 4 or NetUserSetInfo"
-  let name = "do-test-$(rand.string 10)"
+  let name = "do-test-$(rand.str 10)"
   let user = try
     winnet.create_user $name password: $scratch_password()
   catch PermissionDeniedError: _
@@ -590,7 +590,7 @@ def scratch_group block ...rest
     ignore "requires Windows NetAPI"
   if sys.os_info().is_wine
     ignore "Wine does not implement local-group lifecycle operations"
-  let name = "do-group-$(rand.string 8)"
+  let name = "do-group-$(rand.str 8)"
   let group = try
     winnet.create_group $name comment: "created by test/winnet.dol"
   catch PermissionDeniedError: _
@@ -647,7 +647,7 @@ def local_group_lifecycle :user :group
   finally
     group.revoke_right $right
 
-  let conflict_name = "do-hit-$(rand.string 8)"
+  let conflict_name = "do-hit-$(rand.str 8)"
   let conflict = winnet.create_group $conflict_name
   try
     assert_throws $AlreadyExistsError do
@@ -657,7 +657,7 @@ def local_group_lifecycle :user :group
   assert_eq $group.info().name $name
   assert_eq $group.info().comment "applied before conflict"
 
-  let renamed = "do-group-$(rand.string 8)"
+  let renamed = "do-group-$(rand.str 8)"
   let info = group.update comment: "renamed" name: $renamed
   assert_eq $info.name $renamed
   assert_eq $group.info().name $renamed

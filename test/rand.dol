@@ -1,9 +1,7 @@
 import
   rand:
-    - int
-    - string
-    - pick
-    - shuffle
+    - @Algorithm
+    - Rng
   test:
     - assert
     - assert_eq
@@ -11,105 +9,198 @@ import
     - test
   std:
     - @BaseArray
+    - FieldError
     - ValueError
     - TypeError
 
+import rand
+
+# A sequence through the `Indexable` protocol alone.
+class Letters
+  #[getter]
+  pub def len _self -> Int
+    3
+
+  pub def (index) _self i@Int -> Str
+    ["a", "b", "c"][i]
+
+def throws_value msg block
+  let err = assert_throws $ValueError $block
+  assert_eq (str err) "value error: $msg"
+
 #[test]
 def int_range()
-  let zero = int 0 1
-  assert_eq $zero 0
+  assert_eq (rand.int (0..1)) 0
+  assert_eq (rand.int (-3..-2)) -3
 
   for _ = Range 200
-    let n = int 10
-    assert ((n >= 0) && (n < 10))
+    let n = rand.int (10..20)
+    assert ((n >= 10) && (n < 20))
 
   for _ = Range 200
-    let n = int -5 5
+    let n = rand.int (-5..5)
     assert ((n >= -5) && (n < 5))
 
 #[test]
-def int_invalid_args()
-  let end_err = assert_throws $ValueError do
-    int 0
-  assert_eq (str end_err) "value error: expected end to be greater than start"
+def int_open_bounds()
+  assert_eq (type (rand.int (..))) $Int
+  for _ = Range 50
+    assert ((rand.int (0..)) >= 0)
+    assert ((rand.int (..0)) < 0)
 
-  let order_err = assert_throws $ValueError do
-    int 3 2
-  assert_eq (str order_err) "value error: expected end to be greater than start"
-
-  let start_type_err = assert_throws $TypeError do
-    int a
-  assert_eq (str start_type_err) "type error: expected `Int`"
-
-  let end_type_err = assert_throws $TypeError do
-    int 0 b
-  assert_eq (str end_type_err) "type error: expected `Int`"
+  let max = 170141183460469231731687303715884105727
+  assert_eq (rand.int (max..)) $max
 
 #[test]
-def string_func()
-  assert_eq (string 0 alphabet: "abc") ""
+def int_stepped()
+  for _ = Range 200
+    let n = rand.int (Range 0 10 3)
+    assert ([0, 3, 6, 9].contains(n))
 
-  let token = string 8
+  for _ = Range 200
+    let n = rand.int (Range 10 0 -4)
+    assert ([10, 6, 2].contains(n))
+
+  assert_eq (rand.int (Range 5 6 100)) 5
+
+#[test]
+def int_invalid_args()
+  throws_value "expected a non-empty range" do rand.int (0..0)
+  throws_value "expected a non-empty range" do rand.int (3..2)
+  throws_value "expected a non-empty range" do rand.int (Range 0 10 -1)
+  throws_value "expected a non-zero range step" do rand.int (Range 0 10 0)
+
+  let range_err = assert_throws $TypeError do rand.int 3
+  assert_eq (str range_err) "type error: expected `Range`"
+
+  let bound_err = assert_throws $TypeError do rand.int (0.5..2)
+  assert_eq (str bound_err) "type error: expected `Int`"
+
+#[test]
+def float_range()
+  for _ = Range 200
+    let x = rand.float()
+    assert ((x >= 0) && (x < 1))
+
+  for _ = Range 200
+    let x = rand.float (0.5..1.5)
+    assert ((x >= 0.5) && (x < 1.5))
+
+  for _ = Range 50
+    let x = rand.float (-2..-1)
+    assert ((x >= -2) && (x < -1))
+
+#[test]
+def float_invalid_args()
+  throws_value "expected a non-empty range" do rand.float (1.0..1.0)
+  throws_value "expected a bounded range" do rand.float (0..)
+  throws_value "expected a bounded range" do rand.float (..1)
+  throws_value "expected a range without a step" do rand.float (Range 0.0 1.0 0.5)
+  throws_value "expected finite range bounds" do rand.float (0.0..(float "inf"))
+
+#[test]
+def bool_probability()
+  for _ = Range 50
+    assert_eq (rand.bool 0) false
+    assert_eq (rand.bool 1) true
+    assert_eq (rand.bool 0.0) false
+  assert_eq (type (rand.bool())) $Bool
+
+  throws_value "expected p to be between 0 and 1" do rand.bool 1.5
+  throws_value "expected p to be between 0 and 1" do rand.bool -0.1
+
+#[test]
+def bin_func()
+  assert_eq (rand.bin 0) b""
+  let key = rand.bin 32
+  assert_eq (type key) $Bin
+  assert_eq $key.len 32
+  throws_value "expected len to be non-negative" do rand.bin -1
+
+#[test]
+def str_func()
+  assert_eq (rand.str 0 alphabet: "abc") ""
+
+  let token = rand.str 8
   assert_eq $token.len 8
 
   for _ = Range 50
-    let s = string 12 alphabet: a
-    assert_eq $s.len 12
+    let s = rand.str 12 alphabet: a
     assert_eq $s "aaaaaaaaaaaa"
 
   for _ = Range 50
-    let s = string 6 alphabet: "å"
+    let s = rand.str 6 alphabet: "å"
     assert_eq $s "åååååå"
 
 #[test]
-def string_invalid_args()
-  let len_err = assert_throws $ValueError do
-    string -1 alphabet: abc
-  assert_eq (str len_err) "value error: expected len to be non-negative"
-
-  let alpha_err = assert_throws $ValueError do
-    string 4 alphabet: ""
-  assert_eq (str alpha_err) "value error: expected alphabet to be non-empty"
+def str_invalid_args()
+  throws_value "expected len to be non-negative" do rand.str -1 alphabet: abc
+  throws_value "expected alphabet to be non-empty" do rand.str 4 alphabet: ""
 
   let len_type_err = assert_throws $TypeError do
-    string foo alphabet: abc
+    rand.str foo alphabet: abc
   assert_eq (str len_type_err) "type error: expected `Int`"
 
   let alpha_type_err = assert_throws $TypeError do
-    string 4 alphabet: 123
+    rand.str 4 alphabet: 123
   assert_eq (str alpha_type_err) "type error: expected `Str`"
 
 #[test]
 def pick_func()
   let items = [10, 20, 30]
   for _ = Range 50
-    assert (items.contains (pick items))
+    assert (items.contains (rand.pick items))
+    assert ([1, 2].contains (rand.pick((1, 2))))
+    assert (["a", "b", "c"].contains (rand.pick (Letters())))
+
+  let values @ Array[Int] = [1, 2, 3]
+  let view @ BaseArray[Int] = values
+  assert (values.contains (rand.pick view))
 
 #[test]
 def pick_invalid_args()
-  let empty_err = assert_throws $ValueError do
-    pick []
-  assert_eq (str empty_err) "value error: expected non-empty array"
+  throws_value "expected a non-empty sequence" do rand.pick []
+  throws_value "expected a non-empty sequence" do rand.pick ()
+  assert_throws $FieldError do rand.pick 123
 
-  let type_err = assert_throws $TypeError do
-    pick 123
-  assert_eq (str type_err) "type error: expected Array"
+#[test]
+def sample_func()
+  assert_eq (rand.sample [1, 2, 3] 0) []
+  assert_eq (rand.sample [] 0) []
+
+  for _ = Range 50
+    let picked = rand.sample [1, 2, 3, 4, 5] 3
+    assert_eq $picked.len 3
+    for x = picked
+      assert ([1, 2, 3, 4, 5].contains(x))
+    let sorted = [...picked]
+    sorted.sort()
+    assert ((sorted[0] < sorted[1]) && (sorted[1] < sorted[2]))
+
+  let all = rand.sample (Letters()) 3
+  all.sort()
+  assert_eq $all ["a", "b", "c"]
+
+#[test]
+def sample_invalid_args()
+  throws_value "expected k to be at most the sequence length" do rand.sample [1] 2
+  throws_value "expected k to be non-negative" do rand.sample [1] -1
 
 #[test]
 def shuffle_handles_empty_and_singleton_arrays()
   let empty = []
-  assert_eq (shuffle empty) nil
+  assert_eq (rand.shuffle empty) nil
   assert_eq $empty []
 
   let one = [42]
-  assert_eq (shuffle one) nil
+  assert_eq (rand.shuffle one) nil
   assert_eq $one [42]
 
 #[test]
 def shuffle_preserves_elements_and_mutates_in_place()
   let values = [1, 2, 3, 4, 5]
   let before = [...values]
-  assert_eq (shuffle values) nil
+  assert_eq (rand.shuffle values) nil
   let after = [...values]
   before.sort()
   after.sort()
@@ -120,29 +211,89 @@ def shuffle_preserves_elements_and_mutates_in_place()
   let alias = seq
   let changed = false
   for _ = Range 100
-    shuffle $alias
+    rand.shuffle $alias
     if (seq != original)
       changed = true
       break
 
   assert $changed
-  let seq_sorted = [...seq]
-  seq_sorted.sort()
-  original.sort()
-  assert_eq $seq_sorted $original
 
 #[test]
 def shuffle_rejects_non_arrays()
-  let err = assert_throws $TypeError do
-    shuffle 123
-  assert_eq (str err) "type error: expected Array"
+  let err = assert_throws $TypeError do rand.shuffle 123
+  assert_eq (str err) "type error: expected `Array`"
+  assert_throws $TypeError do rand.shuffle (1, 2)
+
+def draws rng
+  $
+    - (rng.int (0..1000000))
+    - (rng.float())
+    - (rng.bool())
+    - (rng.bin 4)
+    - (rng.str 6)
+    - (rng.pick [1, 2, 3, 4])
+    - (rng.sample [1, 2, 3, 4] 2)
 
 #[test]
-def array_read_view()
-  let values @ Array[Int] = [1, 2, 3]
-  let view @ BaseArray[Int] = values
-  assert (values.contains (pick view))
-  shuffle $values
-  assert_eq $view.len 3
-  for non_array = [(1, 2), (0..2)]
-    assert_throws $TypeError do pick $non_array
+def rng_seed_is_reproducible()
+  let algorithms @ Array[Algorithm] = [:CHACHA8:, :CHACHA12:, :CHACHA20:, :XOSHIRO128PP:, :XOSHIRO256PP:]
+  for algorithm = algorithms
+    let a = Rng seed: 7 :algorithm
+    let b = Rng seed: 7 :algorithm
+    assert_eq (draws a) (draws b)
+
+    let xs = [1, 2, 3, 4, 5, 6]
+    let ys = [...xs]
+    a.shuffle $xs
+    b.shuffle $ys
+    assert_eq $xs $ys
+
+  let c = Rng seed: 7
+  let d = Rng seed: 8
+  assert ((draws c) != (draws d))
+
+#[test]
+def rng_seed_is_stable()
+  # A seed must give the same sequence on every platform and release.
+  let rng = Rng seed: 42
+  let values = [for _ = Range 3 => rng.int (0..1000)]
+  assert_eq $values [542, 405, 414]
+
+  let explicit = Rng seed: 42 algorithm: :CHACHA12:
+  assert_eq [for _ = Range 3 => explicit.int (0..1000)] [542, 405, 414]
+
+  let seeded @ Array[(Algorithm, Int)] = $
+    - (:CHACHA8:, 80383)
+    - (:CHACHA20:, 153004)
+    - (:XOSHIRO128PP:, 595121)
+    - (:XOSHIRO256PP:, 747104)
+  for algorithm expected = seeded
+    let rng = Rng seed: 1 :algorithm
+    assert_eq (rng.int (0..1000000)) $expected
+
+#[test]
+def rng_unseeded()
+  let a = Rng()
+  let b = Rng()
+  assert ((a.bin 16) != (b.bin 16))
+
+#[test]
+def rng_methods_validate()
+  let rng = Rng seed: 1
+  throws_value "expected a non-empty range" do rng.int (1..1)
+  throws_value "expected p to be between 0 and 1" do rng.bool 2
+  throws_value "expected a non-empty sequence" do rng.pick []
+  throws_value "expected k to be at most the sequence length" do rng.sample [] 1
+  throws_value "expected len to be non-negative" do rng.bin -1
+
+#[test]
+def rng_invalid_args()
+  throws_value "expected seed to be in the range 0..2**64" do Rng seed: -1
+  throws_value "expected seed to be in the range 0..2**64" do Rng seed: 18446744073709551616
+  assert_eq (type (Rng seed: 18446744073709551615)) $Rng
+
+  let seed_err = assert_throws $TypeError do Rng seed: abc
+  assert_eq (str seed_err) "type error: expected `Int`"
+
+  let algorithm_err = assert_throws $ValueError do Rng algorithm: :FOO:
+  assert ((str algorithm_err).starts_with "value error: algorithm must be")

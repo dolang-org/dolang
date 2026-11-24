@@ -72,7 +72,7 @@ pub def bin exe @ Path = nil -> Path
 # The default alphabet is ASCII, so this is 32 bytes, well over the protocol's
 # 16 byte minimum.
 pub def key() -> Str
-  rand.string 32
+  rand.str 32
 
 # Frames a key the way `--key-stdin` reads it: one length byte followed by that
 # many key bytes.

@@ -1459,7 +1459,7 @@ pub class Builder
   def connect self img @ Str
     if self.#socket.exists()
       self.#socket.remove()
-    let name = "dolang-vfs-$(rand.string 16)"
+    let name = "dolang-vfs-$(rand.str 16)"
     # The socket's mode cannot identify the client: the container maps uids
     # however it likes, so it is bound 0666 and anything that can traverse the
     # directory -- every process in the container, and root -- can connect. The

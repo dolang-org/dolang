@@ -1094,7 +1094,7 @@ class DomainConfig
     # source or derived from the work directory, and the port is this class's
     # to reassign when libvirt refuses the one it picked.
     self.guest = Guest
-      port: (rand.int PORT_START PORT_END)
+      port: (rand.int (PORT_START..PORT_END))
       user: $source.user
       identity: $identity.absolute()
       known_hosts: $((workdir / "known_hosts").absolute())
@@ -1957,7 +1957,7 @@ do -> DomainImpl
   if (wait_timeout != nil && wait_timeout <= 0)
     throw std.ValueError "wait_timeout: expected a positive number of seconds"
   let app = normalized_app $app
-  let name = require_name(name || "$app-$(rand.string 8)")
+  let name = require_name(name || "$app-$(rand.str 8)")
   let root = data_root $app
   let workdir = (root / "domains" / name).absolute()
 
@@ -2099,7 +2099,7 @@ do -> DomainImpl
         let started = false
         for attempt = 0..PORT_ATTEMPTS
           if (attempt > 0)
-            config.guest.port = rand.int $PORT_START $PORT_END
+            config.guest.port = rand.int (PORT_START..PORT_END)
           # Left in the work directory, which is where `DomainXml.generated_xml`
           # reads it back at export time.
           let path = (workdir / "domain.xml")
@@ -3377,7 +3377,7 @@ class InstallerSource: Source
     # Written beside the domain so the console is usable while an install is
     # being watched. It is also what any bundle exported from this domain
     # carries — see the Windows section of the module documentation.
-    let password = rand.string 20
+    let password = rand.str 20
     (workdir / "password").write "$password\n"
 
     let key: _ :public = keys

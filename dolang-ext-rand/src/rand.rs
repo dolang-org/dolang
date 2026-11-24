@@ -1,99 +1,37 @@
-use dolang::runtime::{AllocExt, Error, Result, Strand, unpack, value::Value, vm::Register};
-use rand::RngExt;
+use dolang::runtime::{State, vm::Register};
 
-const DEFAULT_ALPHABET: &str = "_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+use crate::{
+    global::Global,
+    ops::{self, Source},
+};
 
-fn require_i64<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    value: &Value<'v>,
-    msg: &'static str,
-) -> Result<'v, 's, i64> {
-    value
-        .to_i64(strand)
-        .map_err(|_| Error::type_error(strand, msg))
-}
-
-pub(crate) fn configure<'v>(builder: &mut Register<'v>) {
-    let alphabet = builder.sym("alphabet");
-
+pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global<'v>>) {
     builder
         .module("rand")
+        .value("Rng", global.types.rng)
         .function("int", async move |strand, args, out| {
-            unpack!(strand, args => start, ?end);
-            let start = require_i64(strand, &start, "expected `Int`")?;
-            let (start, end) = match end {
-                Some(end) => (start, require_i64(strand, &end, "expected `Int`")?),
-                None => (0, start),
-            };
-            if end <= start {
-                return Err(Error::value(
-                    strand,
-                    "expected end to be greater than start",
-                ));
-            }
-            let mut rng = rand::rng();
-            strand.store(out, rng.random_range(start..end));
-            Ok(())
+            ops::int(strand, Source::Thread, args, out)
         })
-        .function("string", async move |strand, args, out| {
-            unpack!(strand, args => len, ?:alphabet);
-            let len = require_i64(strand, &len, "expected `Int`")?;
-            let len = usize::try_from(len)
-                .map_err(|_| Error::value(strand, "expected len to be non-negative"))?;
-            let chars = match &alphabet {
-                Some(alphabet) => {
-                    let alphabet = alphabet
-                        .as_str(strand)
-                        .ok_or_else(|| Error::type_error(strand, "expected `Str`"))?;
-                    strand.access(|x| alphabet.as_str(x).chars().collect::<Vec<_>>())
-                }
-                None => DEFAULT_ALPHABET.chars().collect(),
-            };
-            if chars.is_empty() {
-                return Err(Error::value(strand, "expected alphabet to be non-empty"));
-            }
-            let mut rng = rand::rng();
-            let text = (0..len)
-                .map(|_| chars[rng.random_range(0..chars.len())])
-                .collect::<String>();
-            strand.store(out, text.as_str());
-            Ok(())
+        .function("float", async move |strand, args, out| {
+            ops::float(strand, Source::Thread, args, out)
+        })
+        .function("bool", async move |strand, args, out| {
+            ops::bool(strand, Source::Thread, args, out)
+        })
+        .function("bin", async move |strand, args, out| {
+            ops::bin(strand, Source::Thread, args, out)
+        })
+        .function("str", async move |strand, args, out| {
+            ops::str(strand, &global, Source::Thread, args, out)
         })
         .function("pick", async move |strand, args, out| {
-            unpack!(strand, args => value);
-            let array = value
-                .as_array(strand.vm())
-                .ok_or_else(|| Error::type_error(strand, "expected Array"))?;
-            let len = array.len(strand)?;
-            if len == 0 {
-                return Err(Error::value(strand, "expected non-empty array"));
-            }
-            let mut rng = rand::rng();
-            let index = rng.random_range(0..len);
-            array.get(strand, index, out)?;
-            Ok(())
+            ops::pick(strand, &global, Source::Thread, args, out)
         })
-        .function_with_slots(
-            "shuffle",
-            async move |strand, args, _out, [mut left, mut right]| {
-                unpack!(strand, args => value);
-                let arr = value
-                    .as_array(strand.vm())
-                    .ok_or_else(|| Error::type_error(strand, "expected Array"))?;
-                let len = arr.len(strand)?;
-                let mut rng = rand::rng();
-                for i in (1..len).rev() {
-                    let j = rng.random_range(0..=i);
-                    if i == j {
-                        continue;
-                    }
-                    arr.get(strand, i, &mut left)?;
-                    arr.get(strand, j, &mut right)?;
-                    arr.set(strand, i, &mut right)?;
-                    arr.set(strand, j, &mut left)?;
-                }
-                Ok(())
-            },
-        )
+        .function("sample", async move |strand, args, out| {
+            ops::sample(strand, &global, Source::Thread, args, out)
+        })
+        .function("shuffle", async move |strand, args, _out| {
+            ops::shuffle(strand, Source::Thread, args)
+        })
         .commit();
 }

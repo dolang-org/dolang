@@ -35,12 +35,12 @@ pub def read_view items @ BaseArray[Int]
 #    |                 ^^^^^
 
 pub def not_array()
-  rand.pick (1, 2)
-  # error: expected `std.BaseArray[Unknown]`, found `(1, 2)`
+  rand.shuffle (1, 2)
+  # error: expected `std.Array[Unknown]`, found `(1, 2)`
   #   --> m.dol:LL:LL
   #    |
-  # LL |   rand.pick (1, 2)
-  #    |             ^^^^^^
+  # LL |   rand.shuffle (1, 2)
+  #    |                ^^^^^^
   let _ @ BaseDict[progress.Colors] = {attrs: (:BOLD:,)}
 # error: expected `progress.Colors`, found `{attrs: (:BOLD:,)}`
 #   --> m.dol:LL:LL

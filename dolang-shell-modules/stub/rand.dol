@@ -1,30 +1,136 @@
 # dolang: strict
-# Random integer sampling, string generation, selection, and shuffling.
+# Random numbers, bytes, strings, selection, and shuffling.
+#
+# The module functions draw from a thread-local ChaCha12 generator that is
+# periodically reseeded from the operating system. It is cryptographically
+# secure, so [`str`](rand.str) and [`bin`](rand.bin) are suitable for tokens,
+# passwords, and keys. For a reproducible sequence, create an
+# [`Rng`](rand.Rng) with a seed.
 
-# Samples a uniformly distributed integer from `[0, end)` or `[start, end)`.
+import std:
+  - @Num
+
+# Generator algorithm for [`Rng`](rand.Rng).
+pub @let Algorithm = (:CHACHA8: | :CHACHA12: | :CHACHA20: | :XOSHIRO128PP: | :XOSHIRO256PP:)
+
+# A sequence that [`pick`](rand.pick) and [`sample`](rand.sample) accept: one
+# with a length that integers from 0 up to it index.
+pub @class Indexable[T]: Index[T]
+  # The number of items.
+  #[getter]
+  pub def len self -> Int
+
+  # Returns the item at an index.
+  pub def (index) self index@Int -> T
+
+# Samples a uniformly distributed integer from `range`.
+#
+# An omitted start is the smallest `Int`, and an omitted end includes the
+# largest. A range with a step yields one of the values it iterates over.
 #
 # ## Errors
 #
-# [`ValueError`](std.ValueError) if `end <= 0`, or `end <= start` when both
-# are given.
+# [`ValueError`](std.ValueError) if `range` is empty or its step is zero.
 #
 # ## Example
 #
 # ```
-# assert_eq (int 1) 0
-# let n = int 10 20
+# assert_eq (int (0..1)) 0
+# let n = int (10..20)
 # assert ((n >= 10) && (n < 20))
+# let even = int (Range 0 10 2)
+# assert ((even % 2) == 0)
 # ```
 pub def int
-  # Inclusive lower bound, or the exclusive upper bound when
-  # `end` is omitted.
-  start @ Int
-  # Exclusive upper bound.
-  end @ Int = ...
+  # Range to sample from.
+  range @ Range[Int]
 do -> Int
   ...
 
-# Selects one random element from an array.
+# Samples a uniformly distributed float from `range`.
+#
+# ## Errors
+#
+# [`ValueError`](std.ValueError) if `range` is empty, has an omitted or
+# non-finite bound, or has a step.
+#
+# ## Example
+#
+# ```
+# let x = float()
+# assert ((x >= 0) && (x < 1))
+# let jitter = float (0.5..1.5)
+# assert ((jitter >= 0.5) && (jitter < 1.5))
+# ```
+pub def float
+  # Half-open range to sample from; `0.0..1.0` by default.
+  range @ Range[Num] = ...
+do -> Float
+  ...
+
+# Returns `true` with probability `p`.
+#
+# ## Errors
+#
+# [`ValueError`](std.ValueError) if `p` is not between 0 and 1.
+#
+# ## Example
+#
+# ```
+# assert_eq (bool 0) false
+# assert_eq (bool 1) true
+# ```
+pub def bool
+  # Probability of `true`; 0.5 by default.
+  p @ Num = ...
+do -> Bool
+  ...
+
+# Generates `len` random bytes.
+#
+# ## Errors
+#
+# [`ValueError`](std.ValueError) if `len` is negative.
+#
+# ## Example
+#
+# ```
+# let key = bin 32
+# assert_eq $key.len 32
+# ```
+pub def bin
+  # Number of bytes to generate.
+  len @ Int
+do -> Bin
+  ...
+
+# Generates a random string by sampling characters from `alphabet`.
+#
+# ## Errors
+#
+# [`ValueError`](std.ValueError) if `len` is negative or `alphabet` is empty.
+#
+# ## Example
+#
+# ```
+# let token = str 12
+# assert_eq $token.len 12
+#
+# let text = str 4 alphabet: "åß"
+# assert_eq $text.len 8
+# ```
+pub def str
+  # Number of characters to emit.
+  len @ Int
+  # Characters to sample from.
+  #
+  # The alphabet is interpreted as characters, not raw UTF-8 bytes. When
+  # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.
+  :alphabet @ Str = ...
+do -> Str
+  ...
+
+# Selects one random element from a sequence.
 #
 # ## Errors
 #
@@ -37,9 +143,31 @@ do -> Int
 # assert ([1, 2, 3].contains $item)
 # ```
 pub def pick[T]
-  # Source array.
-  collection @ BaseArray[T]
+  # Sequence to select from.
+  collection @ Indexable[T]
 do -> T
+  ...
+
+# Selects `k` elements from distinct positions of a sequence, in random order.
+#
+# ## Errors
+#
+# [`ValueError`](std.ValueError) if `k` is negative or greater than the length
+# of `collection`.
+#
+# ## Example
+#
+# ```
+# let hosts = sample ["a", "b", "c", "d"] 2
+# assert_eq $hosts.len 2
+# assert ($hosts[0] != $hosts[1])
+# ```
+pub def sample[T]
+  # Sequence to select from.
+  collection @ Indexable[T]
+  # Number of elements to select.
+  k @ Int
+do -> Array[T]
   ...
 
 # Shuffles an array in place using a uniform Fisher-Yates pass.
@@ -63,28 +191,98 @@ pub def shuffle[T]
 do
   ...
 
-# Generates a random string by sampling characters from `alphabet`.
+# Random generator with its own state.
 #
-# ## Errors
-#
-# [`ValueError`](std.ValueError) if `len` is negative or `alphabet` is empty.
+# Its methods behave as the module functions of the same names. Given a seed,
+# a generator produces the same sequence for the same algorithm on every
+# platform; never use a seeded generator for secrets.
 #
 # ## Example
 #
 # ```
-# let token = string 12
-# assert_eq $token.len 12
-#
-# let text = string 4 alphabet: "åß"
-# assert_eq $text.len 8
+# let a = Rng seed: 42
+# let b = Rng seed: 42
+# assert_eq (a.int (0..1000)) (b.int (0..1000))
 # ```
-pub def string
-  # Number of characters to emit.
-  len @ Int
-  # Characters to sample from.
-  #
-  # The alphabet is interpreted as characters, not raw UTF-8 bytes. When
-  # omitted, it is `_-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ`.
-  :alphabet @ Str = ...
-do -> Str
-  ...
+pub class Rng
+  # Creates a generator.
+  pub def (init)
+    self
+    # Seed, from 0 up to `2**64`; drawn from the module's generator when
+    # omitted.
+    :seed @ Int = ...
+    # Generator algorithm; `:CHACHA12:` by default.
+    #
+    # The ChaCha generators are cryptographically secure when unseeded.
+    # The Xoshiro generators are faster but not secure.
+    :algorithm @ Algorithm = ...
+  do
+    ...
+
+  # Samples an integer from `range`, as [`int`](rand.int) does.
+  pub def int
+    self
+    # Range to sample from.
+    range @ Range[Int]
+  do -> Int
+    ...
+
+  # Samples a float from `range`, as [`float`](rand.float) does.
+  pub def float
+    self
+    # Half-open range to sample from; `0.0..1.0` by default.
+    range @ Range[Num] = ...
+  do -> Float
+    ...
+
+  # Returns `true` with probability `p`, as [`bool`](rand.bool) does.
+  pub def bool
+    self
+    # Probability of `true`; 0.5 by default.
+    p @ Num = ...
+  do -> Bool
+    ...
+
+  # Generates `len` random bytes, as [`bin`](rand.bin) does.
+  pub def bin
+    self
+    # Number of bytes to generate.
+    len @ Int
+  do -> Bin
+    ...
+
+  # Generates a random string, as [`str`](rand.str) does.
+  pub def str
+    self
+    # Number of characters to emit.
+    len @ Int
+    # Characters to sample from.
+    :alphabet @ Str = ...
+  do -> Str
+    ...
+
+  # Selects one element from a sequence, as [`pick`](rand.pick) does.
+  pub def pick[T]
+    self
+    # Sequence to select from.
+    collection @ Indexable[T]
+  do -> T
+    ...
+
+  # Selects `k` distinct elements, as [`sample`](rand.sample) does.
+  pub def sample[T]
+    self
+    # Sequence to select from.
+    collection @ Indexable[T]
+    # Number of elements to select.
+    k @ Int
+  do -> Array[T]
+    ...
+
+  # Shuffles an array in place, as [`shuffle`](rand.shuffle) does.
+  pub def shuffle[T]
+    self
+    # Array to mutate.
+    array @ Array[T]
+  do
+    ...
