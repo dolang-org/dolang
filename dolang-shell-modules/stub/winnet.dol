@@ -132,8 +132,8 @@ pub class User
   #
   # ## Returns
   #
-  # Right names, such as `["SeServiceLogonRight"]`.
-  pub def rights self -> Array[Str]
+  # Right names, such as `("SeServiceLogonRight",)`.
+  pub def rights self -> Seq[Str]
     ...
 
   # Grants an account right.
@@ -347,7 +347,7 @@ pub class Group
     ...
 
   # Lists the account rights assigned through the local security policy.
-  pub def rights self -> Array[Str]
+  pub def rights self -> Seq[Str]
     ...
 
   # Grants an account right.
