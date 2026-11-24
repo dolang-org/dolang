@@ -45,6 +45,21 @@ assert_eq (w.(get) :missing:) "fallback"
 w.(set) :x: 5
 assert_eq $w.x 5
 
+# Read without a call, they're the same accessors, bound to the receiver or,
+# through the class object, taking the instance first
+let wget = w.(get)
+assert_eq (wget :x:) 5
+assert_eq (wget :missing:) "fallback"
+let wset = w.(set)
+wset :x: 6
+assert_eq $w.x 6
+let class_wget = WithPub.(get)
+assert_eq (class_wget w :x:) 6
+assert_eq (class_wget w :missing:) "fallback"
+let class_wset = WithPub.(set)
+class_wset $w :x: 7
+assert_eq $w.x 7
+
 # (get) also works as a fallback for method dispatch:
 # obj.method(args) calls (get) to get the callable, then calls it directly with args
 class Dispatcher

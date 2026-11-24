@@ -619,7 +619,7 @@ impl Renderer<'_> {
             return self.render_into(body, naming, out);
         }
         let offset = binders.len() - declared.len();
-        let mut next = 1;
+        let (mut next_type, mut next_schema) = (1, 1);
         let mut listed = Vec::new();
         let names = binders
             .iter()
@@ -629,9 +629,14 @@ impl Renderer<'_> {
                     Binding::Implicit => return None,
                     _ if slot >= offset => declared[slot - offset].clone(),
                     Binding::Keyword(name) => db.symbol(name).to_owned(),
+                    // A schema binder is named as a schema, each kind counted apart
                     _ => loop {
-                        let name = format!("T{next}");
-                        next += 1;
+                        let (prefix, next) = match binder.kind {
+                            Kind::Type => ("T", &mut next_type),
+                            Kind::Schema => ("S", &mut next_schema),
+                        };
+                        let name = format!("{prefix}{next}");
+                        *next += 1;
                         if !naming.taken(&name) && !declared.contains(&name) {
                             break name;
                         }
@@ -644,19 +649,37 @@ impl Renderer<'_> {
                     Binding::Rest(Rest::Keyed) => "**",
                     _ => "",
                 };
-                listed.push(format!("{sigil}{name}"));
+                listed.push((slot, format!("{sigil}{name}")));
                 Some(name)
             })
             .collect();
-        if !listed.is_empty() {
-            let _ = write!(out, "@[{}] ", listed.join(", "));
-        }
         let group = Group {
             depth: naming.depth + 1,
             names,
             outer: naming.groups,
         };
-        self.render_into(body, naming.within(&group), out);
+        let within = naming.within(&group);
+        if !listed.is_empty() {
+            out.push_str("@[");
+            for (index, (slot, name)) in listed.into_iter().enumerate() {
+                if index != 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&name);
+                // A bound or default may refer to the group's own binders
+                let binder = &binders[slot];
+                if let Some(bound) = binder.bound {
+                    out.push_str(" @ ");
+                    self.render_into(bound, within, out);
+                }
+                if let Some(default) = binder.default {
+                    out.push_str(" = ");
+                    self.render_into(default, within, out);
+                }
+            }
+            out.push_str("] ");
+        }
+        self.render_into(body, within, out);
     }
 
     /// A rigid: everything shows its slot; a reader sees its binder's name, or
