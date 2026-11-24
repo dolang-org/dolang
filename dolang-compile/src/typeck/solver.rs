@@ -4211,6 +4211,29 @@ impl<'db> Solver<'db> {
                 Continue(())
             });
         }
+        // A variable that can't settle leaves its judgments waiting on
+        // inference, though what keeps it unsettled may be a trial its bounds
+        // reached, left ambiguous. Propagated bounds aren't premises, so that
+        // reason is found the way contradictions are, and replaces the wait.
+        let inference = Issue::Residual(Residual::Inference);
+        if !diagnostics.is_empty() && diagnostics.iter().all(|d| d.issue == inference) {
+            let ambiguous = Issue::Residual(Residual::Ambiguous);
+            let mut found = Vec::new();
+            let _ = self.history(root, false, |id, path| {
+                if let State::Issue(issue) = self.progress(id).state.get()
+                    && issue == ambiguous
+                {
+                    found.push(Diagnostic {
+                        issue: ambiguous,
+                        path: path.to_vec(),
+                    });
+                }
+                Continue(())
+            });
+            if !found.is_empty() {
+                diagnostics = found;
+            }
+        }
         // What the budget left undone explains the rest, so it's reported first
         if self.gas.is_exhausted() {
             diagnostics.insert(

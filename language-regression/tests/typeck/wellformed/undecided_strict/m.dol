@@ -92,7 +92,7 @@ pub def literal -> Tuple[(Unknown) -> Int]
   # LL |   (o,)
   #    |   ^^^^
   #    |
-  #    = note: nothing determines a type here; annotate it
+  #    = note: several alternatives remain possible; an annotation may pick one
 
 pub def elements -> Array[(Unknown) -> Int]
   [o]
@@ -102,4 +102,4 @@ pub def elements -> Array[(Unknown) -> Int]
   # LL |   [o]
   #    |   ^^^
   #    |
-  #    = note: nothing determines a type here; annotate it
+  #    = note: several alternatives remain possible; an annotation may pick one
