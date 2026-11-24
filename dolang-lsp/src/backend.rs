@@ -3835,6 +3835,29 @@ let f = twice
     }
 
     #[tokio::test(flavor = "current_thread")]
+    async fn hover_shows_the_overload_a_pipeline_call_chooses() {
+        // Only `dodo lsp-test` builds with the bundled typelibs
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///pipeline-hover.dol".parse().unwrap();
+        let text = "\
+import strand:
+  - collect
+let failures = pipeline input: [\"disk full\"]
+  - $collect
+";
+        harness.open(uri.clone(), text, 1).await;
+        harness.next_publish().await;
+
+        // The space of the call: the stub's only overload
+        let hover = hover_text(&mut harness, uri, 2, 23).await.unwrap();
+        assert!(hover.contains("# overload 1"), "{hover}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
     async fn hover_shows_members_calls_and_values() {
         // Only `dodo lsp-test` builds with the bundled typelibs
         if typelib_index::lookup("std").is_none() {
