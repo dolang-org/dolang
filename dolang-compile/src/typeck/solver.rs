@@ -264,6 +264,9 @@ pub(crate) enum Residual {
     /// items repeat, or an opaque schema precedes items of varying count. A
     /// limitation of schema matching.
     Alignment,
+    /// Keyed-only opaque schemas pair in a different order on each side. A
+    /// limitation: written in the same order, they pair.
+    KeyedOrder,
     /// Several alternatives of a judgment that needs one remain possible, so
     /// none is chosen (see [`Solver::trial`]). A limitation: an annotation may
     /// pick one.
@@ -295,6 +298,7 @@ impl Residual {
             | Self::Limit
             | Self::Exhausted
             | Self::Alignment
+            | Self::KeyedOrder
             | Self::Ambiguous => ResidualClass::Limitation,
         }
     }

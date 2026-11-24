@@ -1915,7 +1915,21 @@ impl Solver<'_> {
                     }
                 }
             }
-            return Err(Residual::Alignment.into());
+            // Only keyed packs out of order: their order is all that's wrong
+            let keyed = |o: &Opaque| !o.positional();
+            let keyed_only = pairs.iter().enumerate().all(|(n, &(i, j))| {
+                pairs[n + 1..].iter().all(|&(k, l)| {
+                    l > j
+                        || [&a.opaque[i], &a.opaque[k], &b.opaque[j], &b.opaque[l]]
+                            .into_iter()
+                            .all(keyed)
+                })
+            });
+            return Err(match keyed_only {
+                true => Residual::KeyedOrder,
+                false => Residual::Alignment,
+            }
+            .into());
         }
         Ok(pairs)
     }
