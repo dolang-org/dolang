@@ -88,6 +88,7 @@ class Spec
     :tuple = nil
     :channel = nil
     :extra = []
+    :cross = false
   do
     self.target = TARGETS[args.target || default_target()]
     self.tuple = (tuple || self.target[:tuple:])
@@ -99,8 +100,9 @@ class Spec
     # With `--target`, Cargo builds build scripts, proc macros, and their
     # dependencies separately for the host, even when the target is the
     # host. The bundle build scripts link most of the workspace, so pass it
-    # only when cross-compiling.
-    self.#cross = (self.tuple != host_tuple() || self.profile == "asan")
+    # only when cross-compiling, or when `cross` asks, as for `RUSTFLAGS` that
+    # must stay out of host artifacts.
+    self.#cross = (cross || self.tuple != host_tuple())
     let artifact_profile = (self.profile == "bench" && "release" || self.profile)
     let base = if self.#cross
       (Path("target") / self.tuple)
@@ -214,7 +216,7 @@ def wasm_build()
 def wasm_test()
   let runner = wasm_tool wasm-bindgen-test-runner
   env CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: $runner do
-    run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --lib --locked
+    run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --profile opt --lib --locked
 
 # Vite copies the hover docs from `playground/public/` with the page.
 def playground_build()
@@ -488,7 +490,8 @@ return $
     do |args|
       let spec = Spec $args
         channel: nightly
-        profile: asan
+        profile: opt
+        cross: true
         extra:
           -Z build-std
       env

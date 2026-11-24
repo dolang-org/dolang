@@ -497,9 +497,13 @@ incremental = false
 panic = "abort"
 
 
-[profile.asan]
+# Lightly optimized, for tests that are slow or memory-hungry unoptimized:
+# AddressSanitizer and the wasm tests, whose runner holds the whole module and
+# its debug info. Line tables are enough for symbolized backtraces.
+[profile.opt]
 inherits = "dev"
 opt-level = 1
+debug = "line-tables-only"
 
 
 [profile.bench]
