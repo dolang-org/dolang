@@ -184,7 +184,7 @@ An invariant binder requires compatibility in both directions.
 ```
 class Reader[T]
   pub def read _self -> T
-    throw "not implemented"
+    throw std.UnsupportedError "read"
 
 class Cell[T]
   pub field value @ T = nil

@@ -2,7 +2,9 @@
 import progress json patch rand shlex strand proc sys transfer _vfs time
   std:
     - RuntimeError
+    - StateError
     - TypeError
+    - UnsupportedError
     - ValueError
     - @Entries
     - null
@@ -1206,22 +1208,22 @@ pub class Runtime
     *images @ Str
   do -> (Str | Path)
     if (images.len == 0)
-      throw "save: expected at least one image"
+      throw ValueError "save: expected at least one image"
     let cli = match format
       :DOCKER_ARCHIVE: => "docker-archive"
       :OCI_ARCHIVE: => "oci-archive"
       :OCI_DIR: => "oci-dir"
       :DOCKER_DIR: => "docker-dir"
       :DIR: => "dir"
-      _ => throw "unsupported save format: $format"
+      _ => throw ValueError "unsupported save format: $format"
     if (self.id == :DOCKER: && format != :DOCKER_ARCHIVE:)
-      throw "docker only supports docker_archive for save"
+      throw UnsupportedError "docker only supports docker_archive for save"
     let file = match format
       :DOCKER_ARCHIVE: | :OCI_ARCHIVE: => true
       _ => false
     let multi = (format == :DOCKER_ARCHIVE:)
     if (!multi && images.len > 1)
-      throw "save format does not support multiple images: $format"
+      throw ValueError "save format does not support multiple images: $format"
     let platform = normalize_platform $platform
     let refs = [...images]
     let lines @ Array[Str] = []
@@ -1360,12 +1362,12 @@ def container_mount_args mounts @ Iterable[ContainerMount] -> Array[Str]
 
 def path_leaf path @ Path -> Str
   let name = path.name
-  else throw "path has no filename: $path"
+  else throw ValueError "path has no filename: $path"
   name
 
 def url_leaf url @ Url -> Str
   let name = url.name
-  else throw "source URL has no filename: $url"
+  else throw ValueError "source URL has no filename: $url"
   name
 
 def parse_source source @ (Str | Path | Url) -> (Path | Url)
@@ -1385,7 +1387,7 @@ class Cache
 
   pub def path self url @ Url -> Path
     self.#paths.get $str(url) else: do
-      throw "cache entry missing for URL: $url"
+      throw StateError "cache entry missing for URL: $url"
 
 let cache = Cache()
 
@@ -1561,7 +1563,7 @@ pub class Builder
   def step_add self spec @ AddSpec
     bind spec => :target :source = nil :content = nil :chmod = nil
     if (source != nil && content != nil)
-      throw "add: expected exactly one of source or content"
+      throw ValueError "add: expected exactly one of source or content"
     if (content != nil)
       self.#add_content $content (Path target) $chmod
     else if (source != nil)
@@ -1573,18 +1575,18 @@ pub class Builder
           let path = self.#resolve_target $target (path_leaf source)
           self.#add_file $source $path $chmod
     else
-      throw "add: expected exactly one of source or content"
+      throw ValueError "add: expected exactly one of source or content"
 
   def step_patch self spec @ PatchSpec
     bind spec => :source = nil :content = nil
     if (source != nil && content != nil)
-      throw "patch: expected exactly one of source or content"
+      throw ValueError "patch: expected exactly one of source or content"
     let patch_data = if (content != nil)
       content
     else if (source != nil)
       (Path source).read()
     else
-      throw "patch: expected exactly one of source or content"
+      throw ValueError "patch: expected exactly one of source or content"
 
     let _ = progress.steps message: patch
       for p = patch.decode $patch_data
@@ -1599,7 +1601,7 @@ pub class Builder
         let source = p.source
         let result = p.apply (source.read())
         if (result.len != 0)
-          throw "delete patch did not produce empty output: $source"
+          throw StateError "delete patch did not produce empty output: $source"
         source.remove()
       _ => self.#live_agent().with do
         let result = p.apply (p.source.read())
