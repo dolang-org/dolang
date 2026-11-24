@@ -460,6 +460,85 @@ fn literal_keys_own_their_items_and_others_go_to_the_domain() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn domains_count_their_items_as_literal_keys_do() {
+    use Multiplicity::{Optional as Opt, Repeated as Rep, Required as Req};
+    let mut db = Database::new();
+    let int = nominal(&mut db, "Int", vec![], vec![]);
+    let sym = nominal(&mut db, "Sym", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Sym, sym);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    db.set_intrinsic(Intrinsic::Str, str);
+    let [a, b] = ["a", "b"].map(|k| db.intern(Type::Literal(Literal::Sym(db.intern_symbol(k)))));
+    let [text_a, text_b] = ["a", "b"].map(|k| db.intern(Type::Literal(Literal::Str(k.into()))));
+    let s = |db: &Database, keys: &[(Multiplicity, TypeId)]| {
+        items(db, keys.iter().map(|&(m, k)| keyed(m, k, int)).collect())
+    };
+    let empty = s(&db, &[]);
+    let one_text = s(&db, &[(Req, text_a)]);
+    let two_texts = s(&db, &[(Req, text_a), (Req, text_b)]);
+    let one_str = s(&db, &[(Req, str)]);
+    let maybe_str = s(&db, &[(Opt, str)]);
+    let many_str = s(&db, &[(Rep, str)]);
+    let maybe_a_text = s(&db, &[(Opt, text_a)]);
+    let a_text = s(&db, &[(Req, text_a)]);
+    let mixed = s(&db, &[(Req, a), (Req, text_a)]);
+    let a_b = s(&db, &[(Req, a), (Req, b)]);
+    let a_once = s(&db, &[(Req, a)]);
+    let a_maybe = s(&db, &[(Opt, a)]);
+    let sym_str = s(&db, &[(Req, sym), (Req, str)]);
+    let a_sym = s(&db, &[(Req, a), (Req, sym)]);
+    let options = s(&db, &[(Rep, str)]);
+    db.seal();
+    for (x, y) in [
+        (one_text, one_str),
+        (empty, maybe_str),
+        (one_text, maybe_str),
+        (one_str, many_str),
+        (one_str, one_str),
+        (maybe_str, maybe_str),
+        (mixed, sym_str),
+    ] {
+        let outcome = check(&db, x, y);
+        assert_eq!(
+            outcome.status,
+            Status::Proven,
+            "{x:?} <: {y:?}: {outcome:?}"
+        );
+    }
+    for (x, y, expected) in [
+        (two_texts, one_str, Contradiction::Excess(1)),
+        (two_texts, maybe_str, Contradiction::Excess(1)),
+        (empty, one_str, Contradiction::Missing(0)),
+        (many_str, one_str, Contradiction::Excess(0)),
+        (maybe_str, one_str, Contradiction::Missing(0)),
+        // The domain's key may not be the literal's
+        (one_str, a_text, Contradiction::Missing(0)),
+        (one_str, maybe_a_text, Contradiction::Excess(0)),
+        (a_b, sym_str, Contradiction::Excess(1)),
+        (a_once, sym_str, Contradiction::Missing(1)),
+        // A repeated domain may hold the key any number of times
+        (options, maybe_a_text, Contradiction::Excess(0)),
+    ] {
+        let outcome = check(&db, x, y);
+        assert!(
+            contradiction(&outcome, expected),
+            "{x:?} <: {y:?}: {outcome:?}"
+        );
+    }
+    // The literal takes the key's first item, which the domain may then have
+    // or not
+    let outcome = check(&db, a_maybe, a_sym);
+    assert!(
+        residual(
+            &outcome,
+            Residual::Unsupported("a bounded key domain beside a literal it admits")
+        ),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn domains_own_what_they_admit_narrowest_first() {
     use Multiplicity::{Repeated as Rep, Required as Req};
     let mut db = Database::new();
