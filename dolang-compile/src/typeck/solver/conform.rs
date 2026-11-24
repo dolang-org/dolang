@@ -10,7 +10,9 @@
 //! each compared as accessors that read and set the field. The supertype's
 //! signature takes the conforming declaration's own type as its receiver, or
 //! `Type` of it for a class method, since only calls on its instances or its
-//! object matter.
+//! object matter. A receiver that is one of the signature's own binders keeps
+//! the binder, whose bound is narrowed instead, provided the binder occurs
+//! elsewhere only in positive positions.
 //!
 //! A method is called with its overloads, or its implementation's signature if
 //! it has none: an implementation behind overloads is never what callers see.
@@ -527,8 +529,9 @@ impl Solver<'_> {
     }
 
     /// A method signature with its receiver narrowed as [`Self::narrowed`] does,
-    /// or its first parameter after the receiver or its result replaced by
-    /// closed types
+    /// or through its bound if it's one of the signature's own binders (see
+    /// [`Self::narrowed_binder`]), or its first parameter after the receiver or
+    /// its result replaced by closed types
     fn rewrite(
         &self,
         signature: Term,
@@ -548,7 +551,7 @@ impl Solver<'_> {
             ) => (view.ty, Some(view.environment)),
             _ => (self.reify(signature)?, None),
         };
-        let (binders, body) = match self.db.ty(ty) {
+        let (mut binders, body) = match self.db.ty(ty) {
             Type::Quantified { binders, body } => (Some(binders.clone()), *body),
             _ => (None, ty),
         };
@@ -558,6 +561,13 @@ impl Solver<'_> {
         // The depth the signature's scope refers to its class's binders at
         let outer = usize::from(binders.is_some());
         let mut function = function.clone();
+        if let (Some(narrowing), Some(group)) = (receiver, &mut binders)
+            && let Some((slot, bound)) = self.narrowed_binder(group, &function, narrowing, outer)?
+        {
+            let mut narrowed = group.to_vec();
+            narrowed[usize::from(slot)].bound = Some(bound);
+            *group = narrowed.into();
+        }
         if receiver.is_some() || value.is_some() {
             let Type::Schema(items) = self.db.ty(function.params) else {
                 return Err(Residual::Unsupported("a method without a parameter list").into());
@@ -659,6 +669,88 @@ impl Solver<'_> {
             args: vec![Argument::Positional(narrowed)].into(),
             kind: Kind::Type,
         })))
+    }
+
+    /// A signature's receiver that is one of its own binders, `X` or `Type[X]`
+    /// for a class method's, narrowed through `X`'s bound: its slot and the bound
+    /// narrowed as [`Self::narrowed_receiver`] narrows a receiver. A call through
+    /// the supertype's receiver chooses some `X` holding the receiver, and the
+    /// narrowed signature can be instantiated at the receiver's own class
+    /// instead, so its results are still below that `X`. That holds only while
+    /// `X` occurs nowhere else but in positive positions: with `other @ X`, the
+    /// narrowed signature would assume `other` is an instance of the conforming
+    /// class. `None` leaves the bound as written.
+    fn narrowed_binder(
+        &self,
+        binders: &[Binder],
+        function: &Function,
+        narrowing: Narrowing,
+        outer: usize,
+    ) -> Result<Option<(u16, TypeId)>, Issue> {
+        let Type::Schema(items) = self.db.ty(function.params) else {
+            return Ok(None);
+        };
+        let Some(index) = items
+            .iter()
+            .position(|item| matches!(item.element, Element::Positional(_)))
+        else {
+            return Ok(None);
+        };
+        let Element::Positional(mut receiver) = items[index].element else {
+            unreachable!()
+        };
+        if narrowing.object {
+            let class_type = self.db.intrinsic(Intrinsic::Type);
+            match self.db.ty(receiver) {
+                Type::Apply { base, args, .. } if Some(*base) == class_type => match &args[..] {
+                    &[Argument::Positional(inner)] => receiver = inner,
+                    _ => return Ok(None),
+                },
+                _ => return Ok(None),
+            }
+        }
+        let &Type::Bound { reference, .. } = self.db.ty(receiver) else {
+            return Ok(None);
+        };
+        let slot = reference.slot;
+        let Some(bound) = binders
+            .get(usize::from(slot))
+            .and_then(|binder| binder.bound)
+        else {
+            return Ok(None);
+        };
+        if reference.depth != 0 {
+            return Ok(None);
+        }
+        // `X` elsewhere in the signature, without its receiver
+        let mut rest = items.to_vec();
+        rest.remove(index);
+        let rest = self.db.intern(Type::Function(Function {
+            params: self.db.intern(Type::Schema(rest.into())),
+            ..function.clone()
+        }));
+        if !matches!(
+            self.db.slot_variance(rest, slot),
+            None | Some(Variance::Covariant)
+        ) {
+            return Ok(None);
+        }
+        // A binder's bound or default naming `X`, including its own
+        let mentioned = binders
+            .iter()
+            .flat_map(|binder| [binder.bound, binder.default])
+            .flatten()
+            .any(|ty| self.db.slot_variance(ty, slot).is_some());
+        if mentioned {
+            return Ok(None);
+        }
+        let instance = Narrowing {
+            object: false,
+            ..narrowing
+        };
+        Ok(self
+            .narrowed_receiver(bound, instance, outer)?
+            .map(|bound| (slot, bound)))
     }
 
     /// Whether a receiver is its class applied to its own binders, which the
