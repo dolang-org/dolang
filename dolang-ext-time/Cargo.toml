@@ -21,9 +21,8 @@ workspace = true
 workspace = true
 
 
-[dependencies.time]
-version = "0.3"
-features = ["formatting", "parsing"]
+[dependencies.jiff]
+version = "0.2"
 
 
 [dependencies.web-time]
@@ -33,6 +32,12 @@ version = "1.1"
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies.tokio]
 workspace = true
 features = ["time"]
+
+
+# Reads the browser's time zone for `TimeZone.local()`.
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.jiff]
+version = "0.2"
+features = ["js"]
 
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.gloo-timers]
