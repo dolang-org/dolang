@@ -240,7 +240,9 @@ impl<'db> Solver<'db> {
     /// What a union on the right is when trials reject every member: a
     /// contradiction for a literal, a class or a function, which have values
     /// outside a union none of whose members admits them. A protocol may be
-    /// covered by several members' classes, so it is left residual. So is a
+    /// covered by several members' classes, so it is left residual, unless
+    /// every member is literals: any class may implement a protocol, so it has
+    /// values outside a set of literals. So is a
     /// class reaching several generic members, whose values may fit their
     /// applications together without fitting any one, and anything beside a
     /// member that is a projection. A class has values outside a member it
@@ -256,6 +258,7 @@ impl<'db> Solver<'db> {
     ) -> Result<Issue, Issue> {
         let residual = Residual::Unsupported("a type that may be inside a union member").into();
         let mut class = None;
+        let mut protocol = false;
         let fixed = match self.widened_head(actual) {
             Ok(Head::Structural(view)) => match self.db.ty(view.ty) {
                 _ if view.ty == self.db.top() => true,
@@ -266,10 +269,11 @@ impl<'db> Solver<'db> {
                 _ => return Ok(residual),
             },
             Ok(Head::Nominal(nominal)) => {
-                if self.db.declaration(nominal.declaration).source.kind != DeclKind::Class {
-                    return Ok(residual);
+                match self.db.declaration(nominal.declaration).source.kind {
+                    DeclKind::Class => class = Some(nominal),
+                    DeclKind::Protocol => protocol = true,
+                    _ => return Ok(residual),
                 }
-                class = Some(nominal);
                 false
             }
             Ok(_) => return Ok(residual),
@@ -282,6 +286,12 @@ impl<'db> Solver<'db> {
                 return Ok(residual);
             };
             if fixed {
+                continue;
+            }
+            if protocol {
+                if !self.literals_only(view.child(ty)) {
+                    return Ok(residual);
+                }
                 continue;
             }
             // A metatype member is `Type[C]`'s, as the actual's class may
