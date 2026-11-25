@@ -414,6 +414,7 @@ default-features = false
 
 [workspace.dependencies.rand]
 version = "0.10"
+features = ["chacha"]
 
 
 [workspace.dependencies.rayon]
