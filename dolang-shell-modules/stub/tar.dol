@@ -38,8 +38,6 @@ pub @let EntryType = $
   | :BLOCK_DEVICE:
   # Contiguous file
   | :CONTIGUOUS:
-  # Any other type
-  | :UNKNOWN:
 
 # Metadata and streaming content for the current TAR entry.
 #
@@ -61,16 +59,6 @@ pub class Entry: Iter[Bin] Io
   # Whether the content can be read: whether the handle is still valid.
   #[getter]
   pub def readable self -> Bool
-    ...
-
-  # Device major number, or `nil` when absent.
-  #[getter]
-  pub def device_major self -> (Int | nil)
-    ...
-
-  # Device minor number, or `nil` when absent.
-  #[getter]
-  pub def device_minor self -> (Int | nil)
     ...
 
   # Numeric group ID.
@@ -223,10 +211,10 @@ pub class Writer
   #
   # ## Errors
   #
-  # | Exception    | Condition                                                       |
-  # | ------------ | --------------------------------------------------------------- |
-  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL            |
-  # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
+  # | Exception    | Condition                                            |
+  # | ------------ | ---------------------------------------------------- |
+  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL |
+  # | `ValueError` | `owner_name` or `group_name` contains a NUL          |
   #
   # ## Example
   #
@@ -264,12 +252,12 @@ pub class Writer
   #
   # ## Errors
   #
-  # | Exception          | Condition                                                       |
-  # | ------------------ | --------------------------------------------------------------- |
-  # | `ValueError`       | `path` is absolute, empty, or contains `..` or a NUL            |
-  # | `ConcurrencyError` | Another entry is created while an entry scope is active         |
-  # | `ValueError`       | The number of bytes written differs from the declared `size`    |
-  # | `ValueError`       | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
+  # | Exception          | Condition                                                    |
+  # | ------------------ | ------------------------------------------------------------ |
+  # | `ValueError`       | `path` is absolute, empty, or contains `..` or a NUL         |
+  # | `ConcurrencyError` | Another entry is created while an entry scope is active      |
+  # | `ValueError`       | The number of bytes written differs from the declared `size` |
+  # | `ValueError`       | `owner_name` or `group_name` contains a NUL                  |
   #
   # ## Example
   #
@@ -309,11 +297,11 @@ pub class Writer
   #
   # ## Errors
   #
-  # | Exception    | Condition                                                       |
-  # | ------------ | --------------------------------------------------------------- |
-  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL            |
-  # | `ValueError` | `target` is empty, exceeds 100 bytes, or contains a NUL         |
-  # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
+  # | Exception    | Condition                                            |
+  # | ------------ | ---------------------------------------------------- |
+  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL |
+  # | `ValueError` | `target` is empty or contains a NUL                  |
+  # | `ValueError` | `owner_name` or `group_name` contains a NUL          |
   #
   # ## Example
   #
@@ -351,11 +339,11 @@ pub class Writer
   #
   # ## Errors
   #
-  # | Exception    | Condition                                                       |
-  # | ------------ | --------------------------------------------------------------- |
-  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL            |
-  # | `ValueError` | `target` is empty, exceeds 100 bytes, or contains a NUL         |
-  # | `ValueError` | `owner_name` or `group_name` exceeds 32 bytes or contains a NUL |
+  # | Exception    | Condition                                            |
+  # | ------------ | ---------------------------------------------------- |
+  # | `ValueError` | `path` is absolute, empty, or contains `..` or a NUL |
+  # | `ValueError` | `target` is empty or contains a NUL                  |
+  # | `ValueError` | `owner_name` or `group_name` contains a NUL          |
   #
   # ## Example
   #
@@ -395,6 +383,9 @@ pub class Writer
 # Compression is detected from gzip or zstd magic bytes, so the source need
 # not seek.
 #
+# Reads POSIX ustar and pax archives and GNU archives. Reading stops at the
+# end-of-archive marker, leaving any data after it unread.
+#
 # ## Errors
 #
 # | Exception | Condition |
@@ -402,6 +393,7 @@ pub class Writer
 # | [`TypeError`](std.TypeError) | `source` is not a path or an [`Io`](io.Io) |
 # | [`ValueError`](std.ValueError) | `source` is not readable, and is left open |
 # | [`DataError`](std.DataError) | The archive is malformed or truncated, raised as it is read |
+# | [`DataError`](std.DataError) | The archive mixes GNU and pax headers, is a UNIX v7 archive, or has an entry type that pax doesn't define |
 #
 # ## Example
 #
@@ -424,6 +416,10 @@ do -> R
 # [`Io`](io.Io), such as an open [`fs.File`](fs.File), which is written without
 # being closed. The archive is finished when `func` returns, and a sink opened
 # from a path is closed.
+#
+# Writes a POSIX ustar archive, with a pax extended header for an entry whose
+# path, link target, names, IDs, size, or modification time don't fit a ustar
+# field.
 #
 # ## Errors
 #

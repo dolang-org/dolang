@@ -1,8 +1,10 @@
-import fs
+import base64
+  fs
   compress
   io
   sys
   tar
+  time
   testlib.memio:
     - MemIo
   testlib.vfs:
@@ -298,15 +300,70 @@ def native_consumers_use_entries()
     archive.next()
     assert_throws $Error do compress.decompress $entry :GZIP: do |stream| stream.read_all()
 
+# Values too long for their ustar fields go in pax records.
 #[test]
 #[vfs]
-def header_names_that_do_not_fit_raise_value_errors()
-  assert_throws $ValueError do
-    tar.write long-owner.tar do |archive|
-      archive.create_dir dir owner_name: ooooooooooooooooooooooooooooooooo
-  assert_throws $ValueError do
-    tar.write long-target.tar do |archive|
-      archive.symlink ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt link
+def long_header_values_round_trip()
+  let owner = ("o".repeat 33)
+  let target = ("t".repeat 101)
+  let prefix = ("p".repeat 150)
+  let name = ("n".repeat 90)
+  let tail = ("l".repeat 120)
+  let split = "$prefix/$name"
+  let long = "$prefix/$tail"
+  tar.write long.tar do |archive|
+    archive.create_dir dir owner_name: $owner group_name: $owner uid: 0o10000000 gid: 0o7777777
+    archive.symlink $target link
+    archive.entry $split size: 1 do |entry| entry.write x
+    archive.entry $long size: 2 do |entry| entry.write yz
+  tar.read long.tar do |archive|
+    let dir = archive.next()
+    assert_eq $dir.owner_name $owner
+    assert_eq $dir.group_name $owner
+    assert_eq $dir.uid 0o10000000
+    assert_eq $dir.gid 0o7777777
+    let link = archive.next()
+    assert_eq (str link.link_name) $target
+    let first = archive.next()
+    assert_eq (str first.path) $split
+    assert_eq (first.read 1) b"x"
+    let second = archive.next()
+    assert_eq (str second.path) $long
+    assert_eq (second.read 2) b"yz"
+
+#[test]
+#[vfs]
+def bad_header_values_raise_value_errors()
+  tar.write nul.tar do |archive|
+    assert_throws $ValueError do
+      archive.create_dir dir owner_name: "a\u{0}b"
+    assert_throws $ValueError do
+      archive.symlink "a\u{0}b" link
+    assert_throws $ValueError do
+      archive.hard_link "" link
+    # A rejected value does not poison the writer.
+    archive.create_dir ok
+  tar.read nul.tar do |archive|
+    let names = [...archive.map(do |entry| str entry.path)]
+    assert_eq $names ["ok"]
+
+#[test]
+def reads_gnu_archives()
+  # Made by GNU tar 1.35 with `--format=gnu`; the long name needs a GNU
+  # long-name extension.
+  let data = base64.decode "H4sIAAAAAAACA+3TTQqCQBjG8Vl3ijmBzpcz2w7gJaRSpFAwhY7fZBBRYAtJUP6/zTPMvKt5eZI0Sfd521R53ZzFf6jIOzdm9JlKB/86j/daexWEzMUChmtfdFKKrm37qblf7yt1nCEtZ0j62xb/k/1/e/Z/7LuxxsTUVmXvnXdCu8y4EJR79N9a542Qasn+F5f6cJqYi2Nlub39V82wowUAAAAAAAAAAAAAAADrdQe481PeACgAAA=="
+  tar.read (MemIo data write: false) do |archive|
+    assert_eq $archive.compression :GZIP:
+    let entry = archive.next()
+    assert_eq (str entry.path) "$("d".repeat 60)/$("f".repeat 60).txt"
+    assert_eq $entry.type :FILE:
+    assert_eq $entry.mode 0o640
+    assert_eq $entry.uid 1234
+    assert_eq $entry.gid 5678
+    assert_eq $entry.owner_name alice
+    assert_eq $entry.group_name staff
+    assert_eq $entry.mtime (time.DateTime.from_unix 1700000000)
+    assert_eq (entry.read 10) b"gnu\n"
 
 #[test]
 #[vfs]
