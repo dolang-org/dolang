@@ -40,15 +40,11 @@ impl Solver<'_> {
         self.record_bounds(obligation, actual, expected)?;
         // What a write must fit is each item its key selects
         if actual != expected
-            && let Some(values) = self.assigned(expected)?
+            && let Term::View(view) = self.resolve(expected)?
+            && let Some(values) = self.write_selection(view)?
         {
-            for (index, value) in values.into_iter().enumerate() {
-                self.derive(
-                    obligation,
-                    actual,
-                    self.closed(value),
-                    Step::Selected(index),
-                );
+            for (value, step) in values {
+                self.derive(obligation, actual, value, step);
             }
             return Ok(());
         }
@@ -68,7 +64,7 @@ impl Solver<'_> {
             a,
             b,
         };
-        let rules: [Rule<'_>; 13] = [
+        let rules: [Rule<'_>; 12] = [
             Self::identical,
             Self::judgeable,
             Self::abstract_schema,
@@ -78,8 +74,7 @@ impl Solver<'_> {
             Self::bounded,
             Self::projections,
             Self::abstract_right,
-            Self::widened_writes,
-            Self::required_keys,
+            Self::lowered,
             Self::union_right,
             Self::overloaded,
         ];
@@ -415,103 +410,34 @@ impl Solver<'_> {
         }
     }
 
-    /// An assignment through a rigid's member schema on the right, or a key of
-    /// it. What its bound's member schema sets is set by every subtype's, as the
-    /// override rules keep a setter from narrowing, so a value its bound's
-    /// assignment takes fits, at a key it sets (see [`Self::widened_fields`]).
-    /// `AssignItem` is invariant in any other schema, so only a member schema
-    /// widens.
-    fn widened_writes(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
+    /// A union of projections on the right that's stuck is above what it
+    /// lowers to (see [`Self::evaluate`]). What every instance
+    /// of its rigids shares is derived; what's only sufficient is probed, and
+    /// otherwise left to the rules after.
+    fn lowered(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
         let Head::Structural(view) = &j.b else {
             return Ok(Continue(()));
         };
-        let Type::Union(members) = self.db.ty(view.ty) else {
+        if !matches!(self.db.ty(view.ty), Type::Union(_)) || !self.projective(view.ty) {
             return Ok(Continue(()));
-        };
-        let mut widened = Vec::with_capacity(members.len());
-        let mut reduced = None;
-        for &member in members.iter() {
-            if let UnionMember::AssignItem(schema, _) | UnionMember::Keys(schema) = member
-                && let Some((fields, step)) =
-                    self.widened_fields(view.child(schema), FieldAccess::Write)?
-            {
-                reduced.get_or_insert(step);
-                widened.push(member.with(fields));
-            } else {
-                widened.push(member);
+        }
+        match self.evaluate(*view, Approximation::Lower)? {
+            Evaluation::Lower(term, step) => {
+                self.derive(j.obligation, j.actual, term, step);
+                Ok(Break(()))
             }
-        }
-        let Some(step) = reduced else {
-            return Ok(Continue(()));
-        };
-        // The keys may refer to the view's binders
-        let widened = view.child(self.db.intern(Type::Union(widened.into())));
-        self.derive(j.obligation, j.actual, widened, step);
-        Ok(Break(()))
-    }
-
-    /// A key of a rigid's schema on the right. A rigid schema is any schema
-    /// below its bound, which may omit every item the bound doesn't require, so
-    /// the keys it's known to admit are those of the bound's required literal
-    /// items, and the index of each fixed position. A read schema of a rigid's
-    /// class lists every member its bound does, which are required. They're
-    /// only some of the keys it admits, so a key among them is proven, and any
-    /// other is left to the rules after.
-    fn required_keys(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
-        let Head::Structural(view) = &j.b else {
-            return Ok(Continue(()));
-        };
-        let Type::Union(members) = self.db.ty(view.ty) else {
-            return Ok(Continue(()));
-        };
-        let mut known = Vec::with_capacity(members.len());
-        let mut changed = false;
-        for &member in members.iter() {
-            let UnionMember::Keys(schema) = member else {
-                known.push(member);
-                continue;
-            };
-            let schema = view.child(schema);
-            let bound = match self.widened_fields(schema, FieldAccess::Read)? {
-                Some((fields, _)) => Some(fields),
-                None => self.closed_abstract_bound(schema)?.map(|(bound, _)| bound),
-            };
-            let Some(bound) = bound else {
-                known.push(member);
-                continue;
-            };
-            let promoted = match self.keyed_view(bound) {
-                Ok(Some(promoted)) => promoted,
-                Ok(None) | Err(Issue::Residual(_)) => return Ok(Continue(())),
-                Err(issue) => return Err(issue),
-            };
-            changed = true;
-            known.extend((0..promoted.fixed.len()).map(|index| {
-                let index = Literal::Int(index as i128);
-                UnionMember::Type(self.db.intern(Type::Literal(index)))
-            }));
-            known.extend(
-                promoted
-                    .keyed
-                    .iter()
-                    .filter(|&&(multiplicity, key, _)| {
-                        multiplicity == Multiplicity::Required && self.db.literal(key).is_some()
-                    })
-                    .map(|&(_, key, _)| UnionMember::Type(key)),
-            );
-        }
-        if !changed {
-            return Ok(Continue(()));
-        }
-        let (Ok(actual), Ok(known)) = (
-            self.reify(j.actual),
-            self.reify(view.child(self.db.intern(Type::Union(known.into())))),
-        ) else {
-            return Ok(Continue(()));
-        };
-        match self.probe(actual, known)? {
-            Status::Proven => Ok(Break(())),
-            _ => Ok(Continue(())),
+            Evaluation::Sufficient(known) => {
+                let (Ok(actual), Ok(known)) = (self.reify(j.actual), self.reify(known)) else {
+                    return Ok(Continue(()));
+                };
+                match self.probe(actual, known)? {
+                    Status::Proven => Ok(Break(())),
+                    _ => Ok(Continue(())),
+                }
+            }
+            Evaluation::Exact(_) | Evaluation::Upper(..) | Evaluation::Stuck { .. } => {
+                Ok(Continue(()))
+            }
         }
     }
 
