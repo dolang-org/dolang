@@ -1,0 +1,137 @@
+# A member that doesn't match the one it overrides is explained by notes, each
+# naming the part of its signature at fault with the types on either side, or
+# the parameter one has that the other can't take
+
+pub class Num
+pub class Int: Num
+
+pub class Base
+  pub def pos _self a @ Int -> Int
+    ...
+  pub def keyed _self :k @ Int -> Int
+    ...
+  pub def plain _self -> Int
+    ...
+  pub def rested _self *xs @ Int -> Int
+    ...
+  pub def nested _self a @ Array[Int] -> Int
+    ...
+  pub def bound[T @ Int] _self a @ T -> T
+    ...
+
+# A positional parameter is named as the override names it
+pub class Positional: Base
+  pub def pos _self b @ Str -> Int
+    # error: `pos` does not match `Base.pos`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pos _self a @ Int -> Int
+    #    |                         --- as `Base.pos` declares it
+    # ...
+    # LL |   pub def pos _self b @ Str -> Int
+    #    |           ^^^           --- parameter `b`: `std.Str` here, but `m.Int` in `Base.pos`
+    ...
+
+pub class Keyed: Base
+  pub def keyed _self :k @ Str -> Int
+    # error: `keyed` does not match `Base.keyed`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def keyed _self :k @ Int -> Int
+    #    |                            --- as `Base.keyed` declares it
+    # ...
+    # LL |   pub def keyed _self :k @ Str -> Int
+    #    |           ^^^^^            --- parameter `k`: `std.Str` here, but `m.Int` in `Base.keyed`
+    ...
+
+pub class Dropped: Base
+  pub def keyed _self -> Int
+    # error: `keyed` does not match `Base.keyed`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def keyed _self :k @ Int -> Int
+    #    |                        - `Base.keyed` passes `k: m.Int`, which `keyed` doesn't take
+    # ...
+    # LL |   pub def keyed _self -> Int
+    #    |           ^^^^^
+    ...
+
+pub class AddedKey: Base
+  pub def keyed _self :k @ Int :j @ Int -> Int
+    # error: `keyed` does not match `Base.keyed`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def keyed _self :k @ Int :j @ Int -> Int
+    #    |           ^^^^^                 - `keyed` requires `j: m.Int`, which `Base.keyed` may not pass
+    ...
+
+# A parameter with a default is one the override may add
+pub class OptionalKey: Base
+  pub def keyed _self :k @ Int :j @ (Int | nil) = nil -> Int
+    ...
+
+pub class ExtraPositional: Base
+  pub def pos _self a @ Int b @ Int -> Int
+    # error: `pos` does not match `Base.pos`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def pos _self a @ Int b @ Int -> Int
+    #    |           ^^^               - `pos` requires positional `m.Int`, which `Base.pos` may not pass
+    ...
+
+pub class RemovedRest: Base
+  pub def rested _self -> Int
+    # error: `rested` does not match `Base.rested`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def rested _self *xs @ Int -> Int
+    #    |                         -- `Base.rested` passes positional `*m.Int`, which `rested` doesn't take
+    # ...
+    # LL |   pub def rested _self -> Int
+    #    |           ^^^^^^
+    ...
+
+# The part of the signature is named even where what fails lies deeper in it
+pub class Nested: Base
+  pub def nested _self a @ Array[Num] -> Int
+    # error: `nested` does not match `Base.nested`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def nested _self a @ Array[Int] -> Int
+    #    |                            ---------- as `Base.nested` declares it
+    # ...
+    # LL |   pub def nested _self a @ Array[Num] -> Int
+    #    |           ^^^^^^           ---------- parameter `a`: `std.Array[m.Num]` here, but `std.Array[m.Int]` in `Base.nested`
+    ...
+
+pub class Bound: Base
+  pub def bound[T @ Num] _self a @ T -> T
+    ...
+
+pub class Narrowed: Base
+  pub def bound[U @ Str] _self a @ U -> U
+    # error: `bound` does not match `Base.bound`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def bound[U @ Str] _self a @ U -> U
+    #    |           ^^^^^     --- binder `U`: bound `std.Str` here, but `Base.bound` passes `m.Int`
+    ...
+
+# A member a class inherits is explained where its supertype is named
+#[mixable]
+pub class Mid
+  pub def pos _self a @ Num -> Num
+    ...
+
+pub class Inherits: Mid Base
+# error: `pos` from `Mid` does not match `Base.pos`
+#   --> m.dol:LL:LL
+#    |
+# LL |   pub def pos _self a @ Int -> Int
+#    |                                --- as `Base.pos` declares it
+# ...
+# LL |   pub def pos _self a @ Num -> Num
+#    |                                --- return type: `m.Num` here, but `m.Int` in `Base.pos`
+# ...
+# LL | pub class Inherits: Mid Base
+#    |                         ^^^^

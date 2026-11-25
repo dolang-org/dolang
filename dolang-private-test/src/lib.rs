@@ -5,7 +5,7 @@ use std::{cell::RefCell, fs::File, io::Read, mem, ops::Range, path::Path};
 use annotate_snippets::{AnnotationKind, Group, Level, Patch, Renderer, Snippet};
 
 use dolang::{
-    compile::{self, Config, Diag, Mode, SourceSpan, Unit},
+    compile::{self, Config, Diag, Mode, SourceSpan, Unit, UnitId},
     extension::{CompilerExt, VmExt},
     runtime::{
         Arg, Args, Bytecode, Error, Frame, Slot, Strand, Sym, call, unpack,
@@ -273,17 +273,22 @@ fn scan_directives(content: &[u8]) -> Vec<Directive> {
     res
 }
 
-/// Replace `:DIGITS` in `-->` header lines with `:LL` for stability across file edits.
+/// Replace `:DIGITS` in `-->` and `:::` header lines with `:LL` for stability across
+/// file edits.
 fn anonymize_origin_lines(rendered: String) -> String {
     let mut result = String::with_capacity(rendered.len());
     for line in rendered.split('\n') {
-        // Match "  --> " with any leading whitespace (the --> origin header line)
+        // Match "  --> " or "  ::: " with any leading whitespace (the origin header
+        // line of a diagnostic's first file or another's)
         let trimmed = line.trim_start_matches(' ');
-        if let Some(path_part) = trimmed.strip_prefix("--> ") {
+        let origin = ["--> ", "::: "]
+            .into_iter()
+            .find_map(|prefix| Some((prefix, trimmed.strip_prefix(prefix)?)));
+        if let Some((prefix, path_part)) = origin {
             // Replace colon-prefixed digit sequences with :LL in the path part
             let indent_len = line.len() - trimmed.len();
             result.push_str(&line[..indent_len]);
-            result.push_str("--> ");
+            result.push_str(prefix);
             let mut i = 0;
             let bytes = path_part.as_bytes();
             while i < bytes.len() {
@@ -307,11 +312,14 @@ fn anonymize_origin_lines(rendered: String) -> String {
     result
 }
 
-/// A diagnostic with where its locations lie in the source of its unit, found while
-/// the unit was at hand
+/// A diagnostic with where its locations lie in the sources of its units, found
+/// while the units were at hand
 pub struct Located {
     pub diag: Diag,
     ranges: Vec<(SourceSpan, Range<usize>)>,
+    /// The files other than its own that its locations lie in, by unit, each with
+    /// its name and source
+    others: Vec<(Option<UnitId>, String, String)>,
     /// The line number its span ends on
     end_line: u32,
 }
@@ -319,22 +327,50 @@ pub struct Located {
 impl Located {
     /// Locate `diag`, all of whose locations are in `unit`.
     pub fn new(diag: Diag, unit: &Unit<'_>) -> Self {
+        Self::across(diag, unit, |_| None)
+    }
+
+    /// Locate `diag`, whose own span is in `unit`, finding each other unit a
+    /// location lies in, with the name it renders by, with `other`. A location
+    /// in a unit `other` doesn't find is left out.
+    pub fn across<'a>(
+        diag: Diag,
+        unit: &Unit<'_>,
+        other: impl Fn(UnitId) -> Option<(&'a str, &'a Unit<'a>)>,
+    ) -> Self {
+        let own = diag.span().unit();
         let locations = [diag.span()]
             .into_iter()
             .chain(diag.annotations().map(|annotation| annotation.span()))
             .chain(diag.patches().map(|patch| patch.span()));
-        let ranges = locations
-            .map(|location| {
-                let range = unit.byte_range(location.span());
-                (location, range)
-            })
-            .collect();
+        let mut ranges = Vec::new();
+        let mut others: Vec<(Option<UnitId>, String, String)> = Vec::new();
+        for location in locations {
+            let range = match location.unit() {
+                at if at == own => unit.byte_range(location.span()),
+                at => {
+                    let Some((file, found)) = at.and_then(&other) else {
+                        continue;
+                    };
+                    if !others.iter().any(|(unit, ..)| *unit == at) {
+                        others.push((at, file.to_owned(), found.source().to_owned()));
+                    }
+                    found.byte_range(location.span())
+                }
+            };
+            ranges.push((location, range));
+        }
         let end_line = unit.end(diag.span().span()).line_number();
         Self {
             diag,
             ranges,
+            others,
             end_line,
         }
+    }
+
+    fn located(&self, location: &SourceSpan) -> bool {
+        self.ranges.iter().any(|(located, _)| located == location)
     }
 
     fn range(&self, location: &SourceSpan) -> Range<usize> {
@@ -345,16 +381,42 @@ impl Located {
     }
 }
 
-fn build_diag_report<'s>(file: &'s str, source: &'s str, located: &Located) -> Vec<Group<'s>> {
+fn build_diag_report<'s>(file: &'s str, source: &'s str, located: &'s Located) -> Vec<Group<'s>> {
     let diag = &located.diag;
     let level = match diag.severity() {
         compile::Severity::Error => Level::ERROR,
         compile::Severity::Warning => Level::WARNING,
         other => Level::INFO.with_name(other.to_string()),
     };
+    let own = diag.span().unit();
     let mut snippet = Snippet::source(source).path(file).line_start(1);
+    // Another file's annotations, each file's in a snippet of its own
+    let mut others: Vec<_> = (located.others.iter())
+        .map(|(unit, file, source)| {
+            let snippet = Snippet::source(source.as_str())
+                .path(file.as_str())
+                .line_start(1);
+            (*unit, snippet)
+        })
+        .collect();
     let mut have_primary = false;
     for ann in diag.annotations() {
+        let location = ann.span();
+        if location.unit() != own {
+            let Some((_, other)) = (others.iter_mut()).find(|(unit, _)| *unit == location.unit())
+            else {
+                continue;
+            };
+            if located.located(&location) {
+                let snippet = mem::replace(other, Snippet::source(""));
+                *other = snippet.annotation(
+                    AnnotationKind::Context
+                        .span(located.range(&location))
+                        .label(ann.message().to_string()),
+                );
+            }
+            continue;
+        }
         snippet = snippet.annotation(
             match ann.kind() {
                 compile::AnnotationKind::Primary => {
@@ -373,6 +435,9 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, located: &Located) -> V
     let mut primary = level
         .primary_title(diag.message().to_string())
         .element(snippet);
+    for (_, snippet) in others {
+        primary = primary.element(snippet);
+    }
     for note in diag.notes() {
         match note.kind() {
             compile::NoteKind::Help => {

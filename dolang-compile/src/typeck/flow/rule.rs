@@ -2115,20 +2115,10 @@ impl<'a> Flow<'a, '_> {
         Some((positional, self.schema_item(schema, index)?))
     }
 
-    /// A schema's top-level item as a diagnostic names it: quoted without the
-    /// schema's braces, and called positional if it is
+    /// A schema's top-level item as a diagnostic names it
     fn schema_item(&self, schema: TypeId, index: usize) -> Option<String> {
-        let Type::Schema(items) = self.db.ty(schema) else {
-            return None;
-        };
-        let item = items.get(index)?;
-        let positional = matches!(item.element, Element::Positional(_));
-        let rendered = self.shown(self.db.intern(Type::Schema(vec![item.clone()].into())));
-        let inner = rendered.strip_prefix('{')?.strip_suffix('}')?;
-        Some(match positional {
-            true => format!("positional `{inner}`"),
-            false => format!("`{inner}`"),
-        })
+        self.db
+            .schema_item(schema, index, &self.names(), Style::Reader)
     }
 
     /// A call: its callee's type below the function type its arguments call it as.

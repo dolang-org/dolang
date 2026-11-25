@@ -31,8 +31,15 @@ pub class Partial: @Both
     # error: `get` does not match `Source.get`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def get self key @ K -> V
+    #    |                          -    - as overload 2 of `Source.get` declares it
+    #    |                          |
+    #    |                          as overload 2 of `Source.get` declares it
+    # ...
     # LL |   pub def get _self key @ Int -> Int
-    #    |           ^^^
+    #    |           ^^^             ---    --- return type: `m.Int` here, but `m.Other` in overload 2 of `Source.get`
+    #    |                           |
+    #    |                           parameter `key`: `m.Int` here, but `m.Str` in overload 2 of `Source.get`
     ...
 
 # A class may claim a protocol more than once too
@@ -47,6 +54,13 @@ pub class Short: @Source[Int, Int] @Source[Str, Other]
     # error: `get` does not match `Source.get`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def get self key @ K -> V
+    #    |                          -    - as `Source.get` declares it
+    #    |                          |
+    #    |                          as `Source.get` declares it
+    # ...
     # LL |   pub def get _self key @ Int -> Int
-    #    |           ^^^
+    #    |           ^^^             ---    --- return type: `m.Int` here, but `m.Other` in `Source.get`
+    #    |                           |
+    #    |                           parameter `key`: `m.Int` here, but `m.Str` in `Source.get`
     ...

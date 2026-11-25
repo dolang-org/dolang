@@ -14,6 +14,9 @@ pub class Narrower: Base
     # error: `(call)` does not match `Base.(call)`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def (call) _self n @ Int -> Str
+    #    |                            --- as `Base.(call)` declares it
+    # ...
     # LL |   pub def (call) _self n @ Str -> Str
-    #    |            ^^^^
+    #    |            ^^^^            --- parameter `n`: `std.Str` here, but `std.Int` in `Base.(call)`
     ...

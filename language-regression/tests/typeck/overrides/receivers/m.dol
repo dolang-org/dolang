@@ -26,8 +26,11 @@ pub class Pinned[T]: Box[T]
     # error: `only` does not match `Box.only`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def only self @ Box[T] -> T
+    #    |                       ------ as `Box.only` declares it
+    # ...
     # LL |   pub def only self @ Pinned[Int] -> T
-    #    |           ^^^^
+    #    |           ^^^^        ----------- parameter `self`: `m.Pinned[m.Int]` here, but `m.Pinned[T]` in `Box.only`
     self.item
 # error: `m.Int` does not fit the declared result `T`
 #   --> m.dol:LL:LL

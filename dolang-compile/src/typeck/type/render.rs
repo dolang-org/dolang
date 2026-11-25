@@ -167,6 +167,29 @@ impl Database {
         }
     }
 
+    /// A schema's top-level item as a diagnostic names it: quoted without the
+    /// schema's braces, and called positional if it is
+    pub(crate) fn schema_item(
+        &self,
+        schema: TypeId,
+        index: usize,
+        names: &dyn Names,
+        style: Style,
+    ) -> Option<String> {
+        let Type::Schema(items) = self.ty(schema) else {
+            return None;
+        };
+        let item = items.get(index)?;
+        let positional = matches!(item.element, Element::Positional(_));
+        let single = self.intern(Type::Schema(vec![item.clone()].into()));
+        let rendered = self.render(single, names, style);
+        let inner = rendered.strip_prefix('{')?.strip_suffix('}')?;
+        Some(match positional {
+            true => format!("positional `{inner}`"),
+            false => format!("`{inner}`"),
+        })
+    }
+
     /// A closed type as the subject of a diagnostic's sentence: an omitted
     /// channel's rigid is described, unless `style` shows everything
     pub(crate) fn subject(&self, ty: TypeId, names: &dyn Names, style: Style) -> Shown {

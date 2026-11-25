@@ -23,9 +23,11 @@ pub(crate) trait Report {
     }
 }
 
-/// A span a report points to besides its own, in the same unit
+/// A span a report points to besides its own
 pub(crate) struct Annotation {
     pub(crate) kind: AnnotationKind,
+    /// The unit the span is of, if not the report's
+    pub(crate) unit: Option<UnitId>,
     pub(crate) span: Span,
     pub(crate) message: String,
 }
@@ -57,7 +59,7 @@ impl Diag {
                 .into_iter()
                 .map(|annotation| diag::Annotation {
                     kind: annotation.kind,
-                    span: resolve_span(unit, annotation.span),
+                    span: resolve_span(annotation.unit.unwrap_or(unit), annotation.span),
                     message: annotation.message,
                 }),
             self.0

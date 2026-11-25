@@ -35,6 +35,22 @@ pub class Same: Base
     # error: `pick` does not match `Base.pick`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   @def pick _self x @ Int -> Int
+    #    |                       ---    --- as overload 1 of `Base.pick` declares it
+    #    |                       |
+    #    |                       as overload 1 of `Base.pick` declares it
+    # LL |   @def pick _self x @ Num -> Num
+    #    |                       ---    --- as overload 2 of `Base.pick` declares it
+    #    |                       |
+    #    |                       as overload 2 of `Base.pick` declares it
+    # ...
+    # LL |   @def pick _self x @ Other -> Other
+    #    |                       -----    -----
+    #    |                       |        |
+    #    |                       |        return type: `m.Other` here, but `m.Int` in overload 1 of `Base.pick`
+    #    |                       |        return type: `m.Other` here, but `m.Num` in overload 2 of `Base.pick`
+    #    |                       parameter `x`: `m.Other` here, but `m.Int` in overload 1 of `Base.pick`
+    #    |                       parameter `x`: `m.Other` here, but `m.Num` in overload 2 of `Base.pick`
     # LL |   pub def pick _self x @ Num -> Num
     #    |           ^^^^
     ...
@@ -44,8 +60,15 @@ pub class Narrow: Base
     # error: `pick` does not match `Base.pick`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   @def pick _self x @ Int -> Int
+    #    |                              --- as overload 1 of `Base.pick` declares it
+    # LL |   @def pick _self x @ Num -> Num
+    #    |                       --- as overload 2 of `Base.pick` declares it
+    # ...
     # LL |   pub def pick _self x @ Int -> Num
-    #    |           ^^^^
+    #    |           ^^^^           ---    --- return type: `m.Num` here, but `m.Int` in overload 1 of `Base.pick`
+    #    |                          |
+    #    |                          parameter `x`: `m.Int` here, but `m.Num` in overload 2 of `Base.pick`
     ...
 
 pub @class Picks
@@ -62,6 +85,15 @@ pub class Unasserted: @Picks
     # error: `pick` does not match `Picks.pick`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def pick self x @ Int -> Int
+    #    |                         ---    --- as `Picks.pick` declares it
+    #    |                         |
+    #    |                         as `Picks.pick` declares it
+    # ...
+    # LL |   @def pick _self x @ Other -> Other
+    #    |                       -----    ----- return type: `m.Other` here, but `m.Int` in `Picks.pick`
+    #    |                       |
+    #    |                       parameter `x`: `m.Other` here, but `m.Int` in `Picks.pick`
     # LL |   pub def pick _self x @ Num -> Num
     #    |           ^^^^
     ...
@@ -83,8 +115,15 @@ pub class HalfConverter: @Converts
     # error: `convert` does not match `Converts.convert`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   @def convert self x @ Other -> Other
+    #    |                         -----    ----- as overload 2 of `Converts.convert` declares it
+    #    |                         |
+    #    |                         as overload 2 of `Converts.convert` declares it
+    # ...
     # LL |   pub def convert _self x @ Int -> Int
-    #    |           ^^^^^^^
+    #    |           ^^^^^^^           ---    --- return type: `m.Int` here, but `m.Other` in overload 2 of `Converts.convert`
+    #    |                             |
+    #    |                             parameter `x`: `m.Int` here, but `m.Other` in overload 2 of `Converts.convert`
     ...
 
 # A requirement met only by several overloads together isn't met

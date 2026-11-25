@@ -28,8 +28,14 @@ pub class Picky: Base
     # error: `size` does not match `Base.size`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def size _self value @ Num
+    #    |                              --- as `Base.size` declares it
+    # ...
     # LL |   pub def size _self -> Num
     #    |           ^^^^
+    # ...
+    # LL |   pub def size _self value @ Int
+    #    |                              --- setter's parameter `value`: `m.Int` here, but `m.Num` in `Base.size`
     ...
 
   #[setter]

@@ -36,7 +36,7 @@ pub class Sub: Base
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def arr[X @ Sub] self @ X -> Array[X]
-    #    |           ^^^
+    #    |           ^^^     --- binder `X`: bound `m.Sub` here, but `Base.arr` passes `m.Base`
     [self]
 
   # A `Base` passed as `other` through a `Base` receiver isn't a `Sub`
@@ -45,7 +45,7 @@ pub class Sub: Base
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def pair[X @ Sub] _self @ X other @ X -> X
-    #    |           ^^^^
+    #    |           ^^^^     --- binder `X`: bound `m.Sub` here, but `Base.pair` passes `m.Base`
     other
 
   #[class]

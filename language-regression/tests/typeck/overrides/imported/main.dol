@@ -1,0 +1,36 @@
+# A member is explained in this unit, and pointed to where the member it
+# overrides declares the part at fault in another
+
+import base:
+  - Base
+  - @Whole
+
+pub class Positional: Base
+  pub def pos _self b @ Str -> Whole
+    # error: `pos` does not match `Base.pos`
+    #   --> main.dol:LL:LL
+    #    |
+    # LL |   pub def pos _self b @ Str -> Whole
+    #    |           ^^^           --- parameter `b`: `std.Str` here, but `base.Whole` in `Base.pos`
+    #    |
+    #   ::: base.dol:LL:LL
+    #    |
+    # LL |   pub def pos _self a @ Whole -> Whole
+    #    |                         ----- as `Base.pos` declares it
+    ...
+
+pub class Dropped: Base
+  pub def keyed _self -> Whole
+    # error: `keyed` does not match `Base.keyed`
+    #   --> main.dol:LL:LL
+    #    |
+    # LL |   pub def keyed _self -> Whole
+    #    |           ^^^^^
+    #    |
+    #   ::: base.dol:LL:LL
+    #    |
+    # LL |   pub def keyed _self :k @ Whole -> Whole
+    #    |                        - as `Base.keyed` declares it
+    #    |
+    #    = note: `Base.keyed` passes `k: base.Whole`, which `keyed` doesn't take
+    ...

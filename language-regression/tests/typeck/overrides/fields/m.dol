@@ -56,6 +56,9 @@ pub class PickySetter: Base
     #    |
     # LL |   pub def name _self -> Num
     #    |           ^^^^
+    # ...
+    # LL |   pub def name _self value @ Int
+    #    |                              --- setter's parameter `value`: `m.Int` here, but `m.Num` in `Base.name`
     ...
 
   #[setter]
@@ -79,6 +82,9 @@ pub class NarrowHeld: Sized
 # error: `size` does not match `Sized.size`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def size _self value @ Num
+#    |                              --- setter's parameter `value`: `m.Int` here, but `m.Num` in `Sized.size`
+# ...
 # LL |   pub field size @ Int = ...
 #    |             ^^^^
 
@@ -87,6 +93,9 @@ pub class WideHeld: Sized
 # error: `size` does not match `Sized.size`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def size _self -> Num
+#    |                         --- getter's return type: `Value` here, but `m.Num` in `Sized.size`
+# ...
 # LL |   pub field size @ Value = ...
 #    |             ^^^^
 

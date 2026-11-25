@@ -28,8 +28,11 @@ pub class Wrong: @Shape
     # error: `area` does not match `Shape.area`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def area self -> Num
+    #    |                        --- as `Shape.area` declares it
+    # ...
     # LL |   pub def area _self -> Other
-    #    |           ^^^^
+    #    |           ^^^^          ----- return type: `m.Other` here, but `m.Num` in `Shape.area`
     ...
 
 # A protocol's field is upheld by a property that reads and writes it
@@ -53,6 +56,9 @@ pub class Strict: @Shape
     #    |
     # LL |   pub def name _self -> Num
     #    |           ^^^^
+    # ...
+    # LL |   pub def name _self value @ Int
+    #    |                              --- setter's parameter `value`: `m.Int` here, but `m.Num` in `Shape.name`
     ...
 
   #[setter]
@@ -78,6 +84,9 @@ pub class NarrowLabel: @Labeled
 # error: `label` does not match `Labeled.label`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def label self value @ Num
+#    |                              --- setter's parameter `value`: `m.Int` here, but `m.Num` in `Labeled.label`
+# ...
 # LL |   pub field label @ Int = ...
 #    |             ^^^^^
 

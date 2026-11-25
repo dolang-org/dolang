@@ -1,0 +1,8 @@
+pub class Num
+pub class Whole: Num
+
+pub class Base
+  pub def pos _self a @ Whole -> Whole
+    ...
+  pub def keyed _self :k @ Whole -> Whole
+    ...

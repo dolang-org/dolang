@@ -34,6 +34,9 @@ pub class Loose: Source[Num] Ints
 # error: `get` from `Source` does not match `Source.get`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def get _self -> T
+#    |                        - return type: `m.Num` here, but `m.Int` in `Source.get`
+# ...
 # LL | pub class Loose: Source[Num] Ints
 #    |                              ^^^^
 # error: `m.Source[m.Num]` is not below `m.Source[m.Int]` from `Ints`
@@ -47,6 +50,9 @@ pub class Late: Nums Source[Int]
 # error: `get` from `Source` does not match `Source.get`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def get _self -> T
+#    |                        - return type: `m.Num` here, but `m.Int` in `Source.get`
+# ...
 # LL | pub class Late: Nums Source[Int]
 #    |                      ^^^^^^
 # error: `m.Source[m.Num]` from `Nums` is not below `m.Source[m.Int]`
@@ -66,6 +72,9 @@ pub class Picky: Drain[Int] NumDrain
 # error: `put` from `Drain` does not match `Drain.put`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def put _self x @ T
+#    |                         - parameter `x`: `m.Int` here, but `m.Num` in `Drain.put`
+# ...
 # LL | pub class Picky: Drain[Int] NumDrain
 #    |                             ^^^^^^^^
 # error: `m.Drain[m.Int]` is not below `m.Drain[m.Num]` from `NumDrain`
@@ -82,6 +91,8 @@ pub class Mixed: Cell[Num] IntCell
 #    |
 # LL | pub class Mixed: Cell[Num] IntCell
 #    |                            ^^^^^^^
+#    |
+#    = note: `m.Num` here, but `m.Int` in `Cell.value`
 # error: `m.Cell[m.Num]` is not below `m.Cell[m.Int]` from `IntCell`
 #   --> m.dol:LL:LL
 #    |
@@ -117,6 +128,9 @@ pub class Loosened[T @ Num]: Source[Num] Holder[T]
 # error: `get` from `Source` does not match `Source.get`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def get _self -> T
+#    |                        - return type: `m.Num` here, but `T` in `Source.get`
+# ...
 # LL | pub class Loosened[T @ Num]: Source[Num] Holder[T]
 #    |                                          ^^^^^^
 
@@ -125,6 +139,9 @@ pub @class Conflicted: Source[Num] Ints
 # error: `get` from `Source` does not match `Source.get`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def get _self -> T
+#    |                        - return type: `m.Num` here, but `m.Int` in `Source.get`
+# ...
 # LL | pub @class Conflicted: Source[Num] Ints
 #    |                                    ^^^^
 # error: `m.Source[m.Num]` is not below `m.Source[m.Int]` from `Ints`
