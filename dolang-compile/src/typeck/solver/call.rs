@@ -107,9 +107,10 @@ impl Solver<'_> {
                 for (index, &member) in members.iter().enumerate() {
                     let (callee, step) = match member {
                         UnionMember::Type(ty) => (view.child(ty), Step::UnionMember(index)),
-                        // A projection is called as what it widens to
+                        // A projection is called as what it evaluates or
+                        // widens to
                         _ => self
-                            .widened_projection(view, member)?
+                            .actual_member(view, member, index)?
                             .ok_or(Residual::Unsupported("an unevaluated projection"))?,
                     };
                     derived.push((callee, step));

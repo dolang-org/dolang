@@ -657,3 +657,101 @@ fn nested_projections_imply_no_key_bounds() {
     assert_eq!(db.item_keys(outer), [0]);
     assert_eq!(db.implied_bounds(outer), []);
 }
+
+/// `[K @ Int] (IndexItem[S, K]) -> Value` against `(?v) -> Value`, solved and
+/// defaulted: `?v` is outside `K`'s scope, so it can't take the projection
+fn below_skolem_item(db: &Database, schema: TypeId) -> (Outcome, Option<TypeId>, bool) {
+    let int = db.intrinsic(Intrinsic::Int).unwrap();
+    let top = db.top();
+    let k = reference(db, 0, 0);
+    let expected = quantified(
+        db,
+        vec![bounded(Kind::Type, Binding::Positional, Some(int))],
+        function(db, &[selecting(db, false, schema, k)], top),
+    );
+    let gas = Gas::default();
+    let mut s = Solver::new(db, &gas);
+    let v = s.infer();
+    let actual = function_term(&s, &[v], s.closed(top));
+    s.constrain(actual, s.closed(expected), Provenance::default());
+    s.solve();
+    let outcome = default_all(&mut s).remove(0);
+    let widened = uses(&s, &Step::SkolemBound);
+    (outcome, s.solution(variable_id(v)), widened)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn escaping_skolem_items_are_evaluated_by_shape() {
+    let mut db = Database::new();
+    let _ = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    // `{*Str}` has `Str` at every index
+    let repeated = items(&db, vec![positional(Multiplicity::Repeated, str)]);
+    db.seal();
+    let (outcome, solution, _) = below_skolem_item(&db, repeated);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    assert_eq!(solution, Some(str));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn escaping_skolem_items_widen_to_their_keys_bounds() {
+    let mut db = Database::new();
+    let _ = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let bin = nominal(&mut db, "Bin", vec![], vec![]);
+    // `K @ Int` selects either position of `{Str, Bin}`
+    let pair = schema(&db, &[str, bin]);
+    let either = db.intern(Type::Union(
+        vec![UnionMember::Type(str), UnionMember::Type(bin)].into(),
+    ));
+    db.seal();
+    let (outcome, solution, widened) = below_skolem_item(&db, pair);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    assert_eq!(solution, Some(either));
+    assert!(widened, "the widening isn't a step below `?v`");
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn skolems_never_escape_through_solved_keys() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let bin = nominal(&mut db, "Bin", vec![], vec![]);
+    let pair = schema(&db, &[str, bin]);
+    let either = db.intern(Type::Union(
+        vec![UnionMember::Type(str), UnionMember::Type(bin)].into(),
+    ));
+    let a = reference(&db, 0, 0);
+    // [A] (A) -> IndexItem[{Str, Bin}, A]
+    let actual = quantified(
+        &db,
+        vec![binder(Variance::Invariant)],
+        function(&db, &[a], selecting(&db, false, pair, a)),
+    );
+    // [K @ Int] (K) -> ?v, with `?v` outside `K`'s scope
+    let outer = db.intern(Type::Bound {
+        reference: BoundRef::new(1, 0),
+        kind: Kind::Type,
+    });
+    let expected = quantified(
+        &db,
+        vec![bounded(Kind::Type, Binding::Positional, Some(int))],
+        function(&db, &[a], outer),
+    );
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let v = s.infer();
+    let environment = s.intern_environment(s.empty_environment(), vec![v]);
+    let expected = s.view(expected, environment);
+    s.constrain(s.closed(actual), expected, Provenance::default());
+    s.solve();
+    // `?a` takes `K`, so `?v`'s bound `IndexItem[{Str, Bin}, ?a]` would reach
+    // it: `?v` is refused that, and takes what `K`'s bound selects instead
+    let outcome = default_all(&mut s).remove(0);
+    assert_eq!(outcome.status, Status::Proven, "{outcome:?}");
+    assert_eq!(s.solution(variable_id(v)), Some(either));
+}

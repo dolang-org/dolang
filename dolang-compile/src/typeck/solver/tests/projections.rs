@@ -781,3 +781,63 @@ fn a_sole_reached_generic_alternative_refutes() {
     db.seal();
     assert_eq!(check(&db, actual, expected).status, Status::Contradicted);
 }
+
+/// A lone projection of a schema of the given positions, each a fresh
+/// variable. The schema is substituted, as interning would evaluate a
+/// projection of one written out.
+fn projected(
+    s: &mut Solver<'_>,
+    positions: &[Multiplicity],
+    member: impl Fn(TypeId) -> UnionMember,
+) -> (TypeView, Vec<Term>) {
+    let slots: Vec<Term> = positions.iter().map(|_| s.infer()).collect();
+    let items = positions
+        .iter()
+        .enumerate()
+        .map(|(i, &multiplicity)| positional(multiplicity, reference(s.db, 0, i)))
+        .collect();
+    let schema = s.db.intern(Type::Schema(items));
+    let inner = s.intern_environment(s.empty_environment(), slots.clone());
+    let schema = s.view(schema, inner);
+    let held = s.db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    });
+    let ty = s.db.intern(Type::Union(vec![member(held)].into()));
+    let environment = s.intern_environment(s.empty_environment(), vec![schema]);
+    (TypeView { ty, environment }, slots)
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn projections_evaluate_by_shape_or_get_stuck() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let fixed = [Multiplicity::Required, Multiplicity::Required];
+    // `Keys` of positions alone is `Int`, whatever their types
+    let (view, _) = projected(&mut s, &fixed, UnionMember::Keys);
+    match s.evaluate(view, Approximation::Exact) {
+        Ok(Evaluation::Exact(term)) => assert_eq!(s.reify(term), Ok(int)),
+        other => panic!("{other:?}"),
+    }
+    // An index of one repeated position selects it
+    let (view, slots) = projected(&mut s, &[Multiplicity::Repeated], |schema| {
+        UnionMember::IndexItem(schema, int)
+    });
+    match s.evaluate(view, Approximation::Exact) {
+        Ok(Evaluation::Exact(term)) => assert!(s.same(term, slots[0]).unwrap()),
+        other => panic!("{other:?}"),
+    }
+    // An index of either of two positions waits on their types, and has
+    // nothing to widen to
+    let (view, _) = projected(&mut s, &fixed, |schema| UnionMember::IndexItem(schema, int));
+    for approximation in [Approximation::Exact, Approximation::Upper] {
+        assert!(matches!(
+            s.evaluate(view, approximation),
+            Ok(Evaluation::Stuck { waiting: true })
+        ));
+    }
+}

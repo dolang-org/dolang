@@ -237,14 +237,10 @@ impl Solver<'_> {
                 self.add_bound(a, Term::Infer(b), false, j.obligation)?;
                 self.add_bound(b, Term::Infer(a), true, j.obligation)?;
             }
-            (&Head::Infer(id), _) => {
-                let expected = self.shape_evaluated(j.expected, false)?;
-                self.add_bound(id, expected, false, j.obligation)?;
-            }
+            (&Head::Infer(id), _) => self.add_bound(id, j.expected, false, j.obligation)?,
             (_, &Head::Infer(id)) => {
-                let actual = self.shape_evaluated(j.actual, true)?;
-                self.occupy(id, actual, j.obligation);
-                self.add_bound(id, actual, true, j.obligation)?;
+                self.occupy(id, j.actual, j.obligation);
+                self.add_bound(id, j.actual, true, j.obligation)?;
             }
             _ => return Ok(Continue(())),
         }
@@ -395,7 +391,7 @@ impl Solver<'_> {
                 _ if self.congruent(*view, member, &j.b)? => continue,
                 _ if self.among_values(*view, member, &j.b)? => continue,
                 _ => self
-                    .widened_projection(*view, member)?
+                    .actual_member(*view, member, index)?
                     .ok_or(Residual::Unsupported("an unevaluated projection"))?,
             };
             derived.push((term, step));
@@ -404,97 +400,6 @@ impl Solver<'_> {
             self.derive(j.obligation, term, j.expected, step);
         }
         Ok(Break(()))
-    }
-
-    /// A projection member of the union `view` widened by one step, as a union
-    /// of it alone, with the step that widens it: a rigid member to its first
-    /// bound, a member schema's projection to its target's bound's (see
-    /// [`Self::widened_fields`]), or an item's rigid key toward its bound (see
-    /// [`Self::widened_key`]). `None` if it can't be widened.
-    pub(super) fn widened_projection(
-        &self,
-        view: TypeView,
-        member: UnionMember,
-    ) -> Result<Option<(Term, Step)>, Issue> {
-        let union = |member: UnionMember| self.db.intern(Type::Union(vec![member].into()));
-        match member {
-            UnionMember::Type(_) => Ok(None),
-            _ if self.rigid(member.id())?.is_some() => {
-                let Some(&(bound, _)) = self.rigid_bounds(member.id()).first() else {
-                    return Err(
-                        Residual::Unsupported("a projection of a rigid without a bound").into(),
-                    );
-                };
-                // The key may refer to the view's binders
-                Ok(Some((
-                    view.child(union(member.with(bound))),
-                    Step::RigidBound,
-                )))
-            }
-            UnionMember::IndexItem(schema, _)
-            | UnionMember::Expand(schema)
-            | UnionMember::Keys(schema)
-            | UnionMember::Values(schema)
-            | UnionMember::Entries(schema)
-                if let Some((fields, step)) =
-                    self.widened_fields(view.child(schema), FieldAccess::Read)? =>
-            {
-                Ok(Some((view.child(union(member.with(fields))), step)))
-            }
-            UnionMember::IndexItem(schema, key) => {
-                // A skolem key widens to its one closed bound, which selects as
-                // much
-                if let Term::Skolem(id) = self.resolve(view.child(key))? {
-                    let bounds = self.abstract_bounds(Abstract::Skolem(id));
-                    let [(bound, step)] = &bounds[..] else {
-                        return Ok(None);
-                    };
-                    let Ok(bound) = self.reify(*bound) else {
-                        return Ok(None);
-                    };
-                    let projected = union(UnionMember::IndexItem(schema, bound));
-                    return Ok(Some((view.child(projected), step.clone())));
-                }
-                Ok(self.widened_key(key)?.map(|(key, step)| {
-                    let projected = union(UnionMember::IndexItem(schema, key));
-                    (view.child(projected), step)
-                }))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    /// An item projection's key widened by one step: a rigid member to its
-    /// first bound, or the keys of a rigid schema to the keys of its first
-    /// bound, with the step that reduces the rigid
-    fn widened_key(&self, key: TypeId) -> Result<Option<(TypeId, Step)>, Issue> {
-        let members = match self.db.ty(key) {
-            Type::Union(members) => members.to_vec(),
-            _ => vec![UnionMember::Type(key)],
-        };
-        let mut widened = Vec::new();
-        let mut step = None;
-        for member in members {
-            let bound = match member {
-                UnionMember::Type(ty) | UnionMember::Keys(ty)
-                    if step.is_none() && self.rigid(ty)?.is_some() =>
-                {
-                    self.rigid_bounds(ty).first().cloned()
-                }
-                _ => None,
-            };
-            let Some((bound, reduced)) = bound else {
-                widened.push(member);
-                continue;
-            };
-            step = Some(reduced);
-            match (member, self.db.ty(bound)) {
-                (UnionMember::Type(_), Type::Union(members)) => widened.extend(members.iter()),
-                (UnionMember::Type(_), _) => widened.push(UnionMember::Type(bound)),
-                _ => widened.push(UnionMember::Keys(bound)),
-            }
-        }
-        Ok(step.map(|step| (self.db.intern(Type::Union(widened.into())), step)))
     }
 
     /// Only itself, bottom and the dynamic type are below a rigid or skolem
@@ -1062,13 +967,18 @@ impl Solver<'_> {
     /// Every new bound is paired with the opposite bounds. Variable-to-variable
     /// bounds use this same rule; derived obligations carry propagation onward.
     ///
-    /// A bound may only hold skolems the variable's scope sees. A skolem from
-    /// inside it that is a whole lower bound is promoted: the variable is above
-    /// its bound instead, the least type above it without it. Any other escape
-    /// leaves the bound unrecorded and the judgment residual; a solution found
-    /// for the variable otherwise is then related to the skolem directly. A
-    /// quantified upper bound would need impredicative instantiation, so it is
-    /// residual too.
+    /// A projection is recorded as far as it evaluates exactly (see
+    /// [`Self::evaluate`]), so the bound holds no variable or skolem the
+    /// projection doesn't depend on.
+    ///
+    /// A bound may only hold skolems the variable's scope sees. A lower bound
+    /// holding one from inside it is promoted: the variable is above what's
+    /// above the bound instead. A whole skolem is promoted to its bound, the
+    /// least type above it without it, and a union of projections member by
+    /// member to what each widens to. Any other escape leaves the bound
+    /// unrecorded and the judgment residual; a solution found for the variable
+    /// otherwise is then related to the skolem directly. A quantified upper
+    /// bound would need impredicative instantiation, so it is residual too.
     fn add_bound(
         &self,
         id: InferVarId,
@@ -1076,25 +986,33 @@ impl Solver<'_> {
         lower: bool,
         source: ObligationId,
     ) -> Result<(), Residual> {
-        let scope = self.variable(id).scope;
-        let mut leaves = FxHashSet::default();
-        self.solved_leaves(term, &mut leaves)?;
-        let escaped = leaves.iter().any(|leaf| {
-            matches!(*leaf, Term::Skolem(skolem)
-                if !self.visible(scope, self.skolem(skolem).scope))
-        });
-        if escaped {
+        let term = self.bound_evaluated(term)?;
+        if self.resolve(term)? == Term::Infer(id) {
+            return Ok(());
+        }
+        if self.escapes(id, term)? {
             // A solution is related to the skolem directly
             if self.assignment(id).is_some() {
                 return Ok(());
             }
-            if lower && let Term::Skolem(skolem) = self.resolve(term)? {
-                let bound = match self.abstract_bound(Abstract::Skolem(skolem)) {
-                    Some((bound, _)) => bound,
-                    None => self.closed(self.db.top()),
-                };
-                self.derive(source, bound, Term::Infer(id), Step::Promotion);
-                return Ok(());
+            if lower {
+                match self.resolve(term)? {
+                    Term::Skolem(skolem) => {
+                        let bound = match self.abstract_bound(Abstract::Skolem(skolem)) {
+                            Some((bound, _)) => bound,
+                            None => self.closed(self.db.top()),
+                        };
+                        self.derive(source, bound, Term::Infer(id), Step::Promotion);
+                        return Ok(());
+                    }
+                    Term::View(view) if let Some(promoted) = self.promoted_members(view)? => {
+                        for (term, step) in promoted {
+                            self.derive(source, term, Term::Infer(id), step);
+                        }
+                        return Ok(());
+                    }
+                    _ => {}
+                }
             }
             return Err(Residual::Escape);
         }
@@ -1133,6 +1051,50 @@ impl Solver<'_> {
             }
         }
         Ok(())
+    }
+
+    /// A bound with a projection in an open environment evaluated exactly, if
+    /// it can be. One that can't is recorded as itself, and its judgment finds
+    /// why.
+    fn bound_evaluated(&self, term: Term) -> Result<Term, Residual> {
+        let Term::View(view) = self.resolve(term)? else {
+            return Ok(term);
+        };
+        if view.environment == self.empty_environment()
+            || !matches!(self.db.ty(view.ty), Type::Union(members)
+                if members.iter().any(|member| member.projected().is_some()))
+        {
+            return Ok(term);
+        }
+        Ok(match self.evaluate(view, Approximation::Exact) {
+            Ok(Evaluation::Exact(evaluated)) => evaluated,
+            _ => term,
+        })
+    }
+
+    /// The members of a union of projections in `view`, each as the actual
+    /// side takes it (see [`Self::actual_member`]), with the step that reaches
+    /// it. `None` if one is stuck.
+    fn promoted_members(&self, view: TypeView) -> Result<Option<Vec<(Term, Step)>>, Residual> {
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(None);
+        };
+        let mut promoted = Vec::with_capacity(members.len());
+        for (index, &member) in members.iter().enumerate() {
+            let taken = match member {
+                UnionMember::Type(ty) => Some((view.child(ty), Step::UnionMember(index))),
+                _ => match self.actual_member(view, member, index) {
+                    Ok(taken) => taken,
+                    Err(Issue::Residual(residual)) => return Err(residual),
+                    Err(Issue::Contradiction(_)) => None,
+                },
+            };
+            let Some(taken) = taken else {
+                return Ok(None);
+            };
+            promoted.push(taken);
+        }
+        Ok(Some(promoted))
     }
 
     /// Whether a term is a quantified type, directly or as a declaration's
