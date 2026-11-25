@@ -183,9 +183,7 @@ impl<'v> Object<'v> for TimeZone {
         builder
             .type_method("local", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                let tz = JiffTimeZone::try_system()
-                    .map_err(|err| Error::runtime(strand, err.to_string()))?;
-                this.create_with_annex(strand, TimeZone, tz, out);
+                this.create_with_annex(strand, TimeZone, JiffTimeZone::system(), out);
                 Ok(())
             })
             .type_method("utc", async move |this, strand, args, out| {
