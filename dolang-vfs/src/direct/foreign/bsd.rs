@@ -743,9 +743,13 @@ impl Process {
         //
         // Read interest only, and not merely as an optimization: a kqueue
         // descriptor supports `EVFILT_READ` but has no write filter, so the
-        // read/write registration `AsyncFd::new` performs is rejected outright
-        // with `EINVAL`.
-        let watch = AsyncFd::with_interest(queue, Interest::READABLE)?;
+        // read/write registration `AsyncFd::register` performs is rejected
+        // outright with `EINVAL`.
+        //
+        // SAFETY: `watch` owns the `OwnedFd` and never replaces it, so the
+        // descriptor stays open and unchanged until it is dropped.
+        let watch = unsafe { AsyncFd::register_with_interest(queue, Interest::READABLE) }
+            .map_err(io::Error::from)?;
         loop {
             let mut guard = watch.readable().await?;
             if drain_exit(watch.get_ref().as_raw_fd())? {

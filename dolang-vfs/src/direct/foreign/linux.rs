@@ -317,7 +317,11 @@ impl Process {
         // is the answer and the descriptor is never read. It is duplicated
         // first because the reactor registers by descriptor number, and two
         // concurrent waits on one handle would otherwise collide.
-        let watch = AsyncFd::new(self.pidfd.try_clone()?)?;
+        //
+        // SAFETY: `watch` owns the duplicate and never replaces it, so the
+        // descriptor stays open and unchanged until it is dropped.
+        let watch =
+            unsafe { AsyncFd::register(self.pidfd.try_clone()?) }.map_err(io::Error::from)?;
         let _guard = watch.readable().await?;
         // Only the parent may reap, and this process is by definition not it,
         // so `waitid(P_PIDFD)` would fail with ECHILD. Exit is all there is.

@@ -205,7 +205,9 @@ impl Drop for UnixReceiver {
 pub(crate) fn unix(stream: UnixStream) -> io::Result<(UnixSender, UnixReceiver)> {
     stream.set_nonblocking(true)?;
     let common = Arc::new(Common {
-        socket: AsyncFd::new(OwnedFd::from(stream))?,
+        // SAFETY: the `OwnedFd` keeps the descriptor open, and it is never
+        // replaced, until the `AsyncFd` drops it.
+        socket: unsafe { AsyncFd::register(OwnedFd::from(stream)) }?,
     });
     Ok((
         UnixSender {

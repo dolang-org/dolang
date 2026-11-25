@@ -22,7 +22,7 @@ workspace = true
 
 
 [dependencies.libsqlite3-sys]
-version = "0.38"
+version = "0.39"
 features = ["bundled-windows"]
 
 
