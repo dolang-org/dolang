@@ -1170,7 +1170,10 @@ impl<'u> Walk<'_, 'u> {
             DeclAst::Closure(func),
         );
         let owner = self.owner.replace((id, 0));
+        // Function types written in its signature take its channels, as a def's do
+        let outer = self.sig.replace((id, 0));
         let sig = self.function(Some(frame), func);
+        self.sig = outer;
         self.owner = owner;
         *self.node(id) = DeclNode::Closure(surface::Closure { span, sig });
     }

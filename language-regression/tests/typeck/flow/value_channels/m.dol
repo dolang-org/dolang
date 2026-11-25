@@ -1,5 +1,5 @@
-# Outside a def's signature, a function type takes `Value` for each channel it
-# omits, so a function of that type can neither read nor write.
+# Outside a def's or block's signature, a function type takes `Value` for each
+# channel it omits, so a function of that type can neither read nor write.
 
 @let Callback = ((Int) -> nil)
 #               ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
@@ -17,8 +17,9 @@ pub class CallbackBox: Box[(Int) -> nil]
 pub def local()
   let _ = ((do |_x| nil) @ ((Int) -> nil))
   #                        ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
+  # In a block's signature, it takes the block's channels
   let g = do |f @ ((Int) -> nil)| f
-  #               ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
+  #               ^~~~~~~~~~~~~~: type (std.Int, <in, >out) -> nil
   g
 
 # A callback in a def's signature takes the def's channels, so it can't escape

@@ -6,7 +6,8 @@ use std::collections::VecDeque;
 use crate::diag::Span;
 
 use super::{
-    At, Detail, Flow, Results, Role, Seen, State, problem::Problem, rule::passed_signature,
+    At, Detail, Flow, Results, Role, Seen, State, instantiate_block, problem::Problem,
+    rule::passed_signature,
 };
 use crate::typeck::{
     cfg::{Expr, ExprKind, FuncId, FuncKind, Origin},
@@ -206,16 +207,20 @@ impl Flow<'_, '_> {
         let unknown = self.db.unknown();
         let data = self.ir.func(func);
         if let Some(signature) = &data.signature {
-            let Some(mut declared) = self.declared[func.index()].clone() else {
+            let Some(open) = self.declared[func.index()].clone() else {
                 return self.gap(span, "a `do` block without a declared type");
             };
+            // Outside a rule, its omitted channels are dynamic, as are the
+            // channels its signature's function types share with it
+            let own = [signature.input, signature.output].iter().flatten().count();
+            let mut declared = instantiate_block(self.db, &open, &vec![unknown; own]);
             // In a strict unit, what it's passed is what its body was checked with.
             // Until each is passed something, its type would only shrink, so it's
             // not known yet.
             if self.strict() {
                 let bottom = self.db.bottom();
                 let mut pending = false;
-                let passed = passed_signature(self.db, data, &declared, |var| {
+                let passed = passed_signature(self.db, data, &open, |var| {
                     let ty = self.joined(var, at);
                     pending |= ty == bottom;
                     ty

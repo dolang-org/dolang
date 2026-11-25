@@ -1,0 +1,14 @@
+# dolang: strict
+# A function type written in a `do` block's signature takes the block's
+# channels, which its body is checked with as what it's passed
+
+pub def takes f @ (((Int) -> nil, <Iter[Int], >Sink[Str]) -> nil) <Iter[Int] >Sink[Str]
+  f (do |_x @ Int| nil)
+
+pub def passes <Iter[Int] >Sink[Str]
+  takes do |cb @ ((Int) -> nil)| cb 1
+
+# Nothing passes its channels anything
+pub def unconstrained() -> Value
+  let g = do |f @ ((Int) -> nil)| f
+  g

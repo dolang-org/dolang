@@ -55,6 +55,20 @@ def with[R] block@(() -> R) -> R
   block()
 ```
 
+A function type in a `do` block's parameters, return type or implicit
+parameters takes the block's channels in the same way. The block isn't generic
+over a channel it omits. That channel is the one each use gives it: the call
+the block is passed to, or the function type expected of it.
+
+```
+def apply f @ (((Int) -> nil) -> nil) <Iter[Int] >Sink[Str]
+  f (do |n| put $ str(n))
+
+def run <Iter[Int] >Sink[Str]
+  # cb has the block's channels, which apply gives as its own
+  apply do |cb @ ((Int) -> nil)| cb 1
+```
+
 Anywhere else, an omitted implicit parameter defaults to `Value`, which
 effectively disallows strand input/output in strict units. For callback
 functions which will be run later in an arbitrary context, explicitly specify

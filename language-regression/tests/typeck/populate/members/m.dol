@@ -46,10 +46,10 @@ pub def use c @ Counter[Text]
   #   ^~~~~~: flow Unknown
   [count, loose, made, made_counter, secret]
 
-# A closure's function types don't share its def's channels
+# A closure's function types share its own channels, not its def's
 pub def run f @ (Num -> Num)
   let g = do |h @ (Num -> Num)| h
-  #               ^~~~~~~~~~~~: type (m.Num, <Value, >Value) -> m.Num
+  #               ^~~~~~~~~~~~: type (m.Num, <in, >out) -> m.Num
   [f, g]
 
 @def overload x @ Num -> Num
