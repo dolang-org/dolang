@@ -11,8 +11,10 @@ rust-version.workspace = true
 test = false
 doctest = false
 
+# 0.18.5 and later miscount emoji presentation widths and corrupt redraws
+# (#1895).
 [dependencies.indicatif]
-version = "0.18"
+version = "=0.18.4"
 
 [dependencies.tokio]
 workspace = true
