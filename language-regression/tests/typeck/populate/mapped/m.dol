@@ -32,6 +32,15 @@ pub def tagged[T, *Us] *values @ ...Pair[T, Us]
   #     ^~~~~~: decl [T, Us, in -, out -] (...m.Pair[T, Us], <in, >out) -> Unknown
   values
 
+# The pattern of just its pack's item is the pack itself
+pub def identity[*Us] *values @ ...Us
+  #     ^~~~~~~~: decl [Us -, in -, out -] (...Us, <in, >out) -> Unknown
+  values
+
+pub def plain[*Us] *values @ Us
+  #     ^~~~~: decl [Us -, in -, out -] (...Us, <in, >out) -> Unknown
+  values
+
 pub @let Known = {Num, ?Text, *Num, key: Text}
 pub def known *values @ ...Box[Known]
   #     ^~~~~: decl [in -, out -] (...m.Box[m.Known], <in, >out) -> Unknown

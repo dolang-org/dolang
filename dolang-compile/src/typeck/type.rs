@@ -437,7 +437,8 @@ pub(crate) enum Type {
     /// is. The pattern is interpreted in a group of one type for each pack: slot
     /// `i` is pack `i`'s item. Several packs correspond item by item. Each item has
     /// its pack's multiplicity, and a keyed item its key. Interning reduces it to a
-    /// schema once its packs are known (see [`Database::normalize`]).
+    /// schema once its packs are known, and the identity over one pack to the pack
+    /// (see [`Database::normalize`]).
     Map {
         packs: alias::Box<[TypeId]>,
         pattern: TypeId,
@@ -2033,7 +2034,8 @@ impl Database {
     /// a schema among them is evaluated as far as the schema is known (see
     /// [`Self::project`]), a projection of `{...S}` being one of `S`. A union
     /// with `Top` is `Top`, and one with a single member is it. A mapping whose
-    /// packs are known is reduced (see [`Self::reduce_map`]). Children are
+    /// packs are known is reduced, and the identity over one pack is the pack
+    /// (see [`Self::reduce_map`]). Children are
     /// assumed canonical already.
     pub(crate) fn normalize(&self, ty: Type) -> Type {
         match ty {
@@ -2423,10 +2425,16 @@ impl Database {
     /// must agree, item by item, on multiplicity and on whether, and by which key,
     /// the item is keyed; otherwise the mapping stays.
     fn reduce_map(&self, packs: &[TypeId], pattern: TypeId) -> Option<Type> {
-        if let [pack] = *packs
-            && let Type::Unknown(_) = self.ty(pack)
-        {
-            return Some(Type::Unknown(Kind::Schema));
+        if let [pack] = *packs {
+            // The identity over one pack is the pack, as `@...Ts` is `@Ts`
+            if let Type::Bound { reference, .. } = *self.ty(pattern)
+                && reference == BoundRef::new(0, 0)
+            {
+                return Some(self.ty(pack).clone());
+            }
+            if let Type::Unknown(_) = self.ty(pack) {
+                return Some(Type::Unknown(Kind::Schema));
+            }
         }
         let mut spliced = Vec::with_capacity(packs.len());
         for &pack in packs {
