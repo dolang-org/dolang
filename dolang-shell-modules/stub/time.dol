@@ -1,8 +1,18 @@
 # dolang: strict
-# UTC instants, calendar dates, durations, sleeping, and scoped timeouts.
+# Instants, time zones, calendar dates, durations, sleeping, and scoped timeouts.
 #
-# Everything here is UTC. There is no local-time or time-zone support, and no
-# way to attach an offset to a [`DateTime`](time.DateTime).
+# A [`DateTime`](time.DateTime) is an instant, with no zone. To read its wall
+# time, date or offset somewhere, view it in a [`TimeZone`](time.TimeZone)
+# with [`zoned`](time.DateTime.zoned). Functions that take a `zone:` key use
+# UTC when it is omitted; pass `zone: TimeZone.local()` for the system zone.
+#
+# ## Patterns {: #time.patterns }
+#
+# [`DateTime.format`](time.DateTime.format),
+# [`DateTime.parse`](time.DateTime.parse) and
+# [`Zoned.format`](time.Zoned.format) take strftime-style patterns, such as
+# `%Y-%m-%d %H:%M:%S %Z`. `%Z` is the zone abbreviation, `%z` the offset, and
+# `%Q` the IANA zone name.
 #
 # ## Duration arguments {: #time.duration-arguments }
 #
@@ -89,6 +99,41 @@ pub class DateTime
   do -> DateTime
     ...
 
+  # Parses text with a [pattern](time.patterns).
+  #
+  # When the text has an offset (`%z`), it gives the instant. Otherwise the
+  # text is wall time in `zone`: a time that happens twice is the earlier
+  # instant, and one skipped by a transition moves forward by the gap.
+  #
+  # ## Errors
+  #
+  # [`DataError`](std.DataError) if the text does not match the pattern, or
+  # does not name a date and time.
+  #
+  # ## Example
+  #
+  # ```playground
+  # #> import time:
+  # #>   - DateTime
+  # #>   - TimeZone
+  # #> import test:
+  # #>   - assert_eq
+  # let ny = TimeZone.get America/New_York
+  # let dt = DateTime.parse "%Y-%m-%d %H:%M" "2024-07-01 09:30" zone: $ny
+  # assert_eq $dt.rfc() "2024-07-01T13:30:00Z"
+  # ```
+  #[class]
+  pub def parse
+    self
+    # Pattern to match.
+    pattern @ Str
+    # Date-time text.
+    text @ Str
+    # Zone for text without an offset. UTC by default.
+    :zone @ TimeZone = ...
+  do -> DateTime
+    ...
+
   # Unix seconds. Approximate: far-from-epoch
   # instants lose sub-second precision.
   #[getter]
@@ -100,8 +145,52 @@ pub class DateTime
   pub def unix_nanos self -> Int
     ...
 
-  # Returns the UTC calendar date.
+  # UTC calendar date. For the date in another zone, use
+  # [`zoned`](time.DateTime.zoned).
+  #
+  # ## Errors
+  #
+  # [`OverflowError`](std.OverflowError) if the instant is outside the
+  # supported range.
+  #[getter]
   pub def date self -> Date
+    ...
+
+  # Views this instant in a time zone.
+  #
+  # ## Example
+  #
+  # ```
+  # let local = DateTime.now().zoned(TimeZone.local())
+  # echo "$(local.hour):$(local.minute)"
+  # ```
+  pub def zoned
+    self
+    # Zone to view the instant in.
+    zone @ TimeZone
+  do -> Zoned
+    ...
+
+  # Formats this instant with a [pattern](time.patterns).
+  #
+  # The same as `dt.zoned(zone).format(pattern)`.
+  #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if the pattern is invalid.
+  #
+  # ## Example
+  #
+  # ```
+  # echo $ DateTime.now().format "%H:%M %Z" zone: $TimeZone.local()
+  # ```
+  pub def format
+    self
+    # Pattern to format with.
+    pattern @ Str
+    # Zone for the wall time. UTC by default.
+    :zone @ TimeZone = ...
+  do -> Str
     ...
 
   # Returns the RFC 3339 representation, in UTC.
@@ -148,9 +237,13 @@ pub class DateTime
 # [`sub_days`](time.Date.sub_days) -- a [`Duration`](time.Duration) cannot be
 # added to a `Date`.
 pub class Date
-  # Returns the current UTC date.
+  # Returns the current date.
   #[class]
-  pub def today self -> Date
+  pub def today
+    self
+    # Zone whose date to return. UTC by default.
+    :zone @ TimeZone = ...
+  do -> Date
     ...
 
   # Builds a date from calendar components.
@@ -217,8 +310,15 @@ pub class Date
   pub def rfc self -> Str
     ...
 
-  # Returns midnight UTC on this date.
-  pub def datetime self -> DateTime
+  # Returns the start of this date.
+  #
+  # This is midnight in `zone`, or, when a transition skips midnight, the
+  # first instant of the day.
+  pub def datetime
+    self
+    # Zone whose midnight to return. UTC by default.
+    :zone @ TimeZone = ...
+  do -> DateTime
     ...
 
   # Returns the date a signed number of days later.
@@ -424,6 +524,246 @@ pub class Weekday
     ...
 
   # Returns the uppercase English name, such as `MONDAY`.
+  pub def (str) self -> Str
+    ...
+
+# A time zone: the rules that give the offset from UTC at each instant.
+#
+# There is no constructor; use [`local`](time.TimeZone.local),
+# [`utc`](time.TimeZone.utc), [`get`](time.TimeZone.get) or
+# [`fixed`](time.TimeZone.fixed).
+pub class TimeZone
+  # Returns the system time zone.
+  #
+  # This follows the `TZ` environment variable when it is set, and otherwise
+  # the system configuration. In the browser it is the browser's zone.
+  #
+  # ## Errors
+  #
+  # [`RuntimeError`](std.RuntimeError) if the zone cannot be determined.
+  #[class]
+  pub def local self -> TimeZone
+    ...
+
+  # Returns UTC.
+  #[class]
+  pub def utc self -> TimeZone
+    ...
+
+  # Looks up a zone by its IANA name, such as `America/New_York`.
+  #
+  # ## Errors
+  #
+  # [`DataError`](std.DataError) if there is no zone by that name.
+  #[class]
+  pub def get
+    self
+    # IANA zone name.
+    name @ Str
+  do -> TimeZone
+    ...
+
+  # Returns a zone with one offset at every instant.
+  #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if the offset is not a whole number of
+  # seconds, or is beyond 25:59:59 either way.
+  #
+  # ## Example
+  #
+  # ```
+  # let est = TimeZone.fixed -18000
+  # ```
+  #[class]
+  pub def fixed
+    self
+    # Offset east of UTC. Unlike other
+    # [duration arguments](time.duration-arguments), it may be negative.
+    offset @ (Duration | Int | Float)
+  do -> TimeZone
+    ...
+
+  # IANA name, or `nil` for a fixed or unnamed zone.
+  #[getter]
+  pub def name self -> (Str | nil)
+    ...
+
+  # Returns the offset from UTC at an instant.
+  pub def offset_at
+    self
+    # Instant to look up.
+    datetime @ DateTime
+  do -> Duration
+    ...
+
+  # Returns the instant at a wall time in this zone.
+  #
+  # Around a transition, a wall time can happen twice, or not at all.
+  # `disambiguate` chooses the result:
+  #
+  # | Value           | Repeated time       | Skipped time                    |
+  # | --------------- | ------------------- | ------------------------------- |
+  # | `:COMPATIBLE:`  | The earlier instant | Moved forward by the gap        |
+  # | `:EARLIER:`     | The earlier instant | Moved back by the gap           |
+  # | `:LATER:`       | The later instant   | Moved forward by the gap        |
+  # | `:REJECT:`      | Raises `ValueError` | Raises `ValueError`             |
+  #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if the components are not a real date and
+  # time, or `disambiguate` is `:REJECT:` and the time is ambiguous.
+  #
+  # ## Example
+  #
+  # ```playground
+  # #> import time:
+  # #>   - TimeZone
+  # #> import test:
+  # #>   - assert_eq
+  # let ny = TimeZone.get America/New_York
+  # let dt = ny.datetime 2024 11 3 hour: 1 minute: 30 disambiguate: :LATER:
+  # assert_eq $dt.rfc() "2024-11-03T06:30:00Z"
+  # ```
+  pub def datetime
+    self
+    # Calendar year.
+    year @ Int
+    # Month, or its number from
+    # 1 through 12.
+    month @ (Month | Int)
+    # Day of month.
+    day @ Int
+    # Hour, 0 through 23. 0 by default.
+    :hour @ Int = ...
+    # Minute. 0 by default.
+    :minute @ Int = ...
+    # Second. 0 by default.
+    :second @ Int = ...
+    # Nanosecond within the second. 0 by default.
+    :nanosecond @ Int = ...
+    # How to resolve an ambiguous wall time. `:COMPATIBLE:` by default.
+    :disambiguate @ (:COMPATIBLE: | :EARLIER: | :LATER: | :REJECT:) = ...
+  do -> DateTime
+    ...
+
+  # Compares two zones by their rules.
+  #
+  # Zones are equal when they give the same offset and abbreviation at every
+  # instant, so aliases such as `US/Eastern` and `America/New_York` are
+  # equal.
+  pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Returns the IANA name, a fixed zone's offset such as `-05:00`, or
+  # `unnamed`.
+  pub def (str) self -> Str
+    ...
+
+# An instant viewed in a time zone.
+#
+# Returned by [`DateTime.zoned`](time.DateTime.zoned). The parts are the wall
+# time in the zone. Zoned values compare by instant, whatever their zones.
+#
+# ## Example
+#
+# ```
+# let z = DateTime.now().zoned(TimeZone.local())
+# echo $ z.format "%Y-%m-%d %H:%M %Z"
+# ```
+pub class Zoned
+  # Calendar year.
+  #[getter]
+  pub def year self -> Int
+    ...
+
+  # Calendar month.
+  #[getter]
+  pub def month self -> Month
+    ...
+
+  # Day of month.
+  #[getter]
+  pub def day self -> Int
+    ...
+
+  # Hour, 0 through 23.
+  #[getter]
+  pub def hour self -> Int
+    ...
+
+  # Minute.
+  #[getter]
+  pub def minute self -> Int
+    ...
+
+  # Second.
+  #[getter]
+  pub def second self -> Int
+    ...
+
+  # Nanosecond within the second.
+  #[getter]
+  pub def nanosecond self -> Int
+    ...
+
+  # Day of week.
+  #[getter]
+  pub def weekday self -> Weekday
+    ...
+
+  # Calendar date in the zone.
+  #[getter]
+  pub def date self -> Date
+    ...
+
+  # Offset from UTC.
+  #[getter]
+  pub def offset self -> Duration
+    ...
+
+  # Zone abbreviation, such as `EST`. For display only: abbreviations are not
+  # unique.
+  #[getter]
+  pub def abbrev self -> Str
+    ...
+
+  # Time zone.
+  #[getter]
+  pub def zone self -> TimeZone
+    ...
+
+  # The instant.
+  #[getter]
+  pub def datetime self -> DateTime
+    ...
+
+  # Returns the RFC 3339 representation, with the offset, such as
+  # `2024-01-02T03:04:05-05:00`.
+  pub def rfc self -> Str
+    ...
+
+  # Formats with a [pattern](time.patterns).
+  #
+  # ## Errors
+  #
+  # [`ValueError`](std.ValueError) if the pattern is invalid.
+  pub def format
+    self
+    # Pattern to format with.
+    pattern @ Str
+  do -> Str
+    ...
+
+  # Compares two instants.
+  pub def (eq) self other @ Value -> Bool
+    ...
+
+  # Orders two instants.
+  pub def (lt) self other @ Zoned -> Bool
+    ...
+
+  # Returns the RFC 3339 representation, as [`rfc`](time.Zoned.rfc) does.
   pub def (str) self -> Str
     ...
 

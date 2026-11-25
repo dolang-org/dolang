@@ -1,14 +1,22 @@
 # title: Time API
 import time:
   - DateTime
+  - TimeZone
   - timeout
   - sleep
 
 let now = DateTime.now()
 echo "Now: $now"
-let today = now.date()
+let today = now.date
 echo "Today: $(today.weekday), $(today.month) $(today.day)"
 echo "A week from today: $(today.add_days 7)"
+
+# Instants are UTC; view one in a zone for its wall time
+let local = now.zoned(TimeZone.local())
+let clock = local.format "%H:%M %Z"
+echo "Local time: $clock"
+let tokyo = now.zoned(TimeZone.get "Asia/Tokyo")
+echo "Tokyo: $tokyo"
 
 # The offset is applied, giving a UTC instant
 let leap = DateTime.parse_rfc 2024-02-29T12:30:00+02:00

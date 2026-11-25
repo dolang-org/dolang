@@ -3,6 +3,7 @@
 mod extension;
 mod global;
 mod time;
+mod zone;
 
 use crate::global::Tag;
 use dolang::runtime::with_instance;

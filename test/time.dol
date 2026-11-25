@@ -11,13 +11,16 @@ import strand
     - OverflowError
     - RuntimeError
     - TimedOutError
+    - TypeError
     - ValueError
   time:
     - Date
     - DateTime
     - Duration
     - Month
+    - TimeZone
     - Weekday
+    - Zoned
     - sleep
     - timeout
 
@@ -62,6 +65,16 @@ def datetime_conversions()
     DateTime.parse_rfc("not-a-timestamp")
   assert_throws $DataError do
     DateTime.parse_rfc("2024-01-02T03:04:05Z[UTC]")
+  assert_eq $DateTime.parse_rfc("2024-01-02t03:04:05z") $DateTime.parse_rfc("2024-01-02T03:04:05Z")
+  let malformed = $
+    - "2024-01-02T03:04:05"
+    - "2024-01-02 03:04:05Z"
+    - "2024-01-02T03:04:05.Z"
+    - "2024-01-02T03:04:05+0200"
+    - "2024-01-02T24:00:00Z"
+    - "2024-02-30T03:04:05Z"
+  for text = malformed
+    assert_throws $DataError do DateTime.parse_rfc $text
 
 #[test]
 def dates_and_calendar_enums()
@@ -79,7 +92,7 @@ def dates_and_calendar_enums()
   assert_eq $(date.sub_days 1).rfc() "2024-02-27"
   let difference = (Date.from_ymd 2024 3 1 - date)
   assert_eq $difference.nanos 172800000000000
-  assert_eq (date.datetime().date()) $date
+  assert_eq $date.datetime().date $date
 
   assert_eq $Month[1] $Month.JANUARY
   assert_eq $Month[12] $Month.DECEMBER
@@ -221,5 +234,135 @@ def canceled_resource_acquisition_retains_outer_resource()
 #[test]
 def out_of_range_datetime_overflows()
   let dt = DateTime.from_unix 1000000000000000
-  assert_throws $OverflowError do dt.date()
+  assert_throws $OverflowError do dt.date
   assert_throws $OverflowError do str $dt
+
+#[test]
+def zoned_decomposition_follows_dst()
+  let ny = TimeZone.get America/New_York
+  assert_eq $ny.name America/New_York
+  assert_eq (str ny) America/New_York
+
+  let winter = DateTime.parse_rfc("2024-01-02T03:04:05.5Z").zoned(ny)
+  assert_type $Zoned $winter
+  assert_eq $winter.year 2024
+  assert_eq $winter.month $Month.JANUARY
+  assert_eq $winter.day 1
+  assert_eq $winter.hour 22
+  assert_eq $winter.minute 4
+  assert_eq $winter.second 5
+  assert_eq $winter.nanosecond 500000000
+  assert_eq $winter.weekday $Weekday.MONDAY
+  assert_eq $winter.date (Date.from_ymd 2024 1 1)
+  assert_eq $winter.offset.secs -18000.0
+  assert_eq $winter.abbrev EST
+  assert_eq $winter.zone.name America/New_York
+  assert_eq $winter.datetime (DateTime.parse_rfc "2024-01-02T03:04:05.5Z")
+  assert_eq (winter.rfc()) "2024-01-01T22:04:05.5-05:00"
+  assert_eq (str winter) (winter.rfc())
+  assert_eq (winter.format "%Y-%m-%d %H:%M %Z") "2024-01-01 22:04 EST"
+
+  let summer = DateTime.parse_rfc("2024-07-01T12:00:00Z").zoned(ny)
+  assert_eq $summer.hour 8
+  assert_eq $summer.abbrev EDT
+  assert_eq $summer.offset.secs -14400.0
+  assert_eq (summer.rfc()) "2024-07-01T08:00:00-04:00"
+  assert_eq $ny.offset_at(summer.datetime).secs -14400.0
+
+#[test]
+def wall_time_disambiguation()
+  let ny = TimeZone.get America/New_York
+  let at = do |month day disambiguate|
+    let dt = ny.datetime 2024 $month $day hour: 1 minute: 30 :disambiguate
+    dt.rfc()
+
+  # 01:30 happens twice on 2024-11-03.
+  assert_eq (at 11 3 :COMPATIBLE:) "2024-11-03T05:30:00Z"
+  assert_eq (at 11 3 :EARLIER:) "2024-11-03T05:30:00Z"
+  assert_eq (at 11 3 :LATER:) "2024-11-03T06:30:00Z"
+  assert_throws $ValueError do at 11 3 :REJECT:
+
+  # 02:30 is skipped on 2024-03-10.
+  let gap = do |disambiguate|
+    let dt = ny.datetime 2024 3 10 hour: 2 minute: 30 :disambiguate
+    dt.rfc()
+  assert_eq (gap :COMPATIBLE:) "2024-03-10T07:30:00Z"
+  assert_eq (gap :EARLIER:) "2024-03-10T06:30:00Z"
+  assert_eq (gap :LATER:) "2024-03-10T07:30:00Z"
+  assert_throws $ValueError do gap :REJECT:
+
+  let nine = ny.datetime 2024 $Month.JULY 1 hour: 9
+  assert_eq (nine.rfc()) "2024-07-01T13:00:00Z"
+  let precise = ny.datetime 2024 7 1 second: 1 nanosecond: 5
+  assert_eq (precise.rfc()) "2024-07-01T04:00:01.000000005Z"
+  assert_throws $ValueError do ny.datetime 2024 7 1 hour: 24
+  assert_throws $ValueError do ny.datetime 2024 2 30
+  assert_throws $ValueError do ny.datetime 2024 7 1 disambiguate: (:NEITHER: !@ :REJECT:)
+
+#[test]
+def fixed_and_named_zones()
+  let est = TimeZone.fixed -18000
+  assert_eq $est.name nil
+  assert_eq (str est) "-05:00"
+  assert_eq (str (TimeZone.fixed 19800.0)) "+05:30"
+  let dt = DateTime.parse_rfc "2024-01-02T03:04:05Z"
+  assert_eq (dt.zoned(est).rfc()) "2024-01-01T22:04:05-05:00"
+  assert_eq (str (TimeZone.fixed (dt - DateTime.parse_rfc "2024-01-02T02:04:05Z"))) "+01:00"
+  assert_throws $ValueError do TimeZone.fixed 0.5
+  assert_throws $ValueError do TimeZone.fixed 100000
+  assert_throws $DataError do TimeZone.get Not/AZone
+
+  let utc = TimeZone.utc()
+  assert_eq $utc.name UTC
+  assert_eq (dt.zoned(utc).rfc()) "2024-01-02T03:04:05Z"
+  assert_type $TimeZone $TimeZone.local()
+
+#[test]
+def zone_keys_default_to_utc()
+  let ny = TimeZone.get America/New_York
+  let dt = DateTime.parse_rfc "2024-07-01T02:30:00Z"
+  assert_eq (dt.format "%Y-%m-%d %H:%M") "2024-07-01 02:30"
+  assert_eq (dt.format "%Y-%m-%d %H:%M" zone: ny) "2024-06-30 22:30"
+  assert_throws $ValueError do dt.format "%"
+  assert_throws $TypeError do dt.format "%H" zone: ("America/New_York" !@ TimeZone)
+
+  let date = Date.from_ymd 2024 7 1
+  assert_eq (date.datetime().rfc()) "2024-07-01T00:00:00Z"
+  let midnight = date.datetime zone: $ny
+  assert_eq (midnight.rfc()) "2024-07-01T04:00:00Z"
+  assert_eq $midnight.zoned(ny).date $date
+  assert_type $Date (Date.today zone: ny)
+
+  let pattern = "%Y-%m-%d %H:%M"
+  let in_utc = DateTime.parse $pattern "2024-07-01 09:30"
+  assert_eq (in_utc.rfc()) "2024-07-01T09:30:00Z"
+  let in_ny = DateTime.parse $pattern "2024-07-01 09:30" zone: $ny
+  assert_eq (in_ny.rfc()) "2024-07-01T13:30:00Z"
+  let with_offset = DateTime.parse "%Y-%m-%d %H:%M %z" "2024-07-01 09:30 +0200" zone: $ny
+  assert_eq (with_offset.rfc()) "2024-07-01T07:30:00Z"
+  assert_throws $DataError do DateTime.parse $pattern "July 1"
+
+#[test]
+def zoned_values_compare_by_instant()
+  let dt = DateTime.parse_rfc "2024-07-01T12:00:00Z"
+  let ny = dt.zoned(TimeZone.get("America/New_York"))
+  let tokyo = dt.zoned(TimeZone.get("Asia/Tokyo"))
+  assert_eq $ny $tokyo
+  let later = DateTime.parse_rfc("2024-07-01T12:00:01Z").zoned(TimeZone.utc())
+  assert (ny < later)
+  assert (ny != dt)
+
+#[test]
+def time_zones_compare_by_rules()
+  let ny = TimeZone.get America/New_York
+  assert_eq $ny (TimeZone.get "America/New_York")
+  assert (ny != TimeZone.get("America/Chicago"))
+  assert (ny != TimeZone.fixed(-18000))
+  assert_eq (TimeZone.fixed -18000) (TimeZone.fixed -18000)
+  assert (TimeZone.fixed(-18000) != TimeZone.fixed(-14400))
+  assert_eq $TimeZone.utc() (TimeZone.fixed 0)
+  assert_eq $TimeZone.local() $TimeZone.local()
+  assert_eq $DateTime.now().zoned(ny).zone $ny
+  let zones = {(ny): 1}
+  assert_eq $zones[TimeZone.get("America/New_York")] 1
+
