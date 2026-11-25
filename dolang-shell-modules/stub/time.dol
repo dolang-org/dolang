@@ -536,11 +536,9 @@ pub class TimeZone
   # Returns the system time zone.
   #
   # This follows the `TZ` environment variable when it is set, and otherwise
-  # the system configuration. In the browser it is the browser's zone.
-  #
-  # ## Errors
-  #
-  # [`RuntimeError`](std.RuntimeError) if the zone cannot be determined.
+  # the system configuration. In the browser it is the browser's zone. When
+  # neither gives a zone, as on some minimal container or VM images, the
+  # result behaves like UTC and has no [`name`](time.TimeZone.name).
   #[class]
   pub def local self -> TimeZone
     ...
