@@ -74,8 +74,18 @@ def host_tuple()
     host_tuple_cache = sub do run rustc --print host-tuple
   host_tuple_cache
 
+# Subcommands that resolve the workspace and get `--locked`, so a stale
+# `Cargo.lock` is an error rather than quietly rewritten. Cargo plugins such
+# as `llvm-cov` and `miri` are left alone, since their flags differ.
+let LOCKED_COMMANDS = $
+  build check test run bench clippy doc
+
 def run_cargo ...args
-  dodo.show cargo ...args
+  let argv = [...args]
+  let i = (argv[0].starts_with("+") && 1 || 0)
+  if LOCKED_COMMANDS.contains(argv[i])
+    argv.insert (i + 1) --locked
+  dodo.show cargo ...argv
 
 class Spec
   pub field target tuple profile channel target_dir
@@ -208,7 +218,7 @@ def wasm_tool name
 
 def wasm_build()
   let bindgen = wasm_tool wasm-bindgen
-  run_cargo build -p dolang-wasm --target wasm32-unknown-unknown --release --locked
+  run_cargo build -p dolang-wasm --target wasm32-unknown-unknown --release
   let wasm = "target/wasm32-unknown-unknown/release/dolang_wasm.wasm"
   dodo.make inputs: [bindgen, wasm] outputs: ["playground/pkg"] do |_ctx|
     dodo.show $bindgen --target web --out-dir playground/pkg $wasm
@@ -216,7 +226,7 @@ def wasm_build()
 def wasm_test()
   let runner = wasm_tool wasm-bindgen-test-runner
   env CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: $runner do
-    run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --profile opt --lib --locked
+    run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --profile opt --lib
 
 # Vite copies the hover docs from `playground/public/` with the page.
 def playground_build()
@@ -777,6 +787,14 @@ return $
     help: check for Markdown errors in documentation
     do |_|
       dodo.show rumdl check
+
+  deny:
+    help: check dependencies against deny.toml (requires cargo-deny)
+    - arg: args
+      help: "checks to run, such as `licenses`; all by default"
+      collect: true
+    do |args|
+      run_cargo deny check ...args.args
 
   clean:
     help: remove build artifacts and generated docs

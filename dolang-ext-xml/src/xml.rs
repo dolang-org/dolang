@@ -177,12 +177,6 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, state: State<'v, Global<
         .commit();
 }
 
-/// Reads a slice of the input that quick-xml split at ASCII delimiters, so it
-/// is still UTF-8.
-fn utf8(bytes: &[u8]) -> &str {
-    str::from_utf8(bytes).expect("quick-xml splits a str only at ASCII delimiters")
-}
-
 fn unknown_entity(name: &str) -> String {
     format!("unknown XML entity &{name}; (custom entities are not supported)")
 }
@@ -329,9 +323,9 @@ impl<'a> Decoder<'a> {
     fn namespace_uri<'v, 's>(
         &self,
         strand: &mut Strand<'v, 's>,
-        bytes: &[u8],
+        raw: &str,
     ) -> Result<'v, 's, String> {
-        match unescape(utf8(bytes)) {
+        match unescape(raw) {
             Ok(uri) => Ok(uri.into_owned()),
             Err(error) => Err(self.fail(
                 strand,
@@ -356,10 +350,7 @@ impl<'a> Decoder<'a> {
                 strand,
                 DecodeKind::Namespace,
                 self.start,
-                format!(
-                    "unknown XML namespace prefix {}",
-                    String::from_utf8_lossy(&prefix)
-                ),
+                format!("unknown XML namespace prefix {prefix}"),
             )),
         }
     }
@@ -381,7 +372,7 @@ impl<'a> Decoder<'a> {
             };
             let prefix = match binding {
                 PrefixDeclaration::Default => String::new(),
-                PrefixDeclaration::Named(prefix) => utf8(prefix).to_owned(),
+                PrefixDeclaration::Named(prefix) => prefix.to_owned(),
             };
             let namespace = self.namespace_uri(strand, &attr.value)?;
             validate_namespace_binding(&prefix, &namespace)
@@ -392,7 +383,7 @@ impl<'a> Decoder<'a> {
         let resolver = self.reader.resolver();
         let (resolved, local) = resolver.resolve_element(start.name());
         let name = Name {
-            local: utf8(local.as_ref()).to_owned(),
+            local: local.as_ref().to_owned(),
             namespace: self.resolved_namespace(strand, resolved)?,
         };
         validate_name(&name, "element name")
@@ -402,11 +393,11 @@ impl<'a> Decoder<'a> {
         for attr in plain {
             let (resolved, local) = resolver.resolve_attribute(attr.key);
             let name = Name {
-                local: utf8(local.as_ref()).to_owned(),
+                local: local.as_ref().to_owned(),
                 namespace: self.resolved_namespace(strand, resolved)?,
             };
             // A forbidden character the raw value lacks came from a reference.
-            validate_text(utf8(&attr.value), "attribute value")
+            validate_text(&attr.value, "attribute value")
                 .map_err(|error| self.invalid(strand, DecodeKind::IllFormed, error))?;
             let value = attr
                 .normalized_value(XmlVersion::Implicit1_0)
@@ -460,10 +451,7 @@ impl<'a> Decoder<'a> {
         state: State<'v, Global<'v>>,
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let text = content
-            .xml_content(XmlVersion::Implicit1_0)
-            .expect("input is UTF-8")
-            .into_owned();
+        let text = content.xml_content(XmlVersion::Implicit1_0).into_owned();
         validate_comment(&text)
             .map_err(|error| self.invalid(strand, DecodeKind::IllFormed, error))?;
         state.comment_type.create(strand, Comment { text }, out);
@@ -504,23 +492,21 @@ impl<'a> Decoder<'a> {
                             children.push(strand, &mut child)?;
                         }
                         Event::Text(content) => {
-                            let content = content
-                                .xml_content(XmlVersion::Implicit1_0)
-                                .expect("input is UTF-8");
+                            let content = content.xml_content(XmlVersion::Implicit1_0);
                             validate_text(&content, "XML text").map_err(|error| {
                                 self.invalid(strand, DecodeKind::IllFormed, error)
                             })?;
                             text.extend(strand, &content);
                         }
                         Event::CData(content) => {
-                            let content = utf8(content.as_ref());
+                            let content: &str = content.as_ref();
                             validate_text(content, "CDATA").map_err(|error| {
                                 self.invalid(strand, DecodeKind::IllFormed, error)
                             })?;
                             text.extend(strand, content);
                         }
                         Event::GeneralRef(reference) => {
-                            let name = reference.decode().expect("input is UTF-8");
+                            let name: &str = &reference;
                             match reference.resolve_char_ref() {
                                 Ok(Some(character)) => {
                                     let mut buf = [0; 4];
@@ -538,14 +524,14 @@ impl<'a> Decoder<'a> {
                                     }
                                     text.extend(strand, character);
                                 }
-                                Ok(None) => match resolve_predefined_entity(&name) {
+                                Ok(None) => match resolve_predefined_entity(name) {
                                     Some(resolved) => text.extend(strand, resolved),
                                     None => {
                                         return Err(self.fail(
                                             strand,
                                             DecodeKind::Reference,
                                             self.start,
-                                            unknown_entity(&name),
+                                            unknown_entity(name),
                                         ));
                                     }
                                 },
@@ -615,9 +601,7 @@ fn decode<'v, 's>(
                     array.push(strand, &mut child)?;
                 }
                 Event::Text(content) => {
-                    let text = content
-                        .xml_content(XmlVersion::Implicit1_0)
-                        .expect("input is UTF-8");
+                    let text = content.xml_content(XmlVersion::Implicit1_0);
                     if !is_xml_whitespace(&text) {
                         return Err(decoder.fail(
                             strand,

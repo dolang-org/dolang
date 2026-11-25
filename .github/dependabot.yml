@@ -1,0 +1,18 @@
+# Security updates come through as soon as an advisory lands, whatever the
+# schedule or cooldown.
+version: 2
+updates:
+  # Monthly, in a single PR, and only within the existing requirements: a
+  # new major (or 0.x minor) version is a deliberate `Cargo.toml` change.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    versioning-strategy: lockfile-only
+    # A release must be two weeks old, which is long enough for most
+    # compromised releases to be caught and yanked.
+    cooldown:
+      default-days: 14
+    groups:
+      cargo:
+        patterns: ["*"]

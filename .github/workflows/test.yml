@@ -67,6 +67,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Dependency policy needs only the lockfile, so it rides on one leg.
+      # Advisories change without any commit here, so a new one is reported
+      # without failing the run.
+      - name: Check dependency policy
+        if: matrix.target == 'x86_64-linux'
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources
+
+      - name: Check dependency advisories
+        if: matrix.target == 'x86_64-linux'
+        continue-on-error: true
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories
+
       - name: Setup runner
         id: setup
         uses: ./.github/actions/setup-runner
