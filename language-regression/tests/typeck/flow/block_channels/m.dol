@@ -1,0 +1,42 @@
+# A function type written in a `do` block's signature takes the block's channels
+# when it omits its own, as one in a def's signature takes the def's. The block
+# isn't generic over them: each use gives them types.
+
+# The block's channels are the declared result's, so its callback's are too
+pub def plain -> ((Int -> Int) -> Int)
+  do |g @ (Int -> Int)| -> Int g 1
+
+pub def takes f @ (((Int) -> nil, <Iter[Int], >Sink[Str]) -> nil) <Iter[Int] >Sink[Str]
+  f (do |_x| nil)
+
+pub def passes <Iter[Int] >Sink[Str]
+  takes do |cb @ ((Int) -> nil)| cb 1
+
+# A channel the block writes is the one its signature's function types take
+pub def written()
+  let _ = do |cb @ (() -> nil) <Iter[Int]| cb
+  #                                        ^~: flow (<std.Iter[std.Int], >Unknown) -> nil
+
+pub def returned -> ((() -> (() -> nil)) -> nil)
+  do |_f @ (() -> (() -> nil))| nil
+
+# The block's body is outside its signature
+pub def body()
+  let _ = do
+    let _g @ ((Int) -> nil) = do |_x| nil
+    #        ^~~~~~~~~~~~~~: type (std.Int, <Value, >Value) -> nil
+    nil
+
+# A quantified type keeps its own channels
+pub def quantified()
+  let _ = do |_f @ (@[T] (T) -> T)| nil
+  #                ^~~~~~~~~~~~~~~: type @[T1] (T1) -> T1
+
+# A callback that takes `Value` doesn't share the result's channels
+pub def bad -> (((Int) -> nil, <Iter[Int], >Sink[Str]) -> nil)
+  do |cb @ ((Int, <Value, >Value) -> nil)| cb 1
+  # error: `((std.Int, <Value, >Value) -> nil, <std.Iter[std.Int], >std.Sink[std.Str]) -> nil` does not fit the declared result `((std.Int, <(input of m.bad), >(output of m.bad)) -> nil, <std.Iter[std.Int], >std.Sink[std.Str]) -> nil`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   do |cb @ ((Int, <Value, >Value) -> nil)| cb 1
+  #    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

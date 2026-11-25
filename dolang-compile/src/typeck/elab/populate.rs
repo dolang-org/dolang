@@ -82,12 +82,7 @@ pub(crate) fn populate(db: &mut Database, tables: &mut Tables<'_>, diags: &mut V
                 sig,
                 slot,
             }));
-            let channels = match tables.decl(id).node {
-                DeclNode::Quantifier(_) => Some(sig::channels(tables, id, sig)),
-                _ => tables
-                    .sig(id, sig)
-                    .map(|completed| [completed.input, completed.output]),
-            };
+            let channels = sig::own_channels(tables, id, sig);
             if let Some(channels) = channels {
                 for ambient in channels {
                     if let Ambient::Implicit(binder) = ambient {
@@ -1404,11 +1399,16 @@ impl<'t, 'u> Populate<'t, 'u> {
                 let func = &closure.sig;
                 let params = sig::params(tables, func, None);
                 let params = self.params(id, group, func, &params);
-                let [input, output, result] =
-                    [func.input, func.output, func.ret].map(|written| match written {
-                        Some(written) => self.site(group, written, Kind::Type, 0),
-                        None => self.db.unknown(),
-                    });
+                // An omitted channel is its implicit binder, which each use fills
+                let channels = sig::channels(tables, id, 0);
+                let [input, output] = [0, 1].map(|index| match [func.input, func.output][index] {
+                    Some(written) => self.site(group, written, Kind::Type, 0),
+                    None => self.ambient(group, channels[index], index, 0),
+                });
+                let result = match func.ret {
+                    Some(written) => self.site(group, written, Kind::Type, 0),
+                    None => self.db.unknown(),
+                };
                 let body = self.db.intern(Type::Function(Function {
                     params,
                     result,

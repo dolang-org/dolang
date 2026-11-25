@@ -72,7 +72,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                 tables.facts_mut(decl).fields.extend(fields);
             }
             // Its omitted channels are implicit binders, as a def's are
-            DeclNode::Quantifier(_) => {
+            DeclNode::Quantifier(_) | DeclNode::Closure(_) => {
                 for ambient in channels(tables, decl, 0) {
                     if let Ambient::Implicit(binder) = ambient {
                         tables.facts_mut(binder.decl).binder_kinds.insert(
@@ -85,7 +85,7 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                     }
                 }
             }
-            DeclNode::Alias(_) | DeclNode::Closure(_) => {}
+            DeclNode::Alias(_) => {}
         }
         designate(tables, decl, diags);
     }
@@ -109,21 +109,25 @@ pub(crate) fn signatures(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
     }
 }
 
-/// The signature of a def or method
+/// The signature of a def, method or `do` block
 pub(crate) fn function<'t>(tables: &'t Tables<'_>, decl: DeclId, sig: usize) -> &'t Signature {
     match &tables.decl(decl).node {
         DeclNode::Defs(defs) => &defs[sig].sig,
         DeclNode::Methods(methods) => &methods[sig].sig,
-        _ => unreachable!("only a def or method has a signature"),
+        DeclNode::Closure(closure) => &closure.sig,
+        _ => unreachable!("only a def, method or block has a signature"),
     }
 }
 
-/// The ambient channels of a def or method signature, as a function type written
-/// within it without its own takes them: the channel written on the signature, or
-/// for one omitted, the implicit binder standing for it.
+/// The ambient channels of a def, method or `do` block signature, as a function
+/// type written within it without its own takes them: the channel written on the
+/// signature, or for one omitted, the implicit binder standing for it.
 ///
 /// A quantified type's are its function's: the channel written there, or for one
 /// omitted, the implicit binder standing for it.
+///
+/// A block's implicit binders only stand for its channels, which are whatever
+/// each use of it gives them: it isn't generic over them.
 pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambient; 2] {
     let written = match &tables.decl(decl).node {
         DeclNode::Quantifier(quantifier) => quantifier.written,
@@ -142,6 +146,17 @@ pub(crate) fn channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> [Ambien
             Ambient::Implicit(binder)
         }
     })
+}
+
+/// The implicit and written ambient channels of a declaration signature that has
+/// them: a def's, method's, block's or quantified type's
+pub(crate) fn own_channels(tables: &Tables<'_>, decl: DeclId, sig: usize) -> Option<[Ambient; 2]> {
+    match tables.decl(decl).node {
+        DeclNode::Quantifier(_) | DeclNode::Closure(_) => Some(channels(tables, decl, sig)),
+        _ => tables
+            .sig(decl, sig)
+            .map(|completed| [completed.input, completed.output]),
+    }
 }
 
 /// The ambient channels of a function type written in a site whose function types

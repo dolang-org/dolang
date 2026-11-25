@@ -1065,6 +1065,11 @@ pub(super) fn passed_signature(
     mut fill: impl FnMut(VarId) -> TypeId,
 ) -> Option<Function> {
     let signature = data.signature.as_ref()?;
+    // A function type its signature writes without a channel shares the block's,
+    // so each channel is filled once, first
+    let [input, output] = [signature.input, signature.output].map(|var| var.map(&mut fill));
+    let own: Vec<TypeId> = [input, output].into_iter().flatten().collect();
+    let declared = &super::instantiate_block(db, declared, &own);
     let (Pattern::Unpack { items: pattern, .. }, Type::Schema(items)) =
         (&data.params, db.ty(declared.params))
     else {
@@ -1098,16 +1103,10 @@ pub(super) fn passed_signature(
     if singles.next().is_some() {
         return None;
     }
-    let mut channel = |var: Option<VarId>, declared: Option<TypeId>| match var {
-        Some(var) => Some(fill(var)),
-        None => declared,
-    };
-    let input = channel(signature.input, declared.input);
-    let output = channel(signature.output, declared.output);
     Some(Function {
         params: db.intern(Type::Schema(schema.into())),
-        input,
-        output,
+        input: input.or(declared.input),
+        output: output.or(declared.output),
         ..declared.clone()
     })
 }

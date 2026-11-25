@@ -920,6 +920,10 @@ fn variances(
     };
     let mut found = BTreeMap::new();
     for decl in tables.unit_decl_ids(unit) {
+        // A block's channel placeholders are never on a surface
+        if tables.decl(decl).kind == DeclKind::Closure {
+            continue;
+        }
         for sig in 0..tables.sig_count(decl) {
             let mut slot = 0;
             while let Some(variance) = tables.variance(BinderRef { decl, sig, slot }) {

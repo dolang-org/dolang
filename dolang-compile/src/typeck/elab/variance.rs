@@ -70,12 +70,7 @@ pub(crate) fn variances(tables: &mut Tables<'_>) {
             for slot in 0..tables.binders(decl, sig).len() {
                 own.push((decl, BinderRef { decl, sig, slot }));
             }
-            let channels = match tables.decl(decl).node {
-                DeclNode::Quantifier(_) => Some(sig::channels(tables, decl, sig)),
-                _ => tables
-                    .sig(decl, sig)
-                    .map(|completed| [completed.input, completed.output]),
-            };
+            let channels = sig::own_channels(tables, decl, sig);
             for ambient in channels.into_iter().flatten() {
                 if let Ambient::Implicit(binder) = ambient {
                     own.push((decl, binder));

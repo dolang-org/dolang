@@ -130,8 +130,8 @@ use super::{
         Verdicts, Widening,
     },
     r#type::{
-        Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, MemberKey,
-        Multiplicity, SchemaItem, Shared, SymbolId, Type, TypeId, UnitId,
+        Argument, BoundRef, Copies, Database, DeclId, DeclKind, Element, Function, Intrinsic, Kind,
+        Literal, MemberKey, Multiplicity, SchemaItem, Shared, SymbolId, Type, TypeId, UnitId,
     },
 };
 use crate::{Mode, RestKind, diag::Span, typeck::report::Report};
@@ -1034,13 +1034,13 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// Check a value against a variable's annotation, or a function's declared
     /// result, when reporting
-    fn check(&mut self, var: VarId, ty: TypeId, span: Span) {
+    fn check(&mut self, at: At, var: VarId, ty: TypeId, span: Span) {
         if !self.observing() || span == INVALID_SPAN || ty == self.db.bottom() {
             return;
         }
         let (annotation, result) = match self.annotation(var) {
             Some(annotation) => (annotation, false),
-            None => match self.result_annotation(var) {
+            None => match self.result_annotation(var, at) {
                 Some(annotation) => (annotation, true),
                 None => return,
             },
@@ -1072,7 +1072,7 @@ impl<'a, 'u> Flow<'a, 'u> {
 
     /// The declared result a function's result variable is checked against: a
     /// def's, or a `do` block's written one
-    fn result_annotation(&self, var: VarId) -> Option<TypeId> {
+    fn result_annotation(&mut self, var: VarId, at: At) -> Option<TypeId> {
         let data = self.ir.var(var);
         if data.origin != Origin::Result {
             return None;
@@ -1085,8 +1085,24 @@ impl<'a, 'u> Flow<'a, 'u> {
         {
             return None;
         }
-        let result = self.declared[data.owner.index()].as_ref()?.result;
+        let result = self.declared_at(data.owner, at)?.result;
         (result != self.db.unknown()).then_some(result)
+    }
+
+    /// A function's declared type, a `do` block's with its omitted channels as
+    /// their signature variables are joined at `at`
+    fn declared_at(&mut self, func: FuncId, at: At) -> Option<Function> {
+        let declared = self.declared[func.index()].as_ref()?.clone();
+        let ir = self.ir;
+        let Some(signature) = &ir.func(func).signature else {
+            return Some(declared);
+        };
+        let own: Vec<TypeId> = [signature.input, signature.output]
+            .into_iter()
+            .flatten()
+            .map(|var| self.joined(var, at))
+            .collect();
+        Some(instantiate_block(self.db, &declared, &own))
     }
 
     /// The ambient channels a function's calls pass, when it declares them. A `do`
@@ -1094,7 +1110,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// calls it's passed to give them, which its block then depends on. A unit's
     /// top level has those of its mode (see [`Flow::top_channels`]).
     fn channels(&mut self, at: At) -> (Option<TypeId>, Option<TypeId>) {
-        let Some(declared) = self.declared[at.func.index()].clone() else {
+        let Some(declared) = self.declared_at(at.func, at) else {
             return match self.ir.func(at.func).kind {
                 FuncKind::Module(unit) => self.top_channels(unit),
                 _ => (None, None),
@@ -1830,7 +1846,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                 let mut operands = Self::operands(state, count + holes(value));
                 match *target {
                     Target::Var { var, .. } => {
-                        let expected = self.annotation(var).or_else(|| self.result_annotation(var));
+                        let expected = match self.annotation(var) {
+                            Some(annotation) => Some(annotation),
+                            None => self.result_annotation(var, at),
+                        };
                         let ty = self.expect(at, state, &mut operands, value, expected);
                         if self.diverged.is_some() {
                             return false;
@@ -2136,7 +2155,7 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// Assign a variable, strongly where its owner holds it, checking the value at
     /// `span` against its annotation. Returns the type stored.
     fn assign(&mut self, at: At, state: &mut State, var: VarId, ty: TypeId, span: Span) -> TypeId {
-        self.check(var, ty, span);
+        self.check(at, var, ty, span);
         let ty = self.settle(var, ty);
         let data = self.ir.var(var);
         if data.owner == at.func {
@@ -2294,7 +2313,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             unreachable!("parameters are a pattern of items")
         };
         let declared = self
-            .declared_params(at.func, items)
+            .declared_params(at, items)
             .unwrap_or_else(|| vec![self.db.unknown(); items.len()]);
         let types: Vec<TypeId> = match &func.signature {
             Some(signature) => signature
@@ -2319,8 +2338,8 @@ impl<'a, 'u> Flow<'a, 'u> {
     /// rigids: a single its item's type, and a rest a `Tuple` or `Pack` of its
     /// items, as the runtime binds it. `None` without a declared type. If they
     /// don't line up, each parameter is a gap.
-    fn declared_params(&mut self, func: FuncId, params: &[PatternItem]) -> Option<Vec<TypeId>> {
-        let schema = self.declared[func.index()].as_ref()?.params;
+    fn declared_params(&mut self, at: At, params: &[PatternItem]) -> Option<Vec<TypeId>> {
+        let schema = self.declared_at(at.func, at)?.params;
         let shares = match self.db.ty(schema) {
             Type::Schema(items) => shares(params, items),
             _ => None,
@@ -2735,13 +2754,13 @@ impl<'a, 'u> Flow<'a, 'u> {
                     self.raise(at.ctx, data.handler, &state);
                 }
                 let result = self.ir.func(*func).result;
-                let expected = self.result_annotation(result);
+                let expected = self.result_annotation(result, at);
                 let mut operands = Self::operands(&mut state, holes(value));
                 let ty = self.expect(at, &mut state, &mut operands, value, expected);
                 if self.diverged.is_some() {
                     return;
                 }
-                self.check(result, ty, value.span);
+                self.check(at, result, ty, value.span);
                 self.join(result, ty);
             }
             Terminal::Return | Terminal::Escape(_) | Terminal::Unreachable => {}
@@ -2805,7 +2824,11 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
 }
 
 /// A declaration's signature `sig`'s type under its rigids, if it's a function
-/// type
+/// type.
+///
+/// A `do` block's own binders stand for its omitted channels, which each use
+/// gives types rather than the block being generic over them, so they stay
+/// references to a group of their own: see [`instantiate_block`].
 fn declared_signature(
     db: &Database,
     tables: &Tables<'_>,
@@ -2815,12 +2838,41 @@ fn declared_signature(
     let id = tables.sig_decl((decl, sig)).unwrap_or(decl);
     let mut ty = db.declaration(id).ty;
     if let Type::Quantified { body, .. } = db.ty(ty) {
-        let rigids = tables.group_rigids(db, (decl, sig));
+        let mut rigids = tables.group_rigids(db, (decl, sig));
+        if db.declaration(id).source.kind == DeclKind::Closure {
+            let group = tables.group((decl, sig)).into_iter().flatten();
+            let own = group.enumerate().filter(|(_, binder)| binder.decl == decl);
+            for (slot, (index, _)) in own.enumerate() {
+                rigids[index] = db.intern(Type::Bound {
+                    reference: BoundRef::new(0, slot),
+                    kind: Kind::Type,
+                });
+            }
+        }
         ty = db.substitute(*body, &rigids);
     }
     match db.ty(ty) {
         Type::Function(function) => Some(function.clone()),
         _ => None,
+    }
+}
+
+/// A `do` block's declared type with `own`, a type for each channel it omits,
+/// in place of its references to them. A function type its signature writes
+/// without a channel shares the block's.
+///
+/// The block isn't generic over a channel even when nothing at a use
+/// constrains it: generalizing that one is #743's.
+pub(super) fn instantiate_block(db: &Database, declared: &Function, own: &[TypeId]) -> Function {
+    if own.is_empty() {
+        return declared.clone();
+    }
+    let instantiate = |ty| db.instantiate(ty, own);
+    Function {
+        params: instantiate(declared.params),
+        result: instantiate(declared.result),
+        input: declared.input.map(instantiate),
+        output: declared.output.map(instantiate),
     }
 }
 
