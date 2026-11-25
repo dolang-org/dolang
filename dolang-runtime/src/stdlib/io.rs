@@ -22,10 +22,13 @@ use std::{
 };
 
 use dolang_util::{shared::Locked, utf8};
+
+mod methods;
+
 use futures::io::{
-    AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite,
-    AsyncWriteExt,
+    AsyncBufRead, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt,
 };
+use methods::Source;
 
 use crate::{
     BYTE_STREAM_CHUNK_SIZE,
@@ -34,7 +37,7 @@ use crate::{
     gc::with_pin,
     io::{
         ByteHandle, ByteIo, ByteStream, IntoByteIo, IoCaps, IoErrorExt as _, IoResultExt as _,
-        Prefixed, Shared,
+        Prefixed, Shared, Target,
     },
     object::{
         interface::Request,
@@ -55,10 +58,9 @@ use crate::{
 /// Buffer capacity, and the size from which reads and writes skip the buffer.
 const CAPACITY: usize = 8 * 1024;
 
-/// A buffer over an owned byte handle.
-struct BufIo {
-    io: Box<dyn ByteStream>,
-    caps: IoCaps,
+/// A buffer's read-ahead and pending writes.
+#[derive(Default)]
+struct Buf {
     /// Read-ahead, unread from `rpos`.
     rbuf: Vec<u8>,
     rpos: usize,
@@ -66,13 +68,14 @@ struct BufIo {
     wbuf: Vec<u8>,
 }
 
-impl BufIo {
+impl Buf {
     fn unread(&self) -> usize {
         self.rbuf.len() - self.rpos
     }
 
-    fn seekable(&self) -> bool {
-        self.caps.contains(IoCaps::SEEK)
+    /// The unread read-ahead.
+    fn available(&self) -> &[u8] {
+        &self.rbuf[self.rpos..]
     }
 
     fn consume(&mut self, n: usize) {
@@ -87,7 +90,7 @@ impl BufIo {
         self.rpos = 0;
     }
 
-    /// Returns bytes taken from the handle to the front of the read-ahead.
+    /// Returns bytes taken from the source to the front of the read-ahead.
     fn push_back(&mut self, bytes: &[u8]) {
         if bytes.len() <= self.rpos {
             self.rpos -= bytes.len();
@@ -101,17 +104,46 @@ impl BufIo {
         }
     }
 
+    /// The source's offset for a seek `n` bytes from the logical position, which lies
+    /// before unread bytes.
+    fn current(&self, n: i64) -> io::Result<i64> {
+        i64::try_from(self.unread())
+            .ok()
+            .and_then(|unread| n.checked_sub(unread))
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))
+    }
+
+    /// The logical position, given the source's: less unread bytes, plus pending writes.
+    fn position(&self, source: u64) -> io::Result<u64> {
+        (source + self.wbuf.len() as u64)
+            .checked_sub(self.unread() as u64)
+            .ok_or_else(|| io::Error::other("position is before buffered data"))
+    }
+}
+
+/// A buffer over an owned byte handle.
+struct BufIo {
+    io: Box<dyn ByteStream>,
+    caps: IoCaps,
+    buf: Buf,
+}
+
+impl BufIo {
+    fn seekable(&self) -> bool {
+        self.caps.contains(IoCaps::SEEK)
+    }
+
     /// Writes out pending writes.
     ///
     /// Reads call this first. On a seekable handle they must, so the read starts after the
     /// writes. On one that cannot seek, a peer may be waiting for them before it answers.
     fn poll_flush_buf(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        while !self.wbuf.is_empty() {
-            let n = ready!(Pin::new(&mut self.io).poll_write(cx, &self.wbuf))?;
+        while !self.buf.wbuf.is_empty() {
+            let n = ready!(Pin::new(&mut self.io).poll_write(cx, &self.buf.wbuf))?;
             if n == 0 {
                 return Poll::Ready(Err(io::ErrorKind::WriteZero.into()));
             }
-            self.wbuf.drain(..n);
+            self.buf.wbuf.drain(..n);
         }
         Poll::Ready(Ok(()))
     }
@@ -121,70 +153,12 @@ impl BufIo {
         if !self.seekable() {
             return Poll::Ready(Ok(()));
         }
-        if self.unread() > 0 {
-            let back = -i64::try_from(self.unread()).map_err(io::Error::other)?;
+        if self.buf.unread() > 0 {
+            let back = -i64::try_from(self.buf.unread()).map_err(io::Error::other)?;
             ready!(Pin::new(&mut self.io).poll_seek(cx, SeekFrom::Current(back)))?;
         }
-        self.drop_read_ahead();
+        self.buf.drop_read_ahead();
         Poll::Ready(Ok(()))
-    }
-
-    /// Appends `n` bytes to `out`, or the rest of the stream when `n` is `None`, stopping
-    /// short only at the end of the stream.
-    async fn read_into<'v>(
-        &mut self,
-        alloc: &mut dyn Alloc<'v>,
-        out: &mut BinEmbryo<'v>,
-        n: Option<usize>,
-    ) -> io::Result<()> {
-        let start = out.len();
-        loop {
-            let want = match n {
-                Some(n) => n - (out.len() - start),
-                None => usize::MAX,
-            };
-            if want == 0 {
-                return Ok(());
-            }
-            if self.unread() == 0 && want >= CAPACITY {
-                let chunk = want.min(BYTE_STREAM_CHUNK_SIZE);
-                if read_spare(self, alloc, out, chunk).await? == 0 {
-                    return Ok(());
-                }
-            } else {
-                let avail = self.fill_buf().await?;
-                if avail.is_empty() {
-                    return Ok(());
-                }
-                let take = avail.len().min(want);
-                out.extend(alloc, &avail[..take]);
-                self.consume(take);
-            }
-        }
-    }
-
-    /// Appends one line to `out`, terminator included. Nothing is appended at the end of
-    /// the stream.
-    async fn read_line_into<'v>(
-        &mut self,
-        alloc: &mut dyn Alloc<'v>,
-        out: &mut BinEmbryo<'v>,
-    ) -> io::Result<()> {
-        loop {
-            let avail = self.fill_buf().await?;
-            if avail.is_empty() {
-                return Ok(());
-            }
-            let (take, done) = match avail.iter().position(|&b| b == b'\n') {
-                Some(i) => (i + 1, true),
-                None => (avail.len(), false),
-            };
-            out.extend(alloc, &avail[..take]);
-            self.consume(take);
-            if done {
-                return Ok(());
-            }
-        }
     }
 }
 
@@ -204,17 +178,6 @@ async fn read_spare<'v>(
     // SAFETY: `read` bytes at the front of the spare capacity are initialized.
     unsafe { out.advance(read) };
     Ok(read)
-}
-
-/// Runs a read under an interrupt guard, so an interrupted read fails instead of being
-/// dropped with its caller, and the caller can push back what it had read.
-async fn guard_read<'v, 's>(
-    strand: &mut Strand<'v, 's>,
-    read: impl AsyncFnOnce(&mut Strand<'v, 's>) -> io::Result<()>,
-) -> Result<'v, 's, ()> {
-    strand
-        .interrupt_guard(async |strand| read(strand).await.into_do_io(strand))
-        .await
 }
 
 /// Reads from `reader` until `n` bytes are appended to `out` or the stream ends.
@@ -267,14 +230,14 @@ impl AsyncRead for BufIo {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        if this.unread() == 0 && buf.len() >= CAPACITY {
+        if this.buf.unread() == 0 && buf.len() >= CAPACITY {
             ready!(this.poll_flush_buf(cx))?;
             return Pin::new(&mut this.io).poll_read(cx, buf);
         }
         let avail = ready!(Pin::new(&mut *this).poll_fill_buf(cx))?;
         let n = avail.len().min(buf.len());
         buf[..n].copy_from_slice(&avail[..n]);
-        this.consume(n);
+        this.buf.consume(n);
         Poll::Ready(Ok(n))
     }
 }
@@ -283,22 +246,23 @@ impl AsyncRead for BufIo {
 impl AsyncBufRead for BufIo {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&[u8]>> {
         let this = self.get_mut();
-        if this.unread() == 0 {
+        if this.buf.unread() == 0 {
             ready!(this.poll_flush_buf(cx))?;
-            this.rbuf.resize(CAPACITY, 0);
-            match Pin::new(&mut this.io).poll_read(cx, &mut this.rbuf) {
-                Poll::Ready(Ok(n)) => this.rbuf.truncate(n),
+            let rbuf = &mut this.buf.rbuf;
+            rbuf.resize(CAPACITY, 0);
+            match Pin::new(&mut this.io).poll_read(cx, rbuf) {
+                Poll::Ready(Ok(n)) => rbuf.truncate(n),
                 res => {
-                    this.rbuf.clear();
+                    rbuf.clear();
                     return res.map_ok(|_| &[][..]);
                 }
             }
         }
-        Poll::Ready(Ok(&this.rbuf[this.rpos..]))
+        Poll::Ready(Ok(this.buf.available()))
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        self.get_mut().consume(amt);
+        self.get_mut().buf.consume(amt);
     }
 }
 
@@ -308,16 +272,7 @@ impl AsyncWrite for BufIo {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let this = self.get_mut();
-        ready!(this.poll_begin_write(cx))?;
-        if this.wbuf.len() + buf.len() > CAPACITY {
-            ready!(this.poll_flush_buf(cx))?;
-        }
-        if buf.len() >= CAPACITY {
-            return Pin::new(&mut this.io).poll_write(cx, buf);
-        }
-        this.wbuf.extend_from_slice(buf);
-        Poll::Ready(Ok(buf.len()))
+        self.poll_write_vectored(cx, &[IoSlice::new(buf)])
     }
 
     /// Buffers every piece, so a stream that writes them at once gets them together.
@@ -329,14 +284,14 @@ impl AsyncWrite for BufIo {
         let this = self.get_mut();
         ready!(this.poll_begin_write(cx))?;
         let len = bufs.iter().map(|buf| buf.len()).sum::<usize>();
-        if this.wbuf.len() + len > CAPACITY {
+        if this.buf.wbuf.len() + len > CAPACITY {
             ready!(this.poll_flush_buf(cx))?;
         }
         if len >= CAPACITY {
             return Pin::new(&mut this.io).poll_write_vectored(cx, bufs);
         }
         for buf in bufs {
-            this.wbuf.extend_from_slice(buf);
+            this.buf.wbuf.extend_from_slice(buf);
         }
         Poll::Ready(Ok(len))
     }
@@ -354,8 +309,7 @@ impl AsyncWrite for BufIo {
     }
 }
 
-/// `SeekFrom::Current(0)` reports the logical position, keeping both buffers: the
-/// handle's position, less unread bytes, plus pending writes.
+/// `SeekFrom::Current(0)` reports the logical position, keeping both buffers.
 impl AsyncSeek for BufIo {
     fn poll_seek(
         self: Pin<&mut Self>,
@@ -365,51 +319,38 @@ impl AsyncSeek for BufIo {
         let this = self.get_mut();
         if pos == SeekFrom::Current(0) {
             let pos = ready!(Pin::new(&mut this.io).poll_seek(cx, pos))?;
-            let pos = (pos + this.wbuf.len() as u64)
-                .checked_sub(this.unread() as u64)
-                .ok_or_else(|| io::Error::other("position is before buffered data"));
-            return Poll::Ready(pos);
+            return Poll::Ready(this.buf.position(pos));
         }
         ready!(this.poll_flush_buf(cx))?;
         let pos = match pos {
-            SeekFrom::Current(n) => {
-                let adjusted = i64::try_from(this.unread())
-                    .ok()
-                    .and_then(|unread| n.checked_sub(unread))
-                    .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-                SeekFrom::Current(adjusted)
-            }
+            SeekFrom::Current(n) => SeekFrom::Current(this.buf.current(n)?),
             pos => pos,
         };
         let pos = ready!(Pin::new(&mut this.io).poll_seek(cx, pos))?;
-        this.drop_read_ahead();
+        this.buf.drop_read_ahead();
         Poll::Ready(Ok(pos))
     }
 }
 
-/// A buffer over an owned byte handle, shared with the handles it lends.
+/// `io.Buffered`, a buffer over a stream.
+///
+/// Over a native stream, the buffer wraps the stream's handle in a [`Shared`] with the
+/// handles it lends. Over a stream served through its `Io` methods, slot 0 holds the
+/// stream, the buffer calls those methods on the calling strand, and `Io` lends the buffer
+/// through its own methods.
 pub(crate) struct Buffered {
     /// The buffer, until it is closed.
-    io: Option<Shared<BufIo>>,
+    io: Option<BufferedIo>,
     caps: IoCaps,
 }
 
-impl Buffered {
-    /// Wraps `handle`, serving its prefix first.
-    fn new(handle: ByteHandle) -> Self {
-        let (io, caps, prefix) = handle.into_parts();
-        Self {
-            caps,
-            io: Some(Shared::new(BufIo {
-                io,
-                caps,
-                rbuf: prefix,
-                rpos: 0,
-                wbuf: Vec::new(),
-            })),
-        }
-    }
+/// A buffer's state in either mode.
+enum BufferedIo {
+    Native(Shared<BufIo>),
+    Methods(Buf),
+}
 
+impl Buffered {
     /// Raises unless the buffer is open and its handle has `need`.
     fn check<'v, 's>(&self, strand: &mut Strand<'v, 's>, need: IoCaps) -> Result<'v, 's, ()> {
         check_caps(strand, "buffer", self.io.is_some(), self.caps, need)
@@ -418,22 +359,6 @@ impl Buffered {
     /// Capabilities while open; a closed buffer has none.
     fn open_caps(&self) -> IoCaps {
         open_caps(&self.io, self.caps)
-    }
-
-    /// Holds the buffer for a method, after any operation through a lent handle.
-    async fn lock<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Locked<'_, BufIo>> {
-        let io = self.io.as_mut().expect("buffer is closed");
-        io.lock().await.into_do_io(strand)
-    }
-
-    /// Flushes and closes the buffer, dropping it even if flushing fails.
-    ///
-    /// The handle's own `close` only flushes a lent handle, so the source stays open.
-    async fn close(&mut self) -> io::Result<()> {
-        close_shared(&mut self.io).await
     }
 }
 
@@ -461,7 +386,7 @@ fn check_caps<'v, 's>(
 }
 
 /// Capabilities while open; a closed stream has none.
-fn open_caps<T>(io: &Option<Shared<T>>, caps: IoCaps) -> IoCaps {
+fn open_caps<T>(io: &Option<T>, caps: IoCaps) -> IoCaps {
     if io.is_some() { caps } else { IoCaps::empty() }
 }
 
@@ -484,8 +409,10 @@ impl<'v> IntoByteIo<'v> for Buffered {
 
     /// Lends the buffer itself, so the consumer reads and writes through it.
     fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
-        let io = self.io.as_ref().expect("buffer is closed").clone();
-        Ok(ByteHandle::with_caps(io, self.caps))
+        let Some(BufferedIo::Native(io)) = &self.io else {
+            unreachable!("only a native buffer lends a handle");
+        };
+        Ok(ByteHandle::with_caps(io.clone(), self.caps))
     }
 }
 
@@ -609,90 +536,6 @@ fn seek_arg<'v, 's>(
     })
 }
 
-impl Buffered {
-    /// Reads a line as a `Str`, or `""` at the end of the stream.
-    async fn read_line<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.check(strand, IoCaps::READ)?;
-        let mut io = self.lock(strand).await?;
-        let mut buf = BinEmbryo::new();
-        if let Err(err) = guard_read(strand, async |strand| {
-            io.read_line_into(strand, &mut buf).await
-        })
-        .await
-        {
-            io.push_back(buf.as_slice());
-            return Err(err);
-        }
-        if str::from_utf8(buf.as_slice()).is_err() {
-            io.push_back(buf.as_slice());
-            return Err(invalid_utf8(strand));
-        }
-        // SAFETY: validated above.
-        unsafe { buf.finish_str_unchecked(strand, out) };
-        Ok(())
-    }
-
-    /// Reads up to `size` bytes, or the rest of the stream, as a `Str`.
-    ///
-    /// A character split by `size` is left for the next read. When `size` is too small for
-    /// the first character, the whole character is read.
-    async fn read_str<'v, 's>(
-        &mut self,
-        strand: &mut Strand<'v, 's>,
-        size: Option<usize>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.check(strand, IoCaps::READ)?;
-        let mut io = self.lock(strand).await?;
-        let mut buf = BinEmbryo::new();
-        if let Err(err) = guard_read(strand, async |strand| {
-            io.read_into(strand, &mut buf, size).await
-        })
-        .await
-        {
-            io.push_back(buf.as_slice());
-            return Err(err);
-        }
-        loop {
-            let eof = size.is_none_or(|size| buf.len() < size);
-            let valid = match utf8::complete_prefix(buf.as_slice()) {
-                Ok(text) if text.len() == buf.len() => break,
-                Ok(text) if !eof => text.len(),
-                _ => {
-                    io.push_back(buf.as_slice());
-                    return Err(invalid_utf8(strand));
-                }
-            };
-            if valid > 0 {
-                io.push_back(&buf.as_slice()[valid..]);
-                buf.truncate(valid);
-                break;
-            }
-            // The first character is incomplete, so read on until it is whole.
-            let before = buf.len();
-            if let Err(err) = guard_read(strand, async |strand| {
-                io.read_into(strand, &mut buf, Some(1)).await
-            })
-            .await
-            {
-                io.push_back(buf.as_slice());
-                return Err(err);
-            }
-            if buf.len() == before {
-                io.push_back(buf.as_slice());
-                return Err(invalid_utf8(strand));
-            }
-        }
-        // SAFETY: validated above.
-        unsafe { buf.finish_str_unchecked(strand, out) };
-        Ok(())
-    }
-}
-
 /// Registers the `io` module.
 pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     // Eager: converting a `ByteHandle` needs `Stream` with only a `Vm`, which can't force
@@ -715,30 +558,83 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     });
 }
 
+impl Buffered {
+    /// Holds the buffer's source for a method, after any operation through a lent handle.
+    /// `target` gets slot 0, the stream a buffer over a stream's methods calls.
+    async fn source<'x, 'v, 's>(
+        this: &'x mut Mut<'v, '_, Self>,
+        strand: &mut Strand<'v, 's>,
+        target: &'x mut Slot<'v, '_>,
+    ) -> Result<'v, 's, Source<'x, 'v>> {
+        strand.store(&mut *target, Mut::slot::<0>(this));
+        let seekable = this.caps.contains(IoCaps::SEEK);
+        match this.io.as_mut().expect("buffer is closed") {
+            BufferedIo::Native(io) => Ok(Source::Native(io.lock().await.into_do_io(strand)?)),
+            BufferedIo::Methods(buf) => Ok(Source::Methods {
+                buf,
+                target,
+                seekable,
+            }),
+        }
+    }
+
+    /// Runs `f` with the source of the buffer `this`, which must be open with `need`.
+    async fn with_source<'v, 's, R>(
+        this: Instance<'v, '_, Self>,
+        strand: &mut Strand<'v, 's>,
+        need: IoCaps,
+        f: impl AsyncFnOnce(&mut Source<'_, 'v>, &mut Strand<'v, 's>) -> Result<'v, 's, R>,
+    ) -> Result<'v, 's, R> {
+        let mut borrow = this.borrow_mut(strand)?;
+        borrow.check(strand, need)?;
+        with_slots!(strand, |mut target| {
+            let mut source = Self::source(&mut borrow, strand, &mut target).await?;
+            f(&mut source, strand).await
+        })
+    }
+
+    /// Writes out pending writes and closes the buffer, dropping it even if writing fails.
+    ///
+    /// A lent handle's own `close` only flushes, so the source stays open.
+    async fn close<'v, 's>(
+        this: &mut Mut<'v, '_, Self>,
+        strand: &mut Strand<'v, 's>,
+    ) -> Result<'v, 's, ()> {
+        match this.io.take() {
+            None => Ok(()),
+            Some(BufferedIo::Native(io)) => close_shared(&mut Some(io)).await.into_do_io(strand),
+            Some(BufferedIo::Methods(mut buf)) => with_slots!(strand, |mut target| {
+                strand.store(&mut target, Mut::slot::<0>(this));
+                strand.store(Mut::slot_mut::<0>(this), Nil);
+                methods::flush_buf(strand, &mut buf, &target).await
+            }),
+        }
+    }
+}
+
 /// Writes `value` as `put` does: a `Str` or `Bin` as its bytes, anything else as its
 /// string form.
 async fn put_value<'v, 's>(
-    this: &mut Buffered,
+    io: &mut Source<'_, 'v>,
     strand: &mut Strand<'v, 's>,
-    value: &Slot<'v, '_>,
+    value: &Value<'v>,
 ) -> Result<'v, 's, ()> {
-    let mut io = this.lock(strand).await?;
-    let res = if let Some(b) = value.as_bin(strand.vm()) {
+    if let Some(b) = value.as_bin(strand.vm()) {
         let b = b.pin();
-        io.write_all(&b).await
+        io.write_all(strand, &[&b]).await
     } else if let Some(s) = value.as_str(strand.vm()) {
         let s = s.pin();
-        io.write_all(s.as_bytes()).await
+        io.write_all(strand, &[s.as_bytes()]).await
     } else {
         let s = value.to_string(strand)?;
-        io.write_all(s.as_bytes()).await
-    };
-    res.into_do_io(strand)
+        io.write_all(strand, &[s.as_bytes()]).await
+    }
 }
 
 impl<'v> Object<'v> for Buffered {
     const NAME: &'v str = "Buffered";
     const MODULE: &'v str = "io";
+    const SLOTS: usize = 1;
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
@@ -747,17 +643,40 @@ impl<'v> Object<'v> for Buffered {
         this: Type<'v, Self>,
         strand: &'a mut Strand<'v, 's>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => source);
-        let handle = crate::io::get(strand, &source, |_, _| Ok(())).map_err(|err| {
+        let target = crate::io::target(strand, &source, |_, _| Ok(())).map_err(|err| {
             if err.kind() == ErrorKind::Unsupported {
                 Error::type_error(strand, "expected an `io.Io` value for `source`")
             } else {
                 err
             }
         })?;
-        this.create(strand, Buffered::new(handle), out);
+        let buffered = match target {
+            Target::Handle(handle) => {
+                let (io, caps, prefix) = handle.into_parts();
+                let buf = Buf {
+                    rbuf: prefix,
+                    ..Buf::default()
+                };
+                Buffered {
+                    io: Some(BufferedIo::Native(Shared::new(BufIo { io, caps, buf }))),
+                    caps,
+                }
+            }
+            Target::Methods(caps) => Buffered {
+                io: Some(BufferedIo::Methods(Buf::default())),
+                caps: caps - IoCaps::FORK,
+            },
+        };
+        this.create(strand, buffered, &mut out);
+        with_instance!(strand, this.cast(&out).unwrap(), |inst| {
+            let mut borrow = inst.borrow_mut_unwrap();
+            if let Some(BufferedIo::Methods(_)) = borrow.io {
+                strand.store(Mut::slot_mut::<0>(&mut borrow), &source);
+            }
+        });
         Ok(())
     }
 
@@ -775,8 +694,10 @@ impl<'v> Object<'v> for Buffered {
         strand: &'a mut Strand<'v, 's>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        let mut borrow = this.borrow_mut(strand)?;
-        borrow.read_line(strand, Slot::reborrow(&mut out)).await?;
+        Buffered::with_source(this, strand, IoCaps::READ, async |io, strand| {
+            io.read_line(strand, Slot::reborrow(&mut out)).await
+        })
+        .await?;
         Ok(out.as_str(strand).is_some_and(|line| !line.is_empty()))
     }
 
@@ -794,11 +715,14 @@ impl<'v> Object<'v> for Buffered {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        let mut borrow = this.borrow_mut(strand)?;
-        borrow.check(strand, IoCaps::WRITE)?;
-        put_value(&mut borrow, strand, &value).await
+        Buffered::with_source(this, strand, IoCaps::WRITE, async |io, strand| {
+            put_value(io, strand, &value).await
+        })
+        .await
     }
 
+    /// Only a buffer over a native handle lends one. A buffer over a stream's methods
+    /// leaves the request to `Io`, which serves it through the buffer's own methods.
     fn provide<'a, 's>(
         this: Instance<'v, 'a, Self>,
         request: &mut Request<'v, 's, '_>,
@@ -806,7 +730,9 @@ impl<'v> Object<'v> for Buffered {
         if request.wants::<ByteIo>() {
             let mut borrow = this.borrow_mut(request)?;
             borrow.check(request, IoCaps::empty())?;
-            request.provide::<ByteIo>(&mut *borrow)?;
+            if let Some(BufferedIo::Native(_)) = borrow.io {
+                request.provide::<ByteIo>(&mut *borrow)?;
+            }
         }
         Ok(())
     }
@@ -836,45 +762,33 @@ impl<'v> Object<'v> for Buffered {
             .method("read", async move |this, strand, args, out| {
                 unpack!(strand, args => ?size);
                 let size = size_arg(strand, size)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::READ)?;
-                let mut io = borrow.lock(strand).await?;
-                let mut buf = BinEmbryo::new();
-                if let Err(err) = guard_read(strand, async |strand| {
-                    io.read_into(strand, &mut buf, size).await
+                Buffered::with_source(this, strand, IoCaps::READ, async |io, strand| {
+                    io.read(strand, size, out).await
                 })
                 .await
-                {
-                    io.push_back(buf.as_slice());
-                    return Err(err);
-                }
-                buf.finish(strand, out);
-                Ok(())
             })
             .method("read_some", async move |this, strand, args, out| {
                 unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::READ)?;
-                let mut io = borrow.lock(strand).await?;
-                let mut buf = BinEmbryo::new();
-                let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
-                read_spare(&mut *io, strand, &mut buf, chunk)
-                    .await
-                    .into_do_io(strand)?;
-                buf.finish(strand, out);
-                Ok(())
+                Buffered::with_source(this, strand, IoCaps::READ, async |io, strand| {
+                    io.read_some(strand, size, out).await
+                })
+                .await
             })
             .method("read_str", async move |this, strand, args, out| {
                 unpack!(strand, args => ?size);
                 let size = size_arg(strand, size)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.read_str(strand, size, out).await
+                Buffered::with_source(this, strand, IoCaps::READ, async |io, strand| {
+                    io.read_str(strand, size, out).await
+                })
+                .await
             })
             .method("read_line", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.read_line(strand, out).await
+                Buffered::with_source(this, strand, IoCaps::READ, async |io, strand| {
+                    io.read_line(strand, out).await
+                })
+                .await
             })
             .method("lines", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
@@ -883,54 +797,53 @@ impl<'v> Object<'v> for Buffered {
             })
             .method("write", async move |this, strand, args, out| {
                 let pieces = pieces(strand, args)?;
-                let (mut slices, len) = slices(&pieces);
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::WRITE)?;
-                let mut io = borrow.lock(strand).await?;
-                let res = io.write_all_vectored(&mut slices).await;
-                res.into_do_io(strand)?;
+                let pieces = pieces.iter().map(|piece| &**piece).collect::<Vec<_>>();
+                let len = pieces.iter().map(|piece| piece.len()).sum::<usize>();
+                Buffered::with_source(this, strand, IoCaps::WRITE, async |io, strand| {
+                    io.write_all(strand, &pieces).await
+                })
+                .await?;
                 strand.store(out, len);
                 Ok(())
             })
             // The buffer takes all of it, writing out what it can't hold.
             .method("write_some", async move |this, strand, args, out| {
                 let piece = one_piece(strand, args)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::WRITE)?;
-                let mut io = borrow.lock(strand).await?;
-                io.write_all(&piece).await.into_do_io(strand)?;
+                Buffered::with_source(this, strand, IoCaps::WRITE, async |io, strand| {
+                    io.write_all(strand, &[&piece]).await
+                })
+                .await?;
                 strand.store(out, piece.len());
                 Ok(())
             })
             .method("flush", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::empty())?;
-                let res = borrow.lock(strand).await?.flush().await;
-                res.into_do_io(strand)
+                Buffered::with_source(this, strand, IoCaps::empty(), async |io, strand| {
+                    io.flush(strand).await
+                })
+                .await
             })
             .method("close", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
-                let res = borrow.close().await;
-                res.into_do_io(strand)
+                Buffered::close(&mut borrow, strand).await
             })
             .method("tell", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::SEEK)?;
-                let res = borrow.lock(strand).await?.stream_position().await;
-                let pos = res.into_do_io(strand)?;
+                let pos = Buffered::with_source(this, strand, IoCaps::SEEK, async |io, strand| {
+                    io.tell(strand).await
+                })
+                .await?;
                 strand.store(out, pos);
                 Ok(())
             })
             .method("seek", async move |this, strand, args, out| {
                 unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::SEEK)?;
-                let res = borrow.lock(strand).await?.seek(pos).await;
-                let pos = res.into_do_io(strand)?;
+                let pos = Buffered::with_source(this, strand, IoCaps::SEEK, async |io, strand| {
+                    io.seek(strand, pos).await
+                })
+                .await?;
                 strand.store(out, pos);
                 Ok(())
             })
@@ -1693,12 +1606,12 @@ impl<'v> Object<'v> for Cursor {
     }
 }
 
-/// A window of a seekable stream, with a position of its own.
+/// A window's position over a seekable stream, kept apart from the stream.
 ///
-/// The span assumes nothing else moves the stream: it seeks only when its own position
-/// moves, or to bring a stream that started outside the window into it.
-pub(crate) struct Span<B> {
-    io: B,
+/// It assumes nothing else moves the stream: the stream needs a seek only when the
+/// position moves, or to bring a stream that started outside the window into it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SpanPos {
     /// The window's absolute start.
     start: u64,
     /// The window's absolute end, when it is bounded.
@@ -1709,13 +1622,11 @@ pub(crate) struct Span<B> {
     aligned: bool,
 }
 
-impl<B: AsyncSeek + Unpin> Span<B> {
-    /// A span over `io`, whose absolute position is `at`. The span starts there, clamped to
-    /// the window.
-    fn new(io: B, start: u64, end: Option<u64>, at: u64) -> Self {
+impl SpanPos {
+    /// A position over a stream whose absolute position is `at`, clamped to the window.
+    fn new(start: u64, end: Option<u64>, at: u64) -> Self {
         let clamped = at.max(start).min(end.unwrap_or(u64::MAX));
         Self {
-            io,
             start,
             end,
             pos: clamped - start,
@@ -1734,6 +1645,81 @@ impl<B: AsyncSeek + Unpin> Span<B> {
         }
     }
 
+    /// Where to seek the stream before an operation, if it isn't at the position.
+    fn realign(&self) -> io::Result<Option<u64>> {
+        if self.aligned {
+            return Ok(None);
+        }
+        self.start
+            .checked_add(self.pos)
+            .map(Some)
+            .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))
+    }
+
+    /// Records an operation that moved the stream `moved` bytes, or `None` if it failed,
+    /// which may have moved it by any amount.
+    fn advance(&mut self, moved: Option<usize>) {
+        self.aligned = moved.is_some();
+        if let Some(n) = moved {
+            self.pos += n as u64;
+        }
+    }
+
+    /// Whether a seek to `pos` needs the stream's end, which only an end seek on an open
+    /// window does.
+    fn needs_end(&self, pos: SeekFrom) -> bool {
+        matches!(pos, SeekFrom::End(_)) && self.end.is_none()
+    }
+
+    /// Moves to `pos`, returning the new position. `stream_end` is the stream's absolute
+    /// end, measured when [`needs_end`](Self::needs_end) says so; measuring moves the
+    /// stream.
+    fn seek(&mut self, pos: SeekFrom, stream_end: Option<u64>) -> io::Result<u64> {
+        let pos = match pos {
+            SeekFrom::Start(n) => i128::from(n),
+            SeekFrom::Current(n) => i128::from(self.pos) + i128::from(n),
+            SeekFrom::End(n) => {
+                let len = match self.end {
+                    Some(end) => end - self.start,
+                    None => {
+                        let end = stream_end.expect("an open window measures its stream");
+                        self.aligned = false;
+                        end.saturating_sub(self.start)
+                    }
+                };
+                i128::from(len) + i128::from(n)
+            }
+        };
+        let pos = u64::try_from(pos).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek position must be non-negative",
+            )
+        })?;
+        if pos != self.pos {
+            self.aligned = false;
+        }
+        self.pos = pos;
+        Ok(pos)
+    }
+}
+
+/// A window of a seekable stream, with a position of its own.
+pub(crate) struct Span<B> {
+    io: B,
+    at: SpanPos,
+}
+
+impl<B: AsyncSeek + Unpin> Span<B> {
+    /// A span over `io`, whose absolute position is `at`. The span starts there, clamped to
+    /// the window.
+    fn new(io: B, start: u64, end: Option<u64>, at: u64) -> Self {
+        Self {
+            io,
+            at: SpanPos::new(start, end, at),
+        }
+    }
+
     /// Seeks the stream to the position if it isn't there, then runs `op` and advances past
     /// what it moved.
     fn poll_op(
@@ -1741,20 +1727,12 @@ impl<B: AsyncSeek + Unpin> Span<B> {
         cx: &mut Context<'_>,
         op: impl FnOnce(Pin<&mut B>, &mut Context<'_>) -> Poll<io::Result<usize>>,
     ) -> Poll<io::Result<usize>> {
-        if !self.aligned {
-            let at = self
-                .start
-                .checked_add(self.pos)
-                .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+        if let Some(at) = self.at.realign()? {
             ready!(Pin::new(&mut self.io).poll_seek(cx, SeekFrom::Start(at)))?;
-            self.aligned = true;
+            self.at.aligned = true;
         }
         let res = ready!(op(Pin::new(&mut self.io), cx));
-        // A failed operation may have moved the stream by any amount.
-        self.aligned = res.is_ok();
-        if let Ok(n) = res {
-            self.pos += n as u64;
-        }
+        self.at.advance(res.as_ref().ok().copied());
         Poll::Ready(res)
     }
 }
@@ -1766,7 +1744,7 @@ impl<B: AsyncRead + AsyncSeek + Unpin> AsyncRead for Span<B> {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let n = buf.len().min(this.room());
+        let n = buf.len().min(this.at.room());
         if n == 0 {
             return Poll::Ready(Ok(0));
         }
@@ -1783,7 +1761,7 @@ impl<B: AsyncWrite + AsyncSeek + Unpin> AsyncWrite for Span<B> {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let n = buf.len().min(this.room());
+        let n = buf.len().min(this.at.room());
         if n == 0 {
             return Poll::Ready(Ok(0));
         }
@@ -1796,14 +1774,8 @@ impl<B: AsyncWrite + AsyncSeek + Unpin> AsyncWrite for Span<B> {
         bufs: &[IoSlice<'_>],
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
-        let mut room = this.room();
-        let bufs = bufs
-            .iter()
-            .map_while(|buf| {
-                let n = buf.len().min(room);
-                room -= n;
-                (n > 0).then(|| IoSlice::new(&buf[..n]))
-            })
+        let bufs = cut(bufs, this.at.room())
+            .map(IoSlice::new)
             .collect::<Vec<_>>();
         if bufs.is_empty() {
             return Poll::Ready(Ok(0));
@@ -1820,6 +1792,16 @@ impl<B: AsyncWrite + AsyncSeek + Unpin> AsyncWrite for Span<B> {
     }
 }
 
+/// The non-empty fronts of `pieces` that fit in `room` bytes, in order.
+fn cut(pieces: &[impl Deref<Target = [u8]>], mut room: usize) -> impl Iterator<Item = &[u8]> {
+    let pieces = pieces.iter().filter(|piece| !piece.is_empty());
+    pieces.map_while(move |piece| {
+        let n = piece.len().min(room);
+        room -= n;
+        (n > 0).then(|| &piece[..n])
+    })
+}
+
 /// Seeks within the window. Only an end seek on an open window touches the stream, to
 /// measure it.
 impl<B: AsyncSeek + Unpin> AsyncSeek for Span<B> {
@@ -1829,43 +1811,40 @@ impl<B: AsyncSeek + Unpin> AsyncSeek for Span<B> {
         pos: SeekFrom,
     ) -> Poll<io::Result<u64>> {
         let this = self.get_mut();
-        let pos = match pos {
-            SeekFrom::Start(n) => i128::from(n),
-            SeekFrom::Current(n) => i128::from(this.pos) + i128::from(n),
-            SeekFrom::End(n) => {
-                let len = match this.end {
-                    Some(end) => end - this.start,
-                    None => {
-                        let end = ready!(Pin::new(&mut this.io).poll_seek(cx, SeekFrom::End(0)))?;
-                        this.aligned = false;
-                        end.saturating_sub(this.start)
-                    }
-                };
-                i128::from(len) + i128::from(n)
-            }
+        let end = if this.at.needs_end(pos) {
+            Some(ready!(
+                Pin::new(&mut this.io).poll_seek(cx, SeekFrom::End(0))
+            )?)
+        } else {
+            None
         };
-        let pos = u64::try_from(pos).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "seek position must be non-negative",
-            )
-        })?;
-        if pos != this.pos {
-            this.aligned = false;
-        }
-        this.pos = pos;
-        Poll::Ready(Ok(pos))
+        Poll::Ready(this.at.seek(pos, end))
     }
 }
 
 /// `io.Window`, a window of a seekable stream.
 ///
-/// The window wraps the handle it took from its target, so it holds no reference to the
-/// target itself.
+/// Over a native stream, the window wraps the handle it took from its target, so it holds
+/// no reference to the target itself. Over a stream served through its `Io` methods, slot
+/// 0 holds the target, the window calls those methods on the calling strand, and `Io`
+/// lends the window through its own methods.
 pub(crate) struct Window {
-    /// The span, until the window is closed.
-    io: Option<Shared<Span<Prefixed>>>,
+    /// The window, until it is closed.
+    io: Option<WindowIo>,
     caps: IoCaps,
+}
+
+/// A window's state in either mode.
+enum WindowIo {
+    Native(Shared<Span<Prefixed>>),
+    Methods(SpanPos),
+}
+
+/// A window for the length of one method: the locked span over a native stream, or the
+/// target and position of a window over a stream's methods.
+enum Side<'x, 'v> {
+    Native(&'x mut Span<Prefixed>),
+    Methods(&'x Value<'v>, &'x mut SpanPos),
 }
 
 impl Window {
@@ -1879,13 +1858,25 @@ impl Window {
         check_caps(strand, "stream", self.io.is_some(), self.caps, need)
     }
 
-    /// Holds the span for a method.
-    async fn lock<'v, 's>(
-        &mut self,
+    /// Runs `f` with the window `this`, which must be open with `need`.
+    async fn with_io<'v, 's, R>(
+        this: Instance<'v, '_, Self>,
         strand: &mut Strand<'v, 's>,
-    ) -> Result<'v, 's, Locked<'_, Span<Prefixed>>> {
-        let io = self.io.as_mut().expect("stream is closed");
-        io.lock().await.into_do_io(strand)
+        need: IoCaps,
+        f: impl AsyncFnOnce(Side<'_, 'v>, &mut Strand<'v, 's>) -> Result<'v, 's, R>,
+    ) -> Result<'v, 's, R> {
+        let mut borrow = this.borrow_mut(strand)?;
+        borrow.check(strand, need)?;
+        with_slots!(strand, |mut target| {
+            strand.store(&mut target, Mut::slot::<0>(&borrow));
+            match borrow.io.as_mut().expect("stream is closed") {
+                WindowIo::Native(io) => {
+                    let mut io = io.lock().await.into_do_io(strand)?;
+                    f(Side::Native(&mut io), strand).await
+                }
+                WindowIo::Methods(at) => f(Side::Methods(&target, at), strand).await,
+            }
+        })
     }
 }
 
@@ -1896,14 +1887,17 @@ impl<'v> IntoByteIo<'v> for Window {
 
     /// Lends the span, so the handle shares the window's position.
     fn get<'s>(&mut self, _strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
-        let io = self.io.as_ref().expect("stream is closed").clone();
-        Ok(ByteHandle::with_caps(io, self.caps))
+        let Some(WindowIo::Native(io)) = &self.io else {
+            unreachable!("only a native window lends a handle");
+        };
+        Ok(ByteHandle::with_caps(io.clone(), self.caps))
     }
 }
 
 impl<'v> Object<'v> for Window {
     const NAME: &'v str = "Window";
     const MODULE: &'v str = "io";
+    const SLOTS: usize = 1;
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
@@ -1916,7 +1910,7 @@ impl<'v> Object<'v> for Window {
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => target, ?range);
         let (start, end) = range_arg(strand, range)?;
-        let handle = crate::io::get(strand, &target, |strand, caps| {
+        let taken = crate::io::target(strand, &target, |strand, caps| {
             if caps.contains(IoCaps::SEEK) {
                 Ok(())
             } else {
@@ -1930,16 +1924,35 @@ impl<'v> Object<'v> for Window {
                 err
             }
         })?;
-        let (mut io, caps) = handle.into_prefixed();
-        let at = io.stream_position().await.into_do_io(strand)?;
-        let window = Window {
-            io: Some(Shared::new(Span::new(io, start, end, at))),
-            caps,
+        let window = match taken {
+            Target::Handle(handle) => {
+                let (mut io, caps) = handle.into_prefixed();
+                let at = io.stream_position().await.into_do_io(strand)?;
+                Window {
+                    io: Some(WindowIo::Native(Shared::new(Span::new(io, start, end, at)))),
+                    caps,
+                }
+            }
+            Target::Methods(caps) => {
+                let at = crate::object::io::seek(strand, &target, SeekFrom::Current(0)).await?;
+                Window {
+                    io: Some(WindowIo::Methods(SpanPos::new(start, end, at))),
+                    caps: caps - IoCaps::FORK,
+                }
+            }
         };
         this.create(strand, window, &mut out);
+        with_instance!(strand, this.cast(&out).unwrap(), |inst| {
+            let mut borrow = inst.borrow_mut_unwrap();
+            if let Some(WindowIo::Methods(_)) = borrow.io {
+                strand.store(Mut::slot_mut::<0>(&mut borrow), &target);
+            }
+        });
         Ok(())
     }
 
+    /// Only a window over a native handle lends one. A window over a stream's methods
+    /// leaves the request to `Io`, which serves it through the window's own methods.
     fn provide<'a, 's>(
         this: Instance<'v, 'a, Self>,
         request: &mut Request<'v, 's, '_>,
@@ -1947,7 +1960,9 @@ impl<'v> Object<'v> for Window {
         if request.wants::<ByteIo>() {
             let mut borrow = this.borrow_mut(request)?;
             borrow.check(request, IoCaps::empty())?;
-            request.provide::<ByteIo>(&mut *borrow)?;
+            if let Some(WindowIo::Native(_)) = borrow.io {
+                request.provide::<ByteIo>(&mut *borrow)?;
+            }
         }
         Ok(())
     }
@@ -1975,72 +1990,119 @@ impl<'v> Object<'v> for Window {
             .method("read", async move |this, strand, args, out| {
                 unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::READ)?;
-                let mut io = borrow.lock(strand).await?;
-                let mut buf = BinEmbryo::new();
-                read_full(&mut *io, strand, &mut buf, size)
-                    .await
-                    .into_do_io(strand)?;
-                buf.finish(strand, out);
-                Ok(())
+                Window::with_io(this, strand, IoCaps::READ, async |io, strand| match io {
+                    Side::Native(io) => {
+                        let mut buf = BinEmbryo::new();
+                        read_full(io, strand, &mut buf, size)
+                            .await
+                            .into_do_io(strand)?;
+                        buf.finish(strand, out);
+                        Ok(())
+                    }
+                    Side::Methods(target, at) => {
+                        let read = Sym::well_known(sym::READ);
+                        methods::window_read(strand, target, at, read, size, out).await
+                    }
+                })
+                .await
             })
             .method("read_some", async move |this, strand, args, out| {
                 unpack!(strand, args => size);
                 let size = size_value(strand, size)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::READ)?;
-                let mut io = borrow.lock(strand).await?;
-                let mut buf = BinEmbryo::new();
-                let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
-                read_spare(&mut *io, strand, &mut buf, chunk)
-                    .await
-                    .into_do_io(strand)?;
-                buf.finish(strand, out);
-                Ok(())
+                Window::with_io(this, strand, IoCaps::READ, async |io, strand| match io {
+                    Side::Native(io) => {
+                        let mut buf = BinEmbryo::new();
+                        let chunk = size.min(BYTE_STREAM_CHUNK_SIZE);
+                        read_spare(io, strand, &mut buf, chunk)
+                            .await
+                            .into_do_io(strand)?;
+                        buf.finish(strand, out);
+                        Ok(())
+                    }
+                    Side::Methods(target, at) => {
+                        let read_some = Sym::well_known(sym::READ_SOME);
+                        methods::window_read(strand, target, at, read_some, size, out).await
+                    }
+                })
+                .await
             })
             .method("write", async move |this, strand, args, out| {
-                let pieces = pieces(strand, args)?;
-                let (mut slices, _) = slices(&pieces);
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::WRITE)?;
-                let mut io = borrow.lock(strand).await?;
-                let res = write_bounded(&mut *io, &mut slices).await;
-                let written = res.into_do_io(strand)?;
-                strand.store(out, written);
-                Ok(())
+                Window::write(this, strand, sym::WRITE, args, out).await
             })
             .method("write_some", async move |this, strand, args, out| {
-                let piece = one_piece(strand, args)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::WRITE)?;
-                let mut io = borrow.lock(strand).await?;
-                let written = io.write(&piece).await.into_do_io(strand)?;
-                strand.store(out, written);
-                Ok(())
+                Window::write(this, strand, sym::WRITE_SOME, args, out).await
             })
             .method("seek", async move |this, strand, args, out| {
                 unpack!(strand, args => ?offset, ?start_sym: start, ?end_sym: end);
                 let pos = seek_arg(strand, offset, start, end, start_sym, end_sym)?;
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::SEEK)?;
-                let mut io = borrow.lock(strand).await?;
-                let pos = io.seek(pos).await.into_do_io(strand)?;
+                let pos =
+                    Window::with_io(this, strand, IoCaps::SEEK, async |io, strand| match io {
+                        Side::Native(io) => io.seek(pos).await.into_do_io(strand),
+                        Side::Methods(target, at) => {
+                            methods::window_seek(strand, target, at, pos).await
+                        }
+                    })
+                    .await?;
                 strand.store(out, pos);
                 Ok(())
             })
+            // A window over a stream's methods holds nothing back, and the stream has no
+            // flush to call.
             .method("flush", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);
-                let mut borrow = this.borrow_mut(strand)?;
-                borrow.check(strand, IoCaps::empty())?;
-                let mut io = borrow.lock(strand).await?;
-                io.flush().await.into_do_io(strand)
+                Window::with_io(this, strand, IoCaps::empty(), async |io, strand| match io {
+                    Side::Native(io) => io.flush().await.into_do_io(strand),
+                    Side::Methods(..) => Ok(()),
+                })
+                .await
             })
             .method("close", async move |this, strand, args, _out| {
                 unpack!(strand, args =>);
                 let mut borrow = this.borrow_mut(strand)?;
-                close_shared(&mut borrow.io).await.into_do_io(strand)
+                match borrow.io.take() {
+                    Some(WindowIo::Native(io)) => {
+                        close_shared(&mut Some(io)).await.into_do_io(strand)
+                    }
+                    Some(WindowIo::Methods(_)) => {
+                        strand.store(Mut::slot_mut::<0>(&mut borrow), Nil);
+                        Ok(())
+                    }
+                    None => Ok(()),
+                }
             })
+    }
+}
+
+impl Window {
+    /// `write` with its pieces, or `write_some` with one piece, as `method`.
+    async fn write<'v, 'a, 's>(
+        this: Instance<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        method: sym::Tag,
+        args: Args<'v, 'a>,
+        out: Slot<'v, 'a>,
+    ) -> Result<'v, 's, ()> {
+        let some = method == sym::WRITE_SOME;
+        Window::with_io(this, strand, IoCaps::WRITE, async |io, strand| match io {
+            Side::Native(io) => {
+                let written = if some {
+                    let piece = one_piece(strand, args)?;
+                    io.write(&piece).await.into_do_io(strand)?
+                } else {
+                    let pieces = pieces(strand, args)?;
+                    let (mut slices, _) = slices(&pieces);
+                    let res = write_bounded(io, &mut slices).await;
+                    res.into_do_io(strand)?
+                };
+                strand.store(out, written);
+                Ok(())
+            }
+            Side::Methods(target, at) => {
+                let method = Sym::well_known(method);
+                methods::window_write(strand, target, at, method, args, out).await
+            }
+        })
+        .await
     }
 }
 

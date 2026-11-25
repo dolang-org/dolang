@@ -17,7 +17,7 @@
 //! starts an owner strand that runs a server strand for each of the handle's
 //! [lanes](crate::io::bridge::Lanes). A server calls the stream's `read_some`, `write_some`
 //! and `seek` for the handle's requests, which map one-to-one onto `AsyncRead::poll_read`
-//! and `AsyncWrite::poll_write`. Once every lane is closed, the owner reports to the handle
+//! and `AsyncWrite::poll_write`, and its `flush` when the handle flushes or closes. Once every lane is closed, the owner reports to the handle
 //! that the servers stopped. The stream stays open.
 //!
 //! The owner holds the [`Root`] of its own strand handle, which keeps it alive until the
@@ -29,6 +29,10 @@
 //!
 //! A forkable stream's `fork` is served like the other methods. The handle of the stream
 //! it returns has its own owner, so it outlives this stream's handle.
+//!
+//! [`DoIo`] also tells a consumer called from Do that it would bridge, so `io.Window` and
+//! `io.Buffered` call the stream's methods directly instead, through the helpers here, and
+//! its exceptions reach them unchanged.
 
 use std::{
     cell::Cell,
@@ -66,7 +70,10 @@ use crate::{
     strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
-    value::{BinEmbryo, Input, Root, Slot, TypeObject, Value, fmt::Format, with_u8_slice},
+    value::{
+        BinEmbryo, Input, Root, Slot, TypeObject, Value, fmt::Format, private::Sealed,
+        with_u8_slice,
+    },
     vm::{AllocExt, Vm},
     with_slots,
 };
@@ -142,6 +149,7 @@ impl<'v> Protocol<'v> for Io {
                 Method(sym::SEEK),
                 Method(sym::FORK),
                 Method(sym::CLOSE),
+                Method(sym::FLUSH),
                 Method(sym::READ_ALL),
                 Method(sym::READ_ALL_STR),
                 Method(sym::CHUNKS),
@@ -343,6 +351,11 @@ async fn helper_mcall<'v, 'a, 's>(
             unpack!(strand, args => stream, value);
             put(strand, &stream, &value).await
         }
+        // Nothing is held back unless the stream overrides it.
+        sym::FLUSH => {
+            unpack!(strand, args => _stream);
+            Ok(())
+        }
         // The stream methods are the subclass's to define.
         sym::READ_SOME | sym::WRITE_SOME | sym::SEEK | sym::FORK | sym::CLOSE => {
             Err(Error::unsupported(strand, "abstract stream method"))
@@ -375,7 +388,13 @@ pub(crate) fn recv_get<'v, 'a, 's>(
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
     match field.tag() {
-        sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS | sym::IO => {
+        sym::READ
+        | sym::WRITE
+        | sym::FLUSH
+        | sym::READ_ALL
+        | sym::READ_ALL_STR
+        | sym::CHUNKS
+        | sym::IO => {
             BoundMethod::create(strand, rcvr, field, out);
             Ok(())
         }
@@ -464,6 +483,27 @@ async fn read_chunk<'v, 's>(
     }
 }
 
+/// Calls `stream.<method> size`, a `read` or `read_some`, into `out`, and checks that it
+/// returned a `Bin` of at most `size` bytes.
+pub(crate) async fn read_bounded<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    stream: &Value<'v>,
+    method: Sym<'v, '_>,
+    size: usize,
+    mut out: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    read_chunk(strand, stream, method, size, Slot::reborrow(&mut out)).await?;
+    let len = out
+        .as_bin(strand.vm())
+        .expect("read_chunk checks for `Bin`")
+        .len();
+    if len > size {
+        let message = format!("{}: read more than `size`", method.as_str(strand.vm()));
+        return Err(Error::runtime(strand, message));
+    }
+    Ok(())
+}
+
 /// Writes the pieces in `args` with `stream`'s `write_some`, one piece or the rest of one
 /// at a time, and returns the total written.
 ///
@@ -499,7 +539,7 @@ async fn write_pieces<'v, 's>(
                     });
                     method!(strand, stream, write_some, &rest, &mut count)?;
                 }
-                let n = written(strand, &count, len - offset)?;
+                let n = written(strand, write_some, &count, len - offset)?;
                 if n == 0 {
                     if total == 0 {
                         return Err(
@@ -522,10 +562,11 @@ fn piece_len<'v, 's>(strand: &mut Strand<'v, 's>, piece: &Value<'v>) -> Result<'
         .ok_or_else(|| Error::type_error(strand, "expected `Str` or `Bin`"))
 }
 
-/// Checks the count a `write_some` of `len` bytes returned: no more than `len`. Zero means
-/// a bounded output is full.
-fn written<'v, 's>(
+/// Checks the count a `write_some` or `write` of `len` bytes returned: no more than `len`.
+/// Zero means a bounded output is full.
+pub(crate) fn written<'v, 's>(
     strand: &mut Strand<'v, 's>,
+    method: Sym<'v, '_>,
     count: &Value<'v>,
     len: usize,
 ) -> Result<'v, 's, usize> {
@@ -534,7 +575,13 @@ fn written<'v, 's>(
         .ok()
         .and_then(|n| usize::try_from(n).ok())
         .filter(|&n| n <= len)
-        .ok_or_else(|| Error::runtime(strand, "write_some: expected a count of bytes written"))
+        .ok_or_else(|| {
+            let message = format!(
+                "{}: expected a count of bytes written",
+                method.as_str(strand.vm())
+            );
+            Error::runtime(strand, message)
+        })
 }
 
 /// Writes `value` with one call of the stream's `write`, as `io.Buffered.(put)` does: a
@@ -678,6 +725,10 @@ impl<'v> IntoByteIo<'v> for DoIo<'_, 'v> {
     }
 
     /// Starts the owner strand, which serves the handle's lanes.
+    fn served_by_methods(&self, _: Sealed) -> bool {
+        true
+    }
+
     fn get<'s>(&mut self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, ByteHandle> {
         let caps = self.caps(strand)?;
         if !caps.intersects(IoCaps::READ | IoCaps::WRITE) {
@@ -747,11 +798,15 @@ async fn serve<'v>(
                 reply(strand, tx, res);
             }
             bridge::Request::Seek(pos, tx) => {
-                let res = serve_seek(strand, stream, pos).await;
+                let res = seek(strand, stream, pos).await;
                 reply(strand, tx, res);
             }
             bridge::Request::Fork(offset, tx) => {
                 let res = serve_fork(strand, stream, offset).await;
+                reply(strand, tx, res);
+            }
+            bridge::Request::Flush(tx) => {
+                let res = serve_flush(strand, stream).await;
                 reply(strand, tx, res);
             }
         }
@@ -771,15 +826,21 @@ async fn serve_read<'v, 's>(
 ) -> Result<'v, 's, Vec<u8>> {
     with_slots!(strand, |mut chunk| {
         let read_some = Sym::well_known(sym::READ_SOME);
-        read_chunk(strand, stream, read_some, size, Slot::reborrow(&mut chunk)).await?;
+        read_bounded(strand, stream, read_some, size, Slot::reborrow(&mut chunk)).await?;
         let bytes = chunk
             .as_bin(strand.vm())
             .expect("read_chunk checks for `Bin`");
-        let bytes = bytes.pin();
-        if bytes.len() > size {
-            return Err(Error::runtime(strand, "read_some: read more than `size`"));
-        }
-        Ok(bytes.to_vec())
+        Ok(bytes.pin().to_vec())
+    })
+}
+
+/// Calls the stream's `flush`.
+async fn serve_flush<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    stream: &Value<'v>,
+) -> Result<'v, 's, ()> {
+    with_slots!(strand, |mut out| {
+        method!(strand, stream, Sym::well_known(sym::FLUSH), &mut out)
     })
 }
 
@@ -822,18 +883,14 @@ async fn serve_write<'v, 's>(
 ) -> Result<'v, 's, usize> {
     with_slots!(strand, |mut bin, mut count| {
         strand.store(&mut bin, data);
-        method!(
-            strand,
-            stream,
-            Sym::well_known(sym::WRITE_SOME),
-            &bin,
-            &mut count
-        )?;
-        written(strand, &count, data.len())
+        let write_some = Sym::well_known(sym::WRITE_SOME);
+        method!(strand, stream, write_some, &bin, &mut count)?;
+        written(strand, write_some, &count, data.len())
     })
 }
 
-async fn serve_seek<'v, 's>(
+/// Calls `stream.seek` for `pos` and returns the position it reports.
+pub(crate) async fn seek<'v, 's>(
     strand: &mut Strand<'v, 's>,
     stream: &Value<'v>,
     pos: SeekFrom,

@@ -3312,9 +3312,13 @@ impl<'v> Protocol<'v> for Null {
                 strand.store(out, false);
                 Ok(())
             }
-            sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS | sym::IO => {
-                recv_get(strand, &this, field, out)
-            }
+            sym::READ
+            | sym::WRITE
+            | sym::FLUSH
+            | sym::READ_ALL
+            | sym::READ_ALL_STR
+            | sym::CHUNKS
+            | sym::IO => recv_get(strand, &this, field, out),
             tag if classify(tag) == Some(Surface::Sinkable) => sink_get(strand, &this, field, out),
             _ => iter_get(strand, &this, field, out),
         }
@@ -3366,9 +3370,13 @@ impl<'v> Protocol<'v> for Null {
                 Ok(())
             }
             sym::SEEK | sym::FORK => Err(Error::unsupported(strand, "`std.null` doesn't seek")),
-            sym::READ | sym::WRITE | sym::READ_ALL | sym::READ_ALL_STR | sym::CHUNKS | sym::IO => {
-                recv_mcall(strand, &this, method, args, out).await
-            }
+            sym::READ
+            | sym::WRITE
+            | sym::FLUSH
+            | sym::READ_ALL
+            | sym::READ_ALL_STR
+            | sym::CHUNKS
+            | sym::IO => recv_mcall(strand, &this, method, args, out).await,
             tag if classify(tag) == Some(Surface::Sinkable) => {
                 sink_mcall(strand, &this, method, args, out).await
             }
