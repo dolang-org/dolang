@@ -1,0 +1,198 @@
+# An overloaded function's body is checked under each of its `@def` overloads
+# too, with its parameters bound from the overload's arguments as a pattern.
+# What only an overload finds is reported pointing at it.
+
+# Arity overloads: a parameter an overload never passes has only its default,
+# and one it always passes doesn't have it. A type test for `nil` then leaves
+# under each overload only the branch it can take.
+@def apply -> (Int -> Int)
+@def apply f@(Int -> Int) -> Int
+pub def apply f @ (Int -> Int) = nil -> Value
+  if type(f, std.Nil)
+    return do |n @ Int| -> Int n
+  f 1
+
+# A body that breaks one overload's result
+@def size x@Str -> Int
+@def size x@Int -> Str
+pub def size x @ (Str | Int) -> Value
+  if type(x, Str)
+    return x.len
+  x
+# error: `std.Int` does not fit the declared result `std.Str`
+#   --> m.dol:LL:LL
+#    |
+# LL | @def size x@Int -> Str
+#    |      ---- checked under this overload
+# ...
+# LL |   x
+#    |   ^
+
+# What the implementation's check reports at a span isn't reported again
+@def twice x@Int -> Int
+@def twice x@Float -> Float
+pub def twice x @ (Int | Float) -> (Int | Float)
+  let _ @ Str = x
+  # error: `std.Float | std.Int` does not fit the annotation `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ @ Str = x
+  #    |                 ^
+  x
+
+# The same problem under two overloads is reported once
+@def same _x@Int -> Int
+@def same _x@Str -> Int
+pub def same _x @ (Int | Str) -> Value
+  "s"
+# error: `"s"` does not fit the declared result `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL | @def same _x@Int -> Int
+#    |      ---- checked under this overload
+# LL | @def same _x@Str -> Int
+#    |      ---- checked under this overload
+# LL | pub def same _x @ (Int | Str) -> Value
+# LL |   "s"
+#    |   ^^^
+
+# Overloads admitting calls the parameters can't take
+@def uncovered -> Int
+# error: this overload admits calls that don't pass every parameter the implementation requires
+#   --> m.dol:LL:LL
+#    |
+# LL | @def uncovered -> Int
+#    |      ^^^^^^^^^
+#    |
+#    = note: the overload admits a call that passes no positional arguments
+@def uncovered a@Int b@Int c@Int -> Int
+# error: this overload admits calls passing an argument the implementation has no parameter for
+#   --> m.dol:LL:LL
+#    |
+# LL | @def uncovered a@Int b@Int c@Int -> Int
+#    |      ^^^^^^^^^
+#    |
+#    = note: the overload admits a call that passes 3 positional arguments
+pub def uncovered a @ Int b @ Int = 0 -> Int
+  (a + b)
+
+# A key parameter takes the overload's field, or its default when absent
+@def label -> Str
+@def label :name@Str -> Str
+pub def label :name @ Str = nil -> Value
+  if type(name, std.Nil)
+    return 0
+  # error: `0` does not fit the declared result `std.Str`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | @def label -> Str
+  #    |      ----- checked under this overload
+  # ...
+  # LL |     return 0
+  #    |            ^
+  name
+
+# Equality and truthiness keep a class whole, since its `(eq)` and `(bool)` may
+# be its own, so they leave the branch an overload can't take
+@def by_equality :v@(Int | Str) -> Int
+pub def by_equality :v @ (Int | Str) = nil -> Value
+  if (v == nil)
+    return "absent"
+  # error: `"absent"` does not fit the declared result `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | @def by_equality :v@(Int | Str) -> Int
+  #    |      ----------- checked under this overload
+  # ...
+  # LL |     return "absent"
+  #    |            ^^^^^^^^
+  0
+
+@def by_truthiness :v@(() -> Int) -> Int
+pub def by_truthiness :v @ (() -> Int) = nil -> Value
+  if !v
+    return "absent"
+  # error: `"absent"` does not fit the declared result `std.Int`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | @def by_truthiness :v@(() -> Int) -> Int
+  #    |      ------------- checked under this overload
+  # ...
+  # LL |     return "absent"
+  #    |            ^^^^^^^^
+  0
+
+# A type test leaves it, whatever the parameter's type
+@def by_union :v@(Int | Str) -> Int
+pub def by_union :v @ (Int | Str) = nil -> Value
+  if type(v, std.Nil)
+    return "absent"
+  0
+
+@def by_protocol :v@Iterable[Int] -> Int
+pub def by_protocol :v @ Iterable[Int] = nil -> Value
+  if type(v, std.Nil)
+    return "absent"
+  0
+
+@def by_function :v@(() -> Int) -> Int
+pub def by_function :v @ (() -> Int) = nil -> Value
+  if type(v, std.Nil)
+    return "absent"
+  0
+
+# A rest takes a pack in the overload's arguments in place, with what follows
+# it
+@def spliced[*Ts] *xs@Ts y@Int -> Tuple[...Ts, Int]
+pub def spliced *xs @ Value -> Value
+  xs
+
+@def misspliced[*Ts] *xs@Ts y@Int -> Tuple[Int, ...Ts]
+pub def misspliced *xs @ Value -> Value
+  xs
+# error: `(...m.misspliced#0.Ts, std.Int)` does not fit the declared result `(std.Int, ...m.misspliced#0.Ts)`
+#   --> m.dol:LL:LL
+#    |
+# LL | @def misspliced[*Ts] *xs@Ts y@Int -> Tuple[Int, ...Ts]
+#    |      ---------- checked under this overload
+# LL | pub def misspliced *xs @ Value -> Value
+# LL |   xs
+#    |   ^^
+
+# A def nested in the body that its run leaves detached is checked under each
+# overload too, from what the overload's variant concluded of what it captures
+@def late x@Str -> Int
+pub def late x
+  def inner()
+    x.missing
+  # error: `std.Str` has no member `missing`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | @def late x@Str -> Int
+  #    |      ---- checked under this overload
+  # ...
+  # LL |     x.missing
+  #    |     ^^^^^^^^^
+  inner()
+  0
+
+# A method's overloads
+pub class Picker
+  @def pick self x@Int -> Int
+  @def pick self x@Str -> Int
+  pub def pick _self x @ (Int | Str) -> Value
+    x
+# error: `std.Str` does not fit the declared result `std.Int`
+#   --> m.dol:LL:LL
+#    |
+# LL |   @def pick self x@Str -> Int
+#    |        ---- checked under this overload
+# LL |   pub def pick _self x @ (Int | Str) -> Value
+# LL |     x
+#    |     ^
+
+# A stub stays trusted
+@def trusted x@Int -> Str
+@def trusted x@Str -> Int
+pub def trusted x @ (Int | Str) -> (Int | Str)
+  ...

@@ -65,5 +65,5 @@ pub class Broadcast
   @def (eq) _self _other @ Int -> Array[Bool]
   @def (eq) _self _other @ Value -> Bool
   pub def (eq) _self _other @ Value -> Value
-    true
+    ...
 

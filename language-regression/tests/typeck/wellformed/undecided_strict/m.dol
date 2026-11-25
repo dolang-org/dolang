@@ -25,7 +25,7 @@ pub def split[*Xs] _x @ Split[...Xs, Num]
 @def o _x @ Int -> Int
 @def o _x @ Int -> Str
 pub def o x @ Value -> Value
-  x
+  ...
 
 # A check undecided for several reasons has a note for each
 pub class Keyed[**Ks]

@@ -460,7 +460,7 @@ pub def keep[S @ {*, *(Int | Sym): Value}] f @ Fmt[Int, S] -> Fmt[Int, S]
 @def choose f @ Fmt[Int, {a: Int}] -> Int
 @def choose f @ Fmt[Int, {b: Str}] -> Str
 pub def choose f
-  f
+  ...
 pub def run n @ Int width @ Int text @ Str
   let seed = t"${#earlier_hole} ${#later_hole}"
   let ordered = t"${#later_hole} ${#1} ${#earlier_hole} ${#0} ${#later_hole}"

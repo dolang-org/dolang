@@ -1,0 +1,29 @@
+# A type test for a final class without binders drops a member the class isn't
+# below, even a protocol, which a class of no nominal relation may conform to:
+# the class's instances are exactly its own.
+
+pub @class Sized
+  pub def size self -> Int
+
+#[final]
+pub class Plain
+
+#[final]
+pub class Measured
+  pub def size _self -> Int
+    1
+
+# Nothing reaches the branch, so what it holds isn't judged
+pub def apart v @ Sized
+  if type(v, Plain)
+    let _ @ Int = "unreached"
+
+pub def apart_nil v @ Sized
+  if type(v, std.Nil)
+    let _ @ Int = "unreached"
+
+# A final class that conforms is kept
+pub def conforming v @ Sized
+  if type(v, Measured)
+    let _ = v
+    #       ^: flow m.Measured

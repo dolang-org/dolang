@@ -5375,7 +5375,7 @@ pub class C: B
 # Doubles a string
 @def g x @ Str -> Str
 pub def g x
-  (x + x)
+  ...
 import std:
   - getter
 pub class D
@@ -5396,7 +5396,7 @@ pub class Local
 @def twice x @ Str -> Str
 # Twice anything
 def twice x
-  (x + x)
+  ...
 pub def run l @ Local b @ a.B u @ (Local | a.C)
   l.grow()
   u.grow()

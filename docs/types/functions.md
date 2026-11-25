@@ -174,7 +174,40 @@ own overloads, or its signature if it has none. A required signature that only
 several overloads meet together, such as `(Int | Str) -> (Int | Str)` by
 `(Int) -> Int` and `(Str) -> Str`, isn't met.
 
-Overloads do not dispatch at runtime or have any runtime effect*; every call
-runs the same implementation. Their signatures are trusted assertions about the
-implementation's behavior that the checker does not verify, so an incorrectly
-specified overload could result in runtime type errors.
+Overloads do not dispatch at runtime or have any runtime effect; every call
+runs the same implementation. The checker checks the implementation's body
+under its own signature, then again under each overload, with the parameters
+bound as a call of that overload binds them:
+
+- A parameter that every call of the overload passes has the overload's type,
+  and its default isn't used.
+- A parameter that no call of the overload passes has only its default's type.
+- The body's result must fit the overload's return type, and its input and
+  output are the overload's.
+
+What only an overload's check finds is reported pointing at the overload.
+An overload that admits a call the implementation's parameters can't take, by
+omitting a required parameter or passing one it doesn't have, is an error.
+Functions nested in the body are checked under each overload too.
+
+Under an overload, a branch that narrowing shows no call of it reaches isn't
+checked. Only a type test narrows away a class (see
+[Truthiness and Equality](./checking.md#truthiness-and-equality)), so test for
+an absent parameter's `nil` default with `type(x, std.Nil)`, not `x == nil`:
+
+```
+@def twice -> ((Int) -> Int)
+@def twice x @ Int -> Int
+pub def twice x @ Int = nil -> Value
+  if type(x, std.Nil)
+    return do |y @ Int| -> Int (y * 2)
+  (x * 2)
+```
+
+Under the first overload, `x` is `nil`, and only the first branch is checked;
+under the second, `x` is an `Int`, and only the second is. With `x == nil`, the
+second overload's check would reach the first branch and report its result.
+
+Where the checker can't follow the body under an overload, a cast (`!@`) asserts
+what it can't verify. A stub's `...` body isn't checked, so a stub's overloads
+remain trusted assertions about its native implementation.

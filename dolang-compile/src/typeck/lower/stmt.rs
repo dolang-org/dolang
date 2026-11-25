@@ -75,6 +75,7 @@ impl<'u> Scope<'_, '_, 'u> {
             self.signature(func, result, exit);
         }
         if let Some(span) = func.stub_span {
+            self.graph().func_mut(self.ctx.func).stub = true;
             self.assign(result, expr(ExprKind::Never, self.locate(span)));
             self.end(Terminal::Branch {
                 target: exit,

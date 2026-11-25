@@ -4777,7 +4777,7 @@ pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use nest::{Gas, Verdicts};
 use nest::{Nesting, Parent, Revisit};
-pub(crate) use unpack::{PatternShape, Reason, Unpacked};
+pub(crate) use unpack::{Bound, PatternShape, Presence, Reason, Unpacked};
 
 #[cfg(test)]
 mod tests;

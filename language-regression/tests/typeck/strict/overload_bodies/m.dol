@@ -1,0 +1,15 @@
+# dolang: strict
+# An overload whose arguments the parameters can't be bound from, as a single
+# that may take an item of a pack, leaves the body unchecked under it, which a
+# strict unit is warned of
+
+@def unbound[*Ts] *_xs@Ts _y@Int -> Int
+# warning: the checker can't verify this
+#   --> m.dol:LL:LL
+#    |
+# LL | @def unbound[*Ts] *_xs@Ts _y@Int -> Int
+#    |      ^^^^^^^
+#    |
+#    = note: it doesn't handle an overload whose arguments the parameters can't be bound from
+pub def unbound _a @ Value *_rest @ Value -> Int
+  0

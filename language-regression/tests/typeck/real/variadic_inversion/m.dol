@@ -58,7 +58,7 @@ pub def axes
   _func @ Value = nil
   **_axes @ Value
 do -> Value
-  nil
+  ...
 
 def takes_both :kind@Str :n@Int
   let _ @ (Str, Int) = (kind, n)

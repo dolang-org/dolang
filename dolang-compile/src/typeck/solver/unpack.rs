@@ -167,6 +167,34 @@ fn rest_slot(kind: RestKind) -> usize {
     }
 }
 
+/// Whether a pattern's slot is filled, for a parameter list bound against an
+/// argument schema
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Presence {
+    /// Every argument list the schema admits fills it
+    Present,
+    /// None does: its default gives it
+    Absent,
+    /// Some do
+    Maybe,
+}
+
+/// A parameter list walked against an argument schema (see [`Solver::bind_schema`])
+#[derive(Debug)]
+pub(crate) struct Bound {
+    /// Each positional slot's type, then each keyed slot's, bottom where absent
+    pub(crate) slots: Vec<TypeId>,
+    /// Whether each slot is filled, in the order of `slots`
+    pub(crate) presence: Vec<Presence>,
+    /// The schema each rest takes
+    pub(crate) rests: Vec<TypeId>,
+    /// Why the parameters may not take an argument list the schema admits; with
+    /// no walk, why they take none
+    pub(crate) rejection: Option<Reason>,
+    /// Whether any argument list the schema admits is taken
+    pub(crate) possible: bool,
+}
+
 impl Solver<'_> {
     /// Walk `pattern` against the schemas `ty`'s members unpack as, through
     /// `unpack`, the `Unpack` declaration. `None` when a member's schema can't be
@@ -281,6 +309,177 @@ impl Solver<'_> {
             rests,
             possible,
             rejection,
+        })
+    }
+
+    /// Walk a parameter list, as `pattern`, against an argument schema, as a
+    /// call binds it. An opaque inclusion, such as a rigid pack, goes whole to
+    /// the rest of its lanes. A positional one, and what follows it, goes to
+    /// the positional rest in order, once the items before it fill every
+    /// positional slot; a keyed one is allowed only without keyed slots.
+    /// `None` if it can't be walked: a slot may take one of a pack's items.
+    pub(crate) fn bind_schema(&self, schema: TypeId, pattern: &PatternShape) -> Option<Bound> {
+        // Rigids stay opaque, so that a rest takes a rigid pack as it is
+        let mut shape = Shape::default();
+        self.include(
+            self.closed(schema),
+            Multiplicity::Required,
+            0,
+            None,
+            &mut shape,
+            0,
+        )
+        .ok()?;
+        // Set aside the opaque inclusions the rests take. The positional lane is
+        // walked up to the first opaque pack in it; the pack and what follows
+        // it go to the positional rest in order.
+        let mut keyed_includes = Vec::new();
+        let mut kept = Vec::with_capacity(shape.positional.len());
+        let mut suffix: Option<Vec<SchemaItem>> = None;
+        let mut suffix_required = false;
+        for slot in &shape.positional {
+            let opaque = match *slot {
+                Slot::Opaque(index) => Some(shape.opaque[index]),
+                Slot::Atom(_) => None,
+            };
+            let pack = match opaque.map(|opaque| opaque.opacity) {
+                None | Some(Opacity::Unknown) => None,
+                Some(Opacity::Rigid(term) | Opacity::Mapped(term) | Opacity::Rest(term)) => {
+                    Some(self.reify(term).ok()?)
+                }
+                Some(Opacity::Infer(_)) => return None,
+            };
+            let include = |ty| SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Include(ty),
+            };
+            match (pack, opaque) {
+                (Some(ty), Some(opaque)) if !opaque.positional() => {
+                    if !pattern.keyed.is_empty() || !pattern.keyed_rest() {
+                        return None;
+                    }
+                    keyed_includes.push(include(ty));
+                }
+                (Some(ty), _) => suffix.get_or_insert_with(Vec::new).push(include(ty)),
+                (None, _) if suffix.is_none() => kept.push(*slot),
+                (None, Some(_)) => suffix.as_mut().expect("past a pack").push(SchemaItem {
+                    multiplicity: Multiplicity::Repeated,
+                    element: Element::Positional(self.db.unknown()),
+                }),
+                (None, None) => {
+                    let Slot::Atom(atom) = *slot else {
+                        unreachable!("an atom")
+                    };
+                    suffix_required |= atom.multiplicity == Multiplicity::Required;
+                    suffix.as_mut().expect("past a pack").push(SchemaItem {
+                        multiplicity: atom.multiplicity,
+                        element: Element::Positional(self.reify(atom.ty).ok()?),
+                    });
+                }
+            }
+        }
+        shape.positional = kept;
+        let atoms = self.atoms(&shape).ok()??;
+        // Past a pack, the walk of what precedes it continues into a rest
+        let extended;
+        let walked = match suffix {
+            Some(_) => {
+                // A slot past what precedes the pack would take one of its items
+                let required = atoms
+                    .positional
+                    .iter()
+                    .filter(|&&(multiplicity, _)| multiplicity == Multiplicity::Required)
+                    .count();
+                if atoms.dynamic_positional || required < pattern.positional.len() {
+                    return None;
+                }
+                let mut rests = pattern.rests.clone();
+                rests.push(RestKind::Pos);
+                extended = PatternShape {
+                    positional: pattern.positional.clone(),
+                    keyed: pattern.keyed.clone(),
+                    rests,
+                };
+                &extended
+            }
+            None => pattern,
+        };
+        let (walk, mut reason) = self.walk(&atoms, walked).ok()?;
+        let Some(mut walk) = walk else {
+            return Some(Bound {
+                slots: Vec::new(),
+                presence: Vec::new(),
+                rests: Vec::new(),
+                rejection: reason,
+                possible: false,
+            });
+        };
+        if let Some(suffix) = suffix {
+            if !pattern.positional_rest() {
+                // A pack's items, and anything after it, are extra
+                reason = reason.or(Some(Reason::More(pattern.positional.len() + 1)));
+                if suffix_required {
+                    return Some(Bound {
+                        slots: Vec::new(),
+                        presence: Vec::new(),
+                        rests: Vec::new(),
+                        rejection: reason,
+                        possible: false,
+                    });
+                }
+            }
+            walk.tail.positional.extend(suffix);
+        }
+        let bottom = self.db.bottom();
+        // A positional slot is filled by every argument list if the schema's
+        // required items outnumber it, as a call fills slots in order
+        let required = atoms
+            .positional
+            .iter()
+            .filter(|&&(multiplicity, _)| multiplicity == Multiplicity::Required)
+            .count();
+        let mut presence = Vec::with_capacity(walk.slots.len());
+        for (index, &defaulted) in pattern.positional.iter().enumerate() {
+            presence.push(match () {
+                _ if walk.slots[index] == bottom => Presence::Absent,
+                _ if !defaulted || (index < required && !atoms.dynamic_positional) => {
+                    Presence::Present
+                }
+                _ => Presence::Maybe,
+            });
+        }
+        // A keyed slot is filled by every argument list if the first item that
+        // may have its key is a required item with that key alone
+        for (index, &(key, _)) in pattern.keyed.iter().enumerate() {
+            let ty = walk.slots[pattern.positional.len() + index];
+            let first = atoms.keyed.iter().find(|&&(_, owner, _)| {
+                !matches!(self.probe(key, owner), Ok(Status::Contradicted))
+            });
+            presence.push(match first {
+                _ if ty == bottom => Presence::Absent,
+                Some(&(Multiplicity::Required, owner, _))
+                    if owner != self.db.unknown()
+                        && self.db.literal(owner).is_some()
+                        && matches!(self.probe(key, owner), Ok(Status::Proven)) =>
+                {
+                    Presence::Present
+                }
+                _ => Presence::Maybe,
+            });
+        }
+        let mut tail = walk.tail;
+        tail.keyed.extend(keyed_includes);
+        let rests = pattern
+            .rests
+            .iter()
+            .map(|&kind| tail.schema(self.db, kind))
+            .collect();
+        Some(Bound {
+            slots: walk.slots,
+            presence,
+            rests,
+            rejection: reason,
+            possible: true,
         })
     }
 
