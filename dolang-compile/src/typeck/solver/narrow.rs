@@ -12,6 +12,9 @@
 //! where another binder leaves no sound argument. An empty result is bottom, making the edge
 //! unreachable.
 //!
+//! A final class without binders, such as `Nil`, also excludes a member it isn't
+//! below, as a structural protocol it doesn't conform to.
+//!
 //! Narrowing against `Func` keeps each function and each class that reaches
 //! `Func`. `Func` is disjoint, so a class is dropped as any other is when their
 //! nearest disjoint ancestors are unrelated. Any other class becomes the gradual
@@ -240,7 +243,9 @@ impl Solver<'_> {
             (Narrowing::Upper, false) => match seen {
                 Member::Class(nominal) => match self.reaches(&nominal, class) {
                     Some(true) => Some(kept),
-                    Some(false) if self.disjoint(&nominal, class) => None,
+                    Some(false) if self.disjoint(&nominal, class) || self.excludes(class, kept) => {
+                        None
+                    }
                     _ => Some(self.below(class, &nominal, kept)),
                 },
                 Member::Literal(_, Some(nominal)) => match self.reaches(&nominal, class) {
@@ -348,6 +353,19 @@ impl Solver<'_> {
         let final_apart = self.db.declaration(nominal.declaration).source.is_final
             && matches!(self.descent(class, nominal.declaration), Ok(None));
         final_apart || self.db.disjoint_apart(nominal.declaration, class)
+    }
+
+    /// Whether a final class without binders, such as `Nil`, provably has no
+    /// instance in a member: its instances are exactly the class's, so none is
+    /// one if the class isn't below the member, by nominal or structural
+    /// conformance alike
+    fn excludes(&self, class: DeclId, member: TypeId) -> bool {
+        self.db.declaration(class).source.is_final
+            && self.binders(class).is_none()
+            && matches!(
+                self.probe(self.db.intern(Type::Decl(class)), member),
+                Ok(Status::Contradicted)
+            )
     }
 
     fn intrinsic_decl(&self, intrinsic: Intrinsic) -> Option<DeclId> {

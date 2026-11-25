@@ -89,6 +89,7 @@ macro_rules! trace {
 mod eval;
 mod live;
 mod member;
+mod overload;
 mod pipeline;
 mod problem;
 mod rule;
@@ -125,8 +126,8 @@ use super::{
     },
     elab::{Designated, Tables},
     solver::{
-        Diagnostic, Gas, NarrowTarget, Outcome, Provenance, Residual, Solver, Status, Verdicts,
-        Widening,
+        Diagnostic, Gas, NarrowTarget, Outcome, Presence, Provenance, Residual, Solver, Status,
+        Verdicts, Widening,
     },
     r#type::{
         Argument, Copies, Database, DeclId, Element, Function, Intrinsic, Kind, Literal, MemberKey,
@@ -346,6 +347,9 @@ struct Tree<'a, 'u> {
     /// Each run's fork and results, by run ID, set by the task that analyzed it
     #[expect(clippy::type_complexity, reason = "one slot per run")]
     outputs: Box<[Mutex<Option<(Database, Results)>>]>,
+    /// What each run concluded under an overload, by run and the overload's
+    /// name, which [`Tree::finish`] folds into the run's results
+    variants: Mutex<Vec<(RunId, Span, Results)>>,
 }
 
 impl<'a, 'u> Tree<'a, 'u> {
@@ -367,6 +371,7 @@ impl<'a, 'u> Tree<'a, 'u> {
             reversed,
             logging,
             outputs: runs.iter().map(|_| Mutex::new(None)).collect(),
+            variants: Mutex::new(Vec::new()),
         }
     }
 
@@ -375,7 +380,8 @@ impl<'a, 'u> Tree<'a, 'u> {
     fn finish(self) -> Vec<(Database, Results)> {
         let root = Database::fork(self.layer);
         rayon::scope(|scope| self.run(scope, RunId::module(), root, FxHashMap::default()));
-        self.outputs
+        let mut outputs: Vec<(Database, Results)> = self
+            .outputs
             .into_iter()
             .map(|output| {
                 output
@@ -383,7 +389,19 @@ impl<'a, 'u> Tree<'a, 'u> {
                     .expect("no run panicked")
                     .expect("every run is analyzed")
             })
-            .collect()
+            .collect();
+        // In run and overload order, whichever thread finished first
+        let mut variants = self.variants.into_inner().expect("no run panicked");
+        variants.sort_by_key(|&(id, span, _)| (id.index(), span));
+        let mut variants = variants.into_iter().peekable();
+        while let Some((id, span, results)) = variants.next() {
+            let mut folded = vec![(span, results)];
+            while let Some((_, span, results)) = variants.next_if(|(next, ..)| *next == id) {
+                folded.push((span, results));
+            }
+            overload::fold(&mut outputs[id.index()].1, folded);
+        }
+        outputs
     }
 
     /// Analyze a run in `db` from what it `inherited`, spawning the runs detached
@@ -413,12 +431,69 @@ impl<'a, 'u> Tree<'a, 'u> {
             self.reversed,
         );
         flow.logging = self.logging;
+        let overloads = overload::overloads(self.ir, self.tables, run);
+        let kept = (!overloads.is_empty()).then(|| inherited.clone());
         let (results, accumulators) = flow.analyze(inherited);
+        // Each overload's variant, and the late runs below it, which inherit
+        // what it concluded; early runs depend on nothing it concludes
+        if let Some(inherited) = kept {
+            for (sig, span) in overloads {
+                let (db, inherited) = self.fork(&db, &inherited, id);
+                scope.spawn(move |scope| {
+                    self.variant(scope, id, db, inherited, Some(sig), span);
+                });
+            }
+        }
         for &child in &run.late {
             let (db, inherited) = self.fork(&db, &accumulators, child);
             scope.spawn(move |scope| self.run(scope, child, db, inherited));
         }
         *self.outputs[id.index()].lock().expect("no run panicked") = Some((db, results));
+    }
+
+    /// Analyze a run under an overload named at `span`: the overloaded root's
+    /// variant under its signature `sig`, or with `None`, a late run below one,
+    /// as it is, from what the variant concluded. Its results are folded into
+    /// the run's once every run is analyzed.
+    fn variant<'s>(
+        &'s self,
+        scope: &rayon::Scope<'s>,
+        id: RunId,
+        db: Database,
+        inherited: FxHashMap<VarId, TypeId>,
+        sig: Option<usize>,
+        span: Span,
+    ) {
+        let run = &self.runs[id.index()];
+        let verdicts = Verdicts::default();
+        let mut flow = Flow::new(
+            self.ir,
+            self.layout,
+            run,
+            &db,
+            &verdicts,
+            self.tables,
+            self.reversed,
+        );
+        if let Some(sig) = sig {
+            flow.vary(&db, sig, span);
+        }
+        let (results, accumulators) = flow.analyze(inherited);
+        dolang_util::debug_eprintln!(
+            topic: "typeck.overload",
+            "variant {span:?} of run {}: {} functions, {} problems",
+            id.index(),
+            run.funcs.len(),
+            results.problems.len()
+        );
+        for &child in &run.late {
+            let (db, inherited) = self.fork(&db, &accumulators, child);
+            scope.spawn(move |scope| self.variant(scope, child, db, inherited, None, span));
+        }
+        self.variants
+            .lock()
+            .expect("no run panicked")
+            .push((id, span, results));
     }
 
     /// A fork for a run detached from one analyzed in `parent`, with what it
@@ -611,6 +686,8 @@ struct Flow<'a, 'u> {
     escaped: BitBox,
     /// In a settle run, the region it settles
     settling: Option<Settling<'a>>,
+    /// In a variant, the overload it checks its root under
+    variant: Option<overload::Variant>,
 }
 
 impl<'a, 'u> Flow<'a, 'u> {
@@ -674,6 +751,7 @@ impl<'a, 'u> Flow<'a, 'u> {
             logging: false,
             escaped: BitBox::default(),
             settling: None,
+            variant: None,
         }
     }
 
@@ -1596,7 +1674,17 @@ impl<'a, 'u> Flow<'a, 'u> {
             func: data.func,
         };
         if block == func.entry {
-            self.bind_params(at, &mut state);
+            if self
+                .variant
+                .as_ref()
+                .is_some_and(|variant| variant.func == at.func)
+            {
+                if !self.bind_overload(at, &mut state) {
+                    return;
+                }
+            } else {
+                self.bind_params(at, &mut state);
+            }
         }
         if block == func.exit {
             // A non-local return's value
@@ -1788,6 +1876,12 @@ impl<'a, 'u> Flow<'a, 'u> {
                 }
             }
             Step::Default { var, value } => {
+                // In a variant, a parameter every call passes has no default, and
+                // one none passes has only its default
+                let presence = self.presence(at, *var);
+                if presence == Some(Presence::Present) {
+                    return true;
+                }
                 let mut operands = Self::operands(state, holes(value));
                 let annotation = self.annotation(*var);
                 // Without an annotation, what the default leaves open may be
@@ -1802,7 +1896,10 @@ impl<'a, 'u> Flow<'a, 'u> {
                 if self.diverged.is_some() {
                     return false;
                 }
-                let ty = self.default(*var, ty, value.span);
+                let ty = match (presence, self.db.literal(ty)) {
+                    (Some(Presence::Absent), Some(Literal::Nil | Literal::Sym(_))) => ty,
+                    _ => self.default(*var, ty, value.span),
+                };
                 trace!("default {}: {}", self.var_name(*var), self.show(ty));
                 let data = self.ir.var(*var);
                 if data.owner == at.func {
@@ -2704,8 +2801,19 @@ fn declared_function(db: &Database, tables: &Tables<'_>, decl: DeclId) -> Option
     if tables.sig_count(decl) > 1 && tables.decl(decl).node.primary_sig().is_none() {
         return None;
     }
-    let sig = tables.primary_sig(decl);
-    let mut ty = db.declaration(decl).ty;
+    declared_signature(db, tables, decl, tables.primary_sig(decl))
+}
+
+/// A declaration's signature `sig`'s type under its rigids, if it's a function
+/// type
+fn declared_signature(
+    db: &Database,
+    tables: &Tables<'_>,
+    decl: DeclId,
+    sig: usize,
+) -> Option<Function> {
+    let id = tables.sig_decl((decl, sig)).unwrap_or(decl);
+    let mut ty = db.declaration(id).ty;
     if let Type::Quantified { body, .. } = db.ty(ty) {
         let rigids = tables.group_rigids(db, (decl, sig));
         ty = db.substitute(*body, &rigids);

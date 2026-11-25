@@ -995,7 +995,7 @@ pub class Runtime
       let err = stderr
       # Whether it writes the strand's output depends on `stdout:`, which a
       # conditional argument would leave undecided
-      if (out == nil)
+      if type(out, std.Nil)
         program ...args stdin: $input
           if (err != nil)
             stderr: $err

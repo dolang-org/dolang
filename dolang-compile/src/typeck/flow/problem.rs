@@ -209,6 +209,20 @@ pub(crate) enum Problem {
         missing: bool,
         note: String,
     },
+    /// An `@def` overload, at its name, admitting a call its implementation's
+    /// parameters may not take, as an example call
+    OverloadUncovered {
+        span: Span,
+        missing: bool,
+        example: String,
+    },
+    /// What checking an overloaded function's body under some of its `@def`
+    /// overloads found, by their names, that checking it under its
+    /// implementation's signature didn't
+    UnderOverload {
+        problem: Box<Problem>,
+        overloads: Vec<Span>,
+    },
 }
 
 /// How a member is misused
@@ -272,12 +286,15 @@ impl Report for Problem {
             | Problem::SuperUninitialized { span, .. }
             | Problem::Unreachable { span, .. }
             | Problem::ElseFallthrough { span, .. }
-            | Problem::Unguaranteed { span, .. } => span,
+            | Problem::Unguaranteed { span, .. }
+            | Problem::OverloadUncovered { span, .. } => span,
+            Problem::UnderOverload { ref problem, .. } => problem.span(),
         }
     }
 
     fn severity(&self) -> Severity {
         match self {
+            Self::UnderOverload { problem, .. } => problem.severity(),
             Self::FmtGap { .. }
             | Self::Assertion { .. }
             | Self::Unreachable { .. }
@@ -289,6 +306,15 @@ impl Report for Problem {
 
     fn annotations(&self) -> Vec<Annotation> {
         match self {
+            Problem::UnderOverload { problem, overloads } => {
+                let mut annotations = problem.annotations();
+                annotations.extend(overloads.iter().map(|&span| Annotation {
+                    kind: AnnotationKind::Context,
+                    span,
+                    message: "checked under this overload".to_owned(),
+                }));
+                annotations
+            }
             Problem::Argument { written, .. } => written
                 .iter()
                 .map(|&span| Annotation {
@@ -308,6 +334,11 @@ impl Report for Problem {
 
     fn notes(&self) -> Vec<(NoteKind, String)> {
         match self {
+            Problem::UnderOverload { problem, .. } => problem.notes(),
+            Problem::OverloadUncovered { example, .. } => vec![(
+                NoteKind::Info,
+                format!("the overload admits a call that {example}"),
+            )],
             Problem::Argument { causes, .. } => causes
                 .iter()
                 .flatten()
@@ -351,6 +382,15 @@ impl Report for Problem {
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         match self {
+            Problem::UnderOverload { problem, .. } => problem.message(w),
+            Problem::OverloadUncovered { missing: true, .. } => write!(
+                w,
+                "this overload admits calls that don't pass every parameter the implementation requires"
+            ),
+            Problem::OverloadUncovered { missing: false, .. } => write!(
+                w,
+                "this overload admits calls passing an argument the implementation has no parameter for"
+            ),
             Problem::FmtGap { index, missing, .. } => write!(
                 w,
                 "format hole `#{index}` follows missing `#{missing}`; it is an integer key, not a positional item"

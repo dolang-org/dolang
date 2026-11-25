@@ -794,7 +794,7 @@ pub def test
   func @ TestFn[{}] = nil
 do -> Value
   let tag_values = check_tags "test tags" $tags
-  if (func == nil)
+  if type(func, std.Nil)
     return do |func @ TestFn[{}] <Value >Value| register $name $tag_values $func
   register $name $tag_values $func
 
@@ -852,16 +852,21 @@ pub def parametrize
   **axes @ Iterable[Value]
 do -> Value
   let normalized @ Array[(Sym, Array[Tagged[Value]])] = []
-  for name values = axes
+  # An overload's axes are a mapped pack, which the checker can't iterate
+  for name values = (axes !@ Pack[**Iterable[Value]])
     let tagged_values @ Array[Tagged[Value]] = []
     for value = values
       tagged_values.push $(normalize_param_value value)
     if (tagged_values.len == 0)
       throw std.ValueError "parametrize: '$name' has no values"
     normalized.push (name, tagged_values)
-  if (func == nil)
-    return do |func @ TestFn[{*(Sym): Value}] <Value >Value| expand $func $normalized
-  expand $func $normalized
+  if type(func, std.Nil)
+    let decorate = do |func @ TestFn[{*(Sym): Value}] <Value >Value| expand $func $normalized
+    # Its overload's rank-2 result names the overload's binders, which the body
+    # can't
+    return (decorate !@ std.Unknown)
+  # An overload's test function takes only its axes' keys and the rest's
+  expand (func !@ TestFn[{*(Sym): Value}]) $normalized
 
 # Each case of a test function for each combination of axis values, with the
 # values bound.

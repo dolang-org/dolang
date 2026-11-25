@@ -9,7 +9,7 @@ import std:
 @def vague x @ Int -> Int
 @def vague x @ (Int | Str) -> Str
 pub def vague x @ (Int | Str) -> (Int | Str)
-  x
+  ...
 
 # Known arguments that fit several are an error
 pub def known() -> nil
@@ -42,7 +42,7 @@ pub def dynamic x @ Unknown -> nil
 @def same x @ Int -> Int
 @def same x @ Int -> Str
 pub def same x @ Value -> Value
-  x
+  ...
 
 def apply f @ ((Int) -> Int) -> Int
   f 1

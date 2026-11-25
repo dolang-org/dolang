@@ -18,7 +18,7 @@ pub class Picker
   @def each self n @ Int f @ (Int -> Str) -> Str
   @def each self s @ Str f @ (Str -> Int) -> Int
   pub def each _self x _f
-    x
+    ...
 
   @def tag self n @ Int xs @ Array[(:a: | :b:)] -> Int
   @def tag self s @ Str xs @ Array[Str] -> Str
@@ -141,7 +141,7 @@ pub def negate f @ (Bool -> Bool) -> Bool
 @def vague x @ Int -> Int
 @def vague x @ (Int | Str) -> Str
 pub def vague x
-  x
+  ...
 
 # An overloaded def's value is the def, which a call through it, however it's
 # reached, chooses an overload of, as does a function type it's passed as.
@@ -258,7 +258,7 @@ pub def tuples t @ Tuple[Int, Str]
 @def same x @ Int -> Int
 @def same x @ Int -> Str
 pub def same x
-  x
+  ...
 
 pub def same_value()
   let _f @ ((Int) -> Int) = same
@@ -276,7 +276,7 @@ pub class Same: Func
   @def (call) _self x @ Int -> Int
   @def (call) _self x @ Int -> Str
   pub def (call) _self x
-    x
+    ...
 
 pub def same_callable s @ Same
   let _int @ ((Int) -> Int) = s

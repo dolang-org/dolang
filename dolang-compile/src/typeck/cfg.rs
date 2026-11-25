@@ -178,6 +178,8 @@ pub(crate) struct Func {
     pub(crate) supers: Vec<VarId>,
     /// How many unpack groups its patterns allocated, [`GroupId::PARAMS`] first
     pub(crate) groups: u32,
+    /// Whether its body is `...`, which trusts its signatures
+    pub(crate) stub: bool,
 }
 
 /// A `do` block's callable state: variables its parent owns and it captures,
@@ -542,6 +544,7 @@ impl Graph {
             fields: Vec::new(),
             supers: Vec::new(),
             groups: 1,
+            stub: false,
         }));
         let allocated = self.alloc_var(id, Origin::Result, None);
         debug_assert_eq!(allocated, result);

@@ -46,7 +46,7 @@ pub def first[T] items @ Array[T] -> T
 @def pick[B] x@B y@B -> B
 #              ^: ref binder B
 pub def pick x y = nil
-  [x, y]
+  ...
 
 pub class Box[T]
   pub field item @ T = ...
