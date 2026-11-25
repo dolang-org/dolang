@@ -12,11 +12,11 @@ assert_throws $std.UnexpectedKeyError do ["x", ...{a: 1}]
 assert_throws $std.UnexpectedKeyError do [...{0: "x"}]
 assert_throws $std.UnexpectedKeyError do (...{a: 1},)
 
-# Constructors spread their source the same way
-assert_eq (Array {"x", "y"}) ["x", "y"]
-assert_throws $std.UnexpectedKeyError do Array {a: 1}
-assert_throws $std.UnexpectedKeyError do Tuple {a: 1}
-assert_throws $std.UnexpectedKeyError do Set {a: 1}
+# Constructors collect their source's iteration instead, which gives pairs
+assert_eq (Array {"x", "y"}) [(0, "x"), (1, "y")]
+assert_eq (Array {a: 1}) [(:a:, 1)]
+assert_eq (Tuple {a: 1}) ((:a:, 1),)
+assert_eq [...Set {a: 1}] [(:a:, 1)]
 
 # `.iter()` gives the pairs
 assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]

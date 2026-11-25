@@ -50,13 +50,13 @@ pub class Mask: Iterable[MaskBit]
   @def (call) cls ...flags@MaskBit -> Mask
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[MaskBit] -> Mask
+  @def (call) cls flags@BaseIterable[MaskBit] -> Mask
 
   #[class]
-  pub def (call) cls ...flags @ (MaskBit | Iterable[MaskBit]) -> Mask
+  pub def (call) cls ...flags @ (MaskBit | BaseIterable[MaskBit]) -> Mask
     ...
 
-  pub def (init) self ...flags @ (MaskBit | Iterable[MaskBit])
+  pub def (init) self ...flags @ (MaskBit | BaseIterable[MaskBit])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -106,13 +106,13 @@ pub class Flags: Iterable[FlagBit]
   @def (call) cls ...flags@FlagBit -> Flags
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[FlagBit] -> Flags
+  @def (call) cls flags@BaseIterable[FlagBit] -> Flags
 
   #[class]
-  pub def (call) cls ...flags @ (FlagBit | Iterable[FlagBit]) -> Flags
+  pub def (call) cls ...flags @ (FlagBit | BaseIterable[FlagBit]) -> Flags
     ...
 
-  pub def (init) self ...flags @ (FlagBit | Iterable[FlagBit])
+  pub def (init) self ...flags @ (FlagBit | BaseIterable[FlagBit])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -222,7 +222,7 @@ pub class Acl
   pub def (init)
     self
     # [`Ace`](security.macos.Ace) values.
-    aces @ Iterable[Ace]
+    aces @ BaseIterable[Ace]
   do
     ...
 
@@ -237,11 +237,11 @@ pub @let Principal = (Uuid | Str | Bin)
 
 # A mask given as a [`Mask`](security.macos.Mask), one symbol, or an iterable
 # of symbols.
-pub @let MaskSpec = (Mask | MaskBit | Iterable[MaskBit])
+pub @let MaskSpec = (Mask | MaskBit | BaseIterable[MaskBit])
 
 # Flags given as [`Flags`](security.macos.Flags), one symbol, or an iterable of
 # symbols.
-pub @let FlagsSpec = (Flags | FlagBit | Iterable[FlagBit])
+pub @let FlagsSpec = (Flags | FlagBit | BaseIterable[FlagBit])
 
 # A macOS entry, built or declared as a dictionary. A dictionary has
 # exactly one type key, with the same meaning as the key arguments of
@@ -258,7 +258,7 @@ pub @let AceSpec = $
       ?flags: FlagsSpec
 
 # A macOS ACL, built or given as its entries.
-pub @let AclSpec = (Acl | Iterable[AceSpec])
+pub @let AclSpec = (Acl | BaseIterable[AceSpec])
 
 # Constructs a macOS entry from declarative arguments.
 #

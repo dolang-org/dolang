@@ -343,9 +343,8 @@ fn resolve_sym<'v, 's, F: FlagLike>(
     })
 }
 
-/// Spreads a plain sequence of symbols (`SpreadContext::Sequence`) into a
-/// `F` accumulator. Any dict-like/keyed item is rejected — a flags value can
-/// only be built from symbols.
+/// Accumulates the symbols an iterable yields into an `F`. Anything other
+/// than a symbol is rejected: a flags value can only be built from symbols.
 struct FlagsSpread<'t, 'v, F> {
     table: &'t FlagTable<'v, F>,
     bits: F,
@@ -504,9 +503,7 @@ async fn convert<'v, 's, F: FlagLike>(
         table,
         bits: F::ZERO,
     };
-    value
-        .op_spread(strand, SpreadContext::Sequence, &mut spread)
-        .await?;
+    super::iter::spread_iter(strand, value, &mut spread).await?;
     Ok(spread.bits)
 }
 

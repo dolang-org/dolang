@@ -807,7 +807,7 @@ pub class Iterable[T]: @BaseIterable[T]
 
   # Returns an iterator over the items, followed by the items of each additional
   # iterable.
-  pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
+  pub def chain[*Us] self *values @ ...BaseIterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   @def chomp self @ Iterable[Str] -> Iter[Str]
@@ -941,7 +941,7 @@ pub class Iterable[T]: @BaseIterable[T]
 
   # Returns an iterator of tuples across this and additional iterables, which
   # stops at the end of the shortest.
-  pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
+  pub def zip[*Us] self *values @ ...BaseIterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
   # Returns an iterator over the items.
@@ -1273,7 +1273,7 @@ pub class BaseArray[T]: Iterable[T] @Seq[T]
 pub class Array[T]: BaseArray[T] Sinkable[T] @MutSeq[T]
   # Builds an array from one iterable. The lowercase `array` factory instead
   # collects its positional arguments verbatim.
-  pub def (init) self iterable @ Iterable[T]
+  pub def (init) self iterable @ BaseIterable[T]
     ...
 
   # Removes all elements from the array.
@@ -1534,7 +1534,7 @@ pub class Bin: @Index[Range[Int], Bin]
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter @ Iterable[Str | Bin] = ...
+    iter @ BaseIterable[Str | Bin] = ...
   do -> Bin
     ...
 
@@ -1670,7 +1670,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ```
   pub def trim
     self
-    chars @ (Bin | Iterable[Bin]) = ...
+    chars @ (Bin | BaseIterable[Bin]) = ...
   do -> Bin
     ...
 
@@ -1684,7 +1684,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ```
   pub def trim_end
     self
-    chars @ (Bin | Iterable[Bin]) = ...
+    chars @ (Bin | BaseIterable[Bin]) = ...
   do -> Bin
     ...
 
@@ -1698,7 +1698,7 @@ pub class Bin: @Index[Range[Int], Bin]
   # ```
   pub def trim_start
     self
-    chars @ (Bin | Iterable[Bin]) = ...
+    chars @ (Bin | BaseIterable[Bin]) = ...
   do -> Bin
     ...
 
@@ -3390,7 +3390,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   # assert_eq $built.len 3
   # assert_eq $built.format() "a=42;"
   # ```
-  pub def (init) self segments @ Iterable[FmtSegment[V]]
+  pub def (init) self segments @ BaseIterable[FmtSegment[V]]
     ...
 
   # The number of segments.
@@ -3701,7 +3701,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
 
   # Returns an iterator that yields this iterator's values followed by those of
   # each additional iterable.
-  pub def chain[*Us] self *values @ ...Iterable[Us] -> Iter[Union[T, ...Us]]
+  pub def chain[*Us] self *values @ ...BaseIterable[Us] -> Iter[Union[T, ...Us]]
     ...
 
   @def chomp self @ Iter[Str] -> Iter[Str]
@@ -3800,7 +3800,7 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
 
   # Returns an iterator of tuples across this iterator and the additional
   # iterables, which stops at the end of the shortest.
-  pub def zip[*Us] self *values @ ...Iterable[Us] -> Iter[Tuple[T, ...Us]]
+  pub def zip[*Us] self *values @ ...BaseIterable[Us] -> Iter[Tuple[T, ...Us]]
     ...
 
   # Returns the next value, raising [`IterStop`](std.IterStop) once exhausted.
@@ -4139,7 +4139,7 @@ do
 # and does not move it to the end.
 pub class Set[T]: Iterable[T] @Spread[T]
   # Builds a set, from one iterable if given.
-  pub def (init) self iterable @ Iterable[T] = ...
+  pub def (init) self iterable @ BaseIterable[T] = ...
     ...
 
   # Returns the number of members.
@@ -4538,7 +4538,7 @@ pub class Str: @Index[Range[Int], Str]
   pub def join
     self
     # iterable to join; uses the default input when omitted
-    iter @ Iterable[Value] = ...
+    iter @ BaseIterable[Value] = ...
   do -> Str
     ...
 
@@ -4712,7 +4712,7 @@ pub class Str: @Index[Range[Int], Str]
   # ```
   pub def trim
     self
-    chars @ (Str | Iterable[Str]) = ...
+    chars @ (Str | BaseIterable[Str]) = ...
   do -> Str
     ...
 
@@ -4726,7 +4726,7 @@ pub class Str: @Index[Range[Int], Str]
   # ```
   pub def trim_end
     self
-    chars @ (Str | Iterable[Str]) = ...
+    chars @ (Str | BaseIterable[Str]) = ...
   do -> Str
     ...
 
@@ -4740,7 +4740,7 @@ pub class Str: @Index[Range[Int], Str]
   # ```
   pub def trim_start
     self
-    chars @ (Str | Iterable[Str]) = ...
+    chars @ (Str | BaseIterable[Str]) = ...
   do -> Str
     ...
 
@@ -5279,7 +5279,7 @@ do
   @def (init)[T]
     self @ Tuple[*T]
     # values to collect
-    iterable @ Iterable[T]
+    iterable @ BaseIterable[T]
   do
 
   pub def (init) self iterable @ Value

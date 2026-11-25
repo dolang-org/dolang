@@ -31,7 +31,7 @@ assert_eq $connect() "localhost:8080"
 assert_eq (connect port: 22) "localhost:22"
 
 def gather first @Int ...rest @Int
-  [first, Tuple(rest)]
+  [first, (...rest,)]
 assert_eq (gather 1 2 3) [1, (2, 3)]
 
 def vertical
@@ -195,7 +195,7 @@ assert_eq $Tagged().tag base
 
 
 def expanded ...args @ ...Int
-  Tuple $args
+  (...args,)
 assert_eq (expanded 1 2) (1, 2)
 
 def expanded_vertical
@@ -204,7 +204,7 @@ do
   {...args}
 assert_eq (expanded_vertical name: "ok") {name: "ok"}
 
-let expanded_lambda = (do |...args @ ...Int| Tuple(args))
+let expanded_lambda = (do |...args @ ...Int| (...args,))
 assert_eq (expanded_lambda 3 4) (3, 4)
 
 let ...tail @ ...Int = [5, 6]
@@ -219,7 +219,7 @@ assert_eq (discard 1 2) 9
 
 @def mapped[...Rs] ...thunks @ ...(() -> Rs) -> Tuple[...Rs]
 def mapped ...thunks
-  Tuple $thunks
+  (...thunks,)
 assert_eq (mapped 10) (10,)
 
 # Positional and keyed rest items and binders

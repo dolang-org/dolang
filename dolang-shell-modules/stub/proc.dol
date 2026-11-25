@@ -516,7 +516,7 @@ pub class Program: Func
     # standard input.
     #
     # A stream is read as bytes, even when it is also iterable.
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :LINE: = ...
@@ -528,7 +528,7 @@ pub class Program: Func
   # chunks.
   @def (call)
     self
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
@@ -539,7 +539,7 @@ pub class Program: Func
   # Runs the program, reading `stdin:` and writing `stdout:` as lines.
   @def (call)
     self
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
@@ -550,7 +550,7 @@ pub class Program: Func
   # Runs the program, reading `stdin:` and writing `stdout:` as chunks.
   @def (call)
     self
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
@@ -796,7 +796,7 @@ pub @class Run: Func
     # standard input.
     #
     # A stream is read as bytes, even when it is also iterable.
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :LINE: = ...
@@ -809,7 +809,7 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
     :mode @ :CHUNK:
@@ -821,7 +821,7 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stdout @ (Path | Str | Sinkable[Str])
     :stderr @ (Path | Str | Sinkable[Str] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...
@@ -833,7 +833,7 @@ pub @class Run: Func
   @def (call)
     self
     program @ (Str | Path)
-    :stdin @ (Path | Str | Io | Iterable[Value])
+    :stdin @ (Path | Str | Io | BaseIterable[Value])
     :stdout @ (Path | Str | Sinkable[Bin])
     :stderr @ (Path | Str | Sinkable[Bin] | :STDOUT:) = ...
     :policy @ BaseDict[{?signal: Signal | Int, ?grace: Duration | Int | Float, ?force: Bool}] = ...

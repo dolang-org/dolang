@@ -384,7 +384,7 @@ do -> Tuple[...Rs]
 # Writes the values of an iterable to the strand-local output.
 pub def from[O]
   # Values to write.
-  value @ Iterable[O]
+  value @ BaseIterable[O]
   > BaseSink[O]
 do
   ...
@@ -413,7 +413,7 @@ do -> nil
   # Function applied to each input value.
   func @ ((I, >Value) -> O)
   # Values to process.
-  :input @ Iterable[I]
+  :input @ BaseIterable[I]
   > BaseSink[O]
 do -> nil
 
@@ -437,7 +437,7 @@ do -> nil
   # Function applied to each input value.
   func @ (I -> O)
   # Values to process.
-  :input @ Iterable[I]
+  :input @ BaseIterable[I]
   # Sink to write results to.
   :output @ Sinkable[O]
 do -> nil
@@ -471,7 +471,7 @@ pub def output[O] >O -> O
 # stage's result.
 @def pipeline[R]
   # Input for the first stage, in place of the strand-local input.
-  :input @ Iterable[Value] = ...
+  :input @ BaseIterable[Value] = ...
   # Output for the last stage, in place of the strand-local output.
   :output @ Sinkable[Value] = ...
   # Pipeline stages, each reading the previous stage's output.
@@ -487,7 +487,7 @@ pub def pipeline ...args @ Value -> Value
   # Number of worker strands.
   count @ Int
   # Items to process.
-  input @ Iterable[T]
+  input @ BaseIterable[T]
   # Function applied to each input value.
   func @ ((T) -> nil)
 do -> nil
@@ -525,7 +525,7 @@ pub def put[T] value@T >BaseSink[T]
 # ```
 @def redirect[R, I, O]
   # Replacement for the strand-local input.
-  :input @ Iterable[I]
+  :input @ BaseIterable[I]
   # Replacement for the strand-local output.
   :output @ Sinkable[O]
   # Function to call.
@@ -535,7 +535,7 @@ do -> R
 # Calls a function with the strand-local input replaced, returning its result.
 @def redirect[R, I]
   # Replacement for the strand-local input.
-  :input @ Iterable[I]
+  :input @ BaseIterable[I]
   # Function to call.
   block @ ((<Iter[I]) -> R)
 do -> R

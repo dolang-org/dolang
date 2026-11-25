@@ -1133,7 +1133,7 @@ do -> Unit
 # let again = check [Typelib(written.typelib(lib)), main]
 # ```
 pub def check
-  units @ Iterable[Unit | Typelib]
+  units @ BaseIterable[Unit | Typelib]
   # Whether the result keeps what [`Checked.typelib`](compile.Checked.typelib)
   # writes. False by default.
   :typelibs @ Bool = ...
