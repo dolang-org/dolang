@@ -36,6 +36,8 @@ pub class Loose: Source[Num] Ints
 #    |
 # LL | pub class Loose: Source[Num] Ints
 #    |                              ^^^^
+#    |
+#    = note: return type: `m.Num` here, but `m.Int` in `Source.get`
 # error: `m.Source[m.Num]` is not below `m.Source[m.Int]` from `Ints`
 #   --> m.dol:LL:LL
 #    |
@@ -49,6 +51,8 @@ pub class Late: Nums Source[Int]
 #    |
 # LL | pub class Late: Nums Source[Int]
 #    |                      ^^^^^^
+#    |
+#    = note: return type: `m.Num` here, but `m.Int` in `Source.get`
 # error: `m.Source[m.Num]` from `Nums` is not below `m.Source[m.Int]`
 #   --> m.dol:LL:LL
 #    |
@@ -68,6 +72,8 @@ pub class Picky: Drain[Int] NumDrain
 #    |
 # LL | pub class Picky: Drain[Int] NumDrain
 #    |                             ^^^^^^^^
+#    |
+#    = note: parameter `x`: `m.Int` here, but `m.Num` in `Drain.put`
 # error: `m.Drain[m.Int]` is not below `m.Drain[m.Num]` from `NumDrain`
 #   --> m.dol:LL:LL
 #    |
@@ -82,6 +88,8 @@ pub class Mixed: Cell[Num] IntCell
 #    |
 # LL | pub class Mixed: Cell[Num] IntCell
 #    |                            ^^^^^^^
+#    |
+#    = note: `m.Num` here, but `m.Int` in `Cell.value`
 # error: `m.Cell[m.Num]` is not below `m.Cell[m.Int]` from `IntCell`
 #   --> m.dol:LL:LL
 #    |
@@ -119,6 +127,8 @@ pub class Loosened[T @ Num]: Source[Num] Holder[T]
 #    |
 # LL | pub class Loosened[T @ Num]: Source[Num] Holder[T]
 #    |                                          ^^^^^^
+#    |
+#    = note: return type: `m.Num` here, but `T` in `Source.get`
 
 # A protocol's supertypes are held to the rule too
 pub @class Conflicted: Source[Num] Ints
@@ -127,6 +137,8 @@ pub @class Conflicted: Source[Num] Ints
 #    |
 # LL | pub @class Conflicted: Source[Num] Ints
 #    |                                    ^^^^
+#    |
+#    = note: return type: `m.Num` here, but `m.Int` in `Source.get`
 # error: `m.Source[m.Num]` is not below `m.Source[m.Int]` from `Ints`
 #   --> m.dol:LL:LL
 #    |

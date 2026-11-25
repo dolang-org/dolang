@@ -58,6 +58,8 @@ pub class Narrow
     #    |
     # LL |   pub def (eq) _self _other @ Narrow -> Bool
     #    |            ^^
+    #    |
+    #    = note: parameter `_other`: `m.Narrow` here, but `Value` in `Value.(eq)`
     true
 
 # A narrower comparison is an overload beside the general one

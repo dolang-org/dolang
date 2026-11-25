@@ -22,3 +22,5 @@ pub class Crossed: Right Left
 #    |
 # LL | pub class Crossed: Right Left
 #    |                          ^^^^
+#    |
+#    = note: return type: `m.Num` here, but `m.Int` in `Left.id`

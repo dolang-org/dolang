@@ -33,6 +33,9 @@ pub class Partial: @Both
     #    |
     # LL |   pub def get _self key @ Int -> Int
     #    |           ^^^
+    #    |
+    #    = note: return type: `m.Int` here, but `m.Other` in overload 2 of `Source.get`
+    #    = note: parameter `key`: `m.Int` here, but `m.Str` in overload 2 of `Source.get`
     ...
 
 # A class may claim a protocol more than once too
@@ -49,4 +52,7 @@ pub class Short: @Source[Int, Int] @Source[Str, Other]
     #    |
     # LL |   pub def get _self key @ Int -> Int
     #    |           ^^^
+    #    |
+    #    = note: return type: `m.Int` here, but `m.Other` in `Source.get`
+    #    = note: parameter `key`: `m.Int` here, but `m.Str` in `Source.get`
     ...

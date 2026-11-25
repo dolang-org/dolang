@@ -56,6 +56,8 @@ pub class PickySetter: Base
     #    |
     # LL |   pub def name _self -> Num
     #    |           ^^^^
+    #    |
+    #    = note: setter's parameter `value`: `m.Int` here, but `m.Num` in `Base.name`
     ...
 
   #[setter]
@@ -81,6 +83,8 @@ pub class NarrowHeld: Sized
 #    |
 # LL |   pub field size @ Int = ...
 #    |             ^^^^
+#    |
+#    = note: setter's parameter `value`: `m.Int` here, but `m.Num` in `Sized.size`
 
 pub class WideHeld: Sized
   pub field size @ Value = ...
@@ -89,6 +93,8 @@ pub class WideHeld: Sized
 #    |
 # LL |   pub field size @ Value = ...
 #    |             ^^^^
+#    |
+#    = note: getter's return type: `Value` here, but `m.Num` in `Sized.size`
 
 pub class Measured
   #[getter]

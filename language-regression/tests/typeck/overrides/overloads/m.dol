@@ -37,6 +37,11 @@ pub class Same: Base
     #    |
     # LL |   pub def pick _self x @ Num -> Num
     #    |           ^^^^
+    #    |
+    #    = note: return type: `m.Other` here, but `m.Int` in overload 1 of `Base.pick`
+    #    = note: parameter `x`: `m.Other` here, but `m.Int` in overload 1 of `Base.pick`
+    #    = note: return type: `m.Other` here, but `m.Num` in overload 2 of `Base.pick`
+    #    = note: parameter `x`: `m.Other` here, but `m.Num` in overload 2 of `Base.pick`
     ...
 
 pub class Narrow: Base
@@ -46,6 +51,9 @@ pub class Narrow: Base
     #    |
     # LL |   pub def pick _self x @ Int -> Num
     #    |           ^^^^
+    #    |
+    #    = note: return type: `m.Num` here, but `m.Int` in overload 1 of `Base.pick`
+    #    = note: parameter `x`: `m.Int` here, but `m.Num` in overload 2 of `Base.pick`
     ...
 
 pub @class Picks
@@ -64,6 +72,9 @@ pub class Unasserted: @Picks
     #    |
     # LL |   pub def pick _self x @ Num -> Num
     #    |           ^^^^
+    #    |
+    #    = note: return type: `m.Other` here, but `m.Int` in `Picks.pick`
+    #    = note: parameter `x`: `m.Other` here, but `m.Int` in `Picks.pick`
     ...
 
 # A protocol's overloads are each required
@@ -85,6 +96,9 @@ pub class HalfConverter: @Converts
     #    |
     # LL |   pub def convert _self x @ Int -> Int
     #    |           ^^^^^^^
+    #    |
+    #    = note: return type: `m.Int` here, but `m.Other` in overload 2 of `Converts.convert`
+    #    = note: parameter `x`: `m.Int` here, but `m.Other` in overload 2 of `Converts.convert`
     ...
 
 # A requirement met only by several overloads together isn't met

@@ -20,4 +20,6 @@ pub class D: A
     #    |
     # LL |   pub def f _self x @ Int *options @ Str
     #    |           ^
+    #    |
+    #    = note: `f` requires positional `std.Int`, which `A.f` may not pass
     ...

@@ -20,6 +20,8 @@ pub class Loose: Source[Int]
     #    |
     # LL |   pub def get _self -> Num
     #    |           ^^^
+    #    |
+    #    = note: return type: `m.Num` here, but `m.Int` in `Source.get`
     ...
 
 # Contravariant: an override may accept more
@@ -38,6 +40,8 @@ pub class Picky: Drain[Num]
     #    |
     # LL |   pub def put _self x @ Int
     #    |           ^^^
+    #    |
+    #    = note: parameter `x`: `m.Int` here, but `m.Num` in `Drain.put`
     ...
 
 # Invariant: a field keeps its type exactly
@@ -54,3 +58,5 @@ pub class Widened: Cell[Int]
 #    |
 # LL |   pub field value @ Num = ...
 #    |             ^^^^^
+#    |
+#    = note: `m.Num` here, but `m.Int` in `Cell.value`

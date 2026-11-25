@@ -1455,6 +1455,8 @@ impl Report for BadRecursion {
 struct Nonconforming {
     span: Span,
     message: String,
+    /// What of the member fails to match, each a note
+    notes: Vec<String>,
 }
 
 impl Report for Nonconforming {
@@ -1468,6 +1470,13 @@ impl Report for Nonconforming {
 
     fn span(&self) -> Span {
         self.span
+    }
+
+    fn notes(&self) -> Vec<(NoteKind, String)> {
+        self.notes
+            .iter()
+            .map(|note| (NoteKind::Info, note.clone()))
+            .collect()
     }
 }
 

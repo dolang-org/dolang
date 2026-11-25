@@ -21,19 +21,22 @@ use rustc_hash::FxHashMap;
 use super::{
     DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Scoped, Tables,
     TrivialProtocol, Uncallable, UnitDiag, Unresolved, sig,
-    surface::{Class, Member, MemberScope},
+    surface::{Class, Member, MemberScope, ParamKind},
 };
 use crate::{
+    RestKind,
     ast::SpecialMethod,
     diag::Span,
     typeck::{
         solver::{
-            Found, FoundKind, Gas, Inheritance, Issue, Lookup, Masked, Provenance, Reach,
-            Requirement, RequirementKind, Residual, Solver, Status, Term,
+            Contradicted, Contradiction, Found, FoundKind, Gas, Inheritance, Issue, Lookup, Masked,
+            Node, Provenance, Reach, Requirement, RequirementKind, Residual, Solver, Status, Step,
+            Term,
         },
         r#type::{
-            Argument, Database, DeclId, DeclKind, Intrinsic, Kind, Member as Declared, MemberKey,
-            NoAncestor, Scope, Style, Type, TypeId, UnitId, UnitSpan,
+            Argument, Database, DeclId, DeclKind, Element, Intrinsic, Kind, Literal,
+            Member as Declared, MemberKey, Multiplicity, NoAncestor, Scope, Style, Type, TypeId,
+            UnitId, UnitSpan,
         },
     },
 };
@@ -79,9 +82,35 @@ struct Check<'a, 'u> {
 /// A check whose judgments are to be solved together and reported
 struct Pending {
     span: Span,
-    /// The judgments, each actual below its expected, all of which must hold
-    pairs: Vec<(Term, Term)>,
+    /// The judgments, each actual below its expected, all of which must hold.
+    /// A judgment is reversed when it relates the required type below the
+    /// provided one.
+    pairs: Vec<(Term, Term, bool)>,
     message: String,
+    /// The members a requirement matches, whose notes say what of them fails
+    matched: Option<Matched>,
+}
+
+/// A provided member and the member it must match, as a diagnostic names them
+struct Matched {
+    /// The provided member, as the headline names it
+    subject: String,
+    /// The required member, qualified by its class
+    required: String,
+    /// Each member's methods, which name its parameters and binders
+    provided_methods: Vec<Accessor>,
+    required_methods: Vec<Accessor>,
+    /// Whether each judgment relates the provided member to another of the
+    /// required member's overloads
+    overloads: bool,
+}
+
+/// A member's method, as its role names what of it a note is about
+#[derive(Clone, Copy)]
+struct Accessor {
+    decl: DeclId,
+    /// The method's role, if a property's accessor: "getter's" or "setter's"
+    role: Option<&'static str>,
 }
 
 impl Check<'_, '_> {
@@ -170,12 +199,40 @@ impl Check<'_, '_> {
             // doesn't exhaust one
             let gas = Gas::default();
             let mut fork = solver.fork(&gas);
-            for (actual, expected) in check.pairs {
-                fork.constrain(actual, expected, Provenance::default());
-            }
+            // Each constraint's judgment, by whether it's reversed and its index
+            let judgments: FxHashMap<_, _> = check
+                .pairs
+                .into_iter()
+                .enumerate()
+                .map(|(index, (actual, expected, reversed))| {
+                    let constraint = fork.constrain(actual, expected, Provenance::default());
+                    (constraint, (reversed, index))
+                })
+                .collect();
             let outcomes = fork.solve();
             if outcomes.iter().any(|o| o.status == Status::Contradicted) {
-                self.report(check.span, check.message);
+                let mut notes = Vec::new();
+                if let Some(matched) = &check.matched {
+                    let contradicted = outcomes
+                        .iter()
+                        .filter(|outcome| outcome.status == Status::Contradicted);
+                    for outcome in contradicted {
+                        let (reversed, index) = judgments[&outcome.constraint];
+                        // The judgment of one of several overloads names it
+                        let required = match matched.overloads {
+                            true => format!("overload {} of `{}`", index + 1, matched.required),
+                            false => format!("`{}`", matched.required),
+                        };
+                        for cause in fork.explain(outcome).iter() {
+                            if let Some(note) = self.cause(matched, &required, cause, reversed)
+                                && !notes.contains(&note)
+                            {
+                                notes.push(note);
+                            }
+                        }
+                    }
+                }
+                self.nonconforming(check.span, check.message, notes);
             } else if let Some(outcome) = outcomes.iter().find(|o| o.status == Status::Unresolved) {
                 // A form the checker doesn't support leaves what depends on it
                 // unsolved, so it's the reason
@@ -396,13 +453,25 @@ impl Check<'_, '_> {
         };
         match requirement.kind {
             RequirementKind::Relate(pairs) => {
+                let (key, scope) = (requirement.key, requirement.scope);
+                let provided = requirement
+                    .provider
+                    .map(|provider| self.methods(provider, key, scope));
+                let (provided_methods, provided_method) = provided.unwrap_or_default();
+                let (required_methods, required_method) =
+                    self.methods(requirement.required, key, scope);
+                let matched = Matched {
+                    subject: subject.clone(),
+                    required: required.clone(),
+                    provided_methods,
+                    required_methods,
+                    overloads: provided_method && required_method && pairs.len() > 1,
+                };
                 pending.push(Pending {
                     span,
-                    pairs: pairs
-                        .into_iter()
-                        .map(|(actual, expected, _)| (actual, expected))
-                        .collect(),
+                    pairs,
                     message: format!("{subject} does not match `{required}`"),
+                    matched: Some(matched),
                 });
             }
             RequirementKind::Missing => {
@@ -444,10 +513,11 @@ impl Check<'_, '_> {
             Inheritance::Relate(actual, expected) => {
                 pending.push(Pending {
                     span,
-                    pairs: vec![(actual, expected)],
+                    pairs: vec![(actual, expected, false)],
                     message: format!(
                         "`{own}` inherits `{named}` with arguments `{claim}` does not allow"
                     ),
+                    matched: None,
                 });
             }
             Inheritance::Undecided(issue) => self.undecided(span, issue),
@@ -486,11 +556,13 @@ impl Check<'_, '_> {
         let pairs = vec![(
             solver.closed(masked.first.ty),
             solver.closed(masked.other.ty),
+            false,
         )];
         pending.push(Pending {
             span,
             pairs,
             message,
+            matched: None,
         });
     }
 
@@ -559,6 +631,299 @@ impl Check<'_, '_> {
         spans
     }
 
+    /// The methods declaring `class`'s member `key` of `scope`: a method, or
+    /// a property's setter and getter. It's a method if the flag is set.
+    fn methods(&self, class: DeclId, key: MemberKey, scope: Scope) -> (Vec<Accessor>, bool) {
+        let members = &self.db.declaration(class).members;
+        let declared = members.iter().find_map(|(member, declared)| {
+            let of = match *declared {
+                Declared::Field { scope, .. }
+                | Declared::Method { scope, .. }
+                | Declared::Property { scope, .. }
+                | Declared::Decorated { scope, .. } => scope,
+            };
+            (*member == key && of == scope).then_some(declared)
+        });
+        match declared {
+            Some(&Declared::Method { decl, .. }) => (vec![Accessor { decl, role: None }], true),
+            Some(&Declared::Property { getter, setter, .. }) => {
+                let setter = setter.map(|decl| Accessor {
+                    decl,
+                    role: Some("setter's"),
+                });
+                let getter = getter.map(|decl| Accessor {
+                    decl,
+                    role: Some("getter's"),
+                });
+                (setter.into_iter().chain(getter).collect(), false)
+            }
+            _ => (Vec::new(), false),
+        }
+    }
+
+    /// A note on what of a member fails to match, by the contradiction's path:
+    /// the first part of the member's type the path enters, with the provided
+    /// and required members' types of it, or the item one has that the other
+    /// can't take. The path's root relates the required member's type below the
+    /// provided one's if `reversed`.
+    fn cause(
+        &self,
+        matched: &Matched,
+        required: &str,
+        cause: &Contradicted,
+        reversed: bool,
+    ) -> Option<String> {
+        let names = Scoped {
+            tables: self.tables,
+            scope: vec![self.id],
+        };
+        let path = &cause.path;
+        // Each type as the provided member's and the required member's, by
+        // whether a node's actual side is the required member's
+        let pair = |sides: (TypeId, TypeId), flipped: bool| {
+            let (provided, required) = match flipped {
+                false => sides,
+                true => (sides.1, sides.0),
+            };
+            self.db.pair(provided, required, &names, Style::Reader)
+        };
+        let both = |node: &Node| match node.sides {
+            Some((Some(actual), Some(expected))) => Some((actual, expected)),
+            _ => None,
+        };
+        let mut flipped = reversed;
+        // Members a protocol judged structurally requires, outermost first
+        let mut within = Vec::new();
+        let component = |within: &[String], label: String| match within.is_empty() {
+            true => label,
+            false => format!("{}, {label}", within.join(", ")),
+        };
+        for (index, node) in path.iter().enumerate() {
+            let Some(step) = &node.step else {
+                continue;
+            };
+            flipped ^= step.reverses();
+            let label = match *step {
+                Step::Member { key, .. } => {
+                    within.push(format!("member `{}`", self.db.member_name(key)));
+                    continue;
+                }
+                Step::Parameters if index + 1 == path.len() => {
+                    return self.arity(matched, required, node, cause.contradiction, flipped);
+                }
+                Step::Item(item) | Step::Key(item)
+                    if matches!(path[index - 1].step, Some(Step::Parameters)) =>
+                {
+                    // The item is the actual side's, a positional one at the
+                    // same ordinal on either side, so the provided member names
+                    // it as the headline's member does
+                    let (schema, _) = both(&path[index - 1])?;
+                    let methods = matched.provided_methods.iter();
+                    self.parameter(
+                        methods.chain(&matched.required_methods),
+                        schema,
+                        item,
+                        &names,
+                    )
+                }
+                // A property's value is returned by its getter, as a field's
+                // is related to one
+                Step::Return => {
+                    let methods = matched.provided_methods.iter();
+                    match methods
+                        .chain(&matched.required_methods)
+                        .any(|method| method.role.is_some())
+                    {
+                        true => "getter's return type".to_owned(),
+                        false => "return type".to_owned(),
+                    }
+                }
+                Step::Input => "input".to_owned(),
+                Step::Output => "output".to_owned(),
+                Step::InstantiationBound(binder) => {
+                    // A fresh variable instantiates the actual side's binder,
+                    // and what it's solved as must be below its bound
+                    let methods = match flipped {
+                        false => &matched.provided_methods,
+                        true => &matched.required_methods,
+                    };
+                    let method = methods.first().map(|method| method.decl);
+                    let (_, Some(bound)) = node.sides? else {
+                        return None;
+                    };
+                    let found = path[index + 1..]
+                        .iter()
+                        .find_map(|node| node.sides.and_then(|(actual, _)| actual))?;
+                    let (bound, found) = (
+                        self.db.render(bound, &names, Style::Reader),
+                        self.db.render(found, &names, Style::Reader),
+                    );
+                    let label = component(&within, self.binder(method, binder));
+                    return Some(format!(
+                        "{label}: bound `{bound}` here, but {required} passes `{found}`"
+                    ));
+                }
+                _ => continue,
+            };
+            let (provided, expected) = pair(both(node)?, flipped);
+            let label = component(&within, label);
+            return Some(format!(
+                "{label}: {provided} here, but {expected} in {required}"
+            ));
+        }
+        // A member that isn't a function, as a field, shows its type whole
+        let root = both(path.first()?)?;
+        let function =
+            |ty: TypeId| matches!(self.db.ty(ty), Type::Function(_) | Type::Quantified { .. });
+        if function(root.0) || function(root.1) {
+            return None;
+        }
+        let (provided, expected) = pair(root, reversed);
+        Some(format!("{provided} here, but {expected} in {required}"))
+    }
+
+    /// A note on a parameter one member's list has and the other's can't take,
+    /// where the list is at `node`, flipped if its actual side is the required
+    /// member's
+    fn arity(
+        &self,
+        matched: &Matched,
+        required: &str,
+        node: &Node,
+        contradiction: Contradiction,
+        flipped: bool,
+    ) -> Option<String> {
+        let names = &Scoped {
+            tables: self.tables,
+            scope: vec![self.id],
+        };
+        let (actual, expected) = match node.sides? {
+            (Some(actual), Some(expected)) => (actual, expected),
+            _ => return None,
+        };
+        let subject = &matched.subject;
+        let item =
+            |schema: TypeId, index: usize| self.db.schema_item(schema, index, names, Style::Reader);
+        match (contradiction, flipped) {
+            // The required member is called with an item the provided one
+            // doesn't take
+            (Contradiction::Excess(index), true) => {
+                let item = item(actual, index)?;
+                Some(format!(
+                    "{required} passes {item}, which {subject} doesn't take"
+                ))
+            }
+            // The provided member requires an item the required one may not be
+            // called with
+            (Contradiction::Missing(index), true) => {
+                let item = item(expected, index)?;
+                Some(format!(
+                    "{subject} requires {item}, which {required} may not pass"
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// How a note names a parameter list's item at `index`, by the first of
+    /// `methods` that names it
+    fn parameter<'m>(
+        &self,
+        methods: impl IntoIterator<Item = &'m Accessor>,
+        schema: TypeId,
+        index: usize,
+        names: &Scoped<'_, '_>,
+    ) -> String {
+        let Type::Schema(items) = self.db.ty(schema) else {
+            return "a parameter".to_owned();
+        };
+        let Some(item) = items.get(index) else {
+            return "a parameter".to_owned();
+        };
+        // A keyed item exactly keyed names its parameter
+        if let Element::Keyed { key, .. } = item.element
+            && let Type::Literal(Literal::Sym(key)) = self.db.ty(key)
+        {
+            return format!("parameter `{}`", self.db.symbol(*key));
+        }
+        // A positional item's ordinal among its list's
+        let ordinal = items[..index]
+            .iter()
+            .filter(|item| matches!(item.element, Element::Positional(_)))
+            .count();
+        let rest = item.multiplicity == Multiplicity::Repeated;
+        let declared = methods.into_iter().find_map(|method| {
+            let decl = self.tables.try_decl(method.decl)?;
+            let sig = decl.node.primary_sig()?;
+            let params = &decl.node.signature(sig).params;
+            let param = match (&item.element, rest) {
+                (Element::Positional(_), false) => params
+                    .iter()
+                    .filter(|param| matches!(param.kind, ParamKind::Pos))
+                    .nth(ordinal)?,
+                (Element::Positional(_), true) => params.iter().find(|param| {
+                    matches!(
+                        param.kind,
+                        ParamKind::Rest {
+                            kind: RestKind::Pos | RestKind::Mixed,
+                            ..
+                        }
+                    )
+                })?,
+                (Element::Keyed { .. }, _) => params.iter().find(|param| {
+                    matches!(
+                        param.kind,
+                        ParamKind::Rest {
+                            kind: RestKind::Key | RestKind::Mixed,
+                            ..
+                        }
+                    )
+                })?,
+                (Element::Include(_), _) => params
+                    .iter()
+                    .find(|param| matches!(param.kind, ParamKind::Rest { .. }))?,
+            };
+            let name = param.name?;
+            let role = method
+                .role
+                .map_or_else(String::new, |role| format!("{role} "));
+            Some((role, self.tables.name(decl.unit, name).to_owned()))
+        });
+        match (
+            declared,
+            rest || matches!(item.element, Element::Include(_)),
+        ) {
+            (Some((role, name)), false) => format!("{role}parameter `{name}`"),
+            (Some((role, name)), true) => format!("{role}rest `{name}`"),
+            (None, _) => match self.db.schema_item(schema, index, names, Style::Reader) {
+                Some(item) => format!("parameter {item}"),
+                None => "a parameter".to_owned(),
+            },
+        }
+    }
+
+    /// How a note names the binder at `index` of a method's type
+    fn binder(&self, method: Option<DeclId>, index: usize) -> String {
+        let named = method.and_then(|method| {
+            let declaration = self.db.declaration(method);
+            let Type::Quantified { binders, .. } = self.db.ty(declaration.ty) else {
+                return None;
+            };
+            // A method's type may leave out binders it has before its own
+            let declared = &declaration.binders;
+            let lifted = declared.len().checked_sub(binders.len())?;
+            Some(
+                self.db
+                    .symbol(declared.get(lifted + index)?.name)
+                    .to_owned(),
+            )
+        });
+        match named {
+            Some(name) => format!("binder `{name}`"),
+            None => format!("binder {}", index + 1),
+        }
+    }
+
     fn name(&self, decl: DeclId) -> &str {
         self.db
             .declaration(decl)
@@ -568,8 +933,16 @@ impl Check<'_, '_> {
     }
 
     fn report(&mut self, span: Span, message: String) {
-        self.diags
-            .push((self.unit, Diag::new(Nonconforming { span, message })));
+        self.nonconforming(span, message, Vec::new());
+    }
+
+    fn nonconforming(&mut self, span: Span, message: String, notes: Vec<String>) {
+        let diag = Nonconforming {
+            span,
+            message,
+            notes,
+        };
+        self.diags.push((self.unit, Diag::new(diag)));
     }
 
     fn undecided(&mut self, span: Span, issue: Issue) {

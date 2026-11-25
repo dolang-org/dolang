@@ -30,6 +30,8 @@ pub class Wrong: @Shape
     #    |
     # LL |   pub def area _self -> Other
     #    |           ^^^^
+    #    |
+    #    = note: return type: `m.Other` here, but `m.Num` in `Shape.area`
     ...
 
 # A protocol's field is upheld by a property that reads and writes it
@@ -53,6 +55,8 @@ pub class Strict: @Shape
     #    |
     # LL |   pub def name _self -> Num
     #    |           ^^^^
+    #    |
+    #    = note: setter's parameter `value`: `m.Int` here, but `m.Num` in `Shape.name`
     ...
 
   #[setter]
@@ -80,6 +84,8 @@ pub class NarrowLabel: @Labeled
 #    |
 # LL |   pub field label @ Int = ...
 #    |             ^^^^^
+#    |
+#    = note: setter's parameter `value`: `m.Int` here, but `m.Num` in `Labeled.label`
 
 pub class ReadOnly: @Shape
   #[getter]

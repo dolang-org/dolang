@@ -16,4 +16,6 @@ pub class Narrower: Base
     #    |
     # LL |   pub def (call) _self n @ Str -> Str
     #    |            ^^^^
+    #    |
+    #    = note: parameter `n`: `std.Str` here, but `std.Int` in `Base.(call)`
     ...

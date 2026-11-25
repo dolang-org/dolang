@@ -40,4 +40,6 @@ do
     #    |
     # LL |   pub def get _self -> Other
     #    |           ^^^
+    #    |
+    #    = note: return type: `m.Other` here, but `m.Num` in `Read.get`
     ...

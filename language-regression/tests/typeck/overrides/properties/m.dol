@@ -30,6 +30,8 @@ pub class Picky: Base
     #    |
     # LL |   pub def size _self -> Num
     #    |           ^^^^
+    #    |
+    #    = note: setter's parameter `value`: `m.Int` here, but `m.Num` in `Base.size`
     ...
 
   #[setter]
