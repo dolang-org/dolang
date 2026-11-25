@@ -726,7 +726,8 @@ def test_files paths @ Iterable[Str | Path] -> Array[Path]
 
 # Makes a decorator from a test fixture. `wrap` receives a test function and
 # the arguments left for it, and calls it with setup and teardown around the
-# call, passing the arguments on with any keys it injects.
+# call, passing the arguments on with any keys it injects, less any it takes
+# for itself.
 #
 # Decorators apply from the bottom up, each over the result of the one below,
 # so a fixture receives the axes of any [`parametrize`](test.parametrize) above
@@ -748,15 +749,15 @@ def test_files paths @ Iterable[Str | Path] -> Array[Path]
 # def example_test()
 #   do_something()
 # ```
-pub def fixture[K @ {*(Sym): Value}]
+pub def fixture[In @ {*(Sym): Value}, Out @ {*(Sym): Value}]
   # The fixture, which calls the test function with the keys it injects and
-  # the arguments it was given.
-  wrap @ (@[R @ {*(Sym): Value}] (TestFn[{...K, ...R}], ...R, <Iter[Never], >Sink[Value]) -> nil)
-do -> (@[R @ {*(Sym): Value}] TestFn[{...K, ...R}] -> TestFn[R])
-  def wrapped[R @ {*(Sym): Value}] func @ TestFn[{...K, ...R}] -> TestFn[R]
+  # the arguments it was given, less those it consumes.
+  wrap @ (@[R @ {*(Sym): Value}] (TestFn[{...Out, ...R}], ...In, ...R, <Iter[Never], >Sink[Value]) -> nil)
+do -> (@[R @ {*(Sym): Value}] TestFn[{...Out, ...R}] -> TestFn[{...In, ...R}])
+  def wrapped[R @ {*(Sym): Value}] func @ TestFn[{...Out, ...R}] -> TestFn[{...In, ...R}]
     let test_def = to_test_def $func
-    test_def.map do |f @ TestFn[{...K, ...R}]| -> TestFn[R]
-      do |...args @ R <Iter[Never] >Sink[Value]| wrap $f ...args
+    test_def.map do |f @ TestFn[{...Out, ...R}]| -> TestFn[{...In, ...R}]
+      do |...args @ {...In, ...R} <Iter[Never] >Sink[Value]| wrap $f ...args
   wrapped
 
 # Returns a decorator that registers a test function taking no arguments.

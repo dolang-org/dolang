@@ -189,6 +189,7 @@ impl<'db> Solver<'db> {
             instantiations: RefCell::default(),
             skolemizations: RefCell::default(),
             inversions: RefCell::default(),
+            splits: RefCell::default(),
             skolems: MonoVec::new(),
             scopes: MonoVec::new(),
             relations: MonoVec::new(),
@@ -783,6 +784,20 @@ impl<'db> Solver<'db> {
             .insert((obligation, lanes), environment);
     }
 
+    /// The remainder variable an obligation's split created, if it has one
+    pub(super) fn split_of(&self, obligation: ObligationId) -> Option<Term> {
+        self.splits
+            .borrow()
+            .get(&obligation)
+            .copied()
+            .or_else(|| self.open_parent()?.split_of(obligation))
+    }
+
+    pub(super) fn record_split(&self, obligation: ObligationId, remainder: Term) {
+        self.writable();
+        self.splits.borrow_mut().insert(obligation, remainder);
+    }
+
     pub(super) fn record_skolemization(
         &self,
         obligation: ObligationId,
@@ -888,6 +903,7 @@ pub(crate) struct Delta {
     instantiations: FxHashMap<ObligationId, EnvironmentId>,
     skolemizations: FxHashMap<ObligationId, EnvironmentId>,
     inversions: FxHashMap<(ObligationId, Rest), EnvironmentId>,
+    splits: FxHashMap<ObligationId, Term>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
     relations: MonoVec<(Relation, bool)>,
@@ -924,6 +940,7 @@ impl<'db> Solver<'db> {
             instantiations,
             skolemizations,
             inversions,
+            splits,
             skolems,
             scopes,
             relations,
@@ -961,6 +978,7 @@ impl<'db> Solver<'db> {
             instantiations: instantiations.into_inner(),
             skolemizations: skolemizations.into_inner(),
             inversions: inversions.into_inner(),
+            splits: splits.into_inner(),
             skolems,
             scopes,
             relations,
@@ -991,6 +1009,7 @@ impl<'db> Solver<'db> {
             instantiations,
             skolemizations,
             inversions,
+            splits,
             mut skolems,
             mut scopes,
             mut relations,
@@ -1081,6 +1100,7 @@ impl<'db> Solver<'db> {
         self.instantiations.get_mut().extend(instantiations);
         self.skolemizations.get_mut().extend(skolemizations);
         self.inversions.get_mut().extend(inversions);
+        self.splits.get_mut().extend(splits);
         self.alternatives.get_mut().extend(alternatives);
         self.blinded.extend(blinded);
         if let Some(caches) = caches {

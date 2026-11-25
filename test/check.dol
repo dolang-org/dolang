@@ -49,11 +49,12 @@ def test_decorators_reject_what_no_layer_takes()
   let err = assert_throws $proc.Error do check test_decorators_bad.dol $out
   assert_eq $err.rc 1
   let text = printed $out
-  # A mistyped axis, a mistyped tagged value, an unsupplied parameter and a
-  # mistyped injected key, each where the decorator applies
-  for line = [26, 31, 36, 41]
+  # A mistyped axis, a mistyped tagged value, an unsupplied parameter, a
+  # mistyped injected key and a consumed key the test still takes, each where
+  # the decorator applies
+  for line = [37, 42, 47, 52, 57]
     assert (text.contains "test_decorators_bad.dol:$line:1")
-  assert (text.contains "failed: 1 units, 7 diagnostics")
+  assert (text.contains "failed: 1 units, 9 diagnostics")
 
 #[test]
 def a_source_under_the_search_path_is_its_module()

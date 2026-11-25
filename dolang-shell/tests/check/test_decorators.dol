@@ -23,6 +23,17 @@ def inject[R @ {*(Sym): Value}]
 do
   func extra: injected ...args
 
+# Takes `kind`, keeping it from the test
+#[fixture]
+def consume[R @ {*(Sym): Value}]
+  func @ TestFn[R]
+  :kind @ Str
+  ...args @ R
+  <Iter[Never] >Sink[Value]
+do
+  let _ @ Str = kind
+  func ...args
+
 #[test]
 def plain()
   nil
@@ -56,3 +67,10 @@ def direct :kind@Str :n@Int
 
 let bound = parametrize $direct kind: ["a"] n: [1]
 test $bound
+
+# A fixture below `parametrize` may consume an axis the test doesn't take
+#[test]
+#[parametrize kind: ["a", "b"]]
+#[consume]
+def consumed()
+  nil

@@ -1,0 +1,70 @@
+# dolang: strict
+# Fixtures that inject and consume keys
+
+pub @let TestFn[S @ {*(Sym): Value}] = ((...S, <Iter[Never], >Sink[Value]) -> nil)
+
+# Today's fixture, whose body must still check
+pub def fixture[K @ {*(Sym): Value}]
+  wrap @ (@[R @ {*(Sym): Value}] (TestFn[{...K, ...R}], ...R, <Iter[Never], >Sink[Value]) -> nil)
+do -> (@[R @ {*(Sym): Value}] TestFn[{...K, ...R}] -> TestFn[R])
+  def wrapped[R @ {*(Sym): Value}] func @ TestFn[{...K, ...R}] -> TestFn[R]
+    do |...args @ R <Iter[Never] >Sink[Value]| wrap $func ...args
+  wrapped
+
+pub def fixture2[In @ {*(Sym): Value}, Out @ {*(Sym): Value}]
+  wrap @ (@[R @ {*(Sym): Value}] (TestFn[{...Out, ...R}], ...In, ...R, <Iter[Never], >Sink[Value]) -> nil)
+do -> (@[R @ {*(Sym): Value}] TestFn[{...Out, ...R}] -> TestFn[{...In, ...R}])
+  def wrapped[R @ {*(Sym): Value}] func @ TestFn[{...Out, ...R}] -> TestFn[{...In, ...R}]
+    do |...args @ {...In, ...R} <Iter[Never] >Sink[Value]| wrap $func ...args
+  wrapped
+
+pub def run_test func @ TestFn[{}]
+  # warning: unused variable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def run_test func @ TestFn[{}]
+  #    |                  ^^^^
+  nil
+
+#[fixture2]
+pub def inject[R @ {*(Sym): Value}]
+  func @ TestFn[{extra: Str, ...R}]
+  ...args @ R
+  <Iter[Never] >Sink[Value]
+do
+  func extra: injected ...args
+
+#[fixture2]
+pub def consume[R @ {*(Sym): Value}]
+  func @ TestFn[R]
+  :kind @ Str
+  ...args @ R
+  <Iter[Never] >Sink[Value]
+do
+  let _ @ Str = kind
+  func ...args
+
+pub def injected :extra@Str
+  let _ @ Str = extra
+
+pub def consumed()
+  nil
+
+run_test $inject(injected)
+let i = inject $injected
+#   ^: flow m.TestFn[{}]
+run_test $i
+let c = consume $consumed
+#   ^: flow m.TestFn[{kind: std.Str}]
+let _ @ TestFn[{kind: Str}] = c
+
+# The consumed key isn't passed on
+pub def wants_kind :kind@Str
+  let _ @ Str = kind
+let w = consume $wants_kind
+let _ @ TestFn[{kind: Str}] = w
+# error: `m.TestFn[{kind: std.Str, kind: std.Str}]` does not fit the annotation `m.TestFn[{kind: std.Str}]`
+#   --> m.dol:LL:LL
+#    |
+# LL | let _ @ TestFn[{kind: Str}] = w
+#    |                               ^
