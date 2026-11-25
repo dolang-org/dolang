@@ -1,8 +1,8 @@
 # dolang: strict
 
-# Project tooling: `dolang -m doze check` checks a project's sources,
-# `dolang -m doze test` runs its tests, and `dolang -m doze bundle` packs its
-# program into a bundle.
+# Project tooling: `dolang -m doze run` runs a project's program,
+# `dolang -m doze check` checks its sources, `dolang -m doze test` runs its
+# tests, and `dolang -m doze bundle` packs its program into a bundle.
 
 import _bundle _shell args compile json regex shell toml
   fs:
@@ -302,6 +302,14 @@ class Project
     _bundle.write $out $program $modules :shebang
     report
 
+  # Runs `main.dol` with `lib/` on the module path, passing `program` to it.
+  # Keeps the current directory. Replaces the running program.
+  pub def run self program @ Array[Str] -> Never
+    let Path(main) = self.#main
+    else throw ProjectError "no main.dol in $(self.#root)"
+    let exe = shell.exe.absolute()
+    shell.exec $exe --module-path $self.#lib_dir().absolute() $main.absolute() ...program
+
   # Runs the tests under `test/` with `dolang -m test`, with `lib/` on the
   # module path, passing `harness` to it. Runs from the project's directory, so
   # test IDs don't depend on how the project was named. Replaces the running
@@ -459,7 +467,7 @@ def parse_level value @ Str -> compile.Severity
     _ => throw args.Error "expected lint, warning, or error"
 
 args.with
-  help: Check, test and bundle a Do project.
+  help: Run, check, test and bundle a Do project.
   - opt: project
     default: nil
     help: The project directory; by default, the current directory
@@ -482,6 +490,15 @@ args.with
     do |p|
       let :diagnose :fail :json ... = p.check
       with_project $p.project $json $diagnose $fail do |it| it.check(:fail)
+  - cmd: run
+    help: Run the project's `main.dol`, with `lib/` on the module path.
+    divider: true
+    - arg: program
+      collect: true
+      help: Arguments to `main.dol`
+    do |p|
+      let :program ... = p.run
+      with_project $p.project nil :WARNING: :ERROR: do |it| it.run $program
   - cmd: test
     help: Run the project's tests under `test/` with `dolang -m test`, with
       `lib/` on the module path.

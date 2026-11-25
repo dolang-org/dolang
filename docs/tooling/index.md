@@ -1,7 +1,7 @@
 # Projects
 
 A project is a directory holding a program, its modules and its tests.
-[`doze`](./doze.md) checks, tests and bundles one, and the
+[`doze`](./doze.md) runs, checks, tests and bundles one, and the
 [language server](./lsp.md) and [VS Code extension](./vscode.md) find the
 project of each file they open.
 
