@@ -134,6 +134,21 @@ def writes_in_mode :dir :mode
   write_file (dir / "out") $mode
 ```
 
+A fixture can also take an axis for itself and leave it out of what it passes
+on, so the test doesn't take it:
+
+```
+#[fixture]
+def in_mode block :mode ...rest
+  with_mode $mode do block(...rest)
+
+#[test]
+#[parametrize mode: ["text", "binary"]]
+#[in_mode]
+def round_trips()
+  check_round_trip()
+```
+
 ## Running Tests
 
 `dolang -m test`, or its alias `dolang-test`, runs the tests in the given files

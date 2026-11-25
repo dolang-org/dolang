@@ -22,6 +22,17 @@ def mistyped[R @ {*(Sym): Value}]
 do
   func extra: 1 ...args
 
+# Takes `kind`, keeping it from the test
+#[fixture]
+def consume[R @ {*(Sym): Value}]
+  func @ TestFn[R]
+  :kind @ Str
+  ...args @ R
+  <Iter[Never] >Sink[Value]
+do
+  let _ @ Str = kind
+  func ...args
+
 #[test]
 #[parametrize kind: [1]]
 def axis_type :kind@Str
@@ -41,3 +52,9 @@ def unsupplied :kind@Str :other@Int
 #[mistyped]
 def injected_type :extra@Str
   let _ @ Str = extra
+
+#[test]
+#[parametrize kind: ["a"]]
+#[consume]
+def consumed_kind :kind@Str
+  let _ @ Str = kind

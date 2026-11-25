@@ -71,7 +71,7 @@ impl Solver<'_> {
         let rules: [Rule<'_>; 13] = [
             Self::identical,
             Self::judgeable,
-            Self::inclusion,
+            Self::abstract_schema,
             Self::variables,
             Self::listed,
             Self::pack,
@@ -172,43 +172,60 @@ impl Solver<'_> {
         Ok(Continue(()))
     }
 
-    /// A schema that's only a required inclusion of a rigid or skolem relates to
-    /// a rigid or skolem as what it includes, so that `{...Ts}` is `Ts`. Other
-    /// inclusions keep their schema, which a call's arguments fill differently.
-    fn inclusion(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
-        let abstract_ = |head: &Head| -> Result<bool, Issue> {
-            Ok(match head {
-                Head::Skolem(_) => true,
-                Head::Structural(view) => self.rigid(view.ty)?.is_some(),
-                _ => false,
-            })
-        };
-        let included = |head: &Head| -> Result<Option<Term>, Issue> {
-            let Head::Structural(view) = head else {
-                return Ok(None);
+    /// A schema-kind rigid or skolem related to a schema relates as the schema
+    /// that only includes it, so that `{...X}` is `X` in one place:
+    /// [`Self::schemas`] pairs it with itself on the other side, relates it to
+    /// a sole opaque there, or relates it through its bound (see
+    /// [`Self::by_bounds`]). One without a bound has no lanes to flatten into,
+    /// and a rest-shaped schema relates each inclusion to itself whole, so
+    /// both are left to the rules that follow.
+    fn abstract_schema(&self, j: &Judgment) -> Result<ControlFlow<()>, Issue> {
+        if self.kind(j.actual) != Kind::Schema {
+            return Ok(Continue(()));
+        }
+        let bounded = |head: &Head| -> Result<bool, Issue> {
+            let of = match head {
+                Head::Skolem(id) => Abstract::Skolem(*id),
+                Head::Structural(view) if self.rigid(view.ty)?.is_some() => {
+                    Abstract::Rigid(view.ty)
+                }
+                _ => return Ok(false),
             };
-            let Type::Schema(items) = self.db.ty(view.ty) else {
-                return Ok(None);
-            };
-            let [
-                SchemaItem {
-                    multiplicity: Multiplicity::Required,
-                    element: Element::Include(inner),
-                },
-            ] = &items[..]
-            else {
-                return Ok(None);
-            };
-            let inner = view.child(*inner);
-            Ok(abstract_(&self.head(inner)?)?.then_some(inner))
+            Ok(self.abstract_bound(of).is_some())
         };
-        let (actual, expected) = match (included(&j.a)?, included(&j.b)?) {
-            (Some(a), None) if abstract_(&j.b)? => (a, j.expected),
-            (None, Some(b)) if abstract_(&j.a)? => (j.actual, b),
-            _ => return Ok(Continue(())),
+        let schema = |head: &Head| match head {
+            Head::Structural(view) => match self.db.ty(view.ty) {
+                Type::Schema(items) => Some((*view, items)),
+                _ => None,
+            },
+            _ => None,
         };
-        self.derive(j.obligation, actual, expected, Step::Item(0));
-        Ok(Break(()))
+        if bounded(&j.a)?
+            && let Some((bv, ys)) = schema(&j.b)
+            && !self.rest_shaped_schema(ys)
+        {
+            let Term::View(av) = self.included(j.actual) else {
+                unreachable!("a schema term is a view")
+            };
+            let Type::Schema(xs) = self.db.ty(av.ty) else {
+                unreachable!("an inclusion is a schema")
+            };
+            self.schemas(av, xs, bv, ys, j.expected, j.obligation)?;
+            return Ok(Break(()));
+        }
+        if bounded(&j.b)?
+            && let Some((av, xs)) = schema(&j.a)
+        {
+            let Term::View(bv) = self.included(j.expected) else {
+                unreachable!("a schema term is a view")
+            };
+            let Type::Schema(ys) = self.db.ty(bv.ty) else {
+                unreachable!("an inclusion is a schema")
+            };
+            self.schemas(av, xs, bv, ys, j.expected, j.obligation)?;
+            return Ok(Break(()));
+        }
+        Ok(Continue(()))
     }
 
     /// An inference variable on either side takes the other as a bound, and the
@@ -301,17 +318,30 @@ impl Solver<'_> {
             Head::Skolem(id) => Abstract::Skolem(*id),
             _ => return Ok(Continue(())),
         };
+        self.by_bounds(of, &j.b, j.expected, j.obligation)
+    }
+
+    /// Relate a rigid or skolem to `expected`, whose head is `b`, through its
+    /// bounds, as [`Self::bounded`] describes. [`Continue`] leaves a rigid
+    /// without a bound to a union's members.
+    pub(super) fn by_bounds(
+        &self,
+        of: Abstract,
+        b: &Head,
+        expected: Term,
+        obligation: ObligationId,
+    ) -> Result<ControlFlow<()>, Issue> {
         let mut bounds = self.abstract_bounds(of);
         if bounds.len() > 1 {
-            return self.below_any_bound(&bounds, j.expected).map(Break);
+            return self.below_any_bound(&bounds, expected).map(Break);
         }
         if let Some((bound, step)) = bounds.pop() {
-            self.derive(j.obligation, bound, j.expected, step);
+            self.derive(obligation, bound, expected, step);
             return Ok(Break(()));
         }
-        match &j.a {
-            Head::Skolem(_) => self.unbounded_skolem(&j.b).map(Break),
-            _ if matches!(&j.b, Head::Structural(view)
+        match of {
+            Abstract::Skolem(_) => self.unbounded_skolem(b).map(Break),
+            _ if matches!(b, Head::Structural(view)
                 if matches!(self.db.ty(view.ty), Type::Union(_))) =>
             {
                 Ok(Continue(()))

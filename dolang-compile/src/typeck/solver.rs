@@ -612,6 +612,9 @@ struct Variable {
     /// Whether it's a call's result, which what the call reaches gives (see
     /// [`Solver::infer_result`])
     result: bool,
+    /// Whether it's what a split leaves of a variable beside a rigid, which is
+    /// the least its bounds allow (see [`Solver::split`])
+    remainder: bool,
 }
 
 /// A variable's resolution, independent of accumulated bounds
@@ -776,6 +779,9 @@ pub(crate) struct Solver<'db> {
     /// by the obligation that inverted it and the mapping's lanes, so
     /// reprocessing reuses its variables
     inversions: RefCell<FxHashMap<(ObligationId, Rest), EnvironmentId>>,
+    /// The remainder variable each split created, by the obligation that split,
+    /// so reprocessing reuses it
+    splits: RefCell<FxHashMap<ObligationId, Term>>,
     skolems: MonoVec<Skolem>,
     scopes: MonoVec<Scope>,
     // Intern only the relation and its guard bit; processing state and
@@ -909,6 +915,7 @@ impl<'db> Solver<'db> {
             instantiations: RefCell::new(FxHashMap::default()),
             skolemizations: RefCell::new(FxHashMap::default()),
             inversions: RefCell::new(FxHashMap::default()),
+            splits: RefCell::new(FxHashMap::default()),
             skolems: MonoVec::new(),
             scopes,
             relations: MonoVec::new(),
@@ -1405,6 +1412,7 @@ impl<'db> Solver<'db> {
             scope: ScopeId(0),
             fresh: false,
             result: true,
+            remainder: false,
         }))
     }
 
@@ -1425,6 +1433,7 @@ impl<'db> Solver<'db> {
             scope,
             fresh: true,
             result: false,
+            remainder: false,
         }))
     }
 
@@ -1436,6 +1445,19 @@ impl<'db> Solver<'db> {
             scope,
             fresh,
             result: false,
+            remainder: false,
+        }))
+    }
+
+    /// A fresh schema variable for what a split leaves (see [`Self::split`])
+    fn fresh_remainder(&self, lanes: Rest, scope: ScopeId) -> Term {
+        Term::Infer(self.push_variable(Variable {
+            kind: Kind::Schema,
+            lanes,
+            scope,
+            fresh: false,
+            result: false,
+            remainder: true,
         }))
     }
 
@@ -2536,6 +2558,10 @@ impl<'db> Solver<'db> {
             self.assign(id, candidate);
             return Ok(candidate);
         }
+        // A split's remainder is the least its solved bounds allow, which is
+        // nothing where it has none
+        let remainder = self.variable(id).remainder;
+        let open = open || remainder;
         let unsolved = |term: Term| open && matches!(self.resolve(term), Ok(Term::Infer(_)));
         let lower = bounds
             .lower()
@@ -2543,6 +2569,15 @@ impl<'db> Solver<'db> {
             .map(|term| self.reify(term))
             .collect::<Result<Vec<_>, _>>()?;
         let kind = self.variable(id).kind;
+        if lower.is_empty() && remainder {
+            let empty = self.db.intern(Type::Schema(Vec::new().into()));
+            if !self.below_upper(id, empty)? {
+                return Err(Residual::Inference);
+            }
+            self.state_mut(id).defaulted.set(true);
+            self.assign(id, self.closed(empty));
+            return Ok(self.closed(empty));
+        }
         if lower.is_empty() {
             // An empty dict's schema is left to what the dict is in
             if kind != Kind::Schema || self.variable(id).fresh {
@@ -2579,6 +2614,11 @@ impl<'db> Solver<'db> {
             } else {
                 precise
             }
+        };
+        // A schema included whole is its items, as a solved remainder is
+        let candidate = match kind {
+            Kind::Schema => self.splice(candidate),
+            Kind::Type => candidate,
         };
         if !self.below_upper(id, candidate)? {
             return Err(Residual::Unsupported(

@@ -755,7 +755,7 @@ impl Solver<'_> {
 
     /// A solved rest with each required inclusion of a schema spliced in, through
     /// applications' arguments, as `{...Ts}` solved is `{...{A, B}}` for `{A, B}`
-    fn splice(&self, ty: TypeId) -> TypeId {
+    pub(super) fn splice(&self, ty: TypeId) -> TypeId {
         match self.db.ty(ty) {
             Type::Apply { base, args, kind } => {
                 let args = args

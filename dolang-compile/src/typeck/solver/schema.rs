@@ -111,6 +111,10 @@ enum Collected {
     Keyed(KeyedAtom),
     /// The dynamic schema, with the top-level item it came from
     Unknown(usize),
+    /// A schema term included whole, with the top-level item it came from. Only
+    /// a split rebuilds a side with these ([`Solver::split`]); nothing collects
+    /// them.
+    Include(Term, usize),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -238,8 +242,24 @@ impl Solver<'_> {
         self.flatten(av, xs, None, None, &mut a, 0)?;
         // A side that is only one variable or rigid is that opaque, as `{...X}`
         // is `X`, so it relates to the whole of the other side, itself reduced
-        // the same way
-        let (sole_a, sole_b) = (self.sole(&a), self.sole(&b));
+        // the same way. A side that is a bare rigid or skolem already stands
+        // here as `{...X}` ([`Self::abstract_schema`]), so its opaque relates
+        // by pairing instead: as itself, it would only come back.
+        let sides = self.relation(obligation).sides();
+        let bare = |side: Option<Term>| -> Result<bool, Issue> {
+            let Some(side) = side else {
+                return Ok(false);
+            };
+            Ok(match self.head(side)? {
+                Head::Skolem(_) => true,
+                Head::Structural(view) => self.rigid(view.ty)?.is_some(),
+                _ => false,
+            })
+        };
+        let (bare_a, bare_b) = (bare(sides.map(|(a, _)| a))?, bare(sides.map(|(_, b)| b))?);
+        let rigid = |sole: &(Term, usize)| !matches!(sole.0, Term::Infer(_));
+        let sole_a = self.sole(&a).filter(|sole| !(bare_a && rigid(sole)));
+        let sole_b = self.sole(&b).filter(|sole| !(bare_b && rigid(sole)));
         if let Some((actual, item)) = sole_a {
             let expected = sole_b.map_or(expected, |(expected, _)| expected);
             self.derive(obligation, actual, expected, Step::Item(item));
@@ -252,6 +272,23 @@ impl Solver<'_> {
             return Ok(());
         }
         let mut pairs = self.pair(&a, &b)?;
+        // A bare actual rigid or skolem the other side doesn't hold relates
+        // through its bounds, as it would anywhere else, rather than standing
+        // for a variable across from it
+        if bare_a
+            && pairs.is_empty()
+            && let Some((actual, _)) = sides
+        {
+            let of = match self.head(actual)? {
+                Head::Skolem(id) => Abstract::Skolem(id),
+                Head::Structural(view) => Abstract::Rigid(view.ty),
+                _ => unreachable!("a bare side is a rigid or skolem"),
+            };
+            let b = self.head(expected)?;
+            if self.by_bounds(of, &b, expected, obligation)?.is_break() {
+                return Ok(());
+            }
+        }
         self.cross(&a, &b, &mut pairs, obligation)?;
         // Mappings paired by pattern relate pack by pack
         for &(i, j) in &pairs {
@@ -305,6 +342,9 @@ impl Solver<'_> {
         if let Some((actual, expected, item)) = self.lone(&peeled_a, &peeled_b, &pairs) {
             derive_all(peeled);
             self.derive(obligation, actual, expected, Step::Item(item));
+            return Ok(());
+        }
+        if self.split(&a, &b, &pairs, obligation)? {
             return Ok(());
         }
         if a.opaque
@@ -431,7 +471,7 @@ impl Solver<'_> {
                     .map(|collected| match *collected {
                         Collected::Atom(atom) => atom.item,
                         Collected::Keyed(atom) => atom.item,
-                        Collected::Unknown(item) => item,
+                        Collected::Unknown(item) | Collected::Include(_, item) => item,
                     })
                     .collect(),
             )
@@ -613,6 +653,7 @@ impl Solver<'_> {
                     lo = 0;
                 }
                 Collected::Keyed(_) => unreachable!("a positional item"),
+                Collected::Include(..) => unreachable!("nothing collects an inclusion"),
             }
         }
         let leading: Vec<Atom> = atoms
@@ -894,6 +935,7 @@ impl Solver<'_> {
                     self.derive(obligation, atom.value, fits, Step::Item(atom.item));
                 }
                 Collected::Unknown(_) => {}
+                Collected::Include(..) => unreachable!("nothing collects an inclusion"),
             }
         }
         for (index, &pack) in packs.iter().enumerate() {
@@ -910,6 +952,7 @@ impl Solver<'_> {
                         ..atom
                     }),
                     Collected::Unknown(item) => Collected::Unknown(item),
+                    Collected::Include(..) => unreachable!("nothing collects an inclusion"),
                 })
                 .collect();
             let exact = self.synthetic(&items);
@@ -949,11 +992,26 @@ impl Solver<'_> {
                     multiplicity: Multiplicity::Required,
                     element: Element::Include(self.db.unknown_schema()),
                 },
+                Collected::Include(term, _) => SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Include(slot(term, Kind::Schema)),
+                },
             })
             .collect();
         let schema = self.db.intern(Type::Schema(items.into()));
         let environment = self.intern_environment(self.empty_environment(), group);
         self.view(schema, environment)
+    }
+
+    /// The schema that only includes `term`, `{...X}`, built around it
+    pub(super) fn included(&self, term: Term) -> Term {
+        self.synthetic(&[Collected::Include(term, 0)])
+    }
+
+    /// Whether a schema is a rest shape, which relates each inclusion to itself
+    /// whole ([`Self::rest_shaped`])
+    pub(super) fn rest_shaped_schema(&self, ys: &[SchemaItem]) -> bool {
+        rest_shape(ys).is_some()
     }
 
     /// Include a schema in one whose items are all repeated: at most one
@@ -1991,6 +2049,148 @@ impl Solver<'_> {
             }
         }
         Ok(())
+    }
+
+    /// Split a variable that may hold a keyed rigid across from it. Where one
+    /// side has a single unpaired keyed rigid, whatever other unpaired opaques
+    /// are beside it, and the other side's only unpaired opaque is a variable
+    /// that admits keyed items, the variable is the rigid beside a fresh
+    /// remainder: `{...R, ...?Rem}`. The rest of the two sides then relates
+    /// with the remainder in the variable's place and without the rigid. What
+    /// the remainder takes is only what the variable must hold besides the
+    /// rigid, so it defaults to the least it allows (see
+    /// [`Solver::fresh_remainder`]). `false` where there's nothing to split, or
+    /// a side holds a mapping or a call's rest.
+    fn split(
+        &self,
+        a: &Shape,
+        b: &Shape,
+        pairs: &[(usize, usize)],
+        obligation: ObligationId,
+    ) -> Result<bool, Issue> {
+        let unpaired = |shape: &Shape, actual: bool| -> Vec<usize> {
+            (0..shape.opaque.len())
+                .filter(|&i| {
+                    !pairs
+                        .iter()
+                        .any(|&(x, y)| if actual { x == i } else { y == i })
+                })
+                .collect()
+        };
+        let (unpaired_a, unpaired_b) = (unpaired(a, true), unpaired(b, false));
+        let rigid = |shape: &Shape, unpaired: &[usize]| {
+            let mut rigids = unpaired.iter().copied().filter(|&i| {
+                matches!(shape.opaque[i].opacity, Opacity::Rigid(_))
+                    && shape.opaque[i].lanes == Rest::Keyed
+            });
+            match (rigids.next(), rigids.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        };
+        let holder = |shape: &Shape, unpaired: &[usize]| match *unpaired {
+            [only] => match shape.opaque[only].opacity {
+                Opacity::Infer(_) if shape.opaque[only].keyed() => Some(only),
+                _ => None,
+            },
+            _ => None,
+        };
+        // Whether the rigid is on the actual side, its index, and the variable's
+        let (actual_rigid, r, v) = match (
+            rigid(a, &unpaired_a),
+            holder(b, &unpaired_b),
+            rigid(b, &unpaired_b),
+            holder(a, &unpaired_a),
+        ) {
+            (Some(r), Some(v), _, _) => (true, r, v),
+            (_, _, Some(r), Some(v)) => (false, r, v),
+            _ => return Ok(false),
+        };
+        let (rigid_shape, var_shape) = if actual_rigid { (a, b) } else { (b, a) };
+        let Opacity::Rigid(rigid) = rigid_shape.opaque[r].opacity else {
+            unreachable!("a split's rigid is rigid")
+        };
+        let var = var_shape.opaque[v];
+        let Opacity::Infer(id) = var.opacity else {
+            unreachable!("a split's holder is a variable")
+        };
+        let variable = Term::Infer(id);
+        let rest = match self.split_of(obligation) {
+            Some(rest) => rest,
+            None => {
+                let scope = self.scope(&[rigid, variable])?;
+                let rest = self.fresh_remainder(var.lanes, scope);
+                self.record_split(obligation, rest);
+                rest
+            }
+        };
+        let (Some(reduced_a), Some(reduced_b)) = (
+            self.split_side(
+                a,
+                actual_rigid.then_some(r),
+                (!actual_rigid).then_some((v, rest)),
+            ),
+            self.split_side(
+                b,
+                (!actual_rigid).then_some(r),
+                actual_rigid.then_some((v, rest)),
+            ),
+        ) else {
+            return Ok(false);
+        };
+        let item = rigid_shape.opaque[r].item;
+        let whole = self.synthetic(&[
+            Collected::Include(rigid, item),
+            Collected::Include(rest, item),
+        ]);
+        #[cfg(feature = "debug")]
+        trace!(
+            self,
+            "split {} around {}: {} <: {}",
+            self.render(variable),
+            self.render(rigid),
+            self.render(reduced_a),
+            self.render(reduced_b)
+        );
+        if actual_rigid {
+            self.derive(obligation, whole, variable, Step::Item(item));
+        } else {
+            self.derive(obligation, variable, whole, Step::Item(item));
+        }
+        self.derive(obligation, reduced_a, reduced_b, Step::Item(item));
+        Ok(true)
+    }
+
+    /// A shape as a schema term, without the opaque at `skip` and with the
+    /// opaque at `replace` swapped for its term. `None` where it holds a
+    /// mapping or a call's rest.
+    fn split_side(
+        &self,
+        shape: &Shape,
+        skip: Option<usize>,
+        replace: Option<(usize, Term)>,
+    ) -> Option<Term> {
+        let mut items = Vec::new();
+        for slot in &shape.positional {
+            items.push(match *slot {
+                Slot::Atom(atom) => Collected::Atom(atom),
+                Slot::Opaque(index) if Some(index) == skip => continue,
+                Slot::Opaque(index) => {
+                    let opaque = shape.opaque[index];
+                    match (replace, opaque.opacity) {
+                        (Some((at, term)), _) if at == index => {
+                            Collected::Include(term, opaque.item)
+                        }
+                        (_, Opacity::Rigid(term)) => Collected::Include(term, opaque.item),
+                        (_, Opacity::Infer(id)) => Collected::Include(Term::Infer(id), opaque.item),
+                        (_, Opacity::Unknown) => Collected::Unknown(opaque.item),
+                        (_, Opacity::Mapped(_) | Opacity::Rest(_)) => return None,
+                    }
+                }
+            });
+        }
+        items.extend(shape.keyed.iter().map(|&atom| Collected::Keyed(atom)));
+        Some(self.synthetic(&items))
     }
 
     /// Relate the positional lanes, segment by segment between paired opaques
