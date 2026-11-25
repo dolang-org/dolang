@@ -1529,8 +1529,9 @@ impl<'db> Solver<'db> {
     }
 
     /// [`Self::closed_alternatives`] of a receiver, a member use of which is made
-    /// of each alternative. A projection's use is made of what it widens to (see
-    /// [`Self::widened_projection`]), as a rigid's is of its bound, so only one
+    /// of each alternative. A projection's use is made of what it evaluates or
+    /// widens to (see
+    /// [`Self::actual_member`]), as a rigid's is of its bound, so only one
     /// that can't be widened is `None`.
     pub(crate) fn member_alternatives(&self, ty: TypeId) -> Option<Vec<Option<TypeId>>> {
         self.reified_alternatives(ty, true)
@@ -1573,11 +1574,11 @@ impl<'db> Solver<'db> {
         if members.is_empty() {
             return false;
         }
-        for member in members.iter() {
+        for (index, member) in members.iter().enumerate() {
             let alternative = match *member {
                 UnionMember::Type(ty) => Some(view.child(ty)),
-                _ if widen => match self.widened_projection(view, *member) {
-                    Ok(Some((widened, _))) => Some(widened),
+                _ if widen => match self.actual_member(view, *member, index) {
+                    Ok(Some((taken, _))) => Some(taken),
                     Ok(None) | Err(_) => None,
                 },
                 _ => None,
@@ -2390,8 +2391,8 @@ impl<'db> Solver<'db> {
     /// term every lower bound is, if it holds no unsolved variable. Skolems
     /// aren't joined, since a join would need their canonical forms.
     fn open_candidate(&self, id: InferVarId) -> Result<Option<Term>, Residual> {
-        let bounds = self.bounds(id);
-        let mut lower = bounds.lower();
+        let lower = self.seen_lower(id)?;
+        let mut lower = lower.into_iter();
         let Some(candidate) = lower.next() else {
             return Ok(None);
         };
@@ -2403,6 +2404,31 @@ impl<'db> Solver<'db> {
         let mut leaves = FxHashSet::default();
         self.solved_leaves(candidate, &mut leaves)?;
         Ok((!leaves.iter().any(|leaf| matches!(leaf, Term::Infer(_)))).then_some(candidate))
+    }
+
+    /// A variable's lower bounds, apart from those holding a skolem it can't
+    /// see. Such a bound was recorded before a variable in it was solved to the
+    /// skolem, and its judgment relates it to the variable's solution instead.
+    fn seen_lower(&self, id: InferVarId) -> Result<Vec<Term>, Residual> {
+        let mut seen = Vec::new();
+        for term in self.bounds(id).lower() {
+            if !self.escapes(id, term)? {
+                seen.push(term);
+            }
+        }
+        Ok(seen)
+    }
+
+    /// Whether a term holds a skolem, through assignments, that a variable's
+    /// scope can't see
+    fn escapes(&self, id: InferVarId, term: Term) -> Result<bool, Residual> {
+        let scope = self.variable(id).scope;
+        let mut leaves = FxHashSet::default();
+        self.solved_leaves(term, &mut leaves)?;
+        Ok(leaves.iter().any(|leaf| {
+            matches!(*leaf, Term::Skolem(skolem)
+                if !self.visible(scope, self.skolem(skolem).scope))
+        }))
     }
 
     /// Whether a term holds a skolem, through assignments
@@ -2545,9 +2571,10 @@ impl<'db> Solver<'db> {
             return Ok(term);
         }
         let bounds = self.bounds(id);
-        if bounds
-            .lower()
-            .map(|term| self.skolemic(term))
+        let seen = self.seen_lower(id)?;
+        if seen
+            .iter()
+            .map(|&term| self.skolemic(term))
             .collect::<Result<Vec<_>, _>>()?
             .contains(&true)
         {
@@ -2563,8 +2590,8 @@ impl<'db> Solver<'db> {
         let remainder = self.variable(id).remainder;
         let open = open || remainder;
         let unsolved = |term: Term| open && matches!(self.resolve(term), Ok(Term::Infer(_)));
-        let lower = bounds
-            .lower()
+        let lower = seen
+            .into_iter()
             .filter(|&term| !unsolved(term))
             .map(|term| self.reify(term))
             .collect::<Result<Vec<_>, _>>()?;
@@ -3571,177 +3598,6 @@ impl<'db> Solver<'db> {
         Ok((args, environment))
     }
 
-    /// A lone `Keys` projection in `view` evaluated by the shape of its schema,
-    /// whose items' types may be unsolved: `Int` for a schema of positions only,
-    /// or the closed keys of one with keyed items only. `None` if it has both,
-    /// as a key may then be an index, or the shape isn't known. A rigid schema
-    /// has its bound's shape, so it's `Int` if its bound is of positions only;
-    /// a rigid narrower than a keyed bound may have fewer keys.
-    fn keys_by_shape(&self, view: TypeView) -> Result<Option<TypeId>, Residual> {
-        let Type::Union(members) = self.db.ty(view.ty) else {
-            return Ok(None);
-        };
-        let &[UnionMember::Keys(schema)] = &members[..] else {
-            return Ok(None);
-        };
-        let mut positions = false;
-        let mut rigid = false;
-        let mut keys = Vec::new();
-        let mut pending = vec![view.child(schema)];
-        while let Some(schema) = pending.pop() {
-            self.spend()?;
-            let Term::View(schema) = self.resolve(schema)? else {
-                return Ok(None);
-            };
-            if self.rigid(schema.ty)?.is_some() {
-                let Some(&(bound, _)) = self.rigid_bounds(schema.ty).first() else {
-                    return Ok(None);
-                };
-                rigid = true;
-                pending.push(self.closed(bound));
-                continue;
-            }
-            let Type::Schema(items) = self.db.ty(schema.ty) else {
-                return Ok(None);
-            };
-            for item in items.iter() {
-                match item.element {
-                    Element::Positional(_) => positions = true,
-                    Element::Keyed { key, .. } => match self.reify(schema.child(key)) {
-                        Ok(key) => keys.push(UnionMember::Type(key)),
-                        Err(_) => return Ok(None),
-                    },
-                    Element::Include(inner) => pending.push(schema.child(inner)),
-                }
-            }
-        }
-        Ok(match (positions, keys.is_empty()) {
-            (true, true) => self.db.intrinsic(Intrinsic::Int),
-            (false, _) if !rigid => Some(self.db.intern(Type::Union(keys.into()))),
-            _ => None,
-        })
-    }
-
-    /// A lone projection in `view` evaluated by the shape of its schema alone,
-    /// as [`Self::keys_by_shape`] and [`Self::item_by_shape`] do
-    fn by_shape(&self, view: TypeView) -> Result<Option<Term>, Residual> {
-        if let Some(keys) = self.keys_by_shape(view)? {
-            return Ok(Some(self.closed(keys)));
-        }
-        self.item_by_shape(view)
-    }
-
-    /// A variable's bound with a projection that its variables or skolems
-    /// leave unevaluated evaluated by its schema's shape, if it can be, so the
-    /// bound holds no variable or skolem the projection doesn't depend on. A
-    /// skolem, or one a variable is later solved to, would otherwise reach the
-    /// bounded variable, which may not see it. A `lower` bound may widen, so an
-    /// item by a skolem index is any of its schema's positions. A variable key
-    /// doesn't widen, as its solution may select a precise item.
-    pub(super) fn shape_evaluated(&self, term: Term, lower: bool) -> Result<Term, Residual> {
-        let Term::View(view) = self.resolve(term)? else {
-            return Ok(term);
-        };
-        let Type::Union(members) = self.db.ty(view.ty) else {
-            return Ok(term);
-        };
-        if view.environment == self.empty_environment()
-            || !members.iter().any(|member| member.projected().is_some())
-        {
-            return Ok(term);
-        }
-        if let Err(Residual::Inference | Residual::Escape) = self.reify(term)
-            && let Some(evaluated) = self.by_shape(view)?
-        {
-            return Ok(evaluated);
-        }
-        if lower
-            && let &[UnionMember::IndexItem(schema, key)] = &members[..]
-            && let key = view.child(key)
-            && let Term::Skolem(_) = self.resolve(key)?
-            && let Some(int) = self.db.intrinsic(Intrinsic::Int)
-            && self.index_key(key)?
-        {
-            let widened = self.db.intern(Type::Union(
-                vec![UnionMember::IndexItem(schema, int)].into(),
-            ));
-            if let Ok(widened) = self.reify(view.child(widened)) {
-                return Ok(self.closed(widened));
-            }
-        }
-        Ok(term)
-    }
-
-    /// Whether a key is shown to be an index, an `Int`: a skolem or an unsolved
-    /// variable by one of its (upper) bounds, and a `Keys` projection by its
-    /// schema's shape if its items' types are unsolved
-    pub(super) fn index_key(&self, key: Term) -> Result<bool, Residual> {
-        self.spend()?;
-        let Some(int) = self.db.intrinsic(Intrinsic::Int) else {
-            return Ok(false);
-        };
-        match self.resolve(key)? {
-            Term::Skolem(id) => {
-                for (bound, _) in self.abstract_bounds(Abstract::Skolem(id)) {
-                    if self.index_key(bound)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-            Term::View(view) => {
-                let key = match self.reify(Term::View(view)) {
-                    Ok(key) => key,
-                    Err(Residual::Inference) => match self.keys_by_shape(view)? {
-                        Some(key) => key,
-                        None => return Ok(false),
-                    },
-                    Err(_) => return Ok(false),
-                };
-                Ok(self.probe(key, int)? == Status::Proven)
-            }
-            // Every solution is below each upper bound
-            Term::Infer(id) => {
-                for bound in self.bounds(id).upper() {
-                    if self.index_key(bound)? {
-                        return Ok(true);
-                    }
-                }
-                Ok(false)
-            }
-        }
-    }
-
-    /// A lone `IndexItem` projection in `view` evaluated by the shape of its
-    /// schema, whose item type may be unsolved: a schema of one repeated
-    /// position gives that position's type for every index.
-    fn item_by_shape(&self, view: TypeView) -> Result<Option<Term>, Residual> {
-        let Type::Union(members) = self.db.ty(view.ty) else {
-            return Ok(None);
-        };
-        let &[UnionMember::IndexItem(schema, key)] = &members[..] else {
-            return Ok(None);
-        };
-        if !self.index_key(view.child(key))? {
-            return Ok(None);
-        }
-        let Term::View(schema) = self.resolve(view.child(schema))? else {
-            return Ok(None);
-        };
-        let Type::Schema(items) = self.db.ty(schema.ty) else {
-            return Ok(None);
-        };
-        Ok(match &items[..] {
-            [
-                SchemaItem {
-                    multiplicity: Multiplicity::Repeated,
-                    element: Element::Positional(item),
-                },
-            ] => Some(schema.child(*item)),
-            _ => None,
-        })
-    }
-
     /// Expose the head form of a solver term. Well-formedness rejects cycles of
     /// transparent declarations, but this doesn't rely on it: exposing the same
     /// declaration or application twice is recursive.
@@ -3859,116 +3715,19 @@ impl<'db> Solver<'db> {
                 }
                 // A fresh literal relates as its regular twin
                 Type::Fresh(_) => term = self.closed(self.db.regular(view.ty)),
-                // A projection is evaluated once its schema is substituted
-                Type::Union(ref members)
-                    if view.environment != self.empty_environment()
-                        && members.iter().any(|member| member.projected().is_some()) =>
-                {
-                    match self.reify(term) {
-                        Ok(reified) => term = self.closed(reified),
-                        // A skolem's projection is evaluated only as an item
-                        // projection by a skolem key; otherwise it relates only
-                        // as itself
-                        Err(Residual::Escape) => match self.evaluate_skolem_items(view)? {
-                            Some(evaluated) => term = self.closed(evaluated),
-                            None => match self.by_shape(view)? {
-                                Some(evaluated) => term = evaluated,
-                                None => return Ok(Head::Structural(view)),
-                            },
-                        },
-                        // `Keys`, and an item of a homogeneous schema, may be
-                        // known by its schema's shape before its items' types are
-                        Err(Residual::Inference) => match self.by_shape(view)? {
-                            Some(evaluated) => term = evaluated,
-                            None => return Err(Residual::Inference.into()),
-                        },
-                        Err(residual) => return Err(residual.into()),
+                // A projection, restriction or member schema is evaluated as
+                // far as it can be; one that can't relates only as itself
+                _ if self.projective(view.ty) => match self.evaluate(view, Approximation::Exact)? {
+                    Evaluation::Exact(evaluated) => term = evaluated,
+                    Evaluation::Stuck { waiting: true } => return Err(Residual::Inference.into()),
+                    Evaluation::Stuck { waiting: false } | Evaluation::Upper(..) => {
+                        return Ok(Head::Structural(view));
                     }
-                }
-                // A restriction is evaluated once its schema and key are
-                // substituted
-                Type::Restricted { .. } if view.environment != self.empty_environment() => {
-                    match self.reify(term) {
-                        Ok(reified) => term = self.closed(reified),
-                        // A skolem key is known only by its bounds
-                        Err(Residual::Escape) => match self.evaluate_skolem_restriction(view)? {
-                            Some(schema) => term = self.closed(schema),
-                            None => return Ok(Head::Structural(view)),
-                        },
-                        Err(residual) => return Err(residual.into()),
-                    }
-                }
-                // A restriction that holds is its schema. One that can't be
-                // evaluated relates only as itself.
-                Type::Restricted {
-                    schema,
-                    restriction,
-                } => match self.restricted(schema, restriction) {
-                    Ok(schema) => term = self.closed(schema),
-                    Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
-                    Err(issue) => return Err(issue),
                 },
-                // A member schema is evaluated once its target is substituted. A
-                // rigid or skolem target's relates only as itself.
-                Type::Fields { .. } if view.environment != self.empty_environment() => {
-                    match self.reify(term) {
-                        Ok(reified) => term = self.closed(reified),
-                        Err(Residual::Escape) => return Ok(Head::Structural(view)),
-                        Err(residual) => return Err(residual.into()),
-                    }
-                }
-                Type::Fields { target, access } => match self.fields(target, access) {
-                    Ok(schema) => term = self.closed(schema),
-                    Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
-                    Err(issue) => return Err(issue),
-                },
-                Type::Union(ref members)
-                    if members.iter().any(|member| member.projected().is_some()) =>
-                {
-                    // Interning evaluates a projection only of a schema written
-                    // out, so one of a transparent declaration is evaluated once
-                    // exposed
-                    if let Some(exposed) = self.exposed_projections(members)? {
-                        term = self.closed(exposed);
-                        continue;
-                    }
-                    // A rigid schema's keys are known by its bound's shape
-                    if let Some(keys) = self.keys_by_shape(view)? {
-                        term = self.closed(keys);
-                        continue;
-                    }
-                    // An item projection takes the solver to select by its key.
-                    // One that can't be evaluated is left for the rules of unions.
-                    match self.evaluate_items(view.ty) {
-                        Ok(Some(evaluated)) => term = self.closed(evaluated),
-                        Ok(None) | Err(Issue::Residual(_)) => return Ok(Head::Structural(view)),
-                        Err(issue) => return Err(issue),
-                    }
-                }
                 _ => return Ok(Head::Structural(view)),
             }
         }
         unreachable!()
-    }
-
-    /// A closed union with each projection's schema exposed (see
-    /// [`Self::exposed_schema`]), or `None` if none has a transparent
-    /// declaration to expose
-    fn exposed_projections(&self, members: &[UnionMember]) -> Result<Option<TypeId>, Issue> {
-        let mut changed = false;
-        let mut exposed = Vec::with_capacity(members.len());
-        for &member in members {
-            match member.projected().map(|schema| self.exposed_schema(schema)) {
-                Some(Ok(Some(schema))) => {
-                    changed = true;
-                    exposed.push(member.with(schema));
-                }
-                // A projection whose schema can't be exposed stays as it is
-                Some(Ok(None) | Err(Issue::Residual(_))) | None => exposed.push(member),
-                Some(Err(issue)) => return Err(issue),
-            }
-        }
-        Ok(changed.then(|| self.db.intern(Type::Union(exposed.into()))))
     }
 
     /// A closed schema with each transparent declaration and restriction it is
@@ -4805,6 +4564,7 @@ mod lattice;
 mod member;
 mod narrow;
 mod nest;
+mod projection;
 mod reduce;
 mod schema;
 mod unpack;
@@ -4817,6 +4577,7 @@ pub(crate) use member::{Access, Found, FoundKind, Lookup, Signatures};
 pub(crate) use narrow::Target as NarrowTarget;
 pub(crate) use nest::{Gas, Verdicts};
 use nest::{Nesting, Parent, Revisit};
+use projection::{Approximation, Evaluation};
 pub(crate) use unpack::{Bound, PatternShape, Presence, Reason, Unpacked};
 
 #[cfg(test)]

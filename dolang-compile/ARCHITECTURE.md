@@ -244,10 +244,18 @@ does. With only one such member reached, no other member collects the values its
 arguments reject, so that rejection is final. A literal's or function's class is
 fixed, so it is refuted outright. `Int`, `Str` and `Sym` have infinitely many
 literals, which a class's literals, finitely many, can't cover. A function
-relates to a literal through `Func`. A projection is exposed by reifying it once
-its schema's environment is substituted, which waits on the schema's variables.
-One of a rigid's schema that is left on the left reduces to the same projection
-of the rigid's bound. An item projection is evaluated once its schema and key
+relates to a literal through `Func`. A projection, restriction or member schema
+is evaluated in one place (`solver/projection.rs`), with one of three results.
+It is exact when the projection is reified once its schema's environment is
+substituted, which waits on the schema's variables, or when a skolem key's
+bounds or the schema's shape alone determine it. It is an upper approximation,
+which only the actual side takes, when a rigid schema widens to its bound or a
+rigid or skolem key widens toward its bound. A variable key never widens, since
+its solution may select a precise item. Otherwise it is stuck, and relates only
+as itself through the rules for projections. A variable's bound is evaluated
+exactly when it is recorded. A lower bound holding a skolem that the variable
+can't see is promoted to what its upper approximation gives, and defaulting
+leaves out such a bound. An item projection is evaluated once its schema and key
 are closed, by exposing or reifying it (`solver/item.rs`). The key selects items
 of the schema's keyed view: each member of the key goes to the literal item it
 is, or else to the literal items inside it and the domains that own it, as an
