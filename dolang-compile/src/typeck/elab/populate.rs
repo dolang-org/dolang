@@ -1102,8 +1102,16 @@ impl<'t, 'u> Populate<'t, 'u> {
         let default = written.default?;
         match self.defaults.get(&binder) {
             Some(Some(ty)) => return Some(*ty),
-            // A default that refers to its own binder through an application
-            Some(None) => return Some(self.unknown(self.kind(binder))),
+            // A default that refers to its own binder through an application, such
+            // as `:Rest @ Foo[S] = Foo[S]`, whose omitted `Rest` is this default
+            // again. Tying the knot is #1756; until then, it is an error.
+            Some(None) => {
+                let unit = tables.decl(binder.decl).unit;
+                let span = tables.site(default).ty.span();
+                let name = tables.name(unit, written.name).to_owned();
+                self.report(unit, CyclicDefault { span, name });
+                return Some(self.unknown(self.kind(binder)));
+            }
             None => {}
         }
         self.defaults.insert(binder, None);
@@ -1774,6 +1782,30 @@ impl Report for MissingTypeArgs {
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(w, "missing type arguments for {}", self.names)
+    }
+
+    fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A binder default that reaches itself through an omitted type argument
+struct CyclicDefault {
+    span: Span,
+    name: String,
+}
+
+impl Report for CyclicDefault {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(
+            w,
+            "the default of `{}` refers to itself through an omitted type argument",
+            self.name
+        )
     }
 
     fn span(&self) -> Span {

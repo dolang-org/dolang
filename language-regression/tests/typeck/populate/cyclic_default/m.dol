@@ -1,0 +1,19 @@
+# A binder default that reaches itself through an omitted type argument is an
+# error rather than a silent `Unknown`. A recursive alias ties the knot by hand.
+
+pub @class Nest[T, :Inner @ Nest[T] = Nest[T]]
+# error: the default of `Inner` refers to itself through an omitted type argument
+#   --> m.dol:LL:LL
+#    |
+# LL | pub @class Nest[T, :Inner @ Nest[T] = Nest[T]]
+#    |                                       ^^^^^^^
+  pub def inner self -> Inner
+
+pub @let TiedInner[T] = Tied[T, Inner: TiedInner[T]]
+pub @class Tied[T, :Inner @ TiedInner[T] = TiedInner[T]]
+  pub def inner self -> Inner
+
+pub def tied t @ Tied[Int]
+  let inner = t.inner().inner()
+  #   ^~~~~: flow m.TiedInner[std.Int]
+  inner
