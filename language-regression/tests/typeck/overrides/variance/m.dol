@@ -18,10 +18,11 @@ pub class Loose: Source[Int]
     # error: `get` does not match `Source.get`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def get _self -> T
+    #    |                        - as `Source.get` declares it
+    # ...
     # LL |   pub def get _self -> Num
-    #    |           ^^^
-    #    |
-    #    = note: return type: `m.Num` here, but `m.Int` in `Source.get`
+    #    |           ^^^          --- return type: `m.Num` here, but `m.Int` in `Source.get`
     ...
 
 # Contravariant: an override may accept more
@@ -38,10 +39,11 @@ pub class Picky: Drain[Num]
     # error: `put` does not match `Drain.put`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def put _self x @ T
+    #    |                         - as `Drain.put` declares it
+    # ...
     # LL |   pub def put _self x @ Int
-    #    |           ^^^
-    #    |
-    #    = note: parameter `x`: `m.Int` here, but `m.Num` in `Drain.put`
+    #    |           ^^^           --- parameter `x`: `m.Int` here, but `m.Num` in `Drain.put`
     ...
 
 # Invariant: a field keeps its type exactly

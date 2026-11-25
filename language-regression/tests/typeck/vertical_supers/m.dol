@@ -38,8 +38,9 @@ do
     # error: `get` does not match `Read.get`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def get self -> T
+    #    |                       - as `Read.get` declares it
+    # ...
     # LL |   pub def get _self -> Other
-    #    |           ^^^
-    #    |
-    #    = note: return type: `m.Other` here, but `m.Num` in `Read.get`
+    #    |           ^^^          ----- return type: `m.Other` here, but `m.Num` in `Read.get`
     ...

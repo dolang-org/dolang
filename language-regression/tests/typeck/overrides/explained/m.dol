@@ -25,10 +25,11 @@ pub class Positional: Base
     # error: `pos` does not match `Base.pos`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def pos _self a @ Int -> Int
+    #    |                         --- as `Base.pos` declares it
+    # ...
     # LL |   pub def pos _self b @ Str -> Int
-    #    |           ^^^
-    #    |
-    #    = note: parameter `b`: `std.Str` here, but `m.Int` in `Base.pos`
+    #    |           ^^^           --- parameter `b`: `std.Str` here, but `m.Int` in `Base.pos`
     ...
 
 pub class Keyed: Base
@@ -36,10 +37,11 @@ pub class Keyed: Base
     # error: `keyed` does not match `Base.keyed`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def keyed _self :k @ Int -> Int
+    #    |                            --- as `Base.keyed` declares it
+    # ...
     # LL |   pub def keyed _self :k @ Str -> Int
-    #    |           ^^^^^
-    #    |
-    #    = note: parameter `k`: `std.Str` here, but `m.Int` in `Base.keyed`
+    #    |           ^^^^^            --- parameter `k`: `std.Str` here, but `m.Int` in `Base.keyed`
     ...
 
 pub class Dropped: Base
@@ -47,10 +49,11 @@ pub class Dropped: Base
     # error: `keyed` does not match `Base.keyed`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def keyed _self :k @ Int -> Int
+    #    |                        - `Base.keyed` passes `k: m.Int`, which `keyed` doesn't take
+    # ...
     # LL |   pub def keyed _self -> Int
     #    |           ^^^^^
-    #    |
-    #    = note: `Base.keyed` passes `k: m.Int`, which `keyed` doesn't take
     ...
 
 pub class AddedKey: Base
@@ -59,9 +62,7 @@ pub class AddedKey: Base
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def keyed _self :k @ Int :j @ Int -> Int
-    #    |           ^^^^^
-    #    |
-    #    = note: `keyed` requires `j: m.Int`, which `Base.keyed` may not pass
+    #    |           ^^^^^                 - `keyed` requires `j: m.Int`, which `Base.keyed` may not pass
     ...
 
 # A parameter with a default is one the override may add
@@ -75,9 +76,7 @@ pub class ExtraPositional: Base
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def pos _self a @ Int b @ Int -> Int
-    #    |           ^^^
-    #    |
-    #    = note: `pos` requires positional `m.Int`, which `Base.pos` may not pass
+    #    |           ^^^               - `pos` requires positional `m.Int`, which `Base.pos` may not pass
     ...
 
 pub class RemovedRest: Base
@@ -85,10 +84,11 @@ pub class RemovedRest: Base
     # error: `rested` does not match `Base.rested`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def rested _self *xs @ Int -> Int
+    #    |                         -- `Base.rested` passes positional `*m.Int`, which `rested` doesn't take
+    # ...
     # LL |   pub def rested _self -> Int
     #    |           ^^^^^^
-    #    |
-    #    = note: `Base.rested` passes positional `*m.Int`, which `rested` doesn't take
     ...
 
 # The part of the signature is named even where what fails lies deeper in it
@@ -97,10 +97,11 @@ pub class Nested: Base
     # error: `nested` does not match `Base.nested`
     #   --> m.dol:LL:LL
     #    |
+    # LL |   pub def nested _self a @ Array[Int] -> Int
+    #    |                            ---------- as `Base.nested` declares it
+    # ...
     # LL |   pub def nested _self a @ Array[Num] -> Int
-    #    |           ^^^^^^
-    #    |
-    #    = note: parameter `a`: `std.Array[m.Num]` here, but `std.Array[m.Int]` in `Base.nested`
+    #    |           ^^^^^^           ---------- parameter `a`: `std.Array[m.Num]` here, but `std.Array[m.Int]` in `Base.nested`
     ...
 
 pub class Bound: Base
@@ -113,9 +114,7 @@ pub class Narrowed: Base
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def bound[U @ Str] _self a @ U -> U
-    #    |           ^^^^^
-    #    |
-    #    = note: binder `U`: bound `std.Str` here, but `Base.bound` passes `m.Int`
+    #    |           ^^^^^     --- binder `U`: bound `std.Str` here, but `Base.bound` passes `m.Int`
     ...
 
 # A member a class inherits is explained where its supertype is named
@@ -128,7 +127,11 @@ pub class Inherits: Mid Base
 # error: `pos` from `Mid` does not match `Base.pos`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def pos _self a @ Int -> Int
+#    |                                --- as `Base.pos` declares it
+# ...
+# LL |   pub def pos _self a @ Num -> Num
+#    |                                --- return type: `m.Num` here, but `m.Int` in `Base.pos`
+# ...
 # LL | pub class Inherits: Mid Base
 #    |                         ^^^^
-#    |
-#    = note: return type: `m.Num` here, but `m.Int` in `Base.pos`

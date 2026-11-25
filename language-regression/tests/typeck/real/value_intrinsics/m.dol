@@ -57,9 +57,12 @@ pub class Narrow
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def (eq) _self _other @ Narrow -> Bool
-    #    |            ^^
+    #    |            ^^                 ------ parameter `_other`: `m.Narrow` here, but `Value` in `Value.(eq)`
     #    |
-    #    = note: parameter `_other`: `m.Narrow` here, but `Value` in `Value.(eq)`
+    #   ::: dolang-shell-modules/stub/std.dol:LL:LL
+    #    |
+    # LL |   pub def (eq) self other @ Value -> Bool
+    #    |                             ----- as `Value.(eq)` declares it
     true
 
 # A narrower comparison is an overload beside the general one

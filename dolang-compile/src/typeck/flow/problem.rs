@@ -310,6 +310,7 @@ impl Report for Problem {
                 let mut annotations = problem.annotations();
                 annotations.extend(overloads.iter().map(|&span| Annotation {
                     kind: AnnotationKind::Context,
+                    unit: None,
                     span,
                     message: "checked under this overload".to_owned(),
                 }));
@@ -319,12 +320,14 @@ impl Report for Problem {
                 .iter()
                 .map(|&span| Annotation {
                     kind: AnnotationKind::Context,
+                    unit: None,
                     span,
                     message: "written here".to_owned(),
                 })
                 .collect(),
             &Problem::Unreachable { span, call } if span != call => vec![Annotation {
                 kind: AnnotationKind::Context,
+                unit: None,
                 span: call,
                 message: "any code after this call is unreachable".to_owned(),
             }],

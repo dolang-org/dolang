@@ -19,14 +19,14 @@
 use rustc_hash::FxHashMap;
 
 use super::{
-    DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Scoped, Tables,
+    Decl, DeclNode, Designated, Diag, Hidden, IncoherentClasses, Nonconforming, Scoped, Tables,
     TrivialProtocol, Uncallable, UnitDiag, Unresolved, sig,
-    surface::{Class, Member, MemberScope, ParamKind},
+    surface::{Class, Member, MemberScope, Param, ParamKind, SiteId},
 };
 use crate::{
     RestKind,
     ast::SpecialMethod,
-    diag::Span,
+    diag::{INVALID_SPAN, Span},
     typeck::{
         solver::{
             Contradicted, Contradiction, Found, FoundKind, Gas, Inheritance, Issue, Lookup, Masked,
@@ -103,6 +103,15 @@ struct Matched {
     /// Whether each judgment relates the provided member to another of the
     /// required member's overloads
     overloads: bool,
+}
+
+/// What of a member fails to match, and where the provided and required members
+/// declare that part of them, in whichever units
+#[derive(PartialEq)]
+struct Explained {
+    note: String,
+    provided: Option<UnitSpan>,
+    required: Option<UnitSpan>,
 }
 
 /// A member's method, as its role names what of it a note is about
@@ -211,7 +220,7 @@ impl Check<'_, '_> {
                 .collect();
             let outcomes = fork.solve();
             if outcomes.iter().any(|o| o.status == Status::Contradicted) {
-                let mut notes = Vec::new();
+                let mut explained = Vec::new();
                 if let Some(matched) = &check.matched {
                     let contradicted = outcomes
                         .iter()
@@ -219,20 +228,56 @@ impl Check<'_, '_> {
                     for outcome in contradicted {
                         let (reversed, index) = judgments[&outcome.constraint];
                         // The judgment of one of several overloads names it
-                        let required = match matched.overloads {
-                            true => format!("overload {} of `{}`", index + 1, matched.required),
-                            false => format!("`{}`", matched.required),
+                        let (required, overload) = match matched.overloads {
+                            true => (
+                                format!("overload {} of `{}`", index + 1, matched.required),
+                                Some(index),
+                            ),
+                            false => (format!("`{}`", matched.required), None),
                         };
                         for cause in fork.explain(outcome).iter() {
-                            if let Some(note) = self.cause(matched, &required, cause, reversed)
-                                && !notes.contains(&note)
+                            if let Some(cause) =
+                                self.cause(matched, &required, overload, cause, reversed)
+                                && !explained.iter().any(|(other, _)| *other == cause)
                             {
-                                notes.push(note);
+                                explained.push((cause, required.clone()));
                             }
                         }
                     }
                 }
-                self.nonconforming(check.span, check.message, notes);
+                // Each note is at the part of the provided member it's about,
+                // or else at the required member's, if in this unit, and each
+                // member's part elsewhere is pointed to beside it. A part in
+                // another unit has only a pointer, so the note is the same
+                // whether that unit is checked from source or its typelib.
+                let (mut labels, mut notes) = (Vec::new(), Vec::new());
+                let subject = (check.matched.as_ref()).map_or("", |matched| &matched.subject);
+                for (cause, required) in explained {
+                    let here = |span: &Option<UnitSpan>| span.filter(|span| span.unit == self.unit);
+                    let at = here(&cause.provided).or(here(&cause.required));
+                    let mut placed = Vec::new();
+                    match at {
+                        Some(at) => placed.push((at, cause.note)),
+                        None => notes.push(cause.note),
+                    }
+                    let beside = [
+                        (cause.provided, subject),
+                        (cause.required, required.as_str()),
+                    ];
+                    for (span, member) in beside {
+                        if let Some(span) = span
+                            && Some(span) != at
+                        {
+                            placed.push((span, format!("as {member} declares it")));
+                        }
+                    }
+                    for label in placed {
+                        if !labels.contains(&label) {
+                            labels.push(label);
+                        }
+                    }
+                }
+                self.nonconforming(check.span, check.message, labels, notes);
             } else if let Some(outcome) = outcomes.iter().find(|o| o.status == Status::Unresolved) {
                 // A form the checker doesn't support leaves what depends on it
                 // unsolved, so it's the reason
@@ -661,18 +706,20 @@ impl Check<'_, '_> {
         }
     }
 
-    /// A note on what of a member fails to match, by the contradiction's path:
-    /// the first part of the member's type the path enters, with the provided
-    /// and required members' types of it, or the item one has that the other
-    /// can't take. The path's root relates the required member's type below the
-    /// provided one's if `reversed`.
+    /// What of a member fails to match, by the contradiction's path: the
+    /// first part of the member's type the path enters, with the provided and
+    /// required members' types of it, or the item one has that the other can't
+    /// take. The path's root relates the required member's type below the
+    /// provided one's if `reversed`. The judgment is of the required member's
+    /// `overload`, if it has several.
     fn cause(
         &self,
         matched: &Matched,
         required: &str,
+        overload: Option<usize>,
         cause: &Contradicted,
         reversed: bool,
-    ) -> Option<String> {
+    ) -> Option<Explained> {
         let names = Scoped {
             tables: self.tables,
             scope: vec![self.id],
@@ -691,6 +738,28 @@ impl Check<'_, '_> {
             Some((Some(actual), Some(expected))) => Some((actual, expected)),
             _ => None,
         };
+        // Where each member declares a part of its signature, found by `find`
+        // in the first of its methods `getter` admits: a property's getter, if
+        // set, or any method
+        let spans = |getter: bool, find: &dyn Fn(&Decl<'_>, usize) -> Option<Span>| {
+            let side = |methods: &[Accessor], overload| {
+                let mut admitted = methods
+                    .iter()
+                    .filter(|method| !getter || matches!(method.role, None | Some("getter's")));
+                admitted.find_map(|method| {
+                    let (decl, sig) = self.local(method.decl, overload)?;
+                    let span = find(decl, sig)?;
+                    Some(UnitSpan {
+                        unit: decl.unit,
+                        span,
+                    })
+                })
+            };
+            (
+                side(&matched.provided_methods, None),
+                side(&matched.required_methods, overload),
+            )
+        };
         let mut flipped = reversed;
         // Members a protocol judged structurally requires, outermost first
         let mut within = Vec::new();
@@ -703,13 +772,36 @@ impl Check<'_, '_> {
                 continue;
             };
             flipped ^= step.reverses();
-            let label = match *step {
+            // Within a member a protocol requires, a part is of the member's
+            // type, which neither member declares
+            let declared = within.is_empty();
+            let (label, (provided, required_span)) = match *step {
                 Step::Member { key, .. } => {
                     within.push(format!("member `{}`", self.db.member_name(key)));
                     continue;
                 }
                 Step::Parameters if index + 1 == path.len() => {
-                    return self.arity(matched, required, node, cause.contradiction, flipped);
+                    let mut explained =
+                        self.arity(matched, required, node, cause.contradiction, flipped)?;
+                    // The item is the list's that has it: the required member's
+                    // if passed in excess, else the provided one's
+                    let (actual, expected) = both(node)?;
+                    let (schema, item, excess) = match cause.contradiction {
+                        Contradiction::Excess(item) => (actual, item, true),
+                        Contradiction::Missing(item) => (expected, item, false),
+                        _ => return Some(explained),
+                    };
+                    if declared {
+                        let (provided, required) = spans(false, &|decl, sig| {
+                            let param = self.param(decl, sig, schema, item)?;
+                            self.param_name(param)
+                        });
+                        match excess {
+                            true => explained.required = required,
+                            false => explained.provided = provided,
+                        }
+                    }
+                    return Some(explained);
                 }
                 Step::Item(item) | Step::Key(item)
                     if matches!(path[index - 1].step, Some(Step::Parameters)) =>
@@ -719,33 +811,58 @@ impl Check<'_, '_> {
                     // it as the headline's member does
                     let (schema, _) = both(&path[index - 1])?;
                     let methods = matched.provided_methods.iter();
-                    self.parameter(
+                    let label = self.parameter(
                         methods.chain(&matched.required_methods),
                         schema,
                         item,
                         &names,
-                    )
+                    );
+                    let found = spans(false, &|decl, sig| {
+                        let param = self.param(decl, sig, schema, item)?;
+                        let annot = param.annot.and_then(|annot| self.written(annot));
+                        annot.or_else(|| self.param_name(param))
+                    });
+                    (label, found)
                 }
                 // A property's value is returned by its getter, as a field's
                 // is related to one
                 Step::Return => {
                     let methods = matched.provided_methods.iter();
-                    match methods
+                    let label = match methods
                         .chain(&matched.required_methods)
                         .any(|method| method.role.is_some())
                     {
                         true => "getter's return type".to_owned(),
                         false => "return type".to_owned(),
-                    }
+                    };
+                    let found = spans(true, &|decl, sig| {
+                        let ret = decl.node.signature(sig).ret;
+                        (ret.and_then(|ret| self.written(ret))).or_else(|| decl.name_span())
+                    });
+                    (label, found)
                 }
-                Step::Input => "input".to_owned(),
-                Step::Output => "output".to_owned(),
+                Step::Input | Step::Output => {
+                    let input = matches!(step, Step::Input);
+                    let found = spans(false, &|decl, sig| {
+                        let signature = decl.node.signature(sig);
+                        let site = match input {
+                            true => signature.input,
+                            false => signature.output,
+                        };
+                        (site.and_then(|site| self.written(site))).or_else(|| decl.name_span())
+                    });
+                    let label = match input {
+                        true => "input",
+                        false => "output",
+                    };
+                    (label.to_owned(), found)
+                }
                 Step::InstantiationBound(binder) => {
                     // A fresh variable instantiates the actual side's binder,
                     // and what it's solved as must be below its bound
-                    let methods = match flipped {
-                        false => &matched.provided_methods,
-                        true => &matched.required_methods,
+                    let (methods, overload) = match flipped {
+                        false => (&matched.provided_methods, None),
+                        true => (&matched.required_methods, overload),
                     };
                     let method = methods.first().map(|method| method.decl);
                     let (_, Some(bound)) = node.sides? else {
@@ -758,18 +875,55 @@ impl Check<'_, '_> {
                         self.db.render(bound, &names, Style::Reader),
                         self.db.render(found, &names, Style::Reader),
                     );
-                    let label = component(&within, self.binder(method, binder));
-                    return Some(format!(
-                        "{label}: bound `{bound}` here, but {required} passes `{found}`"
-                    ));
+                    let name = method.and_then(|method| self.binder_name(method, binder));
+                    let label = match name {
+                        Some(name) => format!("binder `{name}`"),
+                        None => format!("binder {}", binder + 1),
+                    };
+                    let label = component(&within, label);
+                    // The binder's bound, or else its name, as its member
+                    // declares it
+                    let span = method
+                        .zip(name)
+                        .filter(|_| declared)
+                        .and_then(|(method, name)| {
+                            let (decl, sig) = self.local(method, overload)?;
+                            let binders = self.tables.binders(method, sig);
+                            let binder = binders
+                                .iter()
+                                .find(|binder| self.tables.name(decl.unit, binder.name) == name)?;
+                            let bound = binder.bound.and_then(|bound| self.written(bound));
+                            let span = bound.unwrap_or(binder.name.span);
+                            Some(UnitSpan {
+                                unit: decl.unit,
+                                span,
+                            })
+                        });
+                    let (provided, required_span) = match flipped {
+                        false => (span, None),
+                        true => (None, span),
+                    };
+                    return Some(Explained {
+                        note: format!(
+                            "{label}: bound `{bound}` here, but {required} passes `{found}`"
+                        ),
+                        provided,
+                        required: required_span,
+                    });
                 }
                 _ => continue,
             };
-            let (provided, expected) = pair(both(node)?, flipped);
+            let (provided_ty, expected) = pair(both(node)?, flipped);
             let label = component(&within, label);
-            return Some(format!(
-                "{label}: {provided} here, but {expected} in {required}"
-            ));
+            let (provided, required_span) = match declared {
+                true => (provided, required_span),
+                false => (None, None),
+            };
+            return Some(Explained {
+                note: format!("{label}: {provided_ty} here, but {expected} in {required}"),
+                provided,
+                required: required_span,
+            });
         }
         // A member that isn't a function, as a field, shows its type whole
         let root = both(path.first()?)?;
@@ -779,7 +933,11 @@ impl Check<'_, '_> {
             return None;
         }
         let (provided, expected) = pair(root, reversed);
-        Some(format!("{provided} here, but {expected} in {required}"))
+        Some(Explained {
+            note: format!("{provided} here, but {expected} in {required}"),
+            provided: None,
+            required: None,
+        })
     }
 
     /// A note on a parameter one member's list has and the other's can't take,
@@ -792,7 +950,7 @@ impl Check<'_, '_> {
         node: &Node,
         contradiction: Contradiction,
         flipped: bool,
-    ) -> Option<String> {
+    ) -> Option<Explained> {
         let names = &Scoped {
             tables: self.tables,
             scope: vec![self.id],
@@ -804,24 +962,120 @@ impl Check<'_, '_> {
         let subject = &matched.subject;
         let item =
             |schema: TypeId, index: usize| self.db.schema_item(schema, index, names, Style::Reader);
-        match (contradiction, flipped) {
+        let note = match (contradiction, flipped) {
             // The required member is called with an item the provided one
             // doesn't take
             (Contradiction::Excess(index), true) => {
                 let item = item(actual, index)?;
-                Some(format!(
-                    "{required} passes {item}, which {subject} doesn't take"
-                ))
+                format!("{required} passes {item}, which {subject} doesn't take")
             }
             // The provided member requires an item the required one may not be
             // called with
             (Contradiction::Missing(index), true) => {
                 let item = item(expected, index)?;
-                Some(format!(
-                    "{subject} requires {item}, which {required} may not pass"
-                ))
+                format!("{subject} requires {item}, which {required} may not pass")
             }
-            _ => None,
+            _ => return None,
+        };
+        Some(Explained {
+            note,
+            provided: None,
+            required: None,
+        })
+    }
+
+    /// A method's declaration and the signature of it a judgment relates, if
+    /// declared in a unit at hand: its `overload`, if it has several, or its only
+    /// signature. A method with several overloads has none of them without
+    /// `overload`, as the solver chooses among them.
+    fn local(&self, method: DeclId, overload: Option<usize>) -> Option<(&Decl<'_>, usize)> {
+        let decl = self.tables.try_decl(method)?;
+        let sig = match &decl.node {
+            DeclNode::Methods(methods) => {
+                let mut overloads = methods
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, method)| method.overload)
+                    .map(|(sig, _)| sig);
+                match (overload, overloads.clone().count()) {
+                    (_, 0) => decl.node.primary_sig()?,
+                    (Some(overload), _) => overloads.nth(overload)?,
+                    (None, 1) => overloads.next()?,
+                    (None, _) => return None,
+                }
+            }
+            node => node.primary_sig()?,
+        };
+        Some((decl, sig))
+    }
+
+    /// The parameter of `decl`'s signature `sig` a parameter list's item at
+    /// `index` is for
+    fn param<'d>(
+        &self,
+        decl: &'d Decl<'_>,
+        sig: usize,
+        schema: TypeId,
+        index: usize,
+    ) -> Option<&'d Param> {
+        let Type::Schema(items) = self.db.ty(schema) else {
+            return None;
+        };
+        let item = items.get(index)?;
+        let params = &decl.node.signature(sig).params;
+        let rest = item.multiplicity == Multiplicity::Repeated;
+        let rest_of = |kinds: &[RestKind]| {
+            params.iter().find(|param| match param.kind {
+                ParamKind::Rest { kind, .. } => kinds.contains(&kind),
+                _ => false,
+            })
+        };
+        match (&item.element, rest) {
+            (Element::Positional(_), false) => {
+                // A positional item's ordinal among its list's
+                let ordinal = items[..index]
+                    .iter()
+                    .filter(|item| matches!(item.element, Element::Positional(_)))
+                    .count();
+                params
+                    .iter()
+                    .filter(|param| matches!(param.kind, ParamKind::Pos))
+                    .nth(ordinal)
+            }
+            (Element::Positional(_), true) => rest_of(&[RestKind::Pos, RestKind::Mixed]),
+            (Element::Keyed { key, .. }, _) => {
+                // A keyed item exactly keyed is its key's parameter
+                let named = match (self.db.ty(*key), rest) {
+                    (Type::Literal(Literal::Sym(key)), false) => {
+                        let key = self.db.symbol(*key);
+                        params.iter().find(|param| match param.kind {
+                            ParamKind::Key { key: name } => {
+                                self.tables.name(decl.unit, name) == key
+                            }
+                            _ => false,
+                        })
+                    }
+                    _ => None,
+                };
+                named.or_else(|| rest_of(&[RestKind::Key, RestKind::Mixed]))
+            }
+            (Element::Include(_), _) => params
+                .iter()
+                .find(|param| matches!(param.kind, ParamKind::Rest { .. })),
+        }
+    }
+
+    /// Where a type is written at a site, which a typelib omits
+    fn written(&self, site: SiteId) -> Option<Span> {
+        let span = self.tables.site(site).ty.span();
+        (span != INVALID_SPAN).then_some(span)
+    }
+
+    /// Where a parameter is named: by its key, if passed by one
+    fn param_name(&self, param: &Param) -> Option<Span> {
+        match param.kind {
+            ParamKind::Key { key } => Some(key.span),
+            _ => param.name.map(|name| name.span),
         }
     }
 
@@ -846,49 +1100,16 @@ impl Check<'_, '_> {
         {
             return format!("parameter `{}`", self.db.symbol(*key));
         }
-        // A positional item's ordinal among its list's
-        let ordinal = items[..index]
-            .iter()
-            .filter(|item| matches!(item.element, Element::Positional(_)))
-            .count();
-        let rest = item.multiplicity == Multiplicity::Repeated;
         let declared = methods.into_iter().find_map(|method| {
             let decl = self.tables.try_decl(method.decl)?;
             let sig = decl.node.primary_sig()?;
-            let params = &decl.node.signature(sig).params;
-            let param = match (&item.element, rest) {
-                (Element::Positional(_), false) => params
-                    .iter()
-                    .filter(|param| matches!(param.kind, ParamKind::Pos))
-                    .nth(ordinal)?,
-                (Element::Positional(_), true) => params.iter().find(|param| {
-                    matches!(
-                        param.kind,
-                        ParamKind::Rest {
-                            kind: RestKind::Pos | RestKind::Mixed,
-                            ..
-                        }
-                    )
-                })?,
-                (Element::Keyed { .. }, _) => params.iter().find(|param| {
-                    matches!(
-                        param.kind,
-                        ParamKind::Rest {
-                            kind: RestKind::Key | RestKind::Mixed,
-                            ..
-                        }
-                    )
-                })?,
-                (Element::Include(_), _) => params
-                    .iter()
-                    .find(|param| matches!(param.kind, ParamKind::Rest { .. }))?,
-            };
-            let name = param.name?;
+            let name = self.param(decl, sig, schema, index)?.name?;
             let role = method
                 .role
                 .map_or_else(String::new, |role| format!("{role} "));
             Some((role, self.tables.name(decl.unit, name).to_owned()))
         });
+        let rest = item.multiplicity == Multiplicity::Repeated;
         match (
             declared,
             rest || matches!(item.element, Element::Include(_)),
@@ -902,26 +1123,16 @@ impl Check<'_, '_> {
         }
     }
 
-    /// How a note names the binder at `index` of a method's type
-    fn binder(&self, method: Option<DeclId>, index: usize) -> String {
-        let named = method.and_then(|method| {
-            let declaration = self.db.declaration(method);
-            let Type::Quantified { binders, .. } = self.db.ty(declaration.ty) else {
-                return None;
-            };
-            // A method's type may leave out binders it has before its own
-            let declared = &declaration.binders;
-            let lifted = declared.len().checked_sub(binders.len())?;
-            Some(
-                self.db
-                    .symbol(declared.get(lifted + index)?.name)
-                    .to_owned(),
-            )
-        });
-        match named {
-            Some(name) => format!("binder `{name}`"),
-            None => format!("binder {}", index + 1),
-        }
+    /// The name of the binder at `index` of a method's type
+    fn binder_name(&self, method: DeclId, index: usize) -> Option<&str> {
+        let declaration = self.db.declaration(method);
+        let Type::Quantified { binders, .. } = self.db.ty(declaration.ty) else {
+            return None;
+        };
+        // A method's type may leave out binders it has before its own
+        let declared = &declaration.binders;
+        let lifted = declared.len().checked_sub(binders.len())?;
+        Some(self.db.symbol(declared.get(lifted + index)?.name))
     }
 
     fn name(&self, decl: DeclId) -> &str {
@@ -933,13 +1144,20 @@ impl Check<'_, '_> {
     }
 
     fn report(&mut self, span: Span, message: String) {
-        self.nonconforming(span, message, Vec::new());
+        self.nonconforming(span, message, Vec::new(), Vec::new());
     }
 
-    fn nonconforming(&mut self, span: Span, message: String, notes: Vec<String>) {
+    fn nonconforming(
+        &mut self,
+        span: Span,
+        message: String,
+        labels: Vec<(UnitSpan, String)>,
+        notes: Vec<String>,
+    ) {
         let diag = Nonconforming {
             span,
             message,
+            labels,
             notes,
         };
         self.diags.push((self.unit, Diag::new(diag)));

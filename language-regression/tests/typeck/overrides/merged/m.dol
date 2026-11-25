@@ -20,7 +20,11 @@ pub class Crossed: Right Left
 # error: `id` from `Right` does not match `Left.id`
 #   --> m.dol:LL:LL
 #    |
+# LL |   pub def id _self -> Int
+#    |                       --- as `Left.id` declares it
+# ...
+# LL |   pub def id _self -> Num
+#    |                       --- return type: `m.Num` here, but `m.Int` in `Left.id`
+# ...
 # LL | pub class Crossed: Right Left
 #    |                          ^^^^
-#    |
-#    = note: return type: `m.Num` here, but `m.Int` in `Left.id`

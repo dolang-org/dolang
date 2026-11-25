@@ -356,7 +356,11 @@ pub fn validate(case: &Case) {
             .unit()
             .expect("checker diagnostics name their unit");
         let index = checked[&unit];
-        let located = dolang_private_test::Located::new(diag.clone(), &units[index]);
+        let other = |unit: UnitId| {
+            let index = *checked.get(&unit)?;
+            Some((sources[index].file.as_str(), &units[index]))
+        };
+        let located = dolang_private_test::Located::across(diag.clone(), &units[index], other);
         diags[index].push(located);
     }
 
@@ -526,7 +530,8 @@ fn from_typelibs(
     };
     // What is reported in the script, then in the modules. A typelib keeps neither
     // a reference's span nor how it is written, so what is reported in a module is
-    // compared without spans or quoted names.
+    // compared without spans or quoted names, as is where a script's report
+    // points into a module.
     let diagnostics = |check: &typeck::Checked| -> [Vec<String>; 2] {
         let mut split = [Vec::new(), Vec::new()];
         for diag in check.diagnostics() {
@@ -551,12 +556,12 @@ fn from_typelibs(
                 text(&diag.message().to_string())
             );
             for annotation in diag.annotations() {
-                let _ = write!(
-                    out,
-                    "; {}{}",
-                    span(annotation.span()),
-                    text(&annotation.message().to_string())
-                );
+                let location = annotation.span();
+                let at = match module || !script(location.unit()) {
+                    true => String::new(),
+                    false => format!("{location:?} "),
+                };
+                let _ = write!(out, "; {at}{}", text(&annotation.message().to_string()));
             }
             for note in diag.notes() {
                 let _ = write!(out, "; note: {}", text(&note.message().to_string()));

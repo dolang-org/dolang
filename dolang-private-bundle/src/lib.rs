@@ -203,7 +203,10 @@ pub fn bundle(spec: &Bundle<'_>) {
         let unit = config.unit(Path::new(compiler_path), source.as_str());
         for diag in unit.diagnostics() {
             if THRESHOLDS.shows(diag.severity()) {
-                eprintln!("{}", render::render_diag(compiler_path, &unit, &diag));
+                eprintln!(
+                    "{}",
+                    render::render_diag(compiler_path, &unit, &diag, &|_| None)
+                );
             }
             failed |= THRESHOLDS.fails(diag.severity());
         }
@@ -235,9 +238,13 @@ pub fn bundle(spec: &Bundle<'_>) {
             let index = ids.iter().position(|&id| id == unit).unwrap();
             let (compiler_path, _) = &texts[index];
             if THRESHOLDS.shows(diag.severity()) {
+                let other = |unit| {
+                    let index = ids.iter().position(|&id| id == unit)?;
+                    Some((texts[index].0.as_str(), &units[index]))
+                };
                 eprintln!(
                     "{}",
-                    render::render_diag(compiler_path, &units[index], diag)
+                    render::render_diag(compiler_path, &units[index], diag, &other)
                 );
             }
             failed |= THRESHOLDS.fails(diag.severity());

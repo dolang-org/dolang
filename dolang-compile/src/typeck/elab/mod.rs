@@ -1059,6 +1059,7 @@ fn declared_here(declared: Option<Span>) -> Vec<Annotation> {
     declared
         .map(|span| Annotation {
             kind: AnnotationKind::Context,
+            unit: None,
             span,
             message: "declared here".to_owned(),
         })
@@ -1455,7 +1456,11 @@ impl Report for BadRecursion {
 struct Nonconforming {
     span: Span,
     message: String,
-    /// What of the member fails to match, each a note
+    /// What of the member fails to match, each at the part of a signature it
+    /// concerns
+    labels: Vec<(UnitSpan, String)>,
+    /// What of the member fails to match where no part of a signature in the
+    /// unit is at fault
     notes: Vec<String>,
 }
 
@@ -1470,6 +1475,18 @@ impl Report for Nonconforming {
 
     fn span(&self) -> Span {
         self.span
+    }
+
+    fn annotations(&self) -> Vec<Annotation> {
+        self.labels
+            .iter()
+            .map(|(span, message)| Annotation {
+                kind: AnnotationKind::Context,
+                unit: Some(span.unit),
+                span: span.span,
+                message: message.clone(),
+            })
+            .collect()
     }
 
     fn notes(&self) -> Vec<(NoteKind, String)> {
