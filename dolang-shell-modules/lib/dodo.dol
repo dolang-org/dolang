@@ -48,7 +48,7 @@ let special_rules = Set ["common", "default"]
 
 def lookup rules @ Rules task @ (Str | Sym) -> (Rule | Common)
   rules.get $task else: do rules.get (sym task) else: do
-    throw "unknown task: $task"
+    throw std.ValueError "unknown task: $task"
 
 def dispatch
   rules @ Rules

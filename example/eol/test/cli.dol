@@ -51,7 +51,7 @@ def eol *args
 # The first item of `check --format json`'s output.
 def first_result out
   let Array(Dict(result) ...) = json.decode(out)
-  else throw "expected an array of objects: $out"
+  else throw std.DataError "expected an array of objects: $out"
   result
 
 #[test]

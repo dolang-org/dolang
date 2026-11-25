@@ -5,12 +5,17 @@ statement and the `throw` statement for raising errors.
 
 ## Raising Errors
 
-Use `throw` to raise an error with any value:
+Use `throw` to raise an error. Throw one of the `std`
+[error types](#error-types), or a [subclass](#subclassing-error-types) of one,
+constructed with a message:
 
 ```
-throw "something went wrong"
-throw {code: 404, message: "not found"}
+throw std.ValueError "port out of range: $port"
 ```
+
+`throw` accepts any value, but a handler for [`RuntimeError`](std.RuntimeError)
+or [`Error`](std.Error) doesn't catch one that isn't an error type, such as a
+string.
 
 ## Try / Catch / Finally
 

@@ -4,7 +4,7 @@ import args progress http fs url strand
 def download client url
   let name = url.name
   if !name
-    throw "no identifiable file name: $url"
+    throw std.ValueError "no identifiable file name: $url"
   client.get $url do |resp|
     let len = resp.headers.get content-length
     let success = false

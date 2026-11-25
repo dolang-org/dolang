@@ -54,16 +54,16 @@ pub def bin exe @ Path = nil -> Path
   let bin_meta = bin.metadata resolve: :LINK:
 
   if (bin_meta.type != :FILE:)
-    throw "VFS helper is not a regular file: $bin"
+    throw std.RuntimeError "VFS helper is not a regular file: $bin"
   if (type bin_meta unix_fs.Metadata)
     let unix_fs.Metadata(exe_meta) = exe.metadata resolve: :LINK:
-    else throw "interpreter metadata does not match VFS helper platform: $bin"
+    else throw std.RuntimeError "interpreter metadata does not match VFS helper platform: $bin"
     if (bin_meta.uid != exe_meta.uid)
-      throw "VFS helper owner does not match interpreter: $bin"
+      throw std.RuntimeError "VFS helper owner does not match interpreter: $bin"
     if (bin_meta.gid != exe_meta.gid)
-      throw "VFS helper group does not match interpreter: $bin"
+      throw std.RuntimeError "VFS helper group does not match interpreter: $bin"
     if ((bin_meta.mode.int & 0o7777) != (exe_meta.mode.int & 0o7777))
-      throw "VFS helper permissions do not match interpreter: $bin"
+      throw std.RuntimeError "VFS helper permissions do not match interpreter: $bin"
 
   bin
 

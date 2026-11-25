@@ -318,7 +318,7 @@ Raises an error, unwinding the call stack until the error is caught
 by a `try`/`catch` block.
 
 ```
-throw "something went wrong"
+throw std.ValueError "port out of range: $port"
 ```
 
 See [Error Handling](error-handling.md) for full details on raising and catching
