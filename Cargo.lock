@@ -124,21 +124,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
-name = "astral-tokio-tar"
-version = "0.6.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b18457efd137254e016bbde5e1d88df61c4e1a5ae2223746e56123bac6af2463"
-dependencies = [
- "futures-core",
- "libc",
- "portable-atomic",
- "rustc-hash",
- "rustix",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
 name = "astral_async_zip"
 version = "0.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1023,13 +1008,13 @@ dependencies = [
 name = "dolang-ext-tar"
 version = "0.1.1"
 dependencies = [
- "astral-tokio-tar",
  "async-compression",
  "dolang",
  "dolang-ext-shell",
  "dolang-ext-time",
+ "dolang-private-util",
+ "tar-framing",
  "tokio",
- "tokio-stream",
  "tokio-util",
 ]
 
@@ -3557,6 +3542,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
+name = "tar-framing"
+version = "0.0.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c07c818ffdfc87f607073f986b6167218bc9e05d54ecec4d50299a949e09feb1"
+dependencies = [
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3684,17 +3679,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
- "tokio",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
-dependencies = [
- "futures-core",
- "pin-project-lite",
  "tokio",
 ]
 

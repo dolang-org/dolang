@@ -24,7 +24,6 @@ pub(crate) struct Syms<'v> {
     pub(crate) dir: Sym<'v, 'v>,
     pub(crate) fifo: Sym<'v, 'v>,
     pub(crate) contiguous: Sym<'v, 'v>,
-    pub(crate) unknown: Sym<'v, 'v>,
 }
 
 pub(crate) struct Global<'v> {
@@ -59,7 +58,6 @@ impl<'v> Global<'v> {
                 dir: builder.sym("DIR"),
                 fifo: builder.sym("FIFO"),
                 contiguous: builder.sym("CONTIGUOUS"),
-                unknown: builder.sym("UNKNOWN"),
             },
         }
     }

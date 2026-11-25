@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 
 [lib]
-test = false
+test = true
 doctest = false
 
 
@@ -18,18 +18,13 @@ version = "0.4.42"
 features = ["gzip", "tokio", "zstd"]
 
 
-[dependencies.astral-tokio-tar]
-version = "0.6.4"
-default-features = false
+[dependencies.tar-framing]
+version = "=0.0.17"
 
 
 [dependencies.tokio]
 workspace = true
 features = ["io-util", "rt", "sync"]
-
-
-[dependencies.tokio-stream]
-version = "0.1"
 
 
 [dependencies.tokio-util]
@@ -45,4 +40,8 @@ workspace = true
 
 
 [dependencies.dolang-ext-time]
+workspace = true
+
+
+[dependencies.dolang-util]
 workspace = true

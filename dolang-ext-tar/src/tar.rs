@@ -1,5 +1,4 @@
 use std::{
-    future::poll_fn,
     io::{self, IoSlice},
     ops::Deref,
     path::Path,
@@ -13,7 +12,7 @@ use async_compression::tokio::{
     bufread::{GzipDecoder, ZstdDecoder},
     write::{GzipEncoder, ZstdEncoder},
 };
-use dolang::runtime::io::IoResultExt as _;
+use dolang::runtime::io::{IoErrorExt as _, IoResultExt as _};
 use dolang::runtime::{
     AllocExt, Arg, BYTE_STREAM_CHUNK_SIZE, Error, Instance, Object, Result, Slot, State, Strand,
     Value, call,
@@ -25,59 +24,70 @@ use dolang::runtime::{
     vm::Register,
     with_instance, with_slots,
 };
-use tokio::io::{
-    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream, ReadBuf,
+use tar_framing::{
+    FrameError, FrameErrorInner, PaxKeyword, PaxRecord, PaxValue, StreamPolicy, TrailingDataPolicy,
+    UstarKind,
+    logical::{MemberExtensions, MemberFrame, TarReader as FrameReader},
+    write::{end_marker_bytes, payload_padding},
 };
-use tokio_stream::StreamExt;
-use tokio_tar::{Archive, Builder as TarBuilder, Entries, Entry, EntryType, Header};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio_util::compat::{
     Compat, FuturesAsyncReadCompatExt as _, FuturesAsyncWriteCompatExt as _,
     TokioAsyncWriteCompatExt as _,
 };
 
+use crate::cursor::Cursor;
 use crate::global::Global;
+use crate::header::{self, HeaderSpec};
 
-const INTERNAL_BUFFER_SIZE: usize = 8192;
 const GZIP_MAGIC: &[u8] = b"\x1f\x8b";
 const ZSTD_MAGIC: &[u8] = b"\x28\xb5\x2f\xfd";
 
 type DynReader = Pin<Box<dyn AsyncRead + Send>>;
 type DynWriter = Pin<Box<dyn AsyncWrite + Send>>;
-type NativeEntries = Entries<DynReader>;
-type NativeEntry = Entry<Archive<DynReader>>;
-type NativeBuilder = TarBuilder<DynWriter>;
+type NativeFrame<'a> = MemberFrame<'a, DynReader>;
 
-async fn read_into_embryo(
-    reader: &mut (impl AsyncRead + Unpin),
-    embryo: &mut BinEmbryo<'_>,
-) -> io::Result<usize> {
-    let mut buf = ReadBuf::uninit(embryo.spare_capacity_mut());
-    poll_fn(|cx| Pin::new(&mut *reader).poll_read(cx, &mut buf)).await?;
-    let read = buf.filled().len();
-    unsafe { embryo.advance(read) };
-    Ok(read)
+/// Maps a framing error to a Do error: a failed read keeps its I/O class, and
+/// anything else is malformed data.
+fn frame_error<'v, 's>(strand: &mut Strand<'v, 's>, err: FrameError) -> Error<'v, 's> {
+    match err.inner {
+        FrameErrorInner::Io { source } => source.into_do_decode(strand),
+        _ => Error::data(strand, err.to_string()),
+    }
 }
 
-/// Reads into `embryo`, which has room for `size` more bytes, until it holds them or the
-/// entry ends; with `some`, only until it holds any.
-async fn read_size_into_embryo(
-    reader: &mut (impl AsyncRead + Unpin),
-    embryo: &mut BinEmbryo<'_>,
-    size: usize,
-    some: bool,
-) -> io::Result<()> {
-    let end = embryo.len() + size;
-    while embryo.len() < end {
-        let want = end - embryo.len();
-        let mut buf = ReadBuf::uninit(&mut embryo.spare_capacity_mut()[..want]);
-        poll_fn(|cx| Pin::new(&mut *reader).poll_read(cx, &mut buf)).await?;
-        let read = buf.filled().len();
-        unsafe { embryo.advance(read) };
-        if read == 0 || some {
-            break;
-        }
+/// The effective value of a numeric field: a pax record overrides the header
+/// fallback, and a deleted one leaves it absent.
+fn effective_number(frame: &NativeFrame<'_>, keyword: PaxKeyword, fallback: Option<u64>) -> u64 {
+    if let MemberExtensions::Pax(state) = &frame.extensions
+        && let Some(PaxRecord::Uid(value) | PaxRecord::Gid(value) | PaxRecord::Mtime(value)) =
+            state.effective_record(&keyword)
+    {
+        return match value {
+            PaxValue::Value(value) => *value,
+            PaxValue::Deleted => 0,
+        };
     }
-    Ok(())
+    fallback.unwrap_or(0)
+}
+
+/// The effective owner or group name, like [`effective_number`]; empty is absent.
+fn effective_name<'a>(
+    frame: &'a NativeFrame<'_>,
+    keyword: PaxKeyword,
+    fallback: &'a [u8],
+) -> Option<&'a [u8]> {
+    let name = match &frame.extensions {
+        MemberExtensions::Pax(state) => match state.effective_record(&keyword) {
+            Some(PaxRecord::Uname(value) | PaxRecord::Gname(value)) => match value {
+                PaxValue::Value(value) => value.as_bytes(),
+                PaxValue::Deleted => &[],
+            },
+            _ => fallback,
+        },
+        MemberExtensions::Gnu { .. } => fallback,
+    };
+    (!name.is_empty()).then_some(name)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -88,8 +98,7 @@ enum Compression {
 }
 
 pub(crate) struct TarReader {
-    entries: NativeEntries,
-    current: Option<NativeEntry>,
+    cursor: Cursor<DynReader>,
     generation: u64,
     compression: Compression,
     closed: bool,
@@ -100,7 +109,10 @@ pub(crate) struct TarEntry {
 }
 
 pub(crate) struct TarWriter {
-    builder: Option<NativeBuilder>,
+    /// The archive output, taken while an entry is being written.
+    sink: Option<DynWriter>,
+    /// Numbers pax extended headers.
+    sequence: u64,
     generation: u64,
     active: bool,
     poisoned: bool,
@@ -113,11 +125,14 @@ pub(crate) struct TarEntryWriter {
     generation: u64,
 }
 
-/// An entry's content stream, refusing to go past the declared size.
+/// An entry's content stream into the archive output, refusing to go past the
+/// declared size.
 struct EntrySink {
-    stream: DuplexStream,
+    writer: DynWriter,
     written: u64,
     size: u64,
+    /// Whether a write to the output failed, leaving the archive unusable.
+    failed: bool,
 }
 
 impl EntrySink {
@@ -134,7 +149,7 @@ impl EntrySink {
     }
 
     fn count(&mut self, written: io::Result<usize>) -> io::Result<usize> {
-        let written = written?;
+        let written = written.inspect_err(|_| self.failed = true)?;
         self.written += written as u64;
         Ok(written)
     }
@@ -148,7 +163,7 @@ impl AsyncWrite for EntrySink {
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         this.check(buf.len())?;
-        let written = ready!(Pin::new(&mut this.stream).poll_write(cx, buf));
+        let written = ready!(Pin::new(&mut this.writer).poll_write(cx, buf));
         Poll::Ready(this.count(written))
     }
 
@@ -159,20 +174,20 @@ impl AsyncWrite for EntrySink {
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         this.check(bufs.iter().map(|buf| buf.len()).sum())?;
-        let written = ready!(Pin::new(&mut this.stream).poll_write_vectored(cx, bufs));
+        let written = ready!(Pin::new(&mut this.writer).poll_write_vectored(cx, bufs));
         Poll::Ready(this.count(written))
     }
 
     fn is_write_vectored(&self) -> bool {
-        self.stream.is_write_vectored()
+        self.writer.is_write_vectored()
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_flush(cx)
+        Pin::new(&mut self.get_mut().writer).poll_flush(cx)
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        Pin::new(&mut self.get_mut().stream).poll_shutdown(cx)
+        Pin::new(&mut self.get_mut().writer).poll_shutdown(cx)
     }
 }
 
@@ -204,18 +219,17 @@ fn compression_sym<'v>(
 
 fn entry_type_sym<'v>(
     global: State<'v, Global<'v>>,
-    ty: EntryType,
+    kind: UstarKind,
 ) -> dolang::runtime::Sym<'v, 'v> {
-    match ty {
-        EntryType::Regular => global.syms.file,
-        EntryType::Link => global.syms.hardlink,
-        EntryType::Symlink => global.syms.symlink,
-        EntryType::Char => global.syms.char_device,
-        EntryType::Block => global.syms.block_device,
-        EntryType::Directory => global.syms.dir,
-        EntryType::Fifo => global.syms.fifo,
-        EntryType::Continuous => global.syms.contiguous,
-        _ => global.syms.unknown,
+    match kind {
+        UstarKind::Regular => global.syms.file,
+        UstarKind::HardLink => global.syms.hardlink,
+        UstarKind::SymbolicLink => global.syms.symlink,
+        UstarKind::CharacterDevice => global.syms.char_device,
+        UstarKind::BlockDevice => global.syms.block_device,
+        UstarKind::Directory => global.syms.dir,
+        UstarKind::Fifo => global.syms.fifo,
+        UstarKind::Contiguous => global.syms.contiguous,
     }
 }
 
@@ -274,10 +288,9 @@ fn unix_path_string<'v, 's>(
     }
 }
 
-/// Converts an entry path like [`unix_path_string`], rejecting the paths the
-/// tar builder refuses before the writer is touched. The builder reports them
-/// as untyped I/O errors after it has been taken, which would poison the
-/// writer for what is a bad argument.
+/// Converts an entry path like [`unix_path_string`], rejecting paths that are
+/// unsafe to extract before the writer is touched, so a bad argument doesn't
+/// poison the writer.
 fn entry_path<'v, 's>(strand: &mut Strand<'v, 's>, value: Slot<'v, '_>) -> Result<'v, 's, String> {
     let path = unix_path_string(strand, value, "path")?;
     if path.starts_with('/') {
@@ -294,6 +307,15 @@ fn entry_path<'v, 's>(strand: &mut Strand<'v, 's>, value: Slot<'v, '_>) -> Resul
         return Err(Error::value(strand, "tar entry path must not be empty"));
     }
     Ok(path)
+}
+
+/// Converts a link target like [`unix_path_string`], rejecting an empty one.
+fn link_target<'v, 's>(strand: &mut Strand<'v, 's>, value: Slot<'v, '_>) -> Result<'v, 's, String> {
+    let target = unix_path_string(strand, value, "target")?;
+    if target.is_empty() {
+        return Err(Error::value(strand, "tar link target must not be empty"));
+    }
+    Ok(target)
 }
 
 /// Metadata common to every tar entry, shared by `entry`, `create_dir`,
@@ -342,68 +364,97 @@ fn parse_common_entry_options<'v, 's>(
     })
 }
 
+/// Encodes an entry header into a buffer before the writer is touched, so a
+/// value that can't be encoded doesn't poison the writer.
 fn build_header<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    ty: EntryType,
+    sequence: u64,
+    path: &str,
+    kind: UstarKind,
     size: u64,
     opts: &CommonEntryOptions,
-    link_name: Option<&str>,
-) -> Result<'v, 's, Header> {
-    let mut header = Header::new_gnu();
-    header.set_entry_type(ty);
-    header.set_size(size);
-    header.set_mode(opts.mode);
-    header.set_uid(opts.uid);
-    header.set_gid(opts.gid);
-    header.set_mtime(opts.mtime);
-    if let Some(value) = &opts.owner_name {
-        header.set_username(value).into_do_value(strand)?;
-    }
-    if let Some(value) = &opts.group_name {
-        header.set_groupname(value).into_do_value(strand)?;
-    }
-    if let Some(value) = link_name {
-        header.set_link_name(value).into_do_value(strand)?;
-    }
-    Ok(header)
+    link: Option<&str>,
+) -> Result<'v, 's, Vec<u8>> {
+    let spec = HeaderSpec {
+        path,
+        kind,
+        size,
+        mode: opts.mode,
+        uid: opts.uid,
+        gid: opts.gid,
+        mtime: opts.mtime,
+        uname: opts.owner_name.as_deref(),
+        gname: opts.group_name.as_deref(),
+        link,
+    };
+    let mut buf = Vec::new();
+    header::encode(&spec, sequence, &mut buf).into_do_value(strand)?;
+    Ok(buf)
 }
 
-/// Appends a zero-content entry (directory or symlink) directly, without
-/// exposing a write handle: neither carries a byte stream, so a block would
+/// Takes the archive output for an entry, failing if the writer can't start one.
+fn take_sink<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: Instance<'v, '_, TarWriter>,
+) -> Result<'v, 's, (DynWriter, u64)> {
+    let mut parent = this.borrow_mut(strand)?;
+    if parent.poisoned {
+        return Err(Error::state_error(strand, "tar writer is poisoned"));
+    }
+    if parent.active {
+        return Err(Error::concurrency(strand));
+    }
+    let sink = parent
+        .sink
+        .take()
+        .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?;
+    parent.active = true;
+    parent.generation = parent.generation.wrapping_add(1);
+    parent.sequence += 1;
+    Ok((sink, parent.generation))
+}
+
+/// Returns the archive output after an entry, poisoning the writer if the entry failed.
+fn restore_sink<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: Instance<'v, '_, TarWriter>,
+    sink: DynWriter,
+    ok: bool,
+) -> Result<'v, 's, ()> {
+    let mut parent = this.borrow_mut(strand)?;
+    parent.active = false;
+    parent.sink = Some(sink);
+    if !ok {
+        parent.poisoned = true;
+    }
+    Ok(())
+}
+
+/// The sequence number the next entry's pax header will get.
+fn next_sequence<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    this: Instance<'v, '_, TarWriter>,
+) -> Result<'v, 's, u64> {
+    Ok(this.borrow(strand)?.sequence)
+}
+
+/// Appends a zero-content entry (directory or link) directly, without
+/// exposing a write handle: none carries a byte stream, so a block would
 /// have nothing meaningful to write to.
 async fn append_metadata_only_entry<'v, 's>(
     strand: &mut Strand<'v, 's>,
     this: Instance<'v, '_, TarWriter>,
     path: &str,
-    mut header: Header,
+    kind: UstarKind,
+    opts: &CommonEntryOptions,
+    link: Option<&str>,
 ) -> Result<'v, 's, ()> {
-    let mut native_builder = {
-        let mut parent = this.borrow_mut(strand)?;
-        if parent.poisoned {
-            return Err(Error::state_error(strand, "tar writer is poisoned"));
-        }
-        if parent.active {
-            return Err(Error::concurrency(strand));
-        }
-        parent.active = true;
-        parent
-            .builder
-            .take()
-            .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?
-    };
-
-    let append_result = native_builder
-        .append_data(&mut header, Path::new(path), tokio::io::empty())
-        .await;
-
-    let mut parent = this.borrow_mut(strand)?;
-    parent.active = false;
-    parent.builder = Some(native_builder);
-    if append_result.is_err() {
-        parent.poisoned = true;
-    }
-    drop(parent);
-    append_result.into_do_io(strand)
+    let sequence = next_sequence(strand, this)?;
+    let header = build_header(strand, sequence, path, kind, 0, opts, link)?;
+    let (mut sink, _) = take_sink(strand, this)?;
+    let result = sink.write_all(&header).await;
+    restore_sink(strand, this, sink, result.is_ok())?;
+    result.into_do_io(strand)
 }
 
 /// Validates that the reader-backed entry `$this` is still active, binds
@@ -491,19 +542,13 @@ impl<'v> Object<'v> for TarReader {
         if borrow.closed {
             return Err(Error::state_error(strand, "tar reader is closed"));
         }
-        borrow.current = None;
         borrow.generation = borrow.generation.wrapping_add(1);
-        let Some(entry) = borrow
-            .entries
-            .next()
-            .await
-            .transpose()
-            .into_do_decode(strand)?
-        else {
-            return Ok(false);
-        };
+        match borrow.cursor.advance().await {
+            Ok(true) => {}
+            Ok(false) => return Ok(false),
+            Err(err) => return Err(frame_error(strand, err)),
+        }
         let generation = borrow.generation;
-        borrow.current = Some(entry);
         drop(borrow);
 
         global.types.entry.create_with_annex(
@@ -554,102 +599,72 @@ impl<'v> Object<'v> for TarEntry {
             })
             .get("path", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let bytes = borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .path_bytes()
-                        .into_do_decode(strand)?;
-                    let path = str::from_utf8(&bytes).into_do_data(strand)?;
+                    let frame = borrow.cursor.frame().unwrap();
+                    let path = frame
+                        .effective_path()
+                        .map_err(|err| frame_error(strand, err))?;
+                    let path = str::from_utf8(path).into_do_data(strand)?;
                     dolang_ext_shell::unix_path(strand, path, out)
                 })
             })
             .get("type", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let ty = borrow.current.as_ref().unwrap().header().entry_type();
-                    strand.store(out, entry_type_sym(*this.annex(), ty));
+                    let kind = borrow.cursor.frame().unwrap().header.kind;
+                    strand.store(out, entry_type_sym(*this.annex(), kind));
                     Ok(())
                 })
             })
             .get("size", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let value = borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .size()
-                        .into_do_decode(strand)?;
-                    strand.store(out, value);
+                    strand.store(out, borrow.cursor.frame().unwrap().header.effective_size);
                     Ok(())
                 })
             })
             .get("mode", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let value = borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .mode()
-                        .into_do_decode(strand)?;
-                    strand.store(out, value);
+                    let mode = borrow.cursor.frame().unwrap().header.mode;
+                    strand.store(out, mode.unwrap_or(0));
                     Ok(())
                 })
             })
             .get("uid", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let value = borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .uid()
-                        .into_do_decode(strand)?;
-                    strand.store(out, value);
+                    let frame = borrow.cursor.frame().unwrap();
+                    strand.store(
+                        out,
+                        effective_number(frame, PaxKeyword::Uid, frame.header.uid),
+                    );
                     Ok(())
                 })
             })
             .get("gid", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let value = borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .gid()
-                        .into_do_decode(strand)?;
-                    strand.store(out, value);
+                    let frame = borrow.cursor.frame().unwrap();
+                    strand.store(
+                        out,
+                        effective_number(frame, PaxKeyword::Gid, frame.header.gid),
+                    );
                     Ok(())
                 })
             })
             .get("mtime", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    let seconds = borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .mtime()
-                        .into_do_decode(strand)?;
-                    dolang_ext_time::datetime(
-                        strand,
-                        SystemTime::UNIX_EPOCH + Duration::from_secs(seconds),
-                        out,
-                    )
-                    .into_do_decode(strand)
+                    let frame = borrow.cursor.frame().unwrap();
+                    let seconds = effective_number(frame, PaxKeyword::Mtime, frame.header.mtime);
+                    let time = SystemTime::UNIX_EPOCH
+                        .checked_add(Duration::from_secs(seconds))
+                        .ok_or_else(|| Error::overflow(strand))?;
+                    dolang_ext_time::datetime(strand, time, out).into_do_decode(strand)
                 })
             })
             .get("owner_name", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    match borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .username()
-                        .into_do_data(strand)?
-                    {
-                        Some(value) => strand.store(out, value),
+                    let frame = borrow.cursor.frame().unwrap();
+                    match effective_name(frame, PaxKeyword::Uname, frame.header.uname) {
+                        Some(value) => {
+                            let value = str::from_utf8(value).into_do_data(strand)?;
+                            strand.store(out, value)
+                        }
                         None => strand.store(out, Nil),
                     }
                     Ok(())
@@ -657,14 +672,12 @@ impl<'v> Object<'v> for TarEntry {
             })
             .get("group_name", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    match borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .groupname()
-                        .into_do_data(strand)?
-                    {
-                        Some(value) => strand.store(out, value),
+                    let frame = borrow.cursor.frame().unwrap();
+                    match effective_name(frame, PaxKeyword::Gname, frame.header.gname) {
+                        Some(value) => {
+                            let value = str::from_utf8(value).into_do_data(strand)?;
+                            strand.store(out, value)
+                        }
                         None => strand.store(out, Nil),
                     }
                     Ok(())
@@ -672,50 +685,17 @@ impl<'v> Object<'v> for TarEntry {
             })
             .get("link_name", |this, strand, out| {
                 active_entry!(this, strand, borrow, {
-                    match borrow
-                        .current
-                        .as_ref()
+                    let link = borrow
+                        .cursor
+                        .frame()
                         .unwrap()
-                        .link_name_bytes()
-                        .into_do_decode(strand)?
-                    {
-                        Some(value) => {
-                            let value = str::from_utf8(&value).into_do_data(strand)?;
-                            dolang_ext_shell::unix_path(strand, value, out)?
-                        }
-                        None => strand.store(out, Nil),
-                    }
-                    Ok(())
-                })
-            })
-            .get("device_major", |this, strand, out| {
-                active_entry!(this, strand, borrow, {
-                    match borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .device_major()
-                        .into_do_decode(strand)?
-                    {
-                        Some(value) => strand.store(out, value),
-                        None => strand.store(out, Nil),
-                    }
-                    Ok(())
-                })
-            })
-            .get("device_minor", |this, strand, out| {
-                active_entry!(this, strand, borrow, {
-                    match borrow
-                        .current
-                        .as_ref()
-                        .unwrap()
-                        .header()
-                        .device_minor()
-                        .into_do_decode(strand)?
-                    {
-                        Some(value) => strand.store(out, value),
-                        None => strand.store(out, Nil),
+                        .effective_link_path()
+                        .map_err(|err| frame_error(strand, err))?;
+                    if link.is_empty() {
+                        strand.store(out, Nil);
+                    } else {
+                        let link = str::from_utf8(link).into_do_data(strand)?;
+                        dolang_ext_shell::unix_path(strand, link, out)?;
                     }
                     Ok(())
                 })
@@ -744,10 +724,14 @@ impl<'v> Object<'v> for TarEntry {
                             ));
                         }
                         let mut data = BinEmbryo::new_with_capacity(strand, size);
-                        let current = borrow.current.as_mut().unwrap();
-                        read_size_into_embryo(current, &mut data, size, some)
+                        let spare = &mut data.spare_capacity_mut()[..size];
+                        let read = borrow
+                            .cursor
+                            .read(spare, some)
                             .await
-                            .into_do_decode(strand)?;
+                            .map_err(|err| frame_error(strand, err))?;
+                        // SAFETY: `read` initialized that many spare bytes.
+                        unsafe { data.advance(read) };
                         data.finish(strand, out);
                         Ok(())
                     }
@@ -786,12 +770,17 @@ impl<'v> Object<'v> for TarEntry {
                     return Err(Error::state_error(strand, "tar entry is no longer active"));
                 }
                 let mut data = BinEmbryo::new_with_capacity(strand, BYTE_STREAM_CHUNK_SIZE);
-                let count = read_into_embryo(borrow.current.as_mut().unwrap(), &mut data)
+                let spare = &mut data.spare_capacity_mut()[..BYTE_STREAM_CHUNK_SIZE];
+                let read = borrow
+                    .cursor
+                    .read(spare, true)
                     .await
-                    .into_do_decode(strand)?;
-                if count == 0 {
+                    .map_err(|err| frame_error(strand, err))?;
+                if read == 0 {
                     return Ok(false);
                 }
+                // SAFETY: `read` initialized that many spare bytes.
+                unsafe { data.advance(read) };
                 data.finish(strand, out);
                 Ok(true)
             }
@@ -941,36 +930,31 @@ impl<'v> Object<'v> for TarWriter {
                         strand, 0o644, mode, uid, gid, mtime, owner_name, group_name,
                     )?;
 
-                    let (mut native_builder, generation) = {
-                        let mut parent = this.borrow_mut(strand)?;
-                        if parent.poisoned {
-                            return Err(Error::state_error(strand, "tar writer is poisoned"));
-                        }
-                        if parent.active {
-                            return Err(Error::concurrency(strand));
-                        }
-                        parent.active = true;
-                        parent.generation = parent.generation.wrapping_add(1);
-                        let generation = parent.generation;
-                        let native_builder = parent
-                            .builder
-                            .take()
-                            .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?;
-                        (native_builder, generation)
-                    };
+                    let sequence = next_sequence(strand, this)?;
+                    let header = build_header(
+                        strand,
+                        sequence,
+                        &path,
+                        UstarKind::Regular,
+                        size,
+                        &opts,
+                        None,
+                    )?;
+                    let (mut sink, generation) = take_sink(strand, this)?;
+                    if let Err(err) = sink.write_all(&header).await {
+                        restore_sink(strand, this, sink, false)?;
+                        return Err(err.into_do_io(strand));
+                    }
 
-                    let mut header = build_header(strand, EntryType::Regular, size, &opts, None)?;
-
-                    let (entry_stream, archive_stream) =
-                        tokio::io::duplex(INTERNAL_BUFFER_SIZE * 2);
                     global.types.entry_writer.create_with_annex(
                         strand,
                         TarEntryWriter {
                             stream: Some(Shared::new(
                                 EntrySink {
-                                    stream: entry_stream,
+                                    writer: sink,
                                     written: 0,
                                     size,
+                                    failed: false,
                                 }
                                 .compat_write(),
                             )),
@@ -985,43 +969,41 @@ impl<'v> Object<'v> for TarWriter {
                         strand.store(Mut::slot_mut::<0>(&mut handle_borrow), this);
                     });
 
-                    let append = async move {
-                        let result = native_builder
-                            .append_data(&mut header, Path::new(&path), archive_stream)
-                            .await;
-                        (native_builder, result)
+                    let block_result = call!(strand, block, &handle, out);
+                    let stream = with_instance!(strand, handle_cast, |handle_obj| {
+                        Ok(handle_obj.borrow_mut(strand)?.stream.take())
+                    })?;
+                    // Closing waits for a write in progress on a lent handle.
+                    let sink = match stream {
+                        Some(mut stream) => stream.close().await.map(Compat::into_inner),
+                        None => None,
                     };
-                    let invoke = async {
-                        let result = call!(strand, block, &handle, out);
-                        let stream = with_instance!(strand, handle_cast, |handle_obj| {
-                            Ok(handle_obj.borrow_mut(strand)?.stream.take())
-                        })?;
-                        // Closing waits for a write in progress on a lent handle.
-                        let mut written = 0;
-                        if let Some(mut stream) = stream
-                            && let Some(sink) = stream.close().await
-                        {
-                            let mut sink = sink.into_inner();
-                            let _ = sink.stream.shutdown().await;
-                            written = sink.written;
-                        }
-                        Ok((result, written))
-                    };
-                    let ((native_builder, append_result), invoke_result) =
-                        tokio::join!(append, invoke);
-                    let (block_result, written) = invoke_result?;
-
-                    {
+                    let Some(EntrySink {
+                        writer: mut sink,
+                        written,
+                        failed,
+                        ..
+                    }) = sink
+                    else {
+                        // The output can't be recovered, so the archive can't be finished.
                         let mut parent = this.borrow_mut(strand)?;
                         parent.active = false;
-                        parent.builder = Some(native_builder);
-                        if append_result.is_err() || written != size {
-                            parent.poisoned = true;
-                        }
-                    }
+                        parent.poisoned = true;
+                        drop(parent);
+                        block_result?;
+                        return Err(Error::state_error(strand, "tar entry writer was lost"));
+                    };
+                    // A short entry can't be completed, so only a full one is padded.
+                    let pad_result = if written == size && !failed {
+                        sink.write_all(payload_padding(size)).await
+                    } else {
+                        Ok(())
+                    };
+                    let ok = written == size && !failed && pad_result.is_ok();
+                    restore_sink(strand, this, sink, ok)?;
 
                     block_result?;
-                    append_result.into_do_io(strand)?;
+                    pad_result.into_do_io(strand)?;
                     if written != size {
                         return Err(Error::value(
                             strand,
@@ -1045,8 +1027,8 @@ impl<'v> Object<'v> for TarWriter {
                 let opts = parse_common_entry_options(
                     strand, 0o755, mode, uid, gid, mtime, owner_name, group_name,
                 )?;
-                let header = build_header(strand, EntryType::Directory, 0, &opts, None)?;
-                append_metadata_only_entry(strand, this, &path, header).await
+                append_metadata_only_entry(strand, this, &path, UstarKind::Directory, &opts, None)
+                    .await
             })
             .method("symlink", async move |this, strand, args, _out| {
                 unpack!(strand, args =>
@@ -1059,13 +1041,20 @@ impl<'v> Object<'v> for TarWriter {
                     ?:owner_name,
                     ?:group_name
                 );
-                let target = unix_path_string(strand, target, "target")?;
+                let target = link_target(strand, target)?;
                 let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
                     strand, 0o777, mode, uid, gid, mtime, owner_name, group_name,
                 )?;
-                let header = build_header(strand, EntryType::Symlink, 0, &opts, Some(&target))?;
-                append_metadata_only_entry(strand, this, &path, header).await
+                append_metadata_only_entry(
+                    strand,
+                    this,
+                    &path,
+                    UstarKind::SymbolicLink,
+                    &opts,
+                    Some(&target),
+                )
+                .await
             })
             .method("hard_link", async move |this, strand, args, _out| {
                 unpack!(strand, args =>
@@ -1078,13 +1067,20 @@ impl<'v> Object<'v> for TarWriter {
                     ?:owner_name,
                     ?:group_name
                 );
-                let target = unix_path_string(strand, target, "target")?;
+                let target = link_target(strand, target)?;
                 let path = entry_path(strand, path)?;
                 let opts = parse_common_entry_options(
                     strand, 0o644, mode, uid, gid, mtime, owner_name, group_name,
                 )?;
-                let header = build_header(strand, EntryType::Link, 0, &opts, Some(&target))?;
-                append_metadata_only_entry(strand, this, &path, header).await
+                append_metadata_only_entry(
+                    strand,
+                    this,
+                    &path,
+                    UstarKind::HardLink,
+                    &opts,
+                    Some(&target),
+                )
+                .await
             })
     }
 }
@@ -1131,7 +1127,7 @@ async fn endpoint_handle<'v, 's>(
 async fn open_reader<'v, 's>(
     strand: &mut Strand<'v, 's>,
     handle: ByteHandle,
-) -> Result<'v, 's, (NativeEntries, Compression)> {
+) -> Result<'v, 's, (FrameReader<DynReader>, Compression)> {
     let mut source = handle.into_read().expect("source is readable").compat();
     let mut magic = Vec::with_capacity(ZSTD_MAGIC.len());
     while magic.len() < ZSTD_MAGIC.len() {
@@ -1162,9 +1158,10 @@ async fn open_reader<'v, 's>(
         Compression::Gzip => Box::pin(GzipDecoder::new(buffered)),
         Compression::Zstd => Box::pin(ZstdDecoder::new(buffered)),
     };
-    let mut archive = Archive::new(reader);
-    let entries = archive.entries().into_do_decode(strand)?;
-    Ok((entries, compression))
+    // An archive may be followed by other data in the source, so reading stops at
+    // the end marker.
+    let policy = StreamPolicy::default().trailing_data_policy(TrailingDataPolicy::Ignore);
+    Ok((FrameReader::new(reader).with_policy(policy), compression))
 }
 
 fn parse_compression<'v, 's>(
@@ -1215,13 +1212,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
         .function("read", async move |strand, args, out| {
             unpack!(strand, args => source, block);
             let handle = endpoint_handle(strand, &source, IoCaps::READ, "source").await?;
-            let (entries, compression) = open_reader(strand, handle).await?;
+            let (archive, compression) = open_reader(strand, handle).await?;
             with_slots!(strand, |mut reader| {
                 global.types.reader.create_with_annex(
                     strand,
                     TarReader {
-                        entries,
-                        current: None,
+                        cursor: Cursor::new(archive),
                         generation: 0,
                         compression,
                         closed: false,
@@ -1235,7 +1231,7 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     global.types.reader.cast(&reader).unwrap(),
                     |reader_obj| {
                         let mut borrow = reader_obj.borrow_mut(strand)?;
-                        borrow.current = None;
+                        borrow.cursor.clear();
                         borrow.closed = true;
                         borrow.generation = borrow.generation.wrapping_add(1);
                         Ok(())
@@ -1253,17 +1249,18 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                 .into_write()
                 .expect("sink is writable")
                 .compat_write();
-            let writer: DynWriter = match compression {
+            let output: DynWriter = match compression {
                 Compression::None => Box::pin(sink),
                 Compression::Gzip => Box::pin(GzipEncoder::new(sink)),
                 Compression::Zstd => Box::pin(ZstdEncoder::new(sink)),
             };
-            let native_builder = TarBuilder::new(writer);
+
             with_slots!(strand, |mut writer| {
                 global.types.writer.create_with_annex(
                     strand,
                     TarWriter {
-                        builder: Some(native_builder),
+                        sink: Some(output),
+                        sequence: 0,
                         generation: 0,
                         active: false,
                         poisoned: false,
@@ -1273,12 +1270,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     &mut writer,
                 );
                 let result = call!(strand, block, &writer, out);
-                let (builder, poisoned, active) = with_instance!(
+                let (sink, poisoned, active) = with_instance!(
                     strand,
                     global.types.writer.cast(&writer).unwrap(),
                     |writer_obj| {
                         let mut borrow = writer_obj.borrow_mut(strand)?;
-                        Ok((borrow.builder.take(), borrow.poisoned, borrow.active))
+                        Ok((borrow.sink.take(), borrow.poisoned, borrow.active))
                     }
                 )?;
                 let cleanup = if active || poisoned {
@@ -1288,12 +1285,12 @@ pub(crate) fn configure_vm<'v>(builder: &mut Register<'v>, global: State<'v, Glo
                     ))
                 } else {
                     async {
-                        let mut inner = builder
-                            .ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?
-                            .into_inner()
+                        let mut sink =
+                            sink.ok_or_else(|| Error::state_error(strand, "tar writer is closed"))?;
+                        sink.write_all(end_marker_bytes())
                             .await
                             .into_do_io(strand)?;
-                        inner.shutdown().await.into_do_io(strand)?;
+                        sink.shutdown().await.into_do_io(strand)?;
                         Ok(())
                     }
                     .await
