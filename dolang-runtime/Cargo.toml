@@ -24,10 +24,6 @@ workspace = true
 workspace = true
 
 
-[dependencies.hex]
-version = "0.4.3"
-
-
 [dependencies.rustc-hash]
 workspace = true
 
