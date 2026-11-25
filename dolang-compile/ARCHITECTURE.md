@@ -250,9 +250,16 @@ It is exact when the projection is reified once its schema's environment is
 substituted, which waits on the schema's variables, or when a skolem key's
 bounds or the schema's shape alone determine it. It is an upper approximation,
 which only the actual side takes, when a rigid schema widens to its bound or a
-rigid or skolem key widens toward its bound. A variable key never widens, since
-its solution may select a precise item. Otherwise it is stuck, and relates only
-as itself through the rules for projections. A variable's bound is evaluated
+rigid or skolem key widens toward its bound. A lower approximation is only for
+the expected side. A write through a rigid's member schema, or a key of it,
+lowers to its bound's. Every subclass shares that, so a judgment against it is
+derived. A key of a rigid schema lowers to the keys its bound requires. Those
+are only some of the keys it admits, so they are probed and otherwise left to
+the later rules. `AssignItem` is antitone in its key, so its key never
+approximates. A variable key never approximates either, since its solution may
+select a precise item. Otherwise it is stuck, and relates only as itself
+through the rules for projections. Narrowing evaluates a closed projection the
+way a head does, before it drops members. A variable's bound is evaluated
 exactly when it is recorded. A lower bound holding a skolem that the variable
 can't see is promoted to what its upper approximation gives, and defaulting
 leaves out such a bound. An item projection is evaluated once its schema and key
@@ -266,7 +273,8 @@ from the end: past fixed positions alone it selects one of them, and before
 varying ones it also selects each fixed one as far back as it counts, since the
 varying ones may be fewer. `IndexItem` joins the
 selected values. `AssignItem` meets them: a value below a closed `AssignItem`
-that selects several values is related to each. Evaluated, as where it isn't the
+that selects several values is related to each, before the expected side's
+head would compute the meet. Evaluated, as where it isn't the
 expected side, the meet needs no intersection types: the lower of two ordered
 values, the bottom type for a literal outside the other or a final class that
 doesn't reach the other, and otherwise `Unknown`, unresolved in a strict unit.

@@ -106,7 +106,7 @@ enum Selected {
 
 /// A change to the items a key selects
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Change {
+pub(super) enum Change {
     /// Adding one more of each, as `InsertItem` does
     Insert,
     /// Removing each, as `Deletable` requires
@@ -258,7 +258,7 @@ impl Solver<'_> {
     }
 
     /// Check that each item of a schema a key selects admits a change
-    fn changed(&self, schema: TypeId, key: TypeId, change: Change) -> Result<(), Issue> {
+    pub(super) fn changed(&self, schema: TypeId, key: TypeId, change: Change) -> Result<(), Issue> {
         for selected in self.selected_items(schema, key)? {
             match selected {
                 Selected::Item {
@@ -370,62 +370,9 @@ impl Solver<'_> {
         Ok(met)
     }
 
-    /// The values of a closed `AssignItem` a term is, where its key selects
-    /// more than one. A write must fit each, which needs no meet of them.
-    pub(super) fn assigned(&self, term: Term) -> Result<Option<Vec<TypeId>>, Issue> {
-        let Term::View(view) = self.resolve(term)? else {
-            return Ok(None);
-        };
-        let Type::Union(members) = self.db.ty(view.ty) else {
-            return Ok(None);
-        };
-        if let &[UnionMember::PushItem(schema)] = &members[..] {
-            let Ok(schema) = self.reify(view.child(schema)) else {
-                return Ok(None);
-            };
-            let Ok(pushed) = self.pushed(schema) else {
-                return Ok(None);
-            };
-            let mut values = Vec::new();
-            for value in pushed {
-                if !values.contains(&value) {
-                    values.push(value);
-                }
-            }
-            return Ok((values.len() > 1).then_some(values));
-        }
-        let &[
-            member @ (UnionMember::AssignItem(schema, key) | UnionMember::InsertItem(schema, key)),
-        ] = &members[..]
-        else {
-            return Ok(None);
-        };
-        let (Ok(schema), Ok(key)) = (self.reify(view.child(schema)), self.reify(view.child(key)))
-        else {
-            return Ok(None);
-        };
-        // An insertion its schema doesn't admit relates as its evaluation does
-        if let UnionMember::InsertItem(..) = member
-            && self.changed(schema, key, Change::Insert).is_err()
-        {
-            return Ok(None);
-        }
-        // Anything else relates as the meet does
-        let Ok(selected) = self.selected(schema, key) else {
-            return Ok(None);
-        };
-        let mut values = Vec::new();
-        for value in selected {
-            if !values.contains(&value) {
-                values.push(value);
-            }
-        }
-        Ok((values.len() > 1).then_some(values))
-    }
-
     /// The values of the positions of a closed schema that an appended position
     /// may be: those past its fixed positions, which need a rest
-    fn pushed(&self, schema: TypeId) -> Result<Vec<TypeId>, Issue> {
+    pub(super) fn pushed(&self, schema: TypeId) -> Result<Vec<TypeId>, Issue> {
         let Some(promoted) = self.keyed_view(schema)? else {
             return Ok(vec![self.db.unknown()]);
         };
@@ -446,7 +393,7 @@ impl Solver<'_> {
     }
 
     /// The values of a schema's items a key selects
-    fn selected(&self, schema: TypeId, key: TypeId) -> Result<Vec<TypeId>, Issue> {
+    pub(super) fn selected(&self, schema: TypeId, key: TypeId) -> Result<Vec<TypeId>, Issue> {
         self.selected_items(schema, key)?
             .into_iter()
             .map(|selected| match selected {

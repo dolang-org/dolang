@@ -573,3 +573,27 @@ fn narrowing_is_sound() {
         }
     }
 }
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn projections_are_evaluated_before_narrowing() {
+    let mut w = World::new();
+    // f[S @ {*Int}]
+    let positions = items(&w.db, vec![positional(Multiplicity::Repeated, w.int)]);
+    let binder = bounded(Kind::Schema, Binding::Positional, Some(positions));
+    let top = w.db.top();
+    let decl = generic(&mut w.db, vec![binder], top);
+    w.db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&w.db, &gas);
+    s.assume(decl);
+    let rigid = w.db.rigids(decl)[0];
+    // `Keys[S]` is `Int` by its bound's shape, so never `Nil`
+    let keys =
+        w.db.intern(Type::Union(vec![UnionMember::Keys(rigid)].into()));
+    assert_eq!(
+        class(&s, keys, Relation::Upper, false, w.nil),
+        w.db.bottom()
+    );
+    assert_eq!(class(&s, keys, Relation::Upper, false, w.int), w.int);
+}

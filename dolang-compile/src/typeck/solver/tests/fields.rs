@@ -242,6 +242,85 @@ fn bounded_targets_read_and_set_through_their_bound() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn rigid_member_schemas_lower_to_their_bounds() {
+    let mut db = Database::new();
+    let int = int(&mut db);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    // final class Point: pub field x @ Int; def f[T @ Point]
+    let mut point = Class::new(&mut db, "Point", vec![]).final_class();
+    point.field(key(&db, "x"), int, Scope::Instance);
+    let point = point.finish(&mut db, vec![]);
+    let t = reference(&db, 0, 0);
+    let binder = bounded(Kind::Type, Binding::Positional, Some(point));
+    let decl = generic(&mut db, vec![binder], t);
+    db.seal();
+
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let env = s.rigid_environment(decl);
+    let rigid = s.reify(s.view(t, env)).unwrap();
+    let x = sym(&db, "x");
+    let lone = |member| db.intern(Type::Union(vec![member].into()));
+    let lower = |ty| {
+        let view = TypeView {
+            ty,
+            environment: s.empty_environment(),
+        };
+        s.evaluate(view, Approximation::Lower)
+    };
+    // What the bound sets, every subclass sets
+    let write = fields(&db, rigid, FieldAccess::Write);
+    match lower(lone(UnionMember::AssignItem(write, x))) {
+        Ok(Evaluation::Lower(Term::View(view), Step::RigidBound)) => {
+            let bound = fields(&db, point, FieldAccess::Write);
+            assert_eq!(view.ty, lone(UnionMember::AssignItem(bound, x)));
+        }
+        other => panic!("{other:?}"),
+    }
+    // Every subclass has the bound's members, but may have others
+    let read = fields(&db, rigid, FieldAccess::Read);
+    match lower(lone(UnionMember::Keys(read))) {
+        Ok(Evaluation::Sufficient(term)) => assert_eq!(s.reify(term), Ok(x)),
+        other => panic!("{other:?}"),
+    }
+    // Only the expected side lowers
+    for approximation in [Approximation::Exact, Approximation::Upper] {
+        let view = TypeView {
+            ty: lone(UnionMember::AssignItem(write, x)),
+            environment: s.empty_environment(),
+        };
+        assert!(matches!(
+            s.evaluate(view, approximation),
+            Ok(Evaluation::Stuck { waiting: false })
+        ));
+    }
+    // An assignment selecting two values is their meet, related to each
+    let schema = items(&db, vec![required(&db, "x", int), required(&db, "y", str)]);
+    let held = db.intern(Type::Bound {
+        reference: BoundRef::new(0, 0),
+        kind: Kind::Schema,
+    });
+    let y = sym(&db, "y");
+    let both = db.intern(Type::Union(
+        vec![UnionMember::Type(x), UnionMember::Type(y)].into(),
+    ));
+    let view = TypeView {
+        ty: lone(UnionMember::AssignItem(held, both)),
+        environment: s.intern_environment(s.empty_environment(), vec![s.closed(schema)]),
+    };
+    let selected = s.write_selection(view).unwrap().unwrap();
+    let selected: Vec<_> = selected
+        .into_iter()
+        .map(|(value, step)| (s.reify(value).unwrap(), step))
+        .collect();
+    assert_eq!(
+        selected,
+        [(int, Step::Selected(0)), (str, Step::Selected(1))]
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn member_schemas_relate_as_what_they_list() {
     let mut db = Database::new();
     let symbol = sym_class(&mut db);

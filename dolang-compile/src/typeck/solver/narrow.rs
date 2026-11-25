@@ -197,8 +197,8 @@ impl Solver<'_> {
     /// or a member, replaced by its alternatives. An alias can hide alternatives
     /// a relation drops, as `A` in `A | :GZIP:` does `:TAR:` and `:ZIP:`, or whose
     /// class test preserves their own type arguments, as `FmtSegment[V]` does.
-    /// A projection of a transparent declaration's schema, as `Entries[...S]`, is
-    /// replaced by what it projects to once exposed.
+    /// A projection is replaced by what it evaluates to, as `Entries[...S]` is
+    /// once a transparent declaration's schema `S` is exposed.
     fn exposed_members(
         &self,
         ty: TypeId,
@@ -214,13 +214,30 @@ impl Solver<'_> {
             {
                 self.exposed_members(body, exposed, members);
             } else if member.projected().is_some()
-                && let Ok(Some(projected)) = self.exposed_projections(&[member])
+                && let Some(projected) = self.evaluated_member(member)
                 && exposed.insert(projected)
             {
                 self.exposed_members(projected, exposed, members);
             } else {
                 members.push(member);
             }
+        }
+    }
+
+    /// A closed projection member evaluated alone (see [`Self::evaluate`]), or
+    /// `None` if it's stuck or can't be evaluated
+    fn evaluated_member(&self, member: UnionMember) -> Option<TypeId> {
+        let view = TypeView {
+            ty: self.db.intern(Type::Union(vec![member].into())),
+            environment: self.empty_environment(),
+        };
+        match self.evaluate(view, Approximation::Exact) {
+            Ok(Evaluation::Exact(Term::View(evaluated)))
+                if evaluated.environment == self.empty_environment() =>
+            {
+                Some(evaluated.ty)
+            }
+            _ => None,
         }
     }
 

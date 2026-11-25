@@ -16,22 +16,38 @@
 //!   and a rigid or skolem key toward its bound (see
 //!   [`Solver::widened_projection`]). A variable key never widens, as its
 //!   solution may select a precise item.
+//! - **lower**: a term below it, which only the expected side of a judgment
+//!   may take. A write through a rigid's member schema, or a key of one,
+//!   lowers to its bound's, which every instance shares (see
+//!   [`Solver::lowered_projection`]); a judgment against it is derived. The keys of a
+//!   rigid schema lower to those its bound requires, which are only some of
+//!   the keys it admits: that's sufficient, so a judgment against them is
+//!   only probed. `AssignItem` is antitone in its key, so its key never
+//!   approximates, on either side.
 //! - **stuck**: left for the relational rules (see the `projections` rule),
 //!   noting whether it waits on inference.
 //!
-//! Each caller states whether it takes an upper approximation. A variable's
+//! A write whose key selects several values is the meet of them, which the
+//! expected side relates to each instead of computing it (see
+//! [`Solver::write_selection`]). It's taken before the expected side's head, which
+//! would compute the meet.
+//!
+//! Each caller states which approximation it takes. A variable's
 //! bound is evaluated exactly when it's recorded, and a lower bound that would
 //! hold a skolem the variable can't see takes its upper approximation instead
 //! (see [`Solver::add_bound`]).
 
+use super::item::Change;
 use super::*;
 
 /// Whether a caller of [`Solver::evaluate`] takes a term above the projection,
-/// as only the actual side of a judgment may
+/// as only the actual side of a judgment may, or below it, as only the
+/// expected side may
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Approximation {
     Exact,
     Upper,
+    Lower,
 }
 
 /// What [`Solver::evaluate`] found a projection to be
@@ -41,6 +57,12 @@ pub(super) enum Evaluation {
     Exact(Term),
     /// A term above it, with the step that widens it
     Upper(Term, Step),
+    /// A term below it that every instance of its rigids shares, with the
+    /// step that reaches it
+    Lower(Term, Step),
+    /// A term below it that's only sufficient: what's below the term fits
+    /// the projection, but what isn't may fit it too
+    Sufficient(Term),
     /// Neither, leaving it to the relational rules: `waiting` if that's
     /// because it waits on inference
     Stuck { waiting: bool },
@@ -59,20 +81,34 @@ impl Solver<'_> {
 
     /// Evaluate a projection in `view` one step, or with
     /// [`Approximation::Upper`], a lone projection that is stuck to what it
-    /// widens to (see the module documentation)
+    /// widens to, or with [`Approximation::Lower`], a union of projections that
+    /// is stuck to what it lowers to (see the module documentation)
     pub(super) fn evaluate(
         &self,
         view: TypeView,
         approximation: Approximation,
     ) -> Result<Evaluation, Issue> {
         let exact = self.exact(view)?;
-        if approximation == Approximation::Upper
-            && let Evaluation::Stuck { .. } = exact
-            && let Type::Union(members) = self.db.ty(view.ty)
-            && let &[member] = &members[..]
-            && let Some((widened, step)) = self.widened_projection(view, member)?
-        {
-            return Ok(Evaluation::Upper(widened, step));
+        let Evaluation::Stuck { .. } = exact else {
+            return Ok(exact);
+        };
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(exact);
+        };
+        match approximation {
+            Approximation::Exact => {}
+            Approximation::Upper => {
+                if let &[member] = &members[..]
+                    && let Some((widened, step)) = self.widened_projection(view, member)?
+                {
+                    return Ok(Evaluation::Upper(widened, step));
+                }
+            }
+            Approximation::Lower => {
+                if let Some(lowered) = self.lowered_projection(view, members)? {
+                    return Ok(lowered);
+                }
+            }
         }
         Ok(exact)
     }
@@ -106,7 +142,9 @@ impl Solver<'_> {
             match self.evaluate_member(view, member, Approximation::Upper)? {
                 Evaluation::Exact(term) => Some((term, Step::UnionMember(index))),
                 Evaluation::Upper(term, step) => Some((term, step)),
-                Evaluation::Stuck { .. } => None,
+                Evaluation::Lower(..) | Evaluation::Sufficient(_) | Evaluation::Stuck { .. } => {
+                    None
+                }
             },
         )
     }
@@ -329,10 +367,7 @@ impl Solver<'_> {
     /// A closed union with each projection's schema exposed (see
     /// [`Self::exposed_schema`]), or `None` if none has a transparent
     /// declaration to expose
-    pub(super) fn exposed_projections(
-        &self,
-        members: &[UnionMember],
-    ) -> Result<Option<TypeId>, Issue> {
+    fn exposed_projections(&self, members: &[UnionMember]) -> Result<Option<TypeId>, Issue> {
         let mut changed = false;
         let mut exposed = Vec::with_capacity(members.len());
         for &member in members {
@@ -448,5 +483,142 @@ impl Solver<'_> {
             }
         }
         Ok(step.map(|step| (self.db.intern(Type::Union(widened.into())), step)))
+    }
+
+    /// A stuck union of projections in `view` lowered by one step (see the
+    /// module documentation), or `None` if no member lowers. A write through
+    /// a rigid's member schema, or a key of it, is lowered first: what its
+    /// bound's member schema sets is set by every subtype's, as the override
+    /// rules keep a setter from narrowing, so a value its bound's assignment
+    /// takes fits, at a key it sets (see [`Self::widened_fields`]).
+    /// `AssignItem` is invariant in any other schema, so only a member schema
+    /// lowers. Otherwise a key of a rigid's schema lowers to the keys its
+    /// bound is known to admit: a rigid schema is any schema below its bound,
+    /// which may omit every item the bound doesn't require, so those are the
+    /// keys of the bound's required literal items, and the index of each fixed
+    /// position. A read schema of a rigid's class lists every member its bound
+    /// does, which are required. They're only some of the keys it admits, so
+    /// they're only sufficient.
+    fn lowered_projection(
+        &self,
+        view: TypeView,
+        members: &[UnionMember],
+    ) -> Result<Option<Evaluation>, Issue> {
+        let mut written = Vec::with_capacity(members.len());
+        let mut reduced = None;
+        for &member in members {
+            if let UnionMember::AssignItem(schema, _) | UnionMember::Keys(schema) = member
+                && let Some((fields, step)) =
+                    self.widened_fields(view.child(schema), FieldAccess::Write)?
+            {
+                reduced.get_or_insert(step);
+                written.push(member.with(fields));
+            } else {
+                written.push(member);
+            }
+        }
+        if let Some(step) = reduced {
+            // The keys may refer to the view's binders
+            let written = view.child(self.db.intern(Type::Union(written.into())));
+            return Ok(Some(Evaluation::Lower(written, step)));
+        }
+        let mut known = Vec::with_capacity(members.len());
+        let mut changed = false;
+        for &member in members {
+            let UnionMember::Keys(schema) = member else {
+                known.push(member);
+                continue;
+            };
+            let schema = view.child(schema);
+            let bound = match self.widened_fields(schema, FieldAccess::Read)? {
+                Some((fields, _)) => Some(fields),
+                None => self.closed_abstract_bound(schema)?.map(|(bound, _)| bound),
+            };
+            let Some(bound) = bound else {
+                known.push(member);
+                continue;
+            };
+            let promoted = match self.keyed_view(bound) {
+                Ok(Some(promoted)) => promoted,
+                Ok(None) | Err(Issue::Residual(_)) => return Ok(None),
+                Err(issue) => return Err(issue),
+            };
+            changed = true;
+            known.extend((0..promoted.fixed.len()).map(|index| {
+                let index = Literal::Int(index as i128);
+                UnionMember::Type(self.db.intern(Type::Literal(index)))
+            }));
+            known.extend(
+                promoted
+                    .keyed
+                    .iter()
+                    .filter(|&&(multiplicity, key, _)| {
+                        multiplicity == Multiplicity::Required && self.db.literal(key).is_some()
+                    })
+                    .map(|&(_, key, _)| UnionMember::Type(key)),
+            );
+        }
+        Ok(changed.then(|| {
+            let known = view.child(self.db.intern(Type::Union(known.into())));
+            Evaluation::Sufficient(known)
+        }))
+    }
+
+    /// The values of a closed `AssignItem`, `InsertItem` or `PushItem` that
+    /// `view` is, where its key selects more than one, each with the step that
+    /// selects it. It's their meet, and a write must fit each, which needs no
+    /// meet of them. `None` if `view` isn't one, or isn't closed.
+    pub(super) fn write_selection(
+        &self,
+        view: TypeView,
+    ) -> Result<Option<Vec<(Term, Step)>>, Issue> {
+        let Type::Union(members) = self.db.ty(view.ty) else {
+            return Ok(None);
+        };
+        let selected = |values: Vec<TypeId>| {
+            let mut distinct = Vec::new();
+            for value in values {
+                if !distinct.contains(&value) {
+                    distinct.push(value);
+                }
+            }
+            (distinct.len() > 1).then(|| {
+                distinct
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, value)| (self.closed(value), Step::Selected(index)))
+                    .collect()
+            })
+        };
+        if let &[UnionMember::PushItem(schema)] = &members[..] {
+            let Ok(schema) = self.reify(view.child(schema)) else {
+                return Ok(None);
+            };
+            let Ok(pushed) = self.pushed(schema) else {
+                return Ok(None);
+            };
+            return Ok(selected(pushed));
+        }
+        let &[
+            member @ (UnionMember::AssignItem(schema, key) | UnionMember::InsertItem(schema, key)),
+        ] = &members[..]
+        else {
+            return Ok(None);
+        };
+        let (Ok(schema), Ok(key)) = (self.reify(view.child(schema)), self.reify(view.child(key)))
+        else {
+            return Ok(None);
+        };
+        // An insertion its schema doesn't admit relates as its evaluation does
+        if let UnionMember::InsertItem(..) = member
+            && self.changed(schema, key, Change::Insert).is_err()
+        {
+            return Ok(None);
+        }
+        // Anything else relates as the meet does
+        let Ok(values) = self.selected(schema, key) else {
+            return Ok(None);
+        };
+        Ok(selected(values))
     }
 }

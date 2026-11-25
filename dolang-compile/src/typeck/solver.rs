@@ -3720,9 +3720,10 @@ impl<'db> Solver<'db> {
                 _ if self.projective(view.ty) => match self.evaluate(view, Approximation::Exact)? {
                     Evaluation::Exact(evaluated) => term = evaluated,
                     Evaluation::Stuck { waiting: true } => return Err(Residual::Inference.into()),
-                    Evaluation::Stuck { waiting: false } | Evaluation::Upper(..) => {
-                        return Ok(Head::Structural(view));
-                    }
+                    Evaluation::Stuck { waiting: false }
+                    | Evaluation::Upper(..)
+                    | Evaluation::Lower(..)
+                    | Evaluation::Sufficient(_) => return Ok(Head::Structural(view)),
                 },
                 _ => return Ok(Head::Structural(view)),
             }
