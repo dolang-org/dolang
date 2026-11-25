@@ -181,6 +181,50 @@ def testing_needs_a_test_dir()
     assert $output.contains("no test directory") $output
 
 #[test]
+def runs_the_program()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    let output rc = doze --project $dir run x
+    assert_eq $rc 0 $output
+    assert $output.contains("42 x") $output
+
+#[test]
+def passes_options_to_the_program()
+  fs.with_temp_dir do |dir|
+    write_project $dir
+    let output rc = doze --project $dir run --flag
+    assert_eq $rc 0 $output
+    assert $output.contains("42 --flag") $output
+
+#[test]
+def running_keeps_the_directory()
+  fs.with_temp_dir do |dir|
+    (dir / "main.dol").write "put \"\$(shell.cd())\\n\"\n"
+    fs.with_temp_dir do |other|
+      cd $other do
+        let output rc = doze --project $dir run
+        assert_eq $rc 0 $output
+        # Compared canonically, as the program sees a symlinked temp dir (on
+        # macOS) by its target
+        assert_eq $fs.Path(output.trim_end()).canonical() $cd().canonical()
+
+#[test]
+def exit_status_is_the_programs()
+  fs.with_temp_dir do |dir|
+    (dir / "main.dol").write "shell.exit 3\n"
+    let output rc = doze --project $dir run
+    assert_eq $rc 3 $output
+
+#[test]
+def running_needs_main()
+  fs.with_temp_dir do |dir|
+    (dir / "lib").create_dir all: true
+    (dir / "lib/a.dol").write "pub let value = 1\n"
+    let output rc = doze --project $dir run
+    assert_eq $rc 1
+    assert $output.contains("no main.dol") $output
+
+#[test]
 def bad_module_paths_fail()
   let cases = $
     - (["lib", "x-y.dol"], "invalid module path")

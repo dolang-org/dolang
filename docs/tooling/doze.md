@@ -1,11 +1,24 @@
 # doze
 
-`doze` checks, tests and bundles a [project](./index.md). Run it as
+`doze` runs, checks, tests and bundles a [project](./index.md). Run it as
 `dolang -m doze`, or through a `doze` symlink to `dolang`, which an installation
 provides on Unix.
 
 Each command works on the project given with `--project`, before the command,
 or else on the current directory.
+
+## Running
+
+`doze run` runs `main.dol` with `lib/` on the module path, so it imports the
+project's modules. It needs `main.dol`. Every argument after `run` goes to the
+program unchanged, as `shell.args`, and its exit status is `doze`'s. It runs in
+the current directory, so relative paths among the arguments mean what they
+would to `dolang`. For a project in `app`, these are the same:
+
+```bash
+doze --project app run input.txt --verbose
+dolang --module-path app/lib app/main.dol input.txt --verbose
+```
 
 ## Checking
 
