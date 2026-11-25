@@ -1,0 +1,197 @@
+import std: error
+import io:
+  - Io
+  - Buffered
+  - Cursor
+  - Window
+import regression2:
+  - byte_read
+  - byte_write
+  - byte_stream
+
+# A seekable in-memory stream
+class MemIo: Io
+  pub field data pos
+
+  def (init) self data
+    self.data = data
+    self.pos = 0
+
+  #[getter]
+  pub def readable _self
+    true
+
+  #[getter]
+  pub def writable _self
+    true
+
+  #[getter]
+  pub def seekable _self
+    true
+
+  pub def read_some self size
+    let end = (self.pos + size)
+    if (end > self.data.len)
+      end = self.data.len
+    let chunk = (self.data[self.pos..end])
+    self.pos = end
+    chunk
+
+  pub def write_some self data
+    let bytes = (Bin data)
+    let out = BinBuf()
+    out.extend (self.data[..self.pos])
+    out.extend $bytes
+    let rest = (self.pos + bytes.len)
+    if (rest < self.data.len)
+      out.extend (self.data[rest..])
+    self.data = out.freeze()
+    self.pos = rest
+    bytes.len
+
+  pub def seek self offset = nil :start = nil :end = nil
+    if (start != nil)
+      self.pos = start
+    else if (end != nil)
+      self.pos = (self.data.len + end)
+    else if (offset != nil)
+      self.pos = (self.pos + offset)
+    self.pos
+
+# Runs `scenario` on a fresh stream over `data`, once wrapping the stream itself
+# and once wrapping its native handle, which goes through the bridge. Both give
+# the same results.
+def both data scenario
+  let direct = scenario (MemIo data) (do |s| s)
+  let bridged = scenario (MemIo data) $byte_stream
+  assert_eq $direct $bridged
+  direct
+
+# A window reads, seeks and writes within its range
+let window = both b"0123456789" do |s wrap|
+  let w = Window (wrap s) (2..8)
+  let results = $
+    - (w.read 3)
+    - (w.read_some 10)
+    - (w.read 3)
+    - (w.seek end: -2)
+    - (w.read 5)
+    - (w.seek start: 1)
+    - (w.write "x" "y")
+    - (w.write "abcdefgh")
+    - (w.write_some "z")
+  w.flush()
+  results.push $s.data
+  results
+assert_eq $window $
+  - b"234"
+  - b"567"
+  - b""
+  - 4
+  - b"67"
+  - 1
+  - 2
+  - 3
+  - 0
+  - b"012xyabc89"
+
+# A window starting before its range reads from the range's start, and an
+# empty piece doesn't end a write
+let open_window = both b"0123456789" do |s wrap|
+  s.seek start: 1
+  let w = Window (wrap s) (4..)
+  let results = $
+    - (w.read 2)
+    - (w.write "" "Q")
+    - (w.seek end: 0)
+    - (w.read 1)
+  w.flush()
+  results.push $s.data
+  results
+assert_eq $open_window $
+  - b"45"
+  - 1
+  - 6
+  - b""
+  - b"012345Q789"
+
+# A buffer reads lines and text, writes at the logical position, and seeks
+let buffered = both b"one\ntwo\nthree" do |s wrap|
+  let b = Buffered (wrap s)
+  let results = $
+    - (b.read_line())
+    - (b.tell())
+    - (b.read 2)
+    - (b.write "X" "Y")
+    - (b.tell())
+    - (b.read_line())
+    - (b.seek start: 0)
+    - (b.read_str 3)
+    - (b.read_some 100)
+    - (b.read())
+  b.close()
+  results.push $s.data
+  results
+assert_eq $buffered $
+  - "one\n"
+  - 4
+  - b"tw"
+  - 2
+  - 8
+  - three
+  - 0
+  - one
+  - b"\ntwXYthree"
+  - b""
+  - b"one\ntwXYthree"
+
+# Reads and writes at least a buffer long skip the buffer
+let chunk = BinBuf()
+for _ = 0..1000
+  chunk.extend b"0123456789"
+let chunk = (chunk.freeze())
+let large = both b"" do |s wrap|
+  let b = Buffered (wrap s)
+  b.write $chunk "end"
+  b.seek start: 0
+  let first = (b.read_some 10000)
+  let rest = (b.read())
+  b.close()
+  [first.len, rest.len, s.data.len]
+assert_eq $large [10000, 3, 10003]
+
+# An exception from the stream reaches a window or buffer unchanged, and the
+# bridge maps it for a native consumer
+class Failing: MemIo
+  pub def read_some _self _size
+    throw error.StateError "read failed"
+
+let failing = "state error: read failed"
+assert_throws $error.StateError str: $failing do Buffered(Failing(b"")).read()
+assert_throws $error.StateError str: $failing do Window(Failing(b"")).read(1)
+let consumers = $
+  - do Buffered(byte_stream(Failing(b""))).read()
+  - do Window(byte_stream(Failing(b""))).read(1)
+for consume = consumers
+  let err = assert_throws $error.RuntimeError str: $failing do consume()
+  assert (!type(err, error.StateError))
+
+# A window or buffer over a Do stream lends itself to a native consumer, and
+# wraps another one over a Do stream
+assert_eq (byte_read (Window (MemIo b"0123456789") (2..5))) b"234"
+assert_eq (byte_read (Buffered (MemIo b"abc"))) b"abc"
+let inner = Window (MemIo b"0123456789") (2..8)
+let outer = Window $inner (1..4)
+assert_eq (outer.read 10) b"345"
+let buffered_window = Buffered (Window (MemIo b"0123456789") (5..))
+assert_eq (buffered_window.read()) b"56789"
+
+# A window over a native stream served through its methods
+assert_eq (Window(Cursor(b"0123456789"), (3..6)).read(10)) b"345"
+
+# A native consumer flushes a buffer over a Do stream when it is done writing
+let flushed = MemIo b""
+let pending = Buffered $flushed
+byte_write $pending b"abc"
+assert_eq $flushed.data b"abc"
+assert_eq (flushed.flush()) nil

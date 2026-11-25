@@ -3,7 +3,8 @@
 //! A [`Handle`] sends each read, write and seek as a [`Request`] to a server strand
 //! that calls the stream's methods, and the servers' ends are [`Lanes`]. The handle
 //! buffers reads and writes. Closing the handle closes its lanes and waits for the
-//! servers to stop, but leaves the stream open. Dropping it tells the owner of the
+//! servers to stop, but leaves the stream open. Flushing the handle, and closing it, also
+//! asks the server to flush the stream. Dropping it tells the owner of the
 //! servers to interrupt them.
 //!
 //! A seekable stream has one position, so its requests share one lane. Otherwise reads
@@ -40,6 +41,7 @@ pub(crate) enum Request {
     Write(Vec<u8>, Reply<usize>),
     Seek(SeekFrom, Reply<u64>),
     Fork(u64, Reply<ByteHandle>),
+    Flush(Reply<()>),
 }
 
 /// The servers' ends of a handle.
@@ -83,6 +85,7 @@ pub(crate) fn handle(caps: IoCaps) -> (ByteHandle, Lanes) {
         write: None,
         seek: None,
         fork: None,
+        flush: None,
         done: Some(done_rx),
         _alive: alive,
     };
@@ -132,6 +135,7 @@ struct Handle {
     write: Pending<usize>,
     seek: Pending<u64>,
     fork: Pending<ByteHandle>,
+    flush: Pending<()>,
     done: Pending<()>,
     /// Never sent; dropping it with the handle resolves [`Lanes::dropped`].
     _alive: oneshot::Sender<()>,
@@ -251,14 +255,23 @@ impl AsyncWrite for Handle {
         Poll::Ready(Ok(written))
     }
 
+    /// Writes out the buffer, then has the stream flush.
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        self.get_mut().poll_drain(cx)
+        let this = self.get_mut();
+        if this.writes.is_none() {
+            return Poll::Ready(Ok(()));
+        }
+        if this.flush.is_none() {
+            ready!(this.poll_drain(cx))?;
+            this.flush = Some(send(this.writes.as_ref(), Request::Flush)?);
+        }
+        poll_reply(&mut this.flush, cx)
     }
 
-    /// Writes out the buffer, closes the lanes, and waits for the servers to stop.
+    /// Flushes, closes the lanes, and waits for the servers to stop.
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
-        ready!(this.poll_drain(cx))?;
+        ready!(Pin::new(&mut *this).poll_flush(cx))?;
         this.reads = None;
         this.writes = None;
         let Some(rx) = &mut this.done else {

@@ -11,6 +11,7 @@ import regression2:
   - byte_overwrite
   - byte_read
   - byte_seek
+  - byte_stream
   - byte_tell
   - byte_write
 
@@ -91,15 +92,15 @@ assert_eq (lines.read_line()) "one\n"
 assert_eq (lines.read_line()) "two\n"
 lines.close()
 
-# An exception from a stream method fails the consumer. A `ValueError` keeps
-# its class and message, and any other error becomes a `RuntimeError` with its
-# message
+# An exception from a stream method fails a native consumer. A `ValueError`
+# keeps its class and message, and any other error becomes a `RuntimeError`
+# with its message
 class Invalid: MemIo
   pub def read_some _self _size
     throw error.ValueError "bad"
 
 assert_throws $error.ValueError str: "value error: bad" do byte_read (Invalid b"")
-assert_throws $error.ValueError str: "value error: bad" do Buffered(Invalid(b"")).read()
+assert_throws $error.ValueError str: "value error: bad" do Buffered(byte_stream(Invalid(b""))).read()
 
 class Failing: MemIo
   pub def read_some _self _size
@@ -107,7 +108,9 @@ class Failing: MemIo
 
 let failing = "state error: read failed"
 assert_throws $error.RuntimeError str: $failing do byte_read (Failing b"")
-assert_throws $error.RuntimeError str: $failing do Buffered(Failing(b"")).read()
+let err = assert_throws $error.RuntimeError str: $failing do
+  Buffered(byte_stream(Failing(b""))).read()
+assert (!type(err, error.StateError))
 
 # A bad result from a stream method fails the consumer
 class BadRead: MemIo

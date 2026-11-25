@@ -34,8 +34,9 @@
 #
 # A native function that accepts an `Io` also accepts an instance of a Do
 # subclass, which must report its capabilities. Strands call its `read_some`,
-# `write_some` and `seek` as the function needs bytes, and its `fork` if it is
-# forkable, never its `close`. Don't use the stream yourself until the function
+# `write_some` and `seek` as the function needs bytes, its `flush` when the
+# function flushes or is done writing, and its `fork` if it is forkable, never
+# its `close`. Don't use the stream yourself until the function
 # is done with it.
 #
 # An exception from one of its methods fails the function. A
@@ -44,6 +45,10 @@
 # [`RuntimeError`](std.RuntimeError) carrying its message. An error class from
 # a native module can keep its class, as [`sys.Error`](sys.Error) keeps its
 # class and code.
+#
+# A [`Window`](io.Window) or [`Buffered`](io.Buffered) over a Do subclass
+# instead calls its `read`, `read_some`, `write`, `write_some` and `seek` from
+# the caller's strand, and lets its exceptions through unchanged.
 #
 # ## Example
 #
@@ -214,6 +219,14 @@ pub class Io: Sink[Value]
   pub def close self
     ...
 
+  # Writes out anything the stream holds back.
+  #
+  # `Io`'s own does nothing. A stream that holds back writes overrides it. A
+  # native function that writes to a Do subclass calls it when it flushes or is
+  # done writing.
+  pub def flush self
+    ...
+
   # Reads the rest of the stream.
   pub def read_all self -> Bin
     ...
@@ -277,7 +290,8 @@ pub class Io: Sink[Value]
 # | [`DataError`](std.DataError) | Text read is not valid UTF-8 |
 #
 # A failure of the source raises its own error, such as a
-# [`sys.Error`](sys.Error) from a file, or the exception a Do stream raised.
+# [`sys.Error`](sys.Error) from a file, or the exception a Do subclass of
+# [`Io`](io.Io) raised, which the buffer calls directly.
 #
 # ## Example
 #
@@ -677,6 +691,10 @@ pub class Cursor: Io
 # [fork](io.Io.fork) of a [forkable](io.Io.forkable) target instead.
 #
 # Closing the window flushes it and leaves the target open.
+#
+# The window calls the methods of a Do subclass of [`Io`](io.Io) directly: a
+# read returns the target's own `Bin`, and the target's exceptions propagate
+# unchanged.
 #
 # ## Errors
 #

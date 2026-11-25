@@ -11,7 +11,9 @@
 //! consumers see one buffer and one position.
 //!
 //! A Do subclass of `io.Io` provides [`ByteIo`] through strands that call its methods,
-//! and its handle sends them requests.
+//! and its handle sends them requests. A consumer that is itself called from Do, such as
+//! `io.Window`, can instead take the stream with [`target`] and call its methods on the
+//! calling strand.
 //!
 //! Errors cross a handle as [`io::Error`]s. An exception from a Do stream method becomes
 //! one through the [`IoError`] interface or the core table, and a consumer maps a
@@ -36,7 +38,7 @@ use crate::{
     object::{interface::InterfaceTag, native::Mut},
     stdlib::io::{Concat, ConcatType},
     strand::Strand,
-    value::Value,
+    value::{Value, private::Sealed},
     vm::AllocExt,
     with_instance, with_slots,
 };
@@ -108,6 +110,12 @@ pub trait IntoByteIo<'v> {
     /// through either see the other's. The handle's [forks](ByteHandle::fork) are the
     /// exception: they don't share it.
     fn get<'s>(&mut self, strand: &mut Strand<'v, 's>) -> crate::error::Result<'v, 's, ByteHandle>;
+
+    /// Whether the handle would be the bridge over the provider's own `Io` methods.
+    #[doc(hidden)]
+    fn served_by_methods(&self, _: Sealed) -> bool {
+        false
+    }
 }
 
 /// Gets `value`'s byte handle.
@@ -125,6 +133,38 @@ pub fn get<'v, 's>(
         let caps = io.caps(strand)?;
         accept(strand, caps)?;
         io.get(strand)
+    })
+}
+
+/// What a consumer called from Do takes from a stream.
+pub(crate) enum Target {
+    /// The stream's native handle.
+    Handle(ByteHandle),
+    /// The stream is served through its own `Io` methods, with these capabilities. The
+    /// consumer calls them on its strand instead of through a bridge.
+    Methods(IoCaps),
+}
+
+/// Takes `value` as a stream for a consumer called from Do: its native handle, or, where
+/// [`get`] would bridge its own `Io` methods, the stream itself.
+///
+/// `accept` and the errors are as for [`get`]. A stream served through its methods must
+/// read or write.
+pub(crate) fn target<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    value: &Value<'v>,
+    mut accept: impl FnMut(&mut Strand<'v, 's>, IoCaps) -> crate::error::Result<'v, 's, ()>,
+) -> crate::error::Result<'v, 's, Target> {
+    value.query::<ByteIo, _>(strand, |strand, io| {
+        let caps = io.caps(strand)?;
+        accept(strand, caps)?;
+        if !io.served_by_methods(Sealed) {
+            return io.get(strand).map(Target::Handle);
+        }
+        if !caps.intersects(IoCaps::READ | IoCaps::WRITE) {
+            return Err(Error::value(strand, "stream must be readable or writable"));
+        }
+        Ok(Target::Methods(caps))
     })
 }
 

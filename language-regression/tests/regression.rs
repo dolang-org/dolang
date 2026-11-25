@@ -921,6 +921,13 @@ mod detail {
                         strand.store(out, &buf[..]);
                         Ok(())
                     })
+                    // The value's native handle as a stream: for a Do stream, the bridge.
+                    .function("byte_stream", async move |strand, args, out| {
+                        unpack!(strand, args => value);
+                        let handle = io::get(strand, &value, |_, _| Ok(()))?;
+                        strand.store(out, handle);
+                        Ok(())
+                    })
                     .function("byte_tell", async move |strand, args, out| {
                         unpack!(strand, args => value);
                         let handle = byte_handle(strand, &value, IoCaps::READ | IoCaps::SEEK)?;
