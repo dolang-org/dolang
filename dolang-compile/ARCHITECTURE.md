@@ -324,6 +324,15 @@ for its bound, and an expected one contradicts the judgment. `Unknown` leaves
 the lanes it occupies unchecked, except that the actual side's items with
 literal keys must still fit the expected side's items with those keys.
 
+A schema that only includes `X` is `X`, and this is decided only here. A bounded
+schema rigid or skolem related to a schema that isn't rest-shaped is related as
+`{...X}`, so it pairs with itself on the other side instead of standing for its
+bound. A side that is only a variable relates as that variable to the whole of
+the other side. A side that is only a rigid does so only when the other side is
+also a single opaque or a bare term. When the rigid is a bare term itself, it is
+paired, and if nothing pairs with it, it relates through its bounds as it would
+anywhere else.
+
 Positional inclusion tries every way of filling the actual side's
 multiplicities, up to one overflow past the expected items. Each actual atom
 must be a subtype of every expected atom its items can land on. Where the

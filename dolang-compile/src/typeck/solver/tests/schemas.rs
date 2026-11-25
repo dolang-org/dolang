@@ -2024,6 +2024,106 @@ fn a_lone_variable_relates_to_a_rigid_beside_peels_and_pairs() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn a_rigid_pairs_with_itself_beside_a_variable_on_either_side() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let body = function(&db, &[], db.top());
+    let f = generic(
+        &mut db,
+        vec![bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None)],
+        body,
+    );
+    // Slot 0 is K, slots 1 and 2 keyed variables T and U
+    let k = pack(&db, 0);
+    let k_only = items(&db, vec![include(Req, k)]);
+    let k_t = items(&db, vec![include(Req, k), include(Req, pack(&db, 1))]);
+    let k_u = items(&db, vec![include(Req, k), include(Req, pack(&db, 2))]);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let rigids = s.rigid_environment(f);
+    let mut group = s.frame(rigids).group.clone();
+    let t = s.infer_kind(Kind::Schema, Rest::Keyed);
+    let u = s.infer_kind(Kind::Schema, Rest::Keyed);
+    group.extend([t, u]);
+    let env = s.intern_environment(s.empty_environment(), group);
+    // {...K, ...T} <: {...K}: K pairs, rather than the expected side
+    // collapsing to K, and T holds nothing
+    s.constrain(s.view(k_t, env), s.view(k_only, env), Provenance::default());
+    // K <: {...K, ...U}: K pairs as itself, not as its bound
+    s.constrain(s.view(k, env), s.view(k_u, env), Provenance::default());
+    // Neither contradicts; each waits only on its variable
+    let outcomes = s.solve();
+    for outcome in &outcomes {
+        assert_eq!(outcome.status, Status::Unresolved, "{outcomes:?}");
+        assert!(
+            outcome
+                .diagnostics
+                .iter()
+                .all(|d| d.issue == Issue::Residual(Residual::Inference)),
+            "{outcomes:?}"
+        );
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn a_bare_rigid_beside_a_schema_relates_through_its_bound() {
+    use Multiplicity::Required as Req;
+    let mut db = Database::new();
+    let num = nominal(&mut db, "Num", vec![], vec![]);
+    let int = nominal(&mut db, "Int", vec![], vec![num]);
+    let str = nominal(&mut db, "Str", vec![], vec![]);
+    let a = db.intern(Type::Literal(Literal::Sym(db.intern_symbol("a"))));
+    let body = function(&db, &[], db.top());
+    // T, S @ T, and K @ {a: Int}
+    let a_int = items(&db, vec![keyed(Req, a, int)]);
+    let (t, s_, k) = (pack(&db, 0), pack(&db, 1), pack(&db, 2));
+    let f = generic(
+        &mut db,
+        vec![
+            bounded(Kind::Schema, Binding::Rest(Rest::Keyed), None),
+            bounded(Kind::Schema, Binding::Positional, Some(t)),
+            bounded(Kind::Schema, Binding::Positional, Some(a_int)),
+        ],
+        body,
+    );
+    let s_only = items(&db, vec![include(Req, s_)]);
+    let t_only = items(&db, vec![include(Req, t)]);
+    let a_num_u = items(&db, vec![keyed(Req, a, num), include(Req, pack(&db, 3))]);
+    let a_str_u = items(&db, vec![keyed(Req, a, str), include(Req, pack(&db, 3))]);
+    db.seal();
+    let gas = Gas::default();
+    let mut s = Solver::new(&db, &gas);
+    let rigids = s.rigid_environment(f);
+    let mut group = s.frame(rigids).group.clone();
+    let u = s.infer_kind(Kind::Schema, Rest::Keyed);
+    group.push(u);
+    let env = s.intern_environment(s.empty_environment(), group);
+    // {...S} <: T: S relates as itself, then through its bound T
+    s.constrain(s.view(s_only, env), s.view(t, env), Provenance::default());
+    // {...T} <: S: nothing but S is known below S
+    s.constrain(s.view(t_only, env), s.view(s_, env), Provenance::default());
+    // K <: {a: Num, ...U}: K's bound {a: Int} relates, leaving U to wait for
+    // what it holds
+    s.constrain(s.view(k, env), s.view(a_num_u, env), Provenance::default());
+    // K <: {a: Str, ...U}: its bound's `a` isn't a `Str`
+    s.constrain(s.view(k, env), s.view(a_str_u, env), Provenance::default());
+    let outcomes = s.solve();
+    assert_eq!(outcomes[0].status, Status::Proven, "{outcomes:?}");
+    assert!(
+        contradiction(&outcomes[1], Contradiction::Rigid),
+        "{outcomes:?}"
+    );
+    assert!(residual(&outcomes[2], Residual::Inference), "{outcomes:?}");
+    assert!(
+        contradiction(&outcomes[3], Contradiction::UnrelatedNominals),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_lone_actual_variable_relates_to_the_whole_expected_schema() {
     use Multiplicity::Required as Req;
     let mut db = Database::new();

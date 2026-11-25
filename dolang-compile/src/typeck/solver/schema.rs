@@ -238,8 +238,24 @@ impl Solver<'_> {
         self.flatten(av, xs, None, None, &mut a, 0)?;
         // A side that is only one variable or rigid is that opaque, as `{...X}`
         // is `X`, so it relates to the whole of the other side, itself reduced
-        // the same way
-        let (sole_a, sole_b) = (self.sole(&a), self.sole(&b));
+        // the same way. A side that is a bare rigid or skolem already stands
+        // here as `{...X}` ([`Self::abstract_schema`]), so its opaque relates
+        // by pairing instead: as itself, it would only come back.
+        let sides = self.relation(obligation).sides();
+        let bare = |side: Option<Term>| -> Result<bool, Issue> {
+            let Some(side) = side else {
+                return Ok(false);
+            };
+            Ok(match self.head(side)? {
+                Head::Skolem(_) => true,
+                Head::Structural(view) => self.rigid(view.ty)?.is_some(),
+                _ => false,
+            })
+        };
+        let (bare_a, bare_b) = (bare(sides.map(|(a, _)| a))?, bare(sides.map(|(_, b)| b))?);
+        let rigid = |sole: &(Term, usize)| !matches!(sole.0, Term::Infer(_));
+        let sole_a = self.sole(&a).filter(|sole| !(bare_a && rigid(sole)));
+        let sole_b = self.sole(&b).filter(|sole| !(bare_b && rigid(sole)));
         if let Some((actual, item)) = sole_a {
             let expected = sole_b.map_or(expected, |(expected, _)| expected);
             self.derive(obligation, actual, expected, Step::Item(item));
@@ -252,6 +268,23 @@ impl Solver<'_> {
             return Ok(());
         }
         let mut pairs = self.pair(&a, &b)?;
+        // A bare actual rigid or skolem the other side doesn't hold relates
+        // through its bounds, as it would anywhere else, rather than standing
+        // for a variable across from it
+        if bare_a
+            && pairs.is_empty()
+            && let Some((actual, _)) = sides
+        {
+            let of = match self.head(actual)? {
+                Head::Skolem(id) => Abstract::Skolem(id),
+                Head::Structural(view) => Abstract::Rigid(view.ty),
+                _ => unreachable!("a bare side is a rigid or skolem"),
+            };
+            let b = self.head(expected)?;
+            if self.by_bounds(of, &b, expected, obligation)?.is_break() {
+                return Ok(());
+            }
+        }
         self.cross(&a, &b, &mut pairs, obligation)?;
         // Mappings paired by pattern relate pack by pack
         for &(i, j) in &pairs {
@@ -954,6 +987,29 @@ impl Solver<'_> {
         let schema = self.db.intern(Type::Schema(items.into()));
         let environment = self.intern_environment(self.empty_environment(), group);
         self.view(schema, environment)
+    }
+
+    /// The schema that only includes `term`, `{...X}`, built around it
+    pub(super) fn included(&self, term: Term) -> Term {
+        let reference = self.db.intern(Type::Bound {
+            reference: BoundRef::new(0, 0),
+            kind: Kind::Schema,
+        });
+        let schema = self.db.intern(Type::Schema(
+            vec![SchemaItem {
+                multiplicity: Multiplicity::Required,
+                element: Element::Include(reference),
+            }]
+            .into(),
+        ));
+        let environment = self.intern_environment(self.empty_environment(), vec![term]);
+        self.view(schema, environment)
+    }
+
+    /// Whether a schema is a rest shape, which relates each inclusion to itself
+    /// whole ([`Self::rest_shaped`])
+    pub(super) fn rest_shaped_schema(&self, ys: &[SchemaItem]) -> bool {
+        rest_shape(ys).is_some()
     }
 
     /// Include a schema in one whose items are all repeated: at most one
