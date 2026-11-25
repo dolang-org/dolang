@@ -334,7 +334,7 @@ def long_header_values_round_trip()
 #[test]
 #[vfs]
 def bad_header_values_raise_value_errors()
-  tar.write nul.tar do |archive|
+  tar.write bad_values.tar do |archive|
     assert_throws $ValueError do
       archive.create_dir dir owner_name: "a\u{0}b"
     assert_throws $ValueError do
@@ -343,7 +343,7 @@ def bad_header_values_raise_value_errors()
       archive.hard_link "" link
     # A rejected value does not poison the writer.
     archive.create_dir ok
-  tar.read nul.tar do |archive|
+  tar.read bad_values.tar do |archive|
     let names = [...archive.map(do |entry| str entry.path)]
     assert_eq $names ["ok"]
 
