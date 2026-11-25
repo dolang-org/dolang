@@ -128,7 +128,7 @@ pub class ManagerAccessMask: AccessMask
   # Constructs a flag set from one iterable of symbols.
   #
   # A generic mask converts with the bits this type does not name kept.
-  @def (call) cls flags@Iterable[ManagerAccessRight] -> ManagerAccessMask
+  @def (call) cls flags@BaseIterable[ManagerAccessRight] -> ManagerAccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -139,10 +139,10 @@ pub class ManagerAccessMask: AccessMask
   @def (call) cls value@Int -> ManagerAccessMask
 
   #[class]
-  pub def (call) cls ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight] | Int | AccessMask) -> ManagerAccessMask
+  pub def (call) cls ...flags @ (ManagerAccessRight | BaseIterable[ManagerAccessRight] | Int | AccessMask) -> ManagerAccessMask
     ...
 
-  pub def (init) self ...flags @ (ManagerAccessRight | Iterable[ManagerAccessRight] | Int | AccessMask)
+  pub def (init) self ...flags @ (ManagerAccessRight | BaseIterable[ManagerAccessRight] | Int | AccessMask)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -205,7 +205,7 @@ pub class ServiceAccessMask: AccessMask
   # Constructs a flag set from one iterable of symbols.
   #
   # A generic mask converts with the bits this type does not name kept.
-  @def (call) cls flags@Iterable[ServiceAccessRight] -> ServiceAccessMask
+  @def (call) cls flags@BaseIterable[ServiceAccessRight] -> ServiceAccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -216,10 +216,10 @@ pub class ServiceAccessMask: AccessMask
   @def (call) cls value@Int -> ServiceAccessMask
 
   #[class]
-  pub def (call) cls ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight] | Int | AccessMask) -> ServiceAccessMask
+  pub def (call) cls ...flags @ (ServiceAccessRight | BaseIterable[ServiceAccessRight] | Int | AccessMask) -> ServiceAccessMask
     ...
 
-  pub def (init) self ...flags @ (ServiceAccessRight | Iterable[ServiceAccessRight] | Int | AccessMask)
+  pub def (init) self ...flags @ (ServiceAccessRight | BaseIterable[ServiceAccessRight] | Int | AccessMask)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -265,7 +265,7 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
   @def (call) cls ...flags@ServiceTypeFlag -> ServiceType
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[ServiceTypeFlag] -> ServiceType
+  @def (call) cls flags@BaseIterable[ServiceTypeFlag] -> ServiceType
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -276,10 +276,10 @@ pub class ServiceType: Iterable[ServiceTypeFlag]
   @def (call) cls value@Int -> ServiceType
 
   #[class]
-  pub def (call) cls ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag] | Int) -> ServiceType
+  pub def (call) cls ...flags @ (ServiceTypeFlag | BaseIterable[ServiceTypeFlag] | Int) -> ServiceType
     ...
 
-  pub def (init) self ...flags @ (ServiceTypeFlag | Iterable[ServiceTypeFlag] | Int)
+  pub def (init) self ...flags @ (ServiceTypeFlag | BaseIterable[ServiceTypeFlag] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -348,7 +348,7 @@ pub class NotifyMask: Iterable[NotifyChange]
   @def (call) cls ...flags@NotifyChange -> NotifyMask
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[NotifyChange] -> NotifyMask
+  @def (call) cls flags@BaseIterable[NotifyChange] -> NotifyMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -359,10 +359,10 @@ pub class NotifyMask: Iterable[NotifyChange]
   @def (call) cls value@Int -> NotifyMask
 
   #[class]
-  pub def (call) cls ...flags @ (NotifyChange | Iterable[NotifyChange] | Int) -> NotifyMask
+  pub def (call) cls ...flags @ (NotifyChange | BaseIterable[NotifyChange] | Int) -> NotifyMask
     ...
 
-  pub def (init) self ...flags @ (NotifyChange | Iterable[NotifyChange] | Int)
+  pub def (init) self ...flags @ (NotifyChange | BaseIterable[NotifyChange] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -435,7 +435,7 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
   @def (call) cls ...flags@AcceptedControl -> ServiceControlsAccepted
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[AcceptedControl] -> ServiceControlsAccepted
+  @def (call) cls flags@BaseIterable[AcceptedControl] -> ServiceControlsAccepted
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -446,10 +446,10 @@ pub class ServiceControlsAccepted: Iterable[AcceptedControl]
   @def (call) cls value@Int -> ServiceControlsAccepted
 
   #[class]
-  pub def (call) cls ...flags @ (AcceptedControl | Iterable[AcceptedControl] | Int) -> ServiceControlsAccepted
+  pub def (call) cls ...flags @ (AcceptedControl | BaseIterable[AcceptedControl] | Int) -> ServiceControlsAccepted
     ...
 
-  pub def (init) self ...flags @ (AcceptedControl | Iterable[AcceptedControl] | Int)
+  pub def (init) self ...flags @ (AcceptedControl | BaseIterable[AcceptedControl] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -480,7 +480,7 @@ pub @let ManagerAccessMaskSpec = $
   | AccessMask
   | Int
   | ManagerAccessRight
-  | Iterable[ManagerAccessRight]
+  | BaseIterable[ManagerAccessRight]
 
 # Service rights, given as a [`ServiceAccessMask`](winscm.ServiceAccessMask),
 # a generic mask, native bits, one right, or an iterable of rights.
@@ -489,11 +489,11 @@ pub @let ServiceAccessMaskSpec = $
   | AccessMask
   | Int
   | ServiceAccessRight
-  | Iterable[ServiceAccessRight]
+  | BaseIterable[ServiceAccessRight]
 
 # A service command line, given as a string, an executable path, or an iterable
 # of arguments.
-pub @let BinaryPathSpec = (Str | Path | Iterable[Str | Path])
+pub @let BinaryPathSpec = (Str | Path | BaseIterable[Str | Path])
 
 # Service types, given as a [`ServiceType`](winscm.ServiceType), native bits,
 # one flag, or an iterable of flags.
@@ -501,11 +501,11 @@ pub @let ServiceTypeSpec = $
   | ServiceType
   | Int
   | ServiceTypeFlag
-  | Iterable[ServiceTypeFlag]
+  | BaseIterable[ServiceTypeFlag]
 
 # Status changes, given as a [`NotifyMask`](winscm.NotifyMask), native bits,
 # one change, or an iterable of changes.
-pub @let NotifyMaskSpec = (NotifyMask | Int | NotifyChange | Iterable[NotifyChange])
+pub @let NotifyMaskSpec = (NotifyMask | Int | NotifyChange | BaseIterable[NotifyChange])
 
 # An open handle to the Windows Service Control Manager.
 #
@@ -593,7 +593,7 @@ pub class ScManager
     # Load-order group.
     :load_order_group @ Str = ...
     # Service or load-order-group names this service depends on.
-    :dependencies @ Iterable[Str] = ...
+    :dependencies @ BaseIterable[Str] = ...
     # Account the service runs as.
     :service_start_name @ Str = ...
     # Password for `service_start_name`.
@@ -622,7 +622,7 @@ pub class ScManager
     # Load-order group.
     :load_order_group @ Str = ...
     # Service or load-order-group names this service depends on.
-    :dependencies @ Iterable[Str] = ...
+    :dependencies @ BaseIterable[Str] = ...
     # Account the service runs as.
     :service_start_name @ Str = ...
     # Password for `service_start_name`.
@@ -745,7 +745,7 @@ pub class Service
     # Load-order group.
     :load_order_group @ Str = ...
     # Service or load-order-group names this service depends on.
-    :dependencies @ Iterable[Str] = ...
+    :dependencies @ BaseIterable[Str] = ...
     # Account the service runs as.
     :service_start_name @ Str = ...
     # Password for `service_start_name`.

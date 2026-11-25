@@ -839,9 +839,7 @@ impl<'v> Protocol<'v> for Type {
             .set
             .create(strand, Set::new(), Slot::reborrow(&mut set));
         if let Some(items) = items {
-            items
-                .op_spread(strand, SpreadContext::Sequence, &mut SetSpread(&set))
-                .await?;
+            super::iter::spread_iter(strand, &items, &mut SetSpread(&set)).await?;
         }
         Ok(())
     }

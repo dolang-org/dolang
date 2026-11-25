@@ -56,13 +56,13 @@ pub class Permission: Iterable[PermissionBit]
   @def (call) cls ...flags@PermissionBit -> Permission
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[PermissionBit] -> Permission
+  @def (call) cls flags@BaseIterable[PermissionBit] -> Permission
 
   #[class]
-  pub def (call) cls ...flags @ (PermissionBit | Iterable[PermissionBit]) -> Permission
+  pub def (call) cls ...flags @ (PermissionBit | BaseIterable[PermissionBit]) -> Permission
     ...
 
-  pub def (init) self ...flags @ (PermissionBit | Iterable[PermissionBit])
+  pub def (init) self ...flags @ (PermissionBit | BaseIterable[PermissionBit])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -201,7 +201,7 @@ pub class Acl
   pub def (init)
     self
     # [`Ace`](security.unix.Ace) values.
-    aces @ Iterable[Ace]
+    aces @ BaseIterable[Ace]
   do
     ...
 
@@ -213,7 +213,7 @@ pub class Acl
 
 # Permissions given as a [`Permission`](security.unix.Permission), one
 # permission symbol, or an iterable of permission symbols.
-pub @let PermissionSpec = (Permission | PermissionBit | Iterable[PermissionBit])
+pub @let PermissionSpec = (Permission | PermissionBit | BaseIterable[PermissionBit])
 
 # A POSIX entry, built or declared as a dictionary. A dictionary has exactly
 # one qualifier key, with the same meaning as the key arguments of
@@ -236,7 +236,7 @@ pub @let AceSpec = $
       ?permissions: PermissionSpec
 
 # A POSIX ACL, built or given as its entries.
-pub @let AclSpec = (Acl | Iterable[AceSpec])
+pub @let AclSpec = (Acl | BaseIterable[AceSpec])
 
 # Constructs a POSIX entry from declarative arguments.
 #

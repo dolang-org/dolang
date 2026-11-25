@@ -872,7 +872,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => items);
         gather(strand, out, async |strand, sink| {
-            items.op_spread(strand, SpreadContext::Sequence, sink).await
+            super::iter::spread_iter(strand, &items, sink).await
         })
         .await
     }

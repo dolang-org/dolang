@@ -494,7 +494,7 @@ pub class Text
   @def join
     self
     # Values to join.
-    iter @ Iterable[Value]
+    iter @ BaseIterable[Value]
   do -> Text
 
   # Concatenates the values of the strand's input with this text between them.

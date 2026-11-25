@@ -21,7 +21,7 @@ assert_throws $std.TypeError do adapter.map(do |x| x)
 # Keyed containers reject sequences, while their iterators spread pairs
 # positionally.
 assert_throws $std.UnexpectedKeyError do [...{a: 1, b: 2}]
-assert_throws $std.UnexpectedKeyError do Tuple(pack(a: 1, b: 2))
+assert_eq (Tuple(pack(a: 1, b: 2))) ((:a:, 1), (:b:, 2))
 assert_eq [...{a: 1, b: 2}.iter()] [(:a:, 1), (:b:, 2)]
 assert_eq (capture(...Iterable.iter(pack(a: 1, b: 2)))) (pack (:a:, 1) (:b:, 2))
 assert_throws $std.UnexpectedPosError do {...Iterable.iter(pack(a: 1, b: 2))}

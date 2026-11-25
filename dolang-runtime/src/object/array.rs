@@ -1347,15 +1347,13 @@ impl<'v> Protocol<'v> for Type {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         unpack!(strand, args => items);
-        // Spreading runs arbitrary code, so the values go straight into the allocated
+        // Iterating runs arbitrary code, so the values go straight into the allocated
         // array, which is borrowed only for each push
         strand
             .builtin_types()
             .array
             .create(strand, Array::new(), Slot::reborrow(&mut out));
-        items
-            .op_spread(strand, SpreadContext::Sequence, &mut ArraySpread(&out))
-            .await
+        super::iter::spread_iter(strand, &items, &mut ArraySpread(&out)).await
     }
 
     fn op_type<'a, 's>(

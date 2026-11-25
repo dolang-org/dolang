@@ -1,0 +1,36 @@
+# A subclass's overloads widen the symbols its parent's constructor takes. Each
+# overload is matched against the parent's by refuting the others, so a
+# protocol of symbols must be outside a union of symbol literals: any class may
+# implement the protocol, so literals never cover it.
+
+pub @let Right = (:A: | :B:)
+
+pub class Mask: Iterable[Right]
+  @def (call) cls ...flags@Right -> Mask
+  @def (call) cls flags@BaseIterable[Right] -> Mask
+  @def (call) cls value@Int -> Mask
+  #[class]
+  pub def (call) cls ...flags @ (Right | BaseIterable[Right] | Int) -> Mask
+    ...
+
+pub @let WideRight = (:C: | Right)
+
+pub class WideMask: Mask
+  @def (call) cls ...flags@WideRight -> WideMask
+  @def (call) cls flags@BaseIterable[WideRight] -> WideMask
+  @def (call) cls value@Int -> WideMask
+  #[class]
+  pub def (call) cls ...flags @ (WideRight | BaseIterable[WideRight] | Int | Mask) -> WideMask
+    ...
+
+# The same refutation rejects a protocol passed for literals, through an alias
+pub def narrow _right @ WideRight
+  nil
+
+pub def passes rights @ BaseIterable[Right]
+  narrow $rights
+  # error: expected `m.WideRight`, found `std.BaseIterable[m.Right]`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   narrow $rights
+  #    |           ^^^^^^

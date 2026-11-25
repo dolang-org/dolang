@@ -99,7 +99,7 @@ pub class Mode: Iterable[ModeBit]
   @def (call) cls ...flags@ModeBit -> Mode
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[ModeBit] -> Mode
+  @def (call) cls flags@BaseIterable[ModeBit] -> Mode
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -110,10 +110,10 @@ pub class Mode: Iterable[ModeBit]
   @def (call) cls value@Int -> Mode
 
   #[class]
-  pub def (call) cls ...flags @ (ModeBit | Iterable[ModeBit] | Int) -> Mode
+  pub def (call) cls ...flags @ (ModeBit | BaseIterable[ModeBit] | Int) -> Mode
     ...
 
-  pub def (init) self ...flags @ (ModeBit | Iterable[ModeBit] | Int)
+  pub def (init) self ...flags @ (ModeBit | BaseIterable[ModeBit] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.

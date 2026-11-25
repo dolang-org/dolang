@@ -478,7 +478,7 @@ pub class Concat: Io
   pub def (init)
     self
     # Items to read.
-    items @ Iterable[Value]
+    items @ BaseIterable[Value]
     # Bytes to follow every item. None by default.
     :end @ (Str | Bin) = ...
   do

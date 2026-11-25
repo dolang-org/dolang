@@ -8,7 +8,7 @@ import fs:
   - @Path
 
 # A value accepted by [`encode`](patch.encode).
-pub @let EncodeValue = (Patch | Iterable[Patch])
+pub @let EncodeValue = (Patch | BaseIterable[Patch])
 
 # A value returned by [`decode`](patch.decode).
 pub @let DecodeValue = PatchIter

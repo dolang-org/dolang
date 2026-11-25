@@ -575,7 +575,8 @@ impl Solver<'_> {
     ///
     /// A literal, class or top is outside a union if every member excludes it.
     /// For a class with infinitely many literals, a finite set of literals
-    /// cannot cover it either. A class reaching several generic members may be
+    /// cannot cover it either, nor a protocol, which any class may implement.
+    /// A class reaching several generic members may be
     /// covered by them together. A protocol a class doesn't conform to excludes
     /// it as a class it doesn't reach does: the class's own instances lack one
     /// of its members or classes. Protocols may be covered by several
@@ -596,9 +597,11 @@ impl Solver<'_> {
             self.db.ty(actual),
             Type::Function(_) | Type::Quantified { .. }
         );
+        let protocol = matches!(self.widened_head(self.closed(actual)), Ok(Head::Nominal(nominal))
+            if self.db.declaration(nominal.declaration).source.kind == DeclKind::Protocol);
         // No members but top and the dynamic type cover top
         let top = actual == self.db.top();
-        let mut outside = function || top || self.class_like(actual)?;
+        let mut outside = function || top || protocol || self.class_like(actual)?;
         // A literal's, function's or top's rejections are final
         let fixed = function || top || self.db.literal(actual).is_some();
         let class = match fixed {
@@ -618,6 +621,10 @@ impl Solver<'_> {
             };
             if infinite && self.db.literal(expected).is_some() {
                 continue;
+            }
+            // Only literals leave a protocol's other implementations out
+            if protocol && !self.literals_only(view.child(ty)) {
+                outside = false;
             }
             let (status, recursive) = self.probe_cycle(actual, expected, Some(obligation))?;
             cycle |= recursive;
@@ -654,6 +661,22 @@ impl Solver<'_> {
                 Residual::Unsupported("a type that may be inside a union member").into()
             }
         })
+    }
+
+    /// Whether a type is a literal or a union of them, through aliases and
+    /// however nested
+    pub(super) fn literals_only(&self, term: Term) -> bool {
+        let Ok(Head::Structural(view)) = self.widened_head(term) else {
+            return false;
+        };
+        match self.db.ty(view.ty) {
+            Type::Literal(_) => true,
+            Type::Union(members) => members.iter().all(|member| match *member {
+                UnionMember::Type(ty) => self.literals_only(view.child(ty)),
+                _ => false,
+            }),
+            _ => false,
+        }
     }
 
     /// Relate the heads by their forms

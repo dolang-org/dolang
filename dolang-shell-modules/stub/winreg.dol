@@ -140,7 +140,7 @@ pub class AccessMask: WindowsAccessMask
   # Constructs a flag set from one iterable of symbols.
   #
   # A generic mask converts with the bits this type does not name kept.
-  @def (call) cls flags@Iterable[AccessRight] -> AccessMask
+  @def (call) cls flags@BaseIterable[AccessRight] -> AccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -151,10 +151,10 @@ pub class AccessMask: WindowsAccessMask
   @def (call) cls value@Int -> AccessMask
 
   #[class]
-  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight] | Int | WindowsAccessMask) -> AccessMask
+  pub def (call) cls ...flags @ (AccessRight | BaseIterable[AccessRight] | Int | WindowsAccessMask) -> AccessMask
     ...
 
-  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight] | Int | WindowsAccessMask)
+  pub def (init) self ...flags @ (AccessRight | BaseIterable[AccessRight] | Int | WindowsAccessMask)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -169,7 +169,7 @@ pub @let AccessMaskSpec = $
   | WindowsAccessMask
   | Int
   | AccessRight
-  | Iterable[AccessRight]
+  | BaseIterable[AccessRight]
 
 # An open registry key.
 #
@@ -463,7 +463,7 @@ pub class Key
     # Value name; `""` is the key's default value.
     name @ Str
     # The Do value to write.
-    value @ (Str | Iterable[Str] | Bool | Int | Bin | nil)
+    value @ (Str | BaseIterable[Str] | Bool | Int | Bin | nil)
     # Value kind to store under. Omit to let the kind be decided from what is already there, or
     # from `value` itself.
     #

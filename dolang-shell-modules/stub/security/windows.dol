@@ -233,10 +233,10 @@ pub @let AclRevision = $
 
 # An access mask, built or given as right symbols or native bits. A subtype
 # such as [`winreg.AccessMask`](winreg.AccessMask) is accepted too.
-pub @let AccessMaskSpec = (AccessMask | Int | AccessRight | Iterable[AccessRight])
+pub @let AccessMaskSpec = (AccessMask | Int | AccessRight | BaseIterable[AccessRight])
 
 # ACE header flags, built or given as flag symbols or native bits.
-pub @let AceFlagsSpec = (AceFlags | Int | AceFlag | Iterable[AceFlag])
+pub @let AceFlagsSpec = (AceFlags | Int | AceFlag | BaseIterable[AceFlag])
 
 # An ACE, built or given as a dictionary.
 #
@@ -292,7 +292,7 @@ pub @let AceSpec = $
 # ```
 pub @let AclSpec = $
   | Acl
-  | Iterable[AceSpec]
+  | BaseIterable[AceSpec]
   | BaseRecord ...$
       *AceSpec
       ?revision: (AclRevision | Int)
@@ -407,7 +407,7 @@ pub class AccessMask: Iterable[AccessRight]
   # A mask of a subtype, such as
   # [`fs.windows.AccessMask`](fs.windows.AccessMask), converts with every bit
   # kept.
-  @def (call) cls flags@Iterable[AccessRight] -> AccessMask
+  @def (call) cls flags@BaseIterable[AccessRight] -> AccessMask
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -418,10 +418,10 @@ pub class AccessMask: Iterable[AccessRight]
   @def (call) cls value@Int -> AccessMask
 
   #[class]
-  pub def (call) cls ...flags @ (AccessRight | Iterable[AccessRight] | Int) -> AccessMask
+  pub def (call) cls ...flags @ (AccessRight | BaseIterable[AccessRight] | Int) -> AccessMask
     ...
 
-  pub def (init) self ...flags @ (AccessRight | Iterable[AccessRight] | Int)
+  pub def (init) self ...flags @ (AccessRight | BaseIterable[AccessRight] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -484,7 +484,7 @@ pub class AceFlags: Iterable[AceFlag]
   @def (call) cls ...flags@AceFlag -> AceFlags
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[AceFlag] -> AceFlags
+  @def (call) cls flags@BaseIterable[AceFlag] -> AceFlags
 
   # Constructs a flag set from its native integer form, keeping bits this type
   # does not name.
@@ -495,10 +495,10 @@ pub class AceFlags: Iterable[AceFlag]
   @def (call) cls value@Int -> AceFlags
 
   #[class]
-  pub def (call) cls ...flags @ (AceFlag | Iterable[AceFlag] | Int) -> AceFlags
+  pub def (call) cls ...flags @ (AceFlag | BaseIterable[AceFlag] | Int) -> AceFlags
     ...
 
-  pub def (init) self ...flags @ (AceFlag | Iterable[AceFlag] | Int)
+  pub def (init) self ...flags @ (AceFlag | BaseIterable[AceFlag] | Int)
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -559,13 +559,13 @@ pub class SecDescControl: Iterable[SecDescControlFlag]
   @def (call) cls ...flags@SecDescControlFlag -> SecDescControl
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[SecDescControlFlag] -> SecDescControl
+  @def (call) cls flags@BaseIterable[SecDescControlFlag] -> SecDescControl
 
   #[class]
-  pub def (call) cls ...flags @ (SecDescControlFlag | Iterable[SecDescControlFlag]) -> SecDescControl
+  pub def (call) cls ...flags @ (SecDescControlFlag | BaseIterable[SecDescControlFlag]) -> SecDescControl
     ...
 
-  pub def (init) self ...flags @ (SecDescControlFlag | Iterable[SecDescControlFlag])
+  pub def (init) self ...flags @ (SecDescControlFlag | BaseIterable[SecDescControlFlag])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -608,13 +608,13 @@ pub class SecInfo: Iterable[SecInfoComponent]
   @def (call) cls ...flags@SecInfoComponent -> SecInfo
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[SecInfoComponent] -> SecInfo
+  @def (call) cls flags@BaseIterable[SecInfoComponent] -> SecInfo
 
   #[class]
-  pub def (call) cls ...flags @ (SecInfoComponent | Iterable[SecInfoComponent]) -> SecInfo
+  pub def (call) cls ...flags @ (SecInfoComponent | BaseIterable[SecInfoComponent]) -> SecInfo
     ...
 
-  pub def (init) self ...flags @ (SecInfoComponent | Iterable[SecInfoComponent])
+  pub def (init) self ...flags @ (SecInfoComponent | BaseIterable[SecInfoComponent])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -665,13 +665,13 @@ pub class TokenGroupAttributes: Iterable[TokenGroupAttribute]
   @def (call) cls ...flags@TokenGroupAttribute -> TokenGroupAttributes
 
   # Constructs a flag set from one iterable of symbols.
-  @def (call) cls flags@Iterable[TokenGroupAttribute] -> TokenGroupAttributes
+  @def (call) cls flags@BaseIterable[TokenGroupAttribute] -> TokenGroupAttributes
 
   #[class]
-  pub def (call) cls ...flags @ (TokenGroupAttribute | Iterable[TokenGroupAttribute]) -> TokenGroupAttributes
+  pub def (call) cls ...flags @ (TokenGroupAttribute | BaseIterable[TokenGroupAttribute]) -> TokenGroupAttributes
     ...
 
-  pub def (init) self ...flags @ (TokenGroupAttribute | Iterable[TokenGroupAttribute])
+  pub def (init) self ...flags @ (TokenGroupAttribute | BaseIterable[TokenGroupAttribute])
     ...
 
   # Tests whether all flags named by `flag` are set.
@@ -1037,7 +1037,7 @@ pub class Acl
   pub def (init)
     self
     # Entries, in order.
-    aces @ Iterable[Ace]
+    aces @ BaseIterable[Ace]
     # Native ACL revision.
     :revision @ (AclRevision | Int) = ...
   do
