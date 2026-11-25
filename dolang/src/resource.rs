@@ -64,12 +64,6 @@ pub mod __private {
 #[linkme::distributed_slice]
 pub static TABLES: [&'static [Resource]];
 
-// Keep the PE/COFF section non-empty even without contributing crates. An empty
-// table avoids exposing a synthetic resource and null slice markers under Wine.
-#[cfg(not(target_family = "wasm"))]
-#[linkme::distributed_slice(TABLES)]
-static ANCHOR: &[Resource] = &[];
-
 /// Iterate linked resources, retaining duplicate keys.
 ///
 /// Native table order is unspecified; resources within a table keep their order.

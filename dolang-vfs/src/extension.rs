@@ -216,27 +216,6 @@ impl<T: VfsExtension> ErasedVfsExtension for T {
 #[linkme::distributed_slice]
 pub static VFS_EXTENSIONS: [&'static dyn ErasedVfsExtension];
 
-// Keep the PE/COFF section non-empty.  With no linked extensions, linkme's
-// start marker can resolve to null under Wine and constructing the empty slice
-// then trips Rust's `slice::from_raw_parts` precondition check.
-struct Anchor;
-
-impl VfsExtension for Anchor {
-    type Request = ();
-    type Response = ();
-
-    const NAME: &'static str = "";
-    const VERSION: u16 = 0;
-    const AVAILABLE: bool = false;
-
-    async fn handle(&self, _ctx: &mut ExtContext<'_>, _request: ()) {}
-}
-
-static ANCHOR: Anchor = Anchor;
-
-#[linkme::distributed_slice(VFS_EXTENSIONS)]
-static VFS_EXTENSIONS_ANCHOR: &'static dyn ErasedVfsExtension = &ANCHOR;
-
 struct Registry {
     capabilities: ExtensionSet,
     handlers: HashMap<(&'static str, u16), &'static dyn ErasedVfsExtension>,
@@ -248,11 +227,7 @@ fn registry() -> Result<&'static Registry> {
     REGISTERED
         .get_or_init(|| {
             let mut handlers = HashMap::new();
-            let anchor: &dyn ErasedVfsExtension = &ANCHOR;
-            let extensions = VFS_EXTENSIONS
-                .iter()
-                .copied()
-                .filter(|extension| !std::ptr::eq(*extension, anchor));
+            let extensions = VFS_EXTENSIONS.iter().copied();
             for extension in extensions.clone() {
                 if handlers
                     .insert((extension.name(), extension.version()), extension)

@@ -157,40 +157,6 @@ impl Vtbl {
 #[distributed_slice]
 pub static EXTENSIONS: [Erased];
 
-// Keep the PE/COFF section non-empty. With no linked extensions, linkme's
-// start marker can resolve to null under Wine and constructing the empty slice
-// then trips Rust's `slice::from_raw_parts` precondition check.
-#[cfg(not(target_family = "wasm"))]
-struct Anchor;
-
-#[cfg(not(target_family = "wasm"))]
-impl Extension for Anchor {
-    type Error = std::convert::Infallible;
-
-    const NAME: &str = "";
-    const DESCRIPTION: &str = "";
-    const VERSION: Version = Version {
-        major: 0,
-        minor: 0,
-        patch: 0,
-    };
-
-    fn apply_compiler(&self, _config: &mut Config<'_>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn apply_vm<'v>(&self, _builder: &mut Builder<'v>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
-
-#[cfg(not(target_family = "wasm"))]
-static ANCHOR: Anchor = Anchor;
-
-#[cfg(not(target_family = "wasm"))]
-#[distributed_slice(EXTENSIONS)]
-static EXTENSIONS_ANCHOR: Erased = Vtbl::erase(&ANCHOR);
-
 /// Orders extensions so every extension follows the ones it depends on.
 ///
 /// Each item is a name and the names it depends on. Ties among extensions
@@ -259,10 +225,7 @@ pub(crate) fn extensions() -> impl Iterator<Item = &'static Erased> {
 
     ORDERED
         .get_or_init(|| {
-            let linked = EXTENSIONS
-                .iter()
-                .filter(|extension| !std::ptr::eq(*extension, &EXTENSIONS_ANCHOR))
-                .collect::<Vec<_>>();
+            let linked = EXTENSIONS.iter().collect::<Vec<_>>();
             let items = linked
                 .iter()
                 .map(|extension| (extension.vtbl.name, extension.vtbl.depends))

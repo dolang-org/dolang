@@ -23,15 +23,11 @@ test = false
 doctest = false
 
 
-[dependencies.dolang]
+[dev-dependencies.dolang]
 workspace = true
 
 
-[dependencies.dolang-runtime]
-workspace = true
-
-
-[dependencies.futures]
+[dev-dependencies.futures]
 workspace = true
 
 

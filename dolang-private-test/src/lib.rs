@@ -400,7 +400,7 @@ fn build_diag_report<'s>(file: &'s str, source: &'s str, located: &Located) -> V
 /// The output matches what would appear in the test file comment blocks.
 pub fn render_diag(file: &str, source: &str, diag: &Located) -> String {
     let report = build_diag_report(file, source, diag);
-    let renderer = Renderer::plain().anonymized_line_numbers(true);
+    let renderer = Renderer::plain().anonymized_snippet_line_numbers(true);
     anonymize_origin_lines(renderer.render(&report))
 }
 
