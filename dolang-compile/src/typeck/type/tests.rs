@@ -2092,6 +2092,29 @@ fn several_packs_reduce_only_when_their_items_correspond() {
 
 #[test]
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn the_identity_mapping_over_one_pack_is_the_pack() {
+    let mut db = Database::new();
+    let local = reference(&mut db, 0, 0, Kind::Type);
+    let pack = reference(&mut db, 0, 0, Kind::Schema);
+    assert_eq!(map(&mut db, &[pack], local), pack);
+    // A known pack stays as it is, inclusions and all
+    let one = int(&mut db, 1);
+    let known = items(
+        &mut db,
+        vec![
+            item(Multiplicity::Optional, Element::Positional(one)),
+            item(Multiplicity::Required, Element::Include(pack)),
+        ],
+    );
+    assert_eq!(map(&mut db, &[known], local), known);
+    // Over several packs, the others must still correspond to the first
+    let other = reference(&mut db, 0, 1, Kind::Schema);
+    let mapped = map(&mut db, &[pack, other], local);
+    assert!(matches!(db.ty(mapped), Type::Map { .. }));
+}
+
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn a_mapping_is_its_own_group() {
     let mut db = Database::new();
     // `{...(item, T)}` over the pack `S`, both outside the mapping

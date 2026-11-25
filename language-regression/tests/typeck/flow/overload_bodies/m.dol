@@ -143,8 +143,12 @@ pub def by_function :v @ (() -> Int) = nil -> Value
 
 # A rest takes a pack in the overload's arguments in place, with what follows
 # it
-@def spliced[*Ts] *xs@Ts y@Int -> Tuple[...Ts, Int]
+@def spliced[*Ts] *xs@...Ts y@Int -> Tuple[...Ts, Int]
 pub def spliced *xs @ Value -> Value
+  xs
+
+# A rest of `...Ts` holds a value of `Ts` itself
+pub def direct[*Ts] *xs@...Ts -> Tuple[...Ts]
   xs
 
 @def misspliced[*Ts] *xs@Ts y@Int -> Tuple[Int, ...Ts]
