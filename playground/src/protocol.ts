@@ -92,6 +92,8 @@ export type Signature =
     returns?: string;
   }
   | { form: 'field' | 'let'; pub: boolean; name: string; type?: string }
+  /** A type alias, `type` absent for an opaque one */
+  | { form: 'alias'; pub: boolean; name: string; binders: string[]; type?: string }
   | { form: 'param'; param: Param };
 export interface Param {
   /** The parameter up to its annotation, sigils included */

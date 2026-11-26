@@ -364,6 +364,14 @@ test('hover shows a local function signature and doc comment', async ({ page }) 
   await expect(tip).not.toContainText('std.Int');
 });
 
+test('hover shows a local alias where a type names it', async ({ page }) => {
+  const text = 'let w = 0\n# Two of a kind.\npub @let Pair[T] = Tuple[T, T]\ndef first p@(Pair[Int])\n  p[0]';
+  await source(page, text);
+  const tip = await hoverAt(page, text.lastIndexOf('Pair') + 1);
+  await expect(tip.locator('pre')).toHaveText('pub @let Pair[T] = Tuple[T, T]');
+  await expect(tip).toContainText('Two of a kind.');
+});
+
 test('hover shows a prelude function signature and doc', async ({ page }) => {
   await source(page, 'echo hi');
   const tip = await hoverAt(page, 1);
