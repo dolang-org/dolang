@@ -21,7 +21,7 @@ import './style.css';
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const runButton = element<HTMLButtonElement>('run');
-const stopButton = element<HTMLButtonElement>('stop');
+const runLabel = element('run-label');
 const shareButton = element<HTMLButtonElement>('share');
 const copyButton = element<HTMLButtonElement>('copy-output');
 const revertButton = element<HTMLButtonElement>('revert');
@@ -150,9 +150,12 @@ async function initialSource(): Promise<{ doc: string, label: string, loaded: st
   return { doc: examples['Hello, Do'], label: 'Hello, Do', loaded: examples['Hello, Do'] };
 }
 
+// One button runs, and stops the run in progress
 function controls() {
-  runButton.disabled = !runner.ready || activeRun !== undefined;
-  stopButton.disabled = activeRun === undefined || stopping;
+  const running = activeRun !== undefined;
+  runButton.classList.toggle('running', running);
+  runLabel.textContent = running ? 'Stop' : 'Run';
+  runButton.disabled = running ? stopping : !runner.ready;
 }
 function showSnapshot() {
   element('snapshot').textContent = outputVersion !== undefined && outputVersion !== version ? '(earlier source)' : '';
@@ -392,8 +395,7 @@ function startRun() {
   status.textContent = 'Running…';
   controls();
 }
-runButton.onclick = startRun;
-stopButton.onclick = () => {
+function stopRun() {
   if (activeRun === undefined || stopping) return;
   stopping = true;
   postRun({ type: 'cancel', id: activeRun });
@@ -405,7 +407,8 @@ stopButton.onclick = () => {
     summarize('cancelled', ', restarting');
     replaceRunWorker('Restarting…');
   }, stopGraceMs);
-};
+}
+runButton.onclick = () => activeRun === undefined ? startRun() : stopRun();
 shareButton.onclick = async () => {
   try {
     const param = await encodeSource(view.state.doc.toString());

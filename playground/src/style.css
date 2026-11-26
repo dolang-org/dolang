@@ -15,7 +15,13 @@ button, select { font: inherit; border: 1px solid #454b65; background: #252a3b; 
 button { cursor: pointer; }
 button:hover:enabled { background: #39415d; }
 button:disabled { opacity: .4; cursor: default; }
-#run { background: #7185e7; color: #101425; font-weight: 700; border-color: #7185e7; }
+#run { display: inline-flex; align-items: center; justify-content: center; gap: .35em; min-width: 5.6em; background: #7185e7; color: #101425; font-weight: 700; border-color: #7185e7; }
+#run:hover:enabled { background: #8d9eef; }
+#run svg { width: 1.05em; height: 1.05em; fill: currentcolor; }
+#run.running { background: #ff7a85; border-color: #ff7a85; }
+#run.running:hover:enabled { background: #ff97a0; }
+#run .stop-icon, #run.running .run-icon { display: none; }
+#run.running .stop-icon { display: inline; }
 #status { color: #a3a9bf; margin-left: auto; font-size: .9rem; }
 .workspace { display: grid; grid-template-columns: minmax(0, var(--split, 60%)) auto minmax(0, 1fr); align-items: stretch; border: 1px solid #363b50; border-radius: 8px; overflow: hidden; }
 .workspace section { min-width: 0; background: #1d202d; display: flex; flex-direction: column; }
