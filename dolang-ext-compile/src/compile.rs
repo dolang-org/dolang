@@ -1,4 +1,4 @@
-use dolang::runtime::{with_instance, with_slots};
+use dolang::runtime::{with_instance, with_interrupt_mask, with_slots};
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -8,7 +8,12 @@ use std::{
     mem,
     ops::Range,
     path::Path,
+    sync::Arc,
 };
+
+use futures::future;
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+use futures::future::Either;
 
 use dolang::runtime::AllocExt;
 use dolang::{
@@ -17,8 +22,9 @@ use dolang::{
     runtime::{
         Args, Error, Instance, Object, Result, Slot, State, Strand, Sym, Type, Value,
         object::{ArrayLike, Mut, Ref, TypeBuilder},
+        strand::InterruptMask,
         unpack,
-        value::{Array, Dict, Nil, PinBin, PinStr, TypeObject, View},
+        value::{Array, Dict, Nil, TypeObject, View},
         vm::{Register, StateTag},
     },
 };
@@ -27,7 +33,7 @@ use dolang::{
 use dolang::runtime::{error::ErrorKind as RuntimeErrorKind, method};
 
 pub(crate) struct Types<'v> {
-    unit: Type<'v, UnitObject<'v>>,
+    unit: Type<'v, UnitObject>,
     node_iter: Type<'v, NodeIter>,
     token_iter: Type<'v, TokenIter<'v>>,
     token: Type<'v, TokenObject>,
@@ -54,7 +60,7 @@ pub(crate) struct Types<'v> {
     patch: Type<'v, Patch>,
     check: Type<'v, CheckObject>,
     checked: Type<'v, CheckedObject>,
-    typelib: Type<'v, TypelibObject<'v>>,
+    typelib: Type<'v, TypelibObject>,
 }
 
 pub(crate) struct Syms<'v> {
@@ -335,23 +341,88 @@ impl<'v> Global<'v> {
     }
 }
 
-pub(crate) struct UnitObject<'v> {
-    // Fields are dropped in declaration order: the borrowing unit before its pin.
-    unit: Option<compile::Unit<'static>>,
-    _backing: PinStr<'v>,
+pub(crate) struct UnitObject {
+    unit: UnitState,
     path: Box<Path>,
     /// The module it was compiled as, or `None` for a script
     module: Option<Box<str>>,
     identity: u64,
 }
 
-/// A module's typelib, decoded
-pub(crate) struct TypelibObject<'v> {
-    // Fields are dropped in declaration order: the borrowing typelib before its pin.
-    /// Taken out while a check borrows it
-    typelib: Option<compile::typeck::Typelib<'static>>,
-    _backing: PinBin<'v>,
+/// Where a unit object's compiler unit is
+enum UnitState {
+    Ready(Box<compile::Unit<'static>>),
+    /// Taken out by a running check, which puts it back
+    Checking,
+    /// Consumed by emission
+    Emitted,
 }
+
+impl UnitObject {
+    /// The compiler unit, unless it is emitted or being checked
+    fn unit<'v, 's>(&self, strand: &mut Strand<'v, 's>) -> Result<'v, 's, &compile::Unit<'static>> {
+        match &self.unit {
+            UnitState::Ready(unit) => Ok(unit),
+            UnitState::Checking => Err(Error::concurrency_msg(strand, "unit is being checked")),
+            UnitState::Emitted => Err(Error::state_error(strand, "unit was emitted")),
+        }
+    }
+
+    /// Take the compiler unit out, leaving `state` in its place
+    fn take<'v, 's>(
+        &mut self,
+        strand: &mut Strand<'v, 's>,
+        state: UnitState,
+    ) -> Result<'v, 's, Box<compile::Unit<'static>>> {
+        self.unit(strand)?;
+        let UnitState::Ready(unit) = mem::replace(&mut self.unit, state) else {
+            unreachable!("the unit is ready");
+        };
+        Ok(unit)
+    }
+}
+
+/// A module's typelib, as validated bytes, which each check reads afresh
+pub(crate) struct TypelibObject {
+    bytes: Arc<[u8]>,
+    module: Box<str>,
+    path: Box<str>,
+}
+
+/// Run `work` on the blocking pool when there is a tokio runtime, or inline when
+/// there isn't.
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
+fn offload<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> impl Future<Output = T> {
+    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let task = runtime.spawn_blocking(work);
+        return Either::Left(async move {
+            task.await
+                .unwrap_or_else(|err| std::panic::resume_unwind(err.into_panic()))
+        });
+    }
+    Either::Right(future::ready(work()))
+}
+
+/// Run `work` inline, as there is no blocking pool.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+fn offload<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> impl Future<Output = T> {
+    future::ready(work())
+}
+
+// What crosses to and from the blocking pool
+const _: () = {
+    const fn send<T: Send + 'static>() {}
+    send::<Config<'static>>();
+    send::<compile::Unit<'static>>();
+    send::<compile::typeck::Checked>();
+    send::<Diag>();
+    send::<Ranges>();
+    send::<compile::Error>();
+};
 
 pub(crate) struct DiagnosticAnnex<'v> {
     global: State<'v, Global<'v>>,
@@ -549,8 +620,6 @@ const PIPES: [(&str, &str); 2] = [("proc", "PipeSender"), ("proc", "PipeReceiver
 /// The types `strand`'s script channel placeholders stand for: the shell runs
 /// scripts with any input and output its protocols describe
 const SCRIPTS: [(&str, &str); 2] = [("shell", "Input"), ("shell", "Output")];
-
-const TYPELIB_BYTES: usize = 0;
 
 fn severity<'v>(global: State<'v, Global<'v>>, severity: compile::Severity) -> Sym<'v, 'v> {
     match severity {
@@ -764,7 +833,7 @@ fn create_diagnostic<'v, 's>(
 fn with_unit<'v, 's, R>(
     strand: &mut Strand<'v, 's>,
     value: &Value<'v>,
-    f: impl for<'a> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'a, UnitObject<'v>>) -> Result<'v, 's, R>,
+    f: impl for<'a> FnOnce(&mut Strand<'v, 's>, Instance<'v, 'a, UnitObject>) -> Result<'v, 's, R>,
 ) -> Result<'v, 's, R> {
     let cast = strand
         .state::<Tag>()
@@ -775,14 +844,14 @@ fn with_unit<'v, 's, R>(
     with_instance!(strand, cast, |unit| f(strand, unit))
 }
 
-/// What `check` takes out of one of its inputs
+/// What a check takes from one of its inputs
 enum Taken {
     Unit(Box<compile::Unit<'static>>),
-    Typelib(Box<compile::typeck::Typelib<'static>>),
+    Typelib(Arc<[u8]>),
 }
 
-/// Take the compiler unit or typelib out of an input to a check, setting `source`
-/// to a unit's source, or nil for a typelib.
+/// Take the compiler unit out of an input to a check, or share a typelib's
+/// bytes. Sets `source` to a unit's source, or nil for a typelib.
 fn take_input<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
@@ -791,42 +860,31 @@ fn take_input<'v, 's>(
 ) -> Result<'v, 's, Taken> {
     match global.types.typelib.cast(input) {
         Some(typelib) => with_instance!(strand, typelib, |typelib| {
-            let Some(inner) = typelib.borrow_mut(strand)?.typelib.take() else {
-                return Err(Error::state_error(strand, "typelib is being checked"));
-            };
+            let bytes = typelib.borrow(strand)?.bytes.clone();
             strand.store(&mut *source, Nil);
-            Ok(Taken::Typelib(Box::new(inner)))
+            Ok(Taken::Typelib(bytes))
         }),
         None => with_unit(strand, input, |strand, unit| {
             let mut borrow = unit.borrow_mut(strand)?;
-            let Some(inner) = borrow.unit.take() else {
-                return Err(Error::state_error(strand, "unit was emitted"));
-            };
+            let inner = borrow.take(strand, UnitState::Checking)?;
             strand.store(&mut *source, Mut::slot::<UNIT_SOURCE>(&borrow));
-            Ok(Taken::Unit(Box::new(inner)))
+            Ok(Taken::Unit(inner))
         }),
     }
 }
 
-/// Put what [`take_input`] took back into its input.
+/// Put a unit [`take_input`] took back into its input.
 fn put_input<'v, 's>(
-    global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
     input: &Value<'v>,
     taken: Taken,
 ) -> Result<'v, 's, ()> {
     match taken {
         Taken::Unit(inner) => with_unit(strand, input, |strand, unit| {
-            unit.borrow_mut(strand)?.unit = Some(*inner);
+            unit.borrow_mut(strand)?.unit = UnitState::Ready(inner);
             Ok(())
         }),
-        Taken::Typelib(inner) => {
-            let typelib = global.types.typelib.cast(input).unwrap();
-            with_instance!(strand, typelib, |typelib| {
-                typelib.borrow_mut(strand)?.typelib = Some(*inner);
-                Ok(())
-            })
-        }
+        Taken::Typelib(_) => Ok(()),
     }
 }
 
@@ -838,9 +896,7 @@ fn input_module<'v, 's>(
 ) -> Result<'v, 's, Option<String>> {
     match global.types.typelib.cast(input) {
         Some(typelib) => with_instance!(strand, typelib, |typelib| {
-            with_typelib(strand, &typelib, |typelib| {
-                Some(typelib.module().to_owned())
-            })
+            Ok(Some(typelib.borrow(strand)?.module.to_string()))
         }),
         None => with_unit(strand, input, |strand, unit| {
             Ok(unit.borrow(strand)?.module.as_deref().map(str::to_owned))
@@ -848,16 +904,26 @@ fn input_module<'v, 's>(
     }
 }
 
-/// The modules a check of a unit or typelib needs, or `None` for a unit that
-/// failed to compile.
-fn depends(taken: &Taken) -> std::result::Result<Option<Vec<String>>, compile::Error> {
+/// A check with the shell's pipe and script placeholders nominated
+fn new_check<'u>() -> compile::typeck::Check<'u> {
     let mut check = compile::typeck::Check::new();
     check
         .pipes(PIPES[0], PIPES[1])
         .scripts(SCRIPTS[0], SCRIPTS[1]);
+    check
+}
+
+/// The modules a check of a unit or typelib needs, or `None` for a unit that
+/// failed to compile.
+fn depends(taken: &Taken) -> std::result::Result<Option<Vec<String>>, compile::Error> {
+    let mut check = new_check();
+    let typelib;
     let added = match taken {
         Taken::Unit(unit) => check.unit(unit),
-        Taken::Typelib(typelib) => check.typelib(typelib),
+        Taken::Typelib(bytes) => {
+            typelib = compile::typeck::Typelib::read(bytes)?;
+            check.typelib(&typelib)
+        }
     };
     match added {
         Ok(id) => Ok(Some(
@@ -868,10 +934,78 @@ fn depends(taken: &Taken) -> std::result::Result<Option<Vec<String>>, compile::E
     }
 }
 
-/// Check an array of units and typelibs together. Each input's compiler unit or
-/// typelib is taken out of its object while the checker borrows them all, and put
-/// back afterwards.
-fn check_units<'v, 's>(
+/// What a check finds, by the position in its inputs of each input it accepted
+struct Found {
+    /// The positions of the accepted inputs in what was taken, by unit ID
+    accepted: Vec<usize>,
+    paths: Vec<String>,
+    diags: Vec<(Ranges, Diag)>,
+    undecided: String,
+    check: Option<(compile::typeck::Checked, Vec<compile::UnitId>)>,
+}
+
+/// Check what was taken from a check's inputs together. This is the work done
+/// on the blocking pool.
+fn run_check(taken: &[Taken], typelibs: bool) -> std::result::Result<Found, compile::Error> {
+    let read: Vec<Option<compile::typeck::Typelib<'_>>> = taken
+        .iter()
+        .map(|input| match input {
+            Taken::Unit(_) => Ok(None),
+            Taken::Typelib(bytes) => compile::typeck::Typelib::read(bytes).map(Some),
+        })
+        .collect::<std::result::Result<_, _>>()?;
+    let mut builder = new_check();
+    builder.typelibs(typelibs);
+    // The units the checker accepted, by unit ID, and the position in `taken` of
+    // each
+    let mut ids = Vec::new();
+    let mut accepted = Vec::new();
+    for (position, (input, typelib)) in taken.iter().zip(&read).enumerate() {
+        let added = match (input, typelib) {
+            (Taken::Unit(unit), _) => builder.unit(unit),
+            (Taken::Typelib(_), Some(typelib)) => builder.typelib(typelib),
+            (Taken::Typelib(_), None) => unreachable!("every typelib is read"),
+        };
+        match added {
+            Ok(id) => {
+                ids.push(id);
+                accepted.push(position);
+            }
+            // Its own diagnostics report it
+            Err(error) if matches!(error.kind(), compile::ErrorKind::Fail) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let check = builder.run();
+    let paths: Vec<String> = ids
+        .iter()
+        .map(|&id| check.path(id).to_string_lossy().into_owned())
+        .collect();
+    let unit = |id: Option<compile::UnitId>| {
+        let index = ids.iter().position(|&checked| Some(checked) == id)?;
+        match &taken[accepted[index]] {
+            Taken::Unit(unit) => Some(&**unit),
+            Taken::Typelib(_) => None,
+        }
+    };
+    let diags: Vec<(Ranges, Diag)> = check
+        .diagnostics()
+        .map(|diag| (ranges(diag, unit), diag.clone()))
+        .collect();
+    let undecided = render_undecided(&paths, check.undecided());
+    Ok(Found {
+        accepted,
+        paths,
+        diags,
+        undecided,
+        check: typelibs.then_some((check, ids)),
+    })
+}
+
+/// Check an array of units and typelibs together on the blocking pool. Each
+/// input's compiler unit is taken out of its object while the check runs, and
+/// put back afterwards; interrupts are masked meanwhile, so that it always is.
+async fn check_units<'v, 's>(
     global: State<'v, Global<'v>>,
     strand: &mut Strand<'v, 's>,
     units: &Value<'v>,
@@ -893,88 +1027,64 @@ fn check_units<'v, 's>(
         let sources_array = sources.as_array(strand).unwrap();
         let inputs_array = inputs.as_array(strand).unwrap();
 
-        // What is taken from each input, by its position in `units`. Its source
-        // is at the same position in `taken_sources`, or nil for a typelib.
-        let mut taken = Vec::new();
-        let mut outcome = Ok(());
-        for index in 0..units.len(strand)? {
-            units.get(strand, index, &mut item)?;
-            let input = take_input(global, strand, &item, &mut source);
-            match input {
-                Ok(input) => {
-                    taken_array.push(strand, &*source)?;
-                    taken.push((index, input));
-                }
-                Err(error) => {
-                    outcome = Err(error);
-                    break;
-                }
-            }
-        }
-
-        let checked = outcome.and_then(|()| {
-            let mut builder = compile::typeck::Check::new();
-            builder
-                .pipes(PIPES[0], PIPES[1])
-                .scripts(SCRIPTS[0], SCRIPTS[1]);
-            builder.typelibs(typelibs);
-            // The units the checker accepted, by unit ID, and the position in
-            // `taken` of each
-            let mut ids = Vec::new();
-            let mut accepted = Vec::new();
-            for (position, (index, input)) in taken.iter().enumerate() {
-                let added = match input {
-                    Taken::Unit(unit) => builder.unit(unit),
-                    Taken::Typelib(typelib) => builder.typelib(typelib),
-                };
-                match added {
-                    Ok(id) => {
-                        taken_array.get(strand, position, &mut item)?;
-                        sources_array.push(strand, &*item)?;
-                        units.get(strand, *index, &mut item)?;
-                        inputs_array.push(strand, &*item)?;
-                        ids.push(id);
-                        accepted.push(position);
+        let (indices, found) = with_interrupt_mask!(strand, InterruptMask::all(), {
+            // What is taken from each input, and its position in `units`. Its
+            // source is at the same position in `taken_sources`, or nil for a
+            // typelib.
+            let mut taken = Vec::new();
+            let mut indices = Vec::new();
+            let mut outcome = Ok(());
+            for index in 0..units.len(strand)? {
+                units.get(strand, index, &mut item)?;
+                match take_input(global, strand, &item, &mut source) {
+                    Ok(input) => {
+                        taken_array.push(strand, &*source)?;
+                        taken.push(input);
+                        indices.push(index);
                     }
-                    // Its own diagnostics report it
-                    Err(error) if matches!(error.kind(), compile::ErrorKind::Fail) => {}
-                    Err(error) => return Err(Error::value(strand, error.to_string())),
+                    Err(error) => {
+                        outcome = Err(error);
+                        break;
+                    }
                 }
             }
-            let check = builder.run();
-            let paths: Vec<String> = ids
-                .iter()
-                .map(|&id| check.path(id).to_string_lossy().into_owned())
-                .collect();
-            let unit = |id: Option<compile::UnitId>| {
-                let index = ids.iter().position(|&checked| Some(checked) == id)?;
-                match &taken[accepted[index]].1 {
-                    Taken::Unit(unit) => Some(&**unit),
-                    Taken::Typelib(_) => None,
-                }
-            };
-            let diags: Vec<(Ranges, Diag)> = check
-                .diagnostics()
-                .map(|diag| (ranges(diag, unit), diag.clone()))
-                .collect();
-            let undecided = render_undecided(&paths, check.undecided());
-            Ok((paths, diags, undecided, typelibs.then_some((check, ids))))
+
+            let mut found = None;
+            if outcome.is_ok() {
+                let ran;
+                (taken, ran) = offload(move || {
+                    let found = run_check(&taken, typelibs);
+                    (taken, found)
+                })
+                .await;
+                found = Some(ran);
+            }
+            for (&index, input) in indices.iter().zip(taken) {
+                units.get(strand, index, &mut item)?;
+                put_input(strand, &item, input)?;
+            }
+            outcome?;
+            (
+                indices,
+                found.expect("the check runs once every input is taken"),
+            )
         });
+        let found = found.map_err(|error| Error::value(strand, error.to_string()))?;
 
-        for (index, input) in taken {
-            units.get(strand, index, &mut item)?;
-            put_input(global, strand, &item, input)?;
+        for &position in &found.accepted {
+            taken_array.get(strand, position, &mut item)?;
+            sources_array.push(strand, &*item)?;
+            units.get(strand, indices[position], &mut item)?;
+            inputs_array.push(strand, &*item)?;
         }
-        let (paths, diags, undecided, check) = checked?;
-
         global.types.checked.create_with_annex(
             strand,
             CheckedObject,
             CheckedAnnex {
-                paths,
-                diags,
-                undecided,
-                check,
+                paths: found.paths,
+                diags: found.diags,
+                undecided: found.undecided,
+                check: found.check,
             },
             &mut *out,
         );
@@ -1233,7 +1343,7 @@ pub fn apply_prelude_value<'v, 's>(
     })
 }
 
-impl<'v> Object<'v> for UnitObject<'v> {
+impl<'v> Object<'v> for UnitObject {
     const NAME: &'v str = "Unit";
     const MODULE: &'v str = "compile";
     const SLOTS: usize = 1;
@@ -1244,17 +1354,13 @@ impl<'v> Object<'v> for UnitObject<'v> {
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("diagnostics", |this, strand, out| {
-                if this.borrow(strand)?.unit.is_none() {
-                    return Err(Error::state_error(strand, "unit was emitted"));
-                }
+                this.borrow(strand)?.unit(strand)?;
                 strand.array_view(this, UnitDiagnostics, out);
                 Ok(())
             })
             .method("nodes", async move |this, strand, args, mut out| {
                 unpack!(strand, args =>);
-                if this.borrow(strand)?.unit.is_none() {
-                    return Err(Error::state_error(strand, "unit was emitted"));
-                }
+                this.borrow(strand)?.unit(strand)?;
                 let ty = strand.state::<Tag>().types.node_iter;
                 ty.create(strand, NodeIter { cursor: None }, &mut out);
                 with_instance!(strand, ty.cast(&out).unwrap(), |iter| {
@@ -1263,13 +1369,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 Ok(())
             })
             .get("root", |this, strand, mut out| {
-                let root = {
-                    let borrow = this.borrow(strand)?;
-                    let Some(unit) = borrow.unit.as_ref() else {
-                        return Err(Error::state_error(strand, "unit was emitted"));
-                    };
-                    unit.root()
-                };
+                let root = this.borrow(strand)?.unit(strand)?.root();
                 match root {
                     Some(id) => create_node(strand, this, id, &mut out)?,
                     None => strand.store(out, Nil),
@@ -1283,9 +1383,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 };
                 let id_data = with_instance!(strand, id_obj, |id| *id.annex());
                 let borrow = this.borrow(strand)?;
-                let Some(unit) = borrow.unit.as_ref() else {
-                    return Err(Error::state_error(strand, "unit was emitted"));
-                };
+                let unit = borrow.unit(strand)?;
                 if id_data.unit != borrow.identity || unit.node(id_data.id).is_none() {
                     strand.store(out, Nil);
                     return Ok(());
@@ -1297,9 +1395,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let global = strand.state::<Tag>();
                 let mut tokens = {
                     let borrow = this.borrow(strand)?;
-                    let Some(unit) = borrow.unit.as_ref() else {
-                        return Err(Error::state_error(strand, "unit was emitted"));
-                    };
+                    let unit = borrow.unit(strand)?;
                     let mut tokens = Vec::new();
                     unit.tokens(&mut |kind, span, node, context| {
                         tokens.push(TokenAnnex {
@@ -1323,14 +1419,13 @@ impl<'v> Object<'v> for UnitObject<'v> {
             })
             .method("emit", async move |this, strand, args, out| {
                 unpack!(strand, args =>);
-                let unit = this
-                    .borrow_mut(strand)?
-                    .unit
-                    .take()
-                    .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
-                let mut bytecode = Vec::new();
-                unit.emit(&mut bytecode)
-                    .map_err(|err| Error::compile(strand, err))?;
+                let unit = this.borrow_mut(strand)?.take(strand, UnitState::Emitted)?;
+                let bytecode = offload(move || {
+                    let mut bytecode = Vec::new();
+                    unit.emit(&mut bytecode).map(|()| bytecode)
+                })
+                .await
+                .map_err(|err| Error::compile(strand, err))?;
                 strand.store(out, bytecode.as_slice());
                 Ok(())
             })
@@ -1339,7 +1434,9 @@ impl<'v> Object<'v> for UnitObject<'v> {
                 let range = span_range(this, strand, &span)?;
                 let borrow = this.borrow(strand)?;
                 let text = {
-                    let unit = borrow.unit.as_ref().expect("span_range checked the unit");
+                    let UnitState::Ready(unit) = &borrow.unit else {
+                        unreachable!("span_range checked the unit");
+                    };
                     unit.source()[range].to_owned()
                 };
                 strand.store(out, text.as_str());
@@ -1354,13 +1451,7 @@ impl<'v> Object<'v> for UnitObject<'v> {
             .method("end", async move |this, strand, args, out| {
                 unpack!(strand, args => span);
                 let span = span_arg(strand, &span)?;
-                let end = {
-                    let borrow = this.borrow(strand)?;
-                    let Some(unit) = borrow.unit.as_ref() else {
-                        return Err(Error::state_error(strand, "unit was emitted"));
-                    };
-                    unit.end(span)
-                };
+                let end = this.borrow(strand)?.unit(strand)?.end(span);
                 create_pos(strand.state::<Tag>(), strand, end, out);
                 Ok(())
             })
@@ -1380,16 +1471,12 @@ fn span_arg<'v, 's>(
 
 /// Where a `compile.Span` argument lies in the source of a unit, in bytes
 fn span_range<'v, 's>(
-    this: Instance<'v, '_, UnitObject<'v>>,
+    this: Instance<'v, '_, UnitObject>,
     strand: &mut Strand<'v, 's>,
     span: &Value<'v>,
 ) -> Result<'v, 's, Range<usize>> {
     let span = span_arg(strand, span)?;
-    let borrow = this.borrow(strand)?;
-    let Some(unit) = borrow.unit.as_ref() else {
-        return Err(Error::state_error(strand, "unit was emitted"));
-    };
-    Ok(unit.byte_range(span))
+    Ok(this.borrow(strand)?.unit(strand)?.byte_range(span))
 }
 
 impl<'v> Object<'v> for CheckObject {
@@ -1444,7 +1531,7 @@ impl<'v> Object<'v> for CheckObject {
                     }
                     let taken = take_input(global, strand, &input, &mut source)?;
                     let depends = depends(&taken);
-                    put_input(global, strand, &input, taken)?;
+                    put_input(strand, &input, taken)?;
                     let depends =
                         depends.map_err(|error| Error::value(strand, error.to_string()))?;
                     {
@@ -1479,7 +1566,7 @@ impl<'v> Object<'v> for CheckObject {
                         strand.store(&mut inputs, Ref::slot::<CHECK_INPUTS>(&borrow));
                         borrow.typelibs
                     };
-                    check_units(strand.state::<Tag>(), strand, &inputs, typelibs, &mut out)
+                    check_units(strand.state::<Tag>(), strand, &inputs, typelibs, &mut out).await
                 },
             )
     }
@@ -1545,23 +1632,9 @@ impl<'v> Object<'v> for CheckedObject {
     }
 }
 
-/// The typelib of a typelib object, which a running check may have taken
-fn with_typelib<'v, 's, R>(
-    strand: &mut Strand<'v, 's>,
-    this: &Instance<'v, '_, TypelibObject<'v>>,
-    f: impl FnOnce(&compile::typeck::Typelib<'static>) -> R,
-) -> Result<'v, 's, R> {
-    let borrow = this.borrow(strand)?;
-    match &borrow.typelib {
-        Some(typelib) => Ok(f(typelib)),
-        None => Err(Error::state_error(strand, "typelib is being checked")),
-    }
-}
-
-impl<'v> Object<'v> for TypelibObject<'v> {
+impl<'v> Object<'v> for TypelibObject {
     const NAME: &'v str = "Typelib";
     const MODULE: &'v str = "compile";
-    const SLOTS: usize = 1;
     type Annex = ();
     type Type = ();
     type TypeAnnex = ();
@@ -1576,71 +1649,63 @@ impl<'v> Object<'v> for TypelibObject<'v> {
         let View::Bin(bin) = bytes.view(strand) else {
             return Err(Error::type_error(strand, "bytes: expected `Bin`"));
         };
-        // The retained pin keeps the binary alive and in place for the typelib.
-        let backing: PinBin<'v> = bin.pin();
-        // SAFETY: the pin is retained after the borrowing typelib and dropped after
-        // it.
-        let static_bytes: &'static [u8] = unsafe { mem::transmute::<&[u8], _>(&*backing) };
-        let typelib = compile::typeck::Typelib::read(static_bytes)
-            .map_err(|error| Error::data(strand, error.to_string()))?;
+        let bytes: Arc<[u8]> = Arc::from(&*bin.pin());
+        let (module, path) = match compile::typeck::Typelib::read(&bytes) {
+            Ok(typelib) => (
+                typelib.module().into(),
+                typelib.path().to_string_lossy().into(),
+            ),
+            Err(error) => return Err(Error::data(strand, error.to_string())),
+        };
         this.create(
             strand,
             TypelibObject {
-                typelib: Some(typelib),
-                _backing: backing,
+                bytes,
+                module,
+                path,
             },
             &mut out,
         );
-        with_instance!(strand, this.cast(&out).unwrap(), |typelib| {
-            strand.store(
-                Mut::slot_mut::<TYPELIB_BYTES>(&mut typelib.borrow_mut_unwrap()),
-                bytes,
-            )
-        });
         Ok(())
     }
 
     fn build<'a>(builder: TypeBuilder<'v, 'a, Self>) -> TypeBuilder<'v, 'a, Self> {
         builder
             .get("module", |this, strand, out| {
-                let module = with_typelib(strand, &this, |typelib| typelib.module())?;
-                strand.store(out, module);
+                let module = this.borrow(strand)?.module.clone();
+                strand.store(out, &*module);
                 Ok(())
             })
             .get("path", |this, strand, out| {
-                let path = with_typelib(strand, &this, |typelib| {
-                    typelib.path().to_string_lossy().into_owned()
-                })?;
-                strand.store(out, path.as_str());
+                let path = this.borrow(strand)?.path.clone();
+                strand.store(out, &*path);
                 Ok(())
             })
     }
 }
 
 impl<'v> ArrayLike<'v> for UnitDiagnostics {
-    type Object = UnitObject<'v>;
+    type Object = UnitObject;
     const MODULE: &'v str = "compile";
     const NAME: &'v str = "UnitDiagnostics";
 
-    /// Zero once the unit is emitted
-    fn len(&self, this: Instance<'v, '_, UnitObject<'v>>, _strand: &mut Strand<'v, '_>) -> usize {
-        this.borrow_unwrap()
-            .unit
-            .as_ref()
-            .map_or(0, compile::Unit::diagnostic_count)
+    /// Zero once the unit is emitted, or while it is being checked
+    fn len(&self, this: Instance<'v, '_, UnitObject>, _strand: &mut Strand<'v, '_>) -> usize {
+        match &this.borrow_unwrap().unit {
+            UnitState::Ready(unit) => unit.diagnostic_count(),
+            UnitState::Checking | UnitState::Emitted => 0,
+        }
     }
 
     fn get<'a, 's>(
         &self,
-        this: Instance<'v, '_, UnitObject<'v>>,
+        this: Instance<'v, '_, UnitObject>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let borrow = this.borrow(strand)?;
-        let Some(unit) = borrow.unit.as_ref() else {
-            return Err(Error::state_error(strand, "unit was emitted"));
-        };
+        let unit = borrow.unit(strand)?;
         let diag = unit.diagnostic(index).expect("index is within len");
         let source = Ref::slot::<UNIT_SOURCE>(&borrow);
         let path = borrow.path.to_string_lossy();
@@ -1725,17 +1790,17 @@ diagnostic_list!(DiagNotes, "DiagnosticNotes", notes, create_note);
 diagnostic_list!(DiagPatches, "DiagnosticPatches", patches, create_patch);
 
 impl<'v> ArrayLike<'v> for NodeList {
-    type Object = UnitObject<'v>;
+    type Object = UnitObject;
     const MODULE: &'v str = "compile";
     const NAME: &'v str = "NodeList";
 
-    fn len(&self, _this: Instance<'v, '_, UnitObject<'v>>, _strand: &mut Strand<'v, '_>) -> usize {
+    fn len(&self, _this: Instance<'v, '_, UnitObject>, _strand: &mut Strand<'v, '_>) -> usize {
         self.0.len()
     }
 
     fn get<'a, 's>(
         &self,
-        this: Instance<'v, '_, UnitObject<'v>>,
+        this: Instance<'v, '_, UnitObject>,
         strand: &'a mut Strand<'v, 's>,
         index: usize,
         mut out: Slot<'v, 'a>,
@@ -1772,9 +1837,7 @@ impl<'v> Object<'v> for NodeIter {
         let cursor = iter.cursor;
         let result = with_unit(strand, Mut::slot::<OWNER>(&iter), |strand, owner| {
             let owner_borrow = owner.borrow(strand)?;
-            let Some(unit) = owner_borrow.unit.as_ref() else {
-                return Err(Error::state_error(strand, "unit was emitted"));
-            };
+            let unit = owner_borrow.unit(strand)?;
             let Some(id) = unit.next_id(cursor) else {
                 return Ok(None);
             };
@@ -1917,7 +1980,7 @@ fn create_node_id<'v>(
 fn create_typed_node<'v, T: NodeMarker + 'static>(
     strand: &mut Strand<'v, '_>,
     ty: Type<'v, NodeObject<T>>,
-    owner: Instance<'v, '_, UnitObject<'v>>,
+    owner: Instance<'v, '_, UnitObject>,
     unit: u64,
     id: compile::NodeId,
     out: &mut Slot<'v, '_>,
@@ -1938,7 +2001,7 @@ fn create_typed_node<'v, T: NodeMarker + 'static>(
 
 fn create_node<'v, 's>(
     strand: &mut Strand<'v, 's>,
-    owner: Instance<'v, '_, UnitObject<'v>>,
+    owner: Instance<'v, '_, UnitObject>,
     id: compile::NodeId,
     out: &mut Slot<'v, '_>,
 ) -> Result<'v, 's, ()> {
@@ -2000,14 +2063,7 @@ fn create_node<'v, 's>(
     }
     let (kind, unit) = {
         let b = owner.borrow(strand)?;
-        let kind = match b
-            .unit
-            .as_ref()
-            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?
-            .node(id)
-            .unwrap()
-            .kind()
-        {
+        let kind = match b.unit(strand)?.node(id).unwrap().kind() {
             compile::Kind::Root => Which::Root,
             compile::Kind::Class { .. } => Which::Class,
             compile::Kind::Function { .. } => Which::Function,
@@ -2567,7 +2623,7 @@ trait ProjectNodes {
     fn project<'v, 's>(
         self,
         strand: &mut Strand<'v, 's>,
-        owner: Instance<'v, '_, UnitObject<'v>>,
+        owner: Instance<'v, '_, UnitObject>,
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()>;
 }
@@ -2576,7 +2632,7 @@ impl ProjectNodes for Option<compile::NodeId> {
     fn project<'v, 's>(
         self,
         strand: &mut Strand<'v, 's>,
-        owner: Instance<'v, '_, UnitObject<'v>>,
+        owner: Instance<'v, '_, UnitObject>,
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         match self {
@@ -2593,7 +2649,7 @@ impl ProjectNodes for Vec<compile::NodeId> {
     fn project<'v, 's>(
         self,
         strand: &mut Strand<'v, 's>,
-        owner: Instance<'v, '_, UnitObject<'v>>,
+        owner: Instance<'v, '_, UnitObject>,
         out: &mut Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         strand.array_view(owner, NodeList(self), out);
@@ -2610,10 +2666,7 @@ fn with_node<'v, 's, T: NodeMarker + 'static, R>(
     let id = b.id;
     with_unit(strand, Ref::slot::<OWNER>(&b), |strand, owner| {
         let ub = owner.borrow(strand)?;
-        let unit = ub
-            .unit
-            .as_ref()
-            .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
+        let unit = ub.unit(strand)?;
         let node = unit
             .node(id)
             .ok_or_else(|| Error::state_error(strand, "unit was emitted"))?;
@@ -3265,7 +3318,7 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 while iter.next(strand, &mut item).await? {
                     units.as_array(strand).unwrap().push(strand, &*item)?;
                 }
-                check_units(global, strand, &units, typelibs, &mut out)
+                check_units(global, strand, &units, typelibs, &mut out).await
             },
         )
         .function("compile", async move |strand, args, mut out| {
@@ -3290,13 +3343,12 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 })
                 .transpose()?;
 
-            // The retained pin keeps the source alive and in place for the unit.
+            // The unit owns a copy of the source, so it can be built on the
+            // blocking pool.
             let View::Str(text) = source.view(strand) else {
                 return Err(Error::type_error(strand, "source: expected `Str`"));
             };
-            let backing: PinStr<'v> = text.pin();
-            // SAFETY: the pin is retained after the borrowing unit and dropped after it.
-            let text: &'static str = unsafe { mem::transmute::<&str, _>(&*backing) };
+            let text = text.to_string();
 
             let path: Box<Path> = Path::new(&path.to_string(strand)?).into();
             let module_name: Option<Box<str>> = module.as_deref().map(Into::into);
@@ -3338,14 +3390,17 @@ pub(crate) fn configure<'v>(builder: &mut Register<'v>, global: State<'v, Global
                 ext.apply(&mut config).unwrap();
             }
 
-            let unit = config.unit(&path, text);
+            let unit = offload({
+                let path = path.clone();
+                move || config.unit(&path, text)
+            })
+            .await;
             let identity = global.next_unit_id.get();
             global.next_unit_id.set(identity.strict_add(1));
             global.types.unit.create(
                 strand,
                 UnitObject {
-                    unit: Some(unit),
-                    _backing: backing,
+                    unit: UnitState::Ready(Box::new(unit)),
                     path,
                     module: module_name,
                     identity,
