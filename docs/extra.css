@@ -1,3 +1,65 @@
+/* The header and the accents are shared with the playground
+ * (playground/src/style.css): the page and code backgrounds, a header a shade
+ * above the page, and the playground's accent and link colours. */
+[data-md-color-scheme="slate"] {
+    --md-primary-fg-color: #252a3d;
+    --md-primary-fg-color--light: #2f3550;
+    --md-primary-fg-color--dark: #1d2130;
+    --md-primary-bg-color: #e6e8f0;
+    --md-primary-bg-color--light: #a3a9bf;
+    --md-accent-fg-color: #7185e7;
+    --md-accent-fg-color--transparent: #7185e71a;
+    --md-typeset-a-color: #a9b9ff;
+    --md-default-bg-color: #171922;
+    --md-default-bg-color--light: #1719228a;
+    --md-default-bg-color--lighter: #17192242;
+    --md-default-bg-color--lightest: #17192212;
+    --md-code-bg-color: #1d202d;
+    --md-code-bg-color--light: #1d202de6;
+    --md-code-bg-color--lighter: #1d202d8a;
+}
+.md-header {
+    border-bottom: 1px solid #363b50;
+}
+.md-header--shadow {
+    box-shadow: none;
+}
+/* The border goes under the tabs where Material shows them */
+@media screen and (min-width: 76.25em) {
+    .md-header {
+        border-bottom: 0;
+    }
+    .md-tabs {
+        border-bottom: 1px solid #363b50;
+    }
+}
+
+/* Do code is coloured as the playground colours it (playground/src/style.css,
+ * the `.token-*` rules): docs/dolang_lexer.py gives each of the playground's
+ * token kinds its own Pygments type. */
+[data-md-color-scheme="slate"] {
+    --md-code-fg-color: #e6e8f0;
+    --md-code-hl-keyword-color: #c8a4f8;
+    --md-code-hl-operator-color: #c8a4f8;
+    --md-code-hl-punctuation-color: #6f7690;
+    --md-code-hl-string-color: #b9d991;
+    --md-code-hl-number-color: #f4bc87;
+    --md-code-hl-constant-color: #f4bc87;
+    --md-code-hl-function-color: #9cbcff;
+    --md-code-hl-variable-color: var(--md-code-fg-color);
+    --md-code-hl-comment-color: #8d97ae;
+    --do-class-color: #81d5cc;
+    --do-type-parameter-color: #d8a8ef;
+    --do-property-color: #e5c790;
+    --do-sigil-color: #f29ab8;
+}
+.highlight .c, .highlight .c1, .highlight .cm { font-style: italic; }
+.highlight .se { color: var(--md-code-hl-string-color); }
+.highlight .nc, .highlight .nn, .highlight .kt { color: var(--do-class-color); }
+.highlight .vc { color: var(--do-type-parameter-color); }
+.highlight .py, .highlight .vm { color: var(--do-property-color); }
+.highlight .pm, .highlight .nd { color: var(--do-sigil-color); }
+
 /* Make error tokens stand out */
 .highlight .err,
 .md-typeset .highlight .err {
@@ -20,12 +82,6 @@
     word-break: normal;
     overflow-wrap: break-word;
 }
-/* Material's footer.html renders the <footer> wrapper unconditionally; only
- * its contents (generator line, copyright, social links, prev/next nav) are
- * conditional. With none of those configured, it's a permanently empty bar. */
-.md-footer {
-    display: none;
-}
 
 /* Alias syntax must retain its indentation when copied or viewed on mobile. */
 .md-typeset pre.do-alias {
@@ -46,10 +102,48 @@
     white-space: nowrap;
 }
 
-.playground-link {
+/* The header's playground link looks like the playground's Run button */
+.md-header .playground-link {
+    display: flex;
+    align-items: center;
+    gap: .25em;
+    padding: .3rem .7rem .3rem .5rem;
+    margin: 0 .4rem;
+    border-radius: .25rem;
+    background: #7185e7;
+    color: #101425;
     font-size: .7rem;
-    font-weight: 600;
+    font-weight: 700;
     white-space: nowrap;
+    transition: background-color .25s;
+}
+.md-header .playground-link:is(:hover, :focus-visible) {
+    opacity: 1;
+    background: #8d9eef;
+}
+.md-header .playground-link svg {
+    width: 1.1em;
+    height: 1.1em;
+    fill: currentcolor;
+}
+
+/* Admonitions take the playground's diagnostic colours: lint blue, help
+ * green, warning amber and error red. */
+.md-typeset :is(.admonition, details) {
+    background-color: var(--md-code-bg-color);
+}
+.md-typeset :is(.admonition, details):is(.note) { --do-admonition: #9cbcff; }
+.md-typeset :is(.admonition, details):is(.tip, .hint, .success) { --do-admonition: #b9d991; }
+.md-typeset :is(.admonition, details):is(.warning, .caution, .attention) { --do-admonition: #f4bc87; }
+.md-typeset :is(.admonition, details):is(.danger, .error, .failure, .bug) { --do-admonition: #ff7a85; }
+.md-typeset :is(.admonition, details):is(.note, .tip, .hint, .success, .warning, .caution, .attention, .danger, .error, .failure, .bug) {
+    border-color: var(--do-admonition);
+}
+.md-typeset :is(.note, .tip, .hint, .success, .warning, .caution, .attention, .danger, .error, .failure, .bug) > :is(.admonition-title, summary) {
+    background-color: color-mix(in srgb, var(--do-admonition) 10%, transparent);
+}
+.md-typeset :is(.note, .tip, .hint, .success, .warning, .caution, .attention, .danger, .error, .failure, .bug) > :is(.admonition-title, summary)::before {
+    background-color: var(--do-admonition);
 }
 
 /* Link under a `playground` fence, tucked against the code block. */
@@ -59,7 +153,26 @@
 .md-typeset .playground-example > .highlight {
     margin-bottom: 0;
 }
-.md-typeset .playground-open {
+/* Moved beside the copy button by javascripts/playground.js */
+.md-typeset .md-code__button[data-md-type="playground"] {
+    margin: 0;
+    color: var(--md-default-fg-color--lightest);
+}
+.md-typeset :hover > * > .md-code__button[data-md-type="playground"] {
+    color: var(--md-default-fg-color--light);
+}
+.md-typeset .md-code__button[data-md-type="playground"]:is(:hover, :focus-visible) {
+    color: var(--md-accent-fg-color);
+}
+.md-typeset .md-code__button[data-md-type="playground"]::after {
+    /* Material Design Icons "play" */
+    -webkit-mask-image: var(--do-play-icon);
+    mask-image: var(--do-play-icon);
+}
+:root {
+    --do-play-icon: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 5.14v14l11-7z"/></svg>');
+}
+.md-typeset .playground-open:not(.md-code__button) {
     display: block;
     font-size: .64rem;
     font-weight: 600;

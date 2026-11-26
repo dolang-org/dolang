@@ -3,7 +3,8 @@
 body { margin: 0; }
 a { color: #a9b9ff; text-decoration: none; }
 a:hover { text-decoration: underline; }
-header { padding: 1.2rem 4vw; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333646; }
+/* The header is shared with the docs site (docs/extra.css) */
+header { padding: 1.2rem 4vw; display: flex; justify-content: space-between; align-items: center; background: #252a3d; border-bottom: 1px solid #363b50; }
 .brand { display: flex; align-items: flex-end; gap: .6rem; font-size: 1.4rem; font-weight: 750; color: #fff; }
 .brand span { font-size: 1rem; font-weight: 400; color: #a3a9bf; margin-left: 0; }
 main { max-width: 105rem; margin: auto; padding: 2rem 4vw; }

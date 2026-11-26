@@ -1,5 +1,6 @@
 site_name: Do Language
 site_description: Documentation for the Do programming language
+site_url: https://dolang-org.github.io/dolang/
 repo_url: https://github.com/dolang-org/dolang
 
 hooks:
@@ -31,16 +32,35 @@ exclude_docs: |
 extra_css:
   - extra.css
 
+extra_javascript:
+  - javascripts/playground.js
+
 theme:
   name: material
   custom_dir: docs/overrides
   logo: dot.png
   favicon: dot.png
+  font:
+    # The playground's editor font
+    code: JetBrains Mono
   features:
+    - content.code.copy
+    - navigation.footer
     - navigation.indexes
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.path
+    - navigation.prune
+    - navigation.tabs
+    - navigation.top
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
   palette:
     scheme: slate
-    primary: indigo
+    primary: custom
+    accent: custom
 
 extra:
   generator: false

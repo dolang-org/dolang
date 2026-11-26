@@ -297,58 +297,67 @@ class DoLexer(Lexer):
             raise RuntimeError(f"dolang compile server failed: {response['error']}")
         return response
 
+    # Each Pygments type stands for one of the playground's token kinds (see
+    # `classify_token` in dolang-wasm/src/analysis.rs), so `extra.css` can
+    # colour a fence as the playground colours the same source.
+    _KIND_TOKENS = {
+        "ANNOTATION": Name.Decorator,  # annotation
+        "BINDER": Name.Variable.Class,  # type-parameter
+        "COMMENT": Comment,
+        "CONSTANT": Name.Constant,
+        "DELIM": Punctuation,
+        "ESCAPE": String.Escape,
+        "FIELD": Name.Property,
+        "KEY": Name.Property,
+        "KEYWORD": Keyword,
+        "LITERAL": String,
+        "METHOD": Name.Function,
+        "MODULE_ITEM": Name.Property,
+        "MODULE_NAME": Name.Namespace,
+        "NUMBER": Number,
+        "OPERATOR": Operator,
+        "SIGIL": Punctuation.Marker,  # sigil
+        "STRING_DELIM": String.Double,
+        "TYPE": Keyword.Type,  # type
+        "TYPE_KEY": Name.Property,
+        "VARIABLE": Name.Variable,
+        "ERROR": Token.Error,
+    }
+
+    _BINDERS = ("PosBinder", "KeyBinder", "RestBinder")
+    _PARAMS = ("PositionalParam", "KeyParam", "RestParam", "SelfParam")
+    _FUNCTIONS = ("Function", "Method", "SpecialMethod")
+
     def _map_token_type(self, token_info: Dict[str, Any]) -> Token:
-        kind = token_info.get("kind", "text")
-
-        # Core token type mappings
-        token_mapping = {
-            "KEYWORD": Keyword,
-            "VARIABLE": Name.Variable,
-            "SIGIL": Name.Variable,
-            "NUMBER": Number,
-            "LITERAL": String,
-            "COMMENT": Comment,
-            "OPERATOR": Operator,
-            "STRING_DELIM": String.Double,
-            "DELIM": Punctuation,
-            "CONSTANT": Name.Constant,
-            "ESCAPE": String.Escape,
-            "FIELD": Name.Variable,
-            "KEY": Name.Property,
-            "MODULE_NAME": Name.Namespace,
-            "MODULE_ITEM": Name.Property,
-            "ERROR": Token.Error,
-        }
-
-        base_token = token_mapping.get(kind, Text)
-        return base_token
+        return self._KIND_TOKENS.get(token_info.get("kind", "text"), Text)
 
     def _apply_modifiers(
         self, base_token: Token, token_info: Dict[str, Any], nodes: List[dict]
     ) -> Token:
+        kind = token_info.get("kind")
         ref = token_info.get("ref")
         node_kind = (
             nodes[ref]["kind"] if ref is not None and 0 <= ref < len(nodes) else None
         )
-        context = token_info.get("context")
+        call = token_info.get("context") == "CALL"
 
-        # What the name refers to, if it refers to a declaration
-        if node_kind in ("Class", "Alias", "PosBinder", "KeyBinder", "RestBinder"):
-            base_token = Name.Class
-        elif node_kind in ("Function", "Method", "SpecialMethod"):
-            base_token = Name.Function
-        elif node_kind in ("PositionalParam", "KeyParam", "RestParam", "SelfParam"):
-            base_token = Name.Variable.Magic
-        elif node_kind == "ImportModule":
-            base_token = Name.Namespace
-        elif node_kind in ("PreludeItem", "PreludeModule"):
-            base_token = Name.Builtin
+        if kind == "FIELD":
+            return Name.Function if call else Name.Property
+        if kind == "TYPE":
+            return Name.Variable.Class if node_kind in self._BINDERS else Keyword.Type
+        if kind != "VARIABLE":
+            return base_token
 
-        # Context-based modifiers
-        if context == "CALL":
-            base_token = Name.Function
-
-        return base_token
+        # What the name refers to, and whether it is called
+        if node_kind == "Class" or node_kind in self._BINDERS:
+            return Name.Class
+        if call or node_kind in self._FUNCTIONS:
+            return Name.Function
+        if node_kind in self._PARAMS:
+            return Name.Variable.Magic  # parameter
+        if node_kind in ("PreludeModule", "ImportModule"):
+            return Name.Namespace
+        return Name.Variable
 
 
 __all__ = ["DoLexer"]
