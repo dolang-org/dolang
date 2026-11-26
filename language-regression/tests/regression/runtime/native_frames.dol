@@ -24,9 +24,22 @@ let unpacked = native_frames do
   let _a _b = [1, 2, 3]
 assert_eq $unpacked ["std.Array (unpack)"]
 
-# A callback's error passes through the frames of the iterator that called it
+# A callback's error passes through the frame of the operation that called it.
+# Spreading pulls the iterator's own items within the one operation
 let mapped = native_frames after: 1 do [...[1].map(boom)]
-assert_eq $mapped ["std.Map (next)", "std.Map (spread)"]
+assert_eq $mapped ["std.Map (spread)"]
+
+# An adapter pulling from its input starts an operation on it
+let chained = native_frames after: 1 do [...[1].map(boom).map(do |x| x)]
+assert_eq $chained ["std.Map (next)", "std.Map (spread)"]
+
+# An operation on an element starts an operation of its own, which may run Do code
+class BadHash
+  pub def (hash) _self
+    throw "boom"
+let nested = native_frames after: 1 do std.hash [[BadHash()]]
+assert_eq $nested ["std.Array (hash)", "std.Array (hash)", "std.hash nil"]
+assert_eq (native_frames after: 1 do {[BadHash()]: 1}) ["std.Array (hash)"]
 
 # A Do method gets no native frame
 class Mine
@@ -65,10 +78,7 @@ class Sub: Dict
     Dict.(init) $self {a: 1}
 let sub = Sub()
 assert_eq (Dict.(index) sub :a:) 1
-# The instance's operation pushes a second frame until frames link by logical
-# operation (#1923)
-let frames = native_frames do Dict.(index) {a: 1} :b:
-assert_eq $frames ["std.Dict (index)", "std.Dict (index)"]
+assert_eq (native_frames do Dict.(index) {a: 1} :b:) ["std.Dict (index)"]
 assert_eq (native_frames do Dict.(index) sub :b:) ["std.Dict (index)"]
 assert_eq (native_frames do Dict.keys 5) ["std.Dict keys"]
 assert_throws $std.TypeError do Array.(get) "x" :f:

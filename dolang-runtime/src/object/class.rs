@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     cell::{Cell, RefCell},
     collections::{HashMap, hash_map::Entry},
     hash::DefaultHasher,
@@ -23,7 +22,7 @@ use crate::{
         native,
         protocol::{
             Delegated, Dispatch, Inspect, Member, MemberKind, Recv, Spread, SpreadContext,
-            delegated_frame, instance_mcall_fallback, is_special_mcall,
+            instance_mcall_fallback, is_special_mcall,
         },
         sym::SymObj,
     },
@@ -1320,12 +1319,7 @@ impl<'v> ClassObject<'v> {
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(get)")),
-                        Delegated::new(type_obj, &delegator).op_get(strand, field, out)
-                    )
+                    Delegated::new(type_obj, &delegator).op_get(strand, field, out)
                 })
             }
             None => Err(Error::field(strand, field)),
@@ -1438,12 +1432,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
             Some(ClassTypeEntry::Delegate(type_obj, _)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(set)")),
-                        Delegated::new(type_obj, &delegator).op_set(strand, field, value)
-                    )
+                    Delegated::new(type_obj, &delegator).op_set(strand, field, value)
                 })
             }
             _ => Err(Error::field(strand, field)),
@@ -1510,12 +1499,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         Ok(())
                     }
                     Some(ClassEntry::Abstract(type_obj, _)) => {
-                        delegated_frame!(
-                            strand,
-                            type_obj,
-                            Some(Cow::Borrowed("(get)")),
-                            Delegated::new(type_obj, &obj).op_get(strand, field, out)
-                        )
+                        Delegated::new(type_obj, &obj).op_get(strand, field, out)
                     }
                     Some(ClassEntry::Property { .. }) => Err(Error::field(strand, field)),
                     Some(ClassEntry::Delegate(_slot, _)) => {
@@ -1531,12 +1515,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                                 _ => None,
                             })
                             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(get)")),
-                            Delegated::new(native, &obj).op_get(strand, field, out)
-                        )
+                        Delegated::new(native, &obj).op_get(strand, field, out)
                     }
                     _ => match me.entry_by_tag(sym::GET_METHOD) {
                         Some(ClassEntry::Method(v)) => {
@@ -1551,12 +1530,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             let native = recv.native(*slot).ok_or_else(|| {
                                 Error::runtime(strand, "native slot uninitialized")
                             })?;
-                            delegated_frame!(
-                                strand,
-                                native,
-                                Some(Cow::Borrowed("(get)")),
-                                Delegated::new(native, &obj).op_get(strand, field, out)
-                            )
+                            Delegated::new(native, &obj).op_get(strand, field, out)
                         }
                         _ => Err(Error::field(strand, field)),
                     },
@@ -1606,12 +1580,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         let native = recv
                             .native(*slot)
                             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(set)")),
-                            Delegated::new(native, &obj).op_set(strand, field, value)
-                        )
+                        Delegated::new(native, &obj).op_set(strand, field, value)
                     }
                     _ => match me.entry_by_tag(sym::SET_METHOD) {
                         Some(ClassEntry::Method(v)) => {
@@ -1630,12 +1599,7 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                             let native = recv.native(*slot).ok_or_else(|| {
                                 Error::runtime(strand, "native slot uninitialized")
                             })?;
-                            delegated_frame!(
-                                strand,
-                                native,
-                                Some(Cow::Borrowed("(set)")),
-                                Delegated::new(native, &obj).op_set(strand, field, value)
-                            )
+                            Delegated::new(native, &obj).op_set(strand, field, value)
                         }
                         _ => Err(Error::field(strand, field)),
                     },
@@ -1676,14 +1640,9 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     } else {
                         supertype
                     };
-                    return delegated_frame!(
-                        owning strand,
-                        receiver,
-                        method,
-                        Delegated::new(receiver, &instance)
-                            .op_mcall(strand, method, trailing, out)
-                            .await,
-                    );
+                    return Delegated::new(receiver, &instance)
+                        .op_mcall(strand, method, trailing, out)
+                        .await;
                 }
                 match me.type_entry(method) {
                     // A class method receives the class it was reached through as
@@ -1719,14 +1678,9 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                         with_slots!(strand, |mut ty, mut delegator| {
                             strand.store(Slot::reborrow(&mut ty), type_obj);
                             strand.store(Slot::reborrow(&mut delegator), &delegator_obj);
-                            delegated_frame!(
-                                owning strand,
-                                &*ty,
-                                method,
-                                Delegated::new(&*ty, &delegator)
-                                    .op_mcall(strand, method, args, out)
-                                    .await,
-                            )
+                            Delegated::new(&*ty, &delegator)
+                                .op_mcall(strand, method, args, out)
+                                .await
                         })
                     }
                     None => Err(Error::field(strand, method)),
@@ -2040,14 +1994,9 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
                 {
                     return Err(Error::type_error(strand, "invalid class object type"));
                 }
-                delegated_frame!(
-                    owning strand,
-                    supertype,
-                    method,
-                    Delegated::new(supertype, &receiver)
-                        .op_mcall(strand, method, trailing, out)
-                        .await,
-                )
+                Delegated::new(supertype, &receiver)
+                    .op_mcall(strand, method, trailing, out)
+                    .await
             }
             _ => Err(Error::field(strand, method)),
         }
@@ -2279,37 +2228,23 @@ fn class_sync_binary_op_entry<'v, 'a, 's>(
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             with_slots!(strand, |mut delegator| {
                 strand.store(Slot::reborrow(&mut delegator), &this);
-                delegated_frame!(
+                class_dispatch_binary_op(
+                    Delegated::new(native, &delegator),
                     strand,
-                    native,
-                    Some(Cow::Borrowed(
-                        Sym::well_known(method_sym).as_str(strand.vm())
-                    )),
-                    class_dispatch_binary_op(
-                        Delegated::new(native, &delegator),
-                        strand,
-                        method_sym,
-                        other,
-                        out
-                    )
+                    method_sym,
+                    other,
+                    out,
                 )
             })
         }
         ClassEntry::Abstract(type_obj, _) => with_slots!(strand, |mut delegator| {
             strand.store(Slot::reborrow(&mut delegator), &this);
-            delegated_frame!(
+            class_dispatch_binary_op(
+                Delegated::new(type_obj, &delegator),
                 strand,
-                type_obj,
-                Some(Cow::Borrowed(
-                    Sym::well_known(method_sym).as_str(strand.vm())
-                )),
-                class_dispatch_binary_op(
-                    Delegated::new(type_obj, &delegator),
-                    strand,
-                    method_sym,
-                    other,
-                    out
-                )
+                method_sym,
+                other,
+                out,
             )
         }),
         _ => Err(Error::runtime(
@@ -2359,15 +2294,14 @@ fn class_sync_reverse_comparison<'v, 'a, 's>(
             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
         return with_slots!(strand, |mut delegator| {
             strand.store(Slot::reborrow(&mut delegator), &this);
-            let method = if inclusive { "(gte)" } else { "(gt)" };
-            delegated_frame!(strand, native, Some(Cow::Borrowed(method)), {
+            {
                 let native = Delegated::new(native, &delegator);
                 if inclusive {
                     native.op_gte(strand, other, out)
                 } else {
                     native.op_gt(strand, other, out)
                 }
-            })
+            }
         });
     }
     with_slots!(strand, |mut receiver| {
@@ -2397,15 +2331,14 @@ fn class_sync_unary_op<'v, 'a, 's>(
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             with_slots!(strand, |mut delegator| {
                 strand.store(Slot::reborrow(&mut delegator), &this);
-                let method = Sym::well_known(method_sym).as_str(strand.vm());
-                delegated_frame!(strand, native, Some(Cow::Borrowed(method)), {
+                {
                     let native = Delegated::new(native, &delegator);
                     match method_sym {
                         sym::NEG_METHOD => native.op_neg(strand, out),
                         sym::BNOT_METHOD => native.op_bnot(strand, out),
                         _ => unreachable!(),
                     }
-                })
+                }
             })
         }
         _ => Err(Error::unsupported(strand, "operator")),
@@ -2473,12 +2406,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(fmt)")),
-                        Delegated::new(native, &delegator).op_fmt(strand, spec, w)
-                    )
+                    Delegated::new(native, &delegator).op_fmt(strand, spec, w)
                 })
             }
             _ => default_fmt(this, strand, spec, w),
@@ -2537,25 +2465,15 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 if answer.is_done() {
                     break;
                 }
-                delegated_frame!(
-                    strand,
-                    native,
-                    Some(Cow::Borrowed("(provide)")),
-                    Delegated::new(native, &delegator)
-                        .op_provide(&mut Request::new(strand, &mut *answer))
-                )?;
+                Delegated::new(native, &delegator)
+                    .op_provide(&mut Request::new(strand, &mut *answer))?;
             }
             for sup in this.annex().prefix.class.annex().abstract_supers.iter() {
                 if answer.is_done() {
                     break;
                 }
-                delegated_frame!(
-                    strand,
-                    sup,
-                    Some(Cow::Borrowed("(provide)")),
-                    Delegated::new(sup, &delegator)
-                        .op_provide(&mut Request::new(strand, &mut *answer))
-                )?;
+                Delegated::new(sup, &delegator)
+                    .op_provide(&mut Request::new(strand, &mut *answer))?;
             }
             Ok(())
         })
@@ -2594,12 +2512,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     with_slots!(strand, |mut delegator| {
                         strand.store(Slot::reborrow(&mut delegator), &this);
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(str)")),
-                            Delegated::new(native, &delegator).op_display(strand, w)
-                        )
+                        Delegated::new(native, &delegator).op_display(strand, w)
                     })?;
                     false
                 }
@@ -2633,12 +2546,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(dbg)")),
-                        Delegated::new(native, &delegator).op_debug(strand, w)
-                    )
+                    Delegated::new(native, &delegator).op_debug(strand, w)
                 })
             }
             _ => {
@@ -2682,12 +2590,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     with_slots!(strand, |mut delegator| {
                         strand.store(Slot::reborrow(&mut delegator), &this);
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(verbatim)")),
-                            Delegated::new(native, &delegator).op_verbatim(strand, w)
-                        )
+                        Delegated::new(native, &delegator).op_verbatim(strand, w)
                     })?;
                     false
                 }
@@ -2724,12 +2627,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
             Some(ClassEntry::Abstract(type_obj, _)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(get)")),
-                        Delegated::new(type_obj, &delegator).op_get(strand, field, out)
-                    )
+                    Delegated::new(type_obj, &delegator).op_get(strand, field, out)
                 })
             }
             Some(ClassEntry::Delegate(slot, _)) => {
@@ -2738,12 +2636,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(get)")),
-                        Delegated::new(native, &delegator).op_get(strand, field, out)
-                    )
+                    Delegated::new(native, &delegator).op_get(strand, field, out)
                 })
             }
             _ => match annex.prefix.class.annex().entry_by_tag(sym::GET_METHOD) {
@@ -2756,12 +2649,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     with_slots!(strand, |mut delegator| {
                         strand.store(Slot::reborrow(&mut delegator), &this);
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(get)")),
-                            Delegated::new(native, &delegator).op_get(strand, field, out)
-                        )
+                        Delegated::new(native, &delegator).op_get(strand, field, out)
                     })
                 }
                 _ => Err(Error::field(strand, field)),
@@ -2795,12 +2683,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(set)")),
-                        Delegated::new(native, &delegator).op_set(strand, field, value)
-                    )
+                    Delegated::new(native, &delegator).op_set(strand, field, value)
                 })
             }
             _ => match annex.prefix.class.annex().entry_by_tag(sym::SET_METHOD) {
@@ -2813,12 +2696,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     with_slots!(strand, |mut delegator| {
                         strand.store(Slot::reborrow(&mut delegator), &this);
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(set)")),
-                            Delegated::new(native, &delegator).op_set(strand, field, value)
-                        )
+                        Delegated::new(native, &delegator).op_set(strand, field, value)
                     })
                 }
                 _ => Err(Error::field(strand, field)),
@@ -2867,27 +2745,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 return with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        owning strand,
-                        native,
-                        method,
-                        Delegated::new(native, &delegator)
-                            .op_mcall(strand, method, args, out)
-                            .await,
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_mcall(strand, method, args, out)
+                        .await
                 });
             }
             Some(ClassEntry::Abstract(type_obj, _)) => {
                 return with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        owning strand,
-                        type_obj,
-                        method,
-                        Delegated::new(type_obj, &delegator)
-                            .op_mcall(strand, method, args, out)
-                            .await,
-                    )
+                    Delegated::new(type_obj, &delegator)
+                        .op_mcall(strand, method, args, out)
+                        .await
                 });
             }
             None => {}
@@ -2911,14 +2779,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        owning strand,
-                        native,
-                        method,
-                        Delegated::new(native, &delegator)
-                            .op_mcall(strand, method, args, out)
-                            .await,
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_mcall(strand, method, args, out)
+                        .await
                 })
             }
             _ => Err(Error::field(strand, method)),
@@ -2943,14 +2806,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        None,
-                        Delegated::new(native, &delegator)
-                            .op_call(strand, args, out)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_call(strand, args, out)
+                        .await
                 })
             }
             _ => Err(Error::unsupported(strand, "call")),
@@ -2976,14 +2834,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(unpack)")),
-                        Delegated::new(native, &delegator)
-                            .op_unpack(strand, unpack)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_unpack(strand, unpack)
+                        .await
                 })
             }
             _ => Err(Error::cannot_unpack(strand, &this)),
@@ -3004,27 +2857,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(iter)")),
-                        Delegated::new(native, &delegator)
-                            .op_iter(strand, out)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_iter(strand, out)
+                        .await
                 })
             }
             Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(iter)")),
-                        Delegated::new(type_obj, &delegator)
-                            .op_iter(strand, out)
-                            .await
-                    )
+                    Delegated::new(type_obj, &delegator)
+                        .op_iter(strand, out)
+                        .await
                 })
             }
             _ => Err(Error::unsupported(strand, "iteration")),
@@ -3045,27 +2888,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(sink)")),
-                        Delegated::new(native, &delegator)
-                            .op_sink(strand, out)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_sink(strand, out)
+                        .await
                 })
             }
             Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(sink)")),
-                        Delegated::new(type_obj, &delegator)
-                            .op_sink(strand, out)
-                            .await
-                    )
+                    Delegated::new(type_obj, &delegator)
+                        .op_sink(strand, out)
+                        .await
                 })
             }
             _ => Err(Error::unsupported(strand, "sink")),
@@ -3092,27 +2925,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(spread)")),
-                        Delegated::new(native, &delegator)
-                            .op_spread(strand, context, sink)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_spread(strand, context, sink)
+                        .await
                 })
             }
             Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(spread)")),
-                        Delegated::new(type_obj, &delegator)
-                            .op_spread(strand, context, sink)
-                            .await
-                    )
+                    Delegated::new(type_obj, &delegator)
+                        .op_spread(strand, context, sink)
+                        .await
                 })
             }
             _ => Err(Error::unsupported(strand, "spread")),
@@ -3137,14 +2960,9 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(next)")),
-                        Delegated::new(native, &delegator)
-                            .op_next(strand, out)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_next(strand, out)
+                        .await
                 })
             }
             _ => Err(Error::unsupported(strand, "`next`")),
@@ -3167,27 +2985,17 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(put)")),
-                        Delegated::new(native, &delegator)
-                            .op_put(strand, item)
-                            .await
-                    )
+                    Delegated::new(native, &delegator)
+                        .op_put(strand, item)
+                        .await
                 })
             }
             Some(ClassEntry::Abstract(type_obj, MemberKind::Method)) => {
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        type_obj,
-                        Some(Cow::Borrowed("(put)")),
-                        Delegated::new(type_obj, &delegator)
-                            .op_put(strand, item)
-                            .await
-                    )
+                    Delegated::new(type_obj, &delegator)
+                        .op_put(strand, item)
+                        .await
                 })
             }
             _ => Err(Error::unsupported(strand, "`put`")),
@@ -3497,12 +3305,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                 .map(|native| {
                     with_slots!(strand, |mut delegator| {
                         strand.store(Slot::reborrow(&mut delegator), &this);
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(bool)")),
-                            Delegated::new(native, &delegator).op_bool(strand)
-                        )
+                        Delegated::new(native, &delegator).op_bool(strand)
                     })
                 })
                 .unwrap_or(Ok(true)),
@@ -3532,12 +3335,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(index)")),
-                        Delegated::new(native, &delegator).op_index(strand, index, out)
-                    )
+                    Delegated::new(native, &delegator).op_index(strand, index, out)
                 })
             }
             _ => Err(Error::type_error(strand, "indexing not supported")),
@@ -3566,12 +3364,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                     .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                 with_slots!(strand, |mut delegator| {
                     strand.store(Slot::reborrow(&mut delegator), &this);
-                    delegated_frame!(
-                        strand,
-                        native,
-                        Some(Cow::Borrowed("(assign)")),
-                        Delegated::new(native, &delegator).op_assign(strand, index, value)
-                    )
+                    Delegated::new(native, &delegator).op_assign(strand, index, value)
                 })
             }
             _ => Err(Error::type_error(strand, "index assignment not supported")),
@@ -3608,12 +3401,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
                     with_slots!(strand, |mut delegator| {
                         strand.store(Slot::reborrow(&mut delegator), &this);
-                        delegated_frame!(
-                            strand,
-                            native,
-                            Some(Cow::Borrowed("(hash)")),
-                            Delegated::new(native, &delegator).op_hash(strand, hasher)
-                        )
+                        Delegated::new(native, &delegator).op_hash(strand, hasher)
                     })?;
                     true
                 }

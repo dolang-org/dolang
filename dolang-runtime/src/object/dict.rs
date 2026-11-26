@@ -138,7 +138,7 @@ impl<'v> Dict<'v> {
         instance: Option<i64>,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
         let mut hasher = strand.vm().hasher();
-        index.op_hash(strand, &mut hasher)?;
+        index.hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         Ok(self.find(strand, hash, index)?.and_then(|pair| unsafe {
             let pair = pair.as_ref();
@@ -384,7 +384,7 @@ impl<'v> Dict<'v> {
         key: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let Some(bucket) = self.find(strand, hash, key)? else {
             return Ok(false);
@@ -490,6 +490,7 @@ impl<'v> Dict<'v> {
             let key = match args.next() {
                 Some(Arg::Pos(key)) => key,
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    let _op = strand.start_op();
                     expand
                         .op_spread(strand, SpreadContext::Pairs, &mut sink)
                         .await?;
@@ -534,7 +535,7 @@ impl<'b, 'v> DictPairs<'b, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = self
             .dict
@@ -1616,10 +1617,10 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 if let Some(sym) = bucket.as_ref().key.downcast_ref(strand.builtin_types().sym) {
                     crate::fmt!(strand, w, "{}", sym.name())?;
                 } else {
-                    bucket.as_ref().key.op_debug(strand, w)?;
+                    bucket.as_ref().key.debug(strand, w)?;
                 }
                 crate::fmt!(strand, w, ": ")?;
-                bucket.as_ref().value.at(subindex).op_debug(strand, w)?;
+                bucket.as_ref().value.at(subindex).debug(strand, w)?;
             }
         }
         crate::fmt!(strand, w, "}}")
@@ -1657,7 +1658,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 }
                 let elem = elem.as_ref();
                 elem.hash.hash(hasher);
-                elem.value.at(subindex).op_hash(strand, hasher)?;
+                elem.value.at(subindex).hash(strand, hasher)?;
                 i += 1;
             }
         }
@@ -1766,7 +1767,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        index.op_hash(strand, &mut hasher)?;
+        index.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
         match dict.find(strand, hv, index)? {
@@ -1785,7 +1786,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut borrow = this.borrow_mut(strand)?;
         borrow.insert(
@@ -1855,7 +1856,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let epoch = this.borrow(strand)?.epoch;
                 if let Some(key) = key {
                     let mut hasher = strand.vm().hasher();
-                    key.op_hash(strand, &mut hasher)?;
+                    key.hash(strand, &mut hasher)?;
                     let hv = hasher.finish();
                     let bucket = this.borrow(strand)?.find(strand, hv, &key)?;
                     let embryo = strand.builtin_types().dict_key_values.embryo(strand);
@@ -2156,7 +2157,7 @@ impl<'v> Dict<'v> {
         skip: &mut Skip,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         Ok(self.find(strand, hv, key)?.and_then(|bucket| {
             let instance = skip.add(&bucket);
@@ -2218,7 +2219,7 @@ impl<'v> Dict<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
         dict.insert(
@@ -2272,7 +2273,7 @@ impl<'v> Dict<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let else_key = Sym::well_known(sym::ELSE);
         if default.is_some() && or_else.is_some() {
@@ -2365,7 +2366,7 @@ impl<'v> Dict<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
         let found = match dict.find(strand, hv, &key)? {
@@ -2412,7 +2413,7 @@ impl<'v> Dict<'v> {
         let dict = this.borrow(strand)?;
         let count = if let Some(key) = key {
             let mut hasher = strand.vm().hasher();
-            key.op_hash(strand, &mut hasher)?;
+            key.hash(strand, &mut hasher)?;
             let hv = hasher.finish();
             dict.find(strand, hv, &key)?
                 .map(|bucket| unsafe { bucket.as_ref().value.len() })
@@ -2459,6 +2460,7 @@ impl<'v> Protocol<'v> for Type {
             .builtin_types()
             .dict
             .create(strand, Dict::new(), Slot::reborrow(&mut out));
+        let _op = strand.start_op();
         items
             .op_spread(strand, SpreadContext::Pairs, &mut DictPairs { dict: &out })
             .await

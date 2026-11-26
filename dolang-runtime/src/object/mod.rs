@@ -682,7 +682,7 @@ impl<'v> Protocol<'v> for BoundMethodObj<'v> {
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
         crate::fmt!(strand, w, "<bound method: {} receiver: ", me.method.name())?;
-        me.rcvr.op_debug(strand, w)?;
+        me.rcvr.debug(strand, w)?;
         crate::fmt!(strand, w, ">")
     }
 

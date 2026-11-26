@@ -465,7 +465,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 strand.check_trap()?;
             }
             key.as_ref().map(|key| key.tag()).hash(hasher);
-            value.op_hash(strand, hasher)?;
+            value.hash(strand, hasher)?;
         }
         Ok(())
     }

@@ -59,3 +59,13 @@ assert_throws $RuntimeError str: "maximum call depth exceeded" do redirect_recur
 assert_throws $RuntimeError str: "maximum call depth exceeded" do
   scoped_overflow $scoped_parent $scoped_child
 assert_eq (background_ok 40) 0
+
+# Native operations nested within one logical operation still count call levels
+let left = []
+let right = []
+let nesting = 0
+while (nesting < 5000)
+  left = [left]
+  right = [right]
+  nesting = (nesting + 1)
+assert_throws $RuntimeError str: "maximum call depth exceeded" do (left == right)

@@ -21,7 +21,7 @@ use crate::{
     strand::{PinScope, Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Case, Input, Output, Slot, StrEmbryo, TypeObject, Value, ValueCell, private::Sealed},
+    value::{Input, Output, Slot, StrEmbryo, TypeObject, Value, ValueCell, private::Sealed},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -136,10 +136,11 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     /// an impl leaves it empty only if it overrides both and turns
     /// [`NATIVE_FRAMES`](Self::NATIVE_FRAMES) off.
     const NAME: &'v str = "";
-    /// Whether the vtbl glue pushes a native frame named `MODULE.NAME` around each
-    /// operation not reached through a delegator. An impl whose operations run Do code,
-    /// which the interpreter frames, or that frames itself turns it off. An impl with
-    /// frames on must set [`NAME`](Self::NAME).
+    /// Whether the vtbl glue pushes a native frame named `MODULE.NAME` around an
+    /// operation that is the first native step of a logical operation, delegated or
+    /// not (see [`Strand::start_op`]). An impl whose operations run Do code, which the
+    /// interpreter frames, or that frames itself turns it off. An impl with frames on
+    /// must set [`NAME`](Self::NAME).
     const NATIVE_FRAMES: bool = true;
     /// Whether this impl is a type object, whose special methods called by name take
     /// the instance as their first argument; see [`type_mcall_fallback`]. It also
@@ -1235,10 +1236,6 @@ pub(crate) struct Vtbl<'v> {
     /// Ensure 'v is invariant.
     /// This prevents "mixing" of objects from different GC arenas.
     phantom: PhantomData<&'v mut &'v ()>,
-    /// The type's [`Protocol::MODULE`].
-    pub(crate) module: &'v str,
-    /// The type's [`Protocol::NAME`] if it has native frames on, else empty.
-    pub(crate) frame_name: &'v str,
     op_type: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
@@ -1407,8 +1404,6 @@ impl<'v> Vtbl<'v> {
         Self {
             base: *Boxed::<Header, T>::vtbl(),
             phantom: PhantomData,
-            module: T::MODULE,
-            frame_name: if T::NATIVE_FRAMES { T::NAME } else { "" },
             op_type: op_type_glue::<T>,
             op_subtype: op_subtype_glue::<T>,
             op_inspect: op_inspect_glue::<T>,
@@ -1832,10 +1827,11 @@ impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
     }
 }
 
-/// Run `$body` with `$strand` rebound to `T`'s native frame for `$method`, unless `T`
-/// turns [`Protocol::NATIVE_FRAMES`] off or `$this` has a delegator: delegation is
-/// transparent, so the delegator's side frames it.  `owning` copies the method name into
-/// an error's backtrace, for a name that lives only as long as the call.
+/// Run `$body` with `$strand` rebound to `T`'s native frame for `$method`, if the frame
+/// links: `T` leaves [`Protocol::NATIVE_FRAMES`] on and the operation is the first native
+/// step of a logical operation (see [`Strand::start_op`]).  Otherwise `$body` runs in the
+/// caller's frame, one call level deeper for a type with frames.  `owning` copies the
+/// method name into an error's backtrace, for a name that lives only as long as the call.
 macro_rules! glue_frame {
     ($T:ident, $this:ident, $strand:ident, $method:expr, $body:expr $(,)?) => {
         glue_frame!(@finish finish, $T, $this, $strand, $method, $body)
@@ -1844,7 +1840,7 @@ macro_rules! glue_frame {
         glue_frame!(@finish finish_owning_method, $T, $this, $strand, $method, $body)
     };
     (@finish $finish:ident, $T:ident, $this:ident, $strand:ident, $method:expr, $body:expr) => {{
-        if $T::NATIVE_FRAMES && $this.delegator.is_none() {
+        if $T::NATIVE_FRAMES && $strand.links_frame() {
             let frame = Native {
                 module: Cow::Borrowed($T::MODULE),
                 receiver: Cow::Borrowed($T::NAME),
@@ -1857,14 +1853,16 @@ macro_rules! glue_frame {
             let $strand = &mut *scope;
             let res = $body;
             scope.$finish(res)
+        } else if $T::NATIVE_FRAMES {
+            let _depth = $strand.inner.push_call_depth()?;
+            $body
         } else {
             $body
         }
     }};
 }
 
-/// The name of `method` as a frame's method, for `glue_frame!` and `delegated_frame!` with
-/// `owning`.
+/// The name of `method` as a frame's method, for `glue_frame!` with `owning`.
 ///
 /// # Safety
 ///
@@ -1873,61 +1871,6 @@ pub(crate) unsafe fn frame_method<'v>(method: Sym<'v, '_>, vm: &Vm<'v>) -> &'v s
     // SAFETY: the caller keeps the name within the call, which holds `method`
     unsafe { &*ptr::from_ref(method.as_str(vm)) }
 }
-
-/// The module and name of the native frame for an operation on `value`, or `None` if
-/// `value` is not an object or its type turns [`Protocol::NATIVE_FRAMES`] off.
-pub(crate) fn frame_names<'v>(value: &Value<'v>) -> Option<(&'v str, &'v str)> {
-    let Case::Object(obj) = value.case() else {
-        return None;
-    };
-    // SAFETY: every object's header carries a protocol vtbl
-    let vtbl: &Vtbl<'v> = unsafe { obj.header().vtbl() };
-    (!vtbl.frame_name.is_empty()).then_some((vtbl.module, vtbl.frame_name))
-}
-
-/// Run `$body` with `$strand` rebound to the native frame of `$receiver`'s type for
-/// `$method`, for an operation an impl with frames off, such as a class instance,
-/// delegates to a native supertype.  The glue never frames a delegated operation, so
-/// the delegating side does; this does nothing for a `$receiver` whose type has frames
-/// off.  With `owning`, `$method` is the method's [`Sym`], whose name the frame borrows
-/// and an error's backtrace copies.
-macro_rules! delegated_frame {
-    ($strand:ident, $receiver:expr, $method:expr, $body:expr $(,)?) => {
-        $crate::object::protocol::delegated_frame!(@finish finish, $strand, $receiver, $method, $body)
-    };
-    (owning $strand:ident, $receiver:expr, $method:expr, $body:expr $(,)?) => {
-        $crate::object::protocol::delegated_frame!(
-            @finish finish_owning_method,
-            $strand,
-            $receiver,
-            // SAFETY: the frame lives within the call, and `owning` copies the name out
-            Some(::std::borrow::Cow::Borrowed(unsafe {
-                $crate::object::protocol::frame_method($method, $strand.vm())
-            })),
-            $body
-        )
-    };
-    (@finish $finish:ident, $strand:ident, $receiver:expr, $method:expr, $body:expr) => {{
-        match $crate::object::protocol::frame_names($receiver) {
-            Some((module, receiver)) => {
-                let frame = $crate::frame::Native {
-                    module: ::std::borrow::Cow::Borrowed(module),
-                    receiver: ::std::borrow::Cow::Borrowed(receiver),
-                    method: $method,
-                    parent: Some($strand.fp),
-                };
-                // SAFETY: the scope is a local of this block that nothing can move or forget
-                #[allow(unused_unsafe)]
-                let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
-                let $strand = &mut *scope;
-                let res = $body;
-                scope.$finish(res)
-            }
-            None => $body,
-        }
-    }};
-}
-pub(crate) use delegated_frame;
 
 #[derive(Clone, Copy)]
 struct ErasedRecv<'v, 'a> {

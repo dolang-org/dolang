@@ -1379,6 +1379,7 @@ impl<'v> Protocol<'v> for Kv<'v> {
                 // read only once it is gone
                 unsafe {
                     with_scan!(strand, visit, {
+                        let _op = strand.start_op();
                         item.op_unpack(strand, Unpack::new(&unpack, &pair)).await?;
                         strand.store(&mut key, &pair[0]);
                         strand.store(&mut value, &pair[1]);

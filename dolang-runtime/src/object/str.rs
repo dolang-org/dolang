@@ -364,11 +364,11 @@ impl<'v> Protocol<'v> for StrObj {
                     }
                     let mut acc = StrEmbryo::new();
                     if input.next(strand, &mut value).await? {
-                        value.op_display(strand, &mut acc)?;
+                        value.display(strand, &mut acc)?;
                     }
                     while input.next(strand, &mut value).await? {
                         acc.extend(strand, this.str());
-                        value.op_display(strand, &mut acc)?;
+                        value.display(strand, &mut acc)?;
                         strand.check_trap_gc()?;
                     }
                     acc.finish(strand, out);

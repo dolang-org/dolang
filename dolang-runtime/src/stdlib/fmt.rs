@@ -368,7 +368,7 @@ impl<'v> Object<'v> for FmtValue {
         let borrow = this.borrow(strand)?;
         for value in [Ref::slot::<0>(&borrow), Ref::slot::<1>(&borrow)] {
             let mut value_hasher = strand.vm().hasher();
-            value.op_hash(strand, &mut value_hasher)?;
+            value.hash(strand, &mut value_hasher)?;
             hasher.write_u64(value_hasher.finish());
         }
         Ok(())
@@ -475,7 +475,7 @@ impl<'v> Object<'v> for FmtParam {
         let borrow = this.borrow(strand)?;
         for value in [Ref::slot::<0>(&borrow), Ref::slot::<1>(&borrow)] {
             let mut value_hasher = strand.vm().hasher();
-            value.op_hash(strand, &mut value_hasher)?;
+            value.hash(strand, &mut value_hasher)?;
             hasher.write_u64(value_hasher.finish());
         }
         Ok(())
@@ -736,7 +736,7 @@ impl<'v> Object<'v> for Fmt {
         hasher.write_usize(Segments.len(this, strand));
         each_segment(this, strand, |strand, segment| {
             let mut segment_hasher = strand.vm().hasher();
-            segment.op_hash(strand, &mut segment_hasher)?;
+            segment.hash(strand, &mut segment_hasher)?;
             hasher.write_u64(segment_hasher.finish());
             Ok(())
         })

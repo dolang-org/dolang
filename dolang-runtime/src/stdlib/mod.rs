@@ -238,7 +238,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         })
         .function("bool", async move |strand, args, out| {
             unpack!(strand, args => value);
-            let value = value.op_bool(strand)?;
+            let value = value.to_bool(strand)?;
             strand.store(out, value);
             Ok(())
         })
@@ -283,7 +283,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
-                slot.op_hash(strand, &mut hasher)?;
+                slot.hash(strand, &mut hasher)?;
             }
             strand.store(out, hasher.finish());
             Ok(())

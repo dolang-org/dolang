@@ -285,6 +285,8 @@ impl<'v> Value<'v> {
         }
     }
 
+    /// Continues the current logical operation, adding no backtrace frame of its own
+    /// unless one has just started; [`Value::call`] starts one.
     #[doc(hidden)]
     pub async fn op_call<'a, 's>(
         &self,
@@ -301,6 +303,8 @@ impl<'v> Value<'v> {
         }
     }
 
+    /// Continues the current logical operation, adding no backtrace frame of its own
+    /// unless one has just started; [`Value::method`] starts one.
     #[doc(hidden)]
     pub async fn op_mcall<'a, 's>(
         &self,
@@ -1448,6 +1452,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         format: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_verbatim(strand, format)
     }
 
@@ -1458,6 +1463,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         format: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_display(strand, format)
     }
 
@@ -1468,7 +1474,19 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         format: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_debug(strand, format)
+    }
+
+    /// Feeds this value's hash to `hasher`.
+    #[inline]
+    pub(crate) fn hash<'a, 's>(
+        &self,
+        strand: &'a mut Strand<'v, 's>,
+        hasher: &mut DefaultHasher,
+    ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
+        self.op_hash(strand, hasher)
     }
 
     /// Writes this value according to a resolved formatting specification.
@@ -1479,6 +1497,7 @@ impl<'v> Value<'v> {
         spec: &Spec,
         format: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_fmt(strand, spec, format)
     }
 
@@ -1517,6 +1536,7 @@ impl<'v> Value<'v> {
     /// - Other objects are usually `true` unless they have special behavior
     #[inline]
     pub fn to_bool<'a, 's>(&self, strand: &'a mut Strand<'v, 's>) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         self.op_bool(strand)
     }
 
@@ -1527,6 +1547,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut operand, mut result| {
             strand.store(&mut operand, other);
             self.op_eq(strand, &operand, Slot::reborrow(&mut result))?;
@@ -1541,6 +1562,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut operand, mut result| {
             strand.store(&mut operand, other);
             self.op_ne(strand, &operand, Slot::reborrow(&mut result))?;
@@ -1556,6 +1578,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut operand, mut result| {
             strand.store(&mut operand, other);
             self.op_lt(strand, &operand, Slot::reborrow(&mut result))?;
@@ -1571,6 +1594,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut operand, mut result| {
             strand.store(&mut operand, other);
             self.op_lte(strand, &operand, Slot::reborrow(&mut result))?;
@@ -1586,6 +1610,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut operand, mut result| {
             strand.store(&mut operand, other);
             self.op_gt(strand, &operand, Slot::reborrow(&mut result))?;
@@ -1601,6 +1626,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         other: impl Input<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut operand, mut result| {
             strand.store(&mut operand, other);
             self.op_gte(strand, &operand, Slot::reborrow(&mut result))?;
@@ -1636,6 +1662,7 @@ impl<'v> Value<'v> {
         args: Args<'v, 'a>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_call(strand, args, Slot::from_output(&mut out))
             .await
     }
@@ -1651,6 +1678,7 @@ impl<'v> Value<'v> {
         args: Args<'v, 'a>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_mcall(strand, method, args, Slot::from_output(&mut out))
             .await
     }
@@ -1662,6 +1690,7 @@ impl<'v> Value<'v> {
         field: Sym<'v, 'a>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_get(strand, field, Output::as_slot(&mut out, private::Sealed))
     }
 
@@ -1672,6 +1701,7 @@ impl<'v> Value<'v> {
         field: Sym<'v, 'a>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut slot| {
             strand.store(&mut slot, value);
             self.op_set(strand, field, slot)
@@ -1699,6 +1729,7 @@ impl<'v> Value<'v> {
         index: impl Input<'v>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut slot| {
             strand.store(&mut slot, index);
             self.op_index(strand, &slot, Output::as_slot(&mut out, private::Sealed))
@@ -1718,6 +1749,7 @@ impl<'v> Value<'v> {
         index: impl Input<'v>,
         value: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut sloti, mut slotv| {
             strand.store(&mut sloti, index);
             strand.store(&mut slotv, value);
@@ -1732,6 +1764,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_iter(strand, Output::as_slot(&mut out, private::Sealed))
             .await
     }
@@ -1743,6 +1776,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         self.op_sink(strand, Output::as_slot(&mut out, private::Sealed))
             .await
     }
@@ -1764,6 +1798,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         mut out: impl Output<'v>,
     ) -> Result<'v, 's, bool> {
+        let _op = strand.start_op();
         self.op_next(strand, Output::as_slot(&mut out, private::Sealed))
             .await
     }
@@ -1775,6 +1810,7 @@ impl<'v> Value<'v> {
         strand: &'a mut Strand<'v, 's>,
         item: impl Input<'v>,
     ) -> Result<'v, 's, ()> {
+        let _op = strand.start_op();
         with_slots!(strand, |mut slot| {
             strand.store(&mut slot, item);
             self.op_put(strand, slot).await

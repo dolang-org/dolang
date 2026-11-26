@@ -188,6 +188,7 @@ pub(crate) async fn from_builtin_args<'v, 's>(
                 // SAFETY: the value moves straight into the borrowed sink
                 Some(Arg::Pos(item)) => strand.store(sink.0.push(), item),
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    let _op = strand.start_op();
                     expand
                         .op_spread(strand, SpreadContext::Sequence, sink)
                         .await?;
@@ -298,10 +299,10 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         let items = this.items();
         let mut iter = items.iter();
         if let Some(first) = iter.next() {
-            first.op_debug(strand, w)?;
+            first.debug(strand, w)?;
             for item in iter {
                 crate::fmt!(strand, w, ", ")?;
-                item.op_debug(strand, w)?;
+                item.debug(strand, w)?;
             }
         }
         // Match the literal syntax, where `(x)` is only a group
@@ -329,7 +330,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 strand.check_trap()?;
             }
             let elem = unsafe { inner.get_unchecked(i) };
-            elem.op_hash(strand, hasher)?;
+            elem.hash(strand, hasher)?;
         }
         Ok(())
     }

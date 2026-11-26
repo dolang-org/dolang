@@ -895,7 +895,7 @@ fn observe_mcall<'v, 's>(
             let full = Sym::well_known(sym::FULL);
             unpack!(strand, args => ?:full);
             let full = match full {
-                Some(full) => full.op_bool(strand)?,
+                Some(full) => full.to_bool(strand)?,
                 None => false,
             };
             match (cell.state(), cell.get()) {

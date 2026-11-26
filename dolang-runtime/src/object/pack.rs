@@ -185,7 +185,7 @@ pub(crate) fn debug_items<'v, 's>(
         if let Some(key) = key {
             crate::fmt!(strand, w, "{}: ", key.name())?;
         }
-        value.op_debug(strand, w)?;
+        value.debug(strand, w)?;
     }
     if braces {
         return crate::fmt!(strand, w, "}}");
@@ -207,7 +207,7 @@ pub(crate) fn hash_items<'v, 's>(
             strand.check_trap()?;
         }
         key.as_ref().map(|key| key.tag()).hash(hasher);
-        value.op_hash(strand, hasher)?;
+        value.hash(strand, hasher)?;
     }
     Ok(())
 }
@@ -1293,6 +1293,7 @@ pub(crate) async fn source_items<'v, 's>(
         Slot::reborrow(&mut acc),
     );
     let mut sink = PackPairs { pack: &acc };
+    let _op = strand.start_op();
     source
         .op_spread(strand, SpreadContext::Pairs, &mut sink)
         .await

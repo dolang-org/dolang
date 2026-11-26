@@ -607,6 +607,7 @@ impl<'v> Array<'v> {
             match args.next() {
                 Some(Arg::Pos(item)) => sink.push(strand, item)?,
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    let _op = strand.start_op();
                     expand
                         .op_spread(strand, SpreadContext::Sequence, &mut sink)
                         .await?;
@@ -754,13 +755,13 @@ impl<'v> Protocol<'v> for Array<'v> {
         let inner = &this_borrow.inner;
         let mut iter = inner.iter();
         if let Some(first) = iter.next() {
-            first.op_debug(strand, w)?;
+            first.debug(strand, w)?;
             for i in 1..inner.len() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
                 crate::fmt!(strand, w, ", ")?;
-                unsafe { inner.get_unchecked(i) }.op_debug(strand, w)?;
+                unsafe { inner.get_unchecked(i) }.debug(strand, w)?;
             }
         }
         crate::fmt!(strand, w, "]")
@@ -786,7 +787,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 strand.check_trap()?;
             }
             let elem = unsafe { inner.get_unchecked(i) };
-            elem.op_hash(strand, hasher)?;
+            elem.hash(strand, hasher)?;
         }
         Ok(())
     }

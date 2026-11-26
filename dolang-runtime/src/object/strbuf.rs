@@ -141,7 +141,7 @@ impl<'v> StrBuf<'v> {
         if self.copy_from_value(strand, value) {
             Ok(())
         } else {
-            value.op_display(strand, &mut self.embryo)
+            value.display(strand, &mut self.embryo)
         }
     }
 
