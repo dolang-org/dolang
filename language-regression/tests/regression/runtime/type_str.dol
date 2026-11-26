@@ -1,0 +1,32 @@
+# A type's string form is its qualified name, and its debug form wraps that name
+# in `<type …>`
+import inspect
+assert_eq (str Int) "std.Int"
+assert_eq (dbg Int) "<type std.Int>"
+assert_eq "$Int" "std.Int"
+assert_eq [str Value, str Type, str Iter] ["std.Value", "std.Type", "std.Iter"]
+assert_eq (dbg Type) "<type std.Type>"
+assert_eq (str inspect.Backtrace) "inspect.Backtrace"
+assert_eq (str std.ShapelessError) "std.ShapelessError"
+assert_eq (dbg std.ShapelessError) "<type std.ShapelessError>"
+
+# Instances without a string form of their own print their type's debug form
+assert_eq (dbg ([1].map(do |x| x))) "<std.Map>"
+assert_eq (str ([1].iter().chain([2]))) "<std.Chain>"
+
+# A class defined outside a module, as in a script, is unqualified
+class C
+  pub field x = 0
+assert_eq (str C) "C"
+assert_eq (dbg C) "<type C>"
+assert_eq (str (type (C()))) (str C)
+
+# A metatype has no name, so both forms describe it
+assert_eq (str (type C)) (dbg (type C))
+assert ((dbg (type C)).starts_with "<type of ")
+
+# Messages name types by their string form
+assert_throws $std.TypeError str: "type error: expected std.Int, got std.Str" do
+  let Int(_n) = "s"
+assert_throws $std.ShapelessError str: "shape error: cannot unpack std.Int" do
+  let _a _b = 5

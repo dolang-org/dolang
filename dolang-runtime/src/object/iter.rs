@@ -1,7 +1,5 @@
 use std::ops::ControlFlow;
 
-use crate::value::fmt::Format;
-
 use crate::{
     arg::{Arg, Args},
     bytecode::Variadic,
@@ -498,20 +496,15 @@ pub(crate) async fn unpack_iter_mcall<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for Iterable {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Iterable";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Iterable>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -584,20 +577,15 @@ impl<'v> Protocol<'v> for Iterable {
 }
 
 impl<'v> Protocol<'v> for Sinkable {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Sinkable";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Sinkable>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -893,20 +881,15 @@ unsafe impl<'v> Collect for Zip<'v> {
 }
 
 impl<'v> Protocol<'v> for Chain<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Chain";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Chain>")
     }
 
     async fn op_iter<'a, 's>(
@@ -970,20 +953,15 @@ impl<'v> Protocol<'v> for Chain<'v> {
 }
 
 impl<'v> Protocol<'v> for Zip<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Zip";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Zip>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1156,20 +1134,15 @@ unsafe impl<'v> Collect for IterSpread<'v> {
 }
 
 impl<'v> Protocol<'v> for Take<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Take";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Take>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1232,20 +1205,15 @@ impl<'v> Protocol<'v> for Take<'v> {
 }
 
 impl<'v> Protocol<'v> for Skip<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Skip";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Skip>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1314,20 +1282,15 @@ impl<'v> Protocol<'v> for Skip<'v> {
 }
 
 impl<'v> Protocol<'v> for Enumerate<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Enumerate";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Enumerate>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1392,20 +1355,15 @@ impl<'v> Protocol<'v> for Enumerate<'v> {
 }
 
 impl<'v> Protocol<'v> for Kv<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Kv";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().kv)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Kv>")
     }
 
     async fn op_spread<'a, 's>(
@@ -1452,20 +1410,15 @@ impl<'v> Protocol<'v> for Kv<'v> {
 }
 
 impl<'v> Protocol<'v> for IterSpread<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "IterSpread";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, TypeObject::Value)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<spread>")
     }
 
     async fn op_spread<'a, 's>(
@@ -1485,6 +1438,9 @@ impl<'v> Protocol<'v> for IterSpread<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Iter";
+
     // The default `(iter)` of a class that subclasses `Iter`: an iterator
     // iterates as itself.
     async fn op_iter<'a, 's>(
@@ -1531,14 +1487,6 @@ impl<'v> Protocol<'v> for Iter {
                 .iterable
                 .eq(strand, supertype)
                 .unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Iter>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -1700,6 +1648,9 @@ impl<'v> Protocol<'v> for Iter {
 }
 
 impl<'v> Protocol<'v> for Sink {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Sink";
+
     // The default `(sink)` of a class that subclasses `Sink`: a sink accepts
     // values as itself.
     async fn op_sink<'a, 's>(
@@ -1734,14 +1685,6 @@ impl<'v> Protocol<'v> for Sink {
                 .sinkable
                 .eq(strand, supertype)
                 .unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Sink>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -1864,20 +1807,15 @@ unsafe impl<'v> Collect for Map<'v> {
 }
 
 impl<'v> Protocol<'v> for Map<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Map";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().map_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Map>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1972,20 +1910,15 @@ unsafe impl<'v> Collect for Premap<'v> {
 }
 
 impl<'v> Protocol<'v> for Premap<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Premap";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().output_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Premap>")
     }
 
     async fn op_sink<'a, 's>(
@@ -2069,20 +2002,15 @@ unsafe impl<'v> Collect for Filter<'v> {
 }
 
 impl<'v> Protocol<'v> for Filter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Filter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().filter_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Filter>")
     }
 
     async fn op_iter<'a, 's>(
@@ -2180,20 +2108,15 @@ unsafe impl<'v> Collect for Prefilter<'v> {
 }
 
 impl<'v> Protocol<'v> for Prefilter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Prefilter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().output_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Prefilter>")
     }
 
     async fn op_sink<'a, 's>(
@@ -2372,20 +2295,15 @@ unsafe impl<'v> Collect for Chomp<'v> {
 }
 
 impl<'v> Protocol<'v> for Chomp<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Chomp";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Chomp>")
     }
 
     async fn op_iter<'a, 's>(
@@ -2476,20 +2394,15 @@ unsafe impl<'v> Collect for Prechomp<'v> {
 }
 
 impl<'v> Protocol<'v> for Prechomp<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Prechomp";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().output_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Prechomp>")
     }
 
     async fn op_sink<'a, 's>(
@@ -2576,20 +2489,15 @@ unsafe impl<'v> Collect for Crimp<'v> {
 }
 
 impl<'v> Protocol<'v> for Crimp<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Crimp";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Crimp>")
     }
 
     async fn op_iter<'a, 's>(
@@ -2695,20 +2603,15 @@ unsafe impl<'v> Collect for Precrimp<'v> {
 }
 
 impl<'v> Protocol<'v> for Precrimp<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Precrimp";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().output_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Precrimp>")
     }
 
     async fn op_sink<'a, 's>(
@@ -2787,20 +2690,15 @@ unsafe impl Collect for MapType {
 }
 
 impl<'v> Protocol<'v> for MapType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Map";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Map>")
     }
 
     async fn op_call<'a, 's>(
@@ -2829,20 +2727,15 @@ unsafe impl Collect for FilterType {
 }
 
 impl<'v> Protocol<'v> for FilterType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Filter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Filter>")
     }
 
     async fn op_call<'a, 's>(
@@ -3166,6 +3059,9 @@ unsafe impl Collect for NullType {
 }
 
 impl<'v> Protocol<'v> for NullType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Null";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -3192,14 +3088,6 @@ impl<'v> Protocol<'v> for NullType {
             || sings.iterable.eq(strand, supertype).unwrap_or(false)
             || sings.sinkable.eq(strand, supertype).unwrap_or(false)
     }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Null>")
-    }
 }
 
 /// Singleton iterator/sink that yields no items and discards all items, and as
@@ -3218,20 +3106,15 @@ unsafe impl Collect for Null {
 }
 
 impl<'v> Protocol<'v> for Null {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Null";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().null_type)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Null>")
     }
 
     // Iter protocol: never yields any items

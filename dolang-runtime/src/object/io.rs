@@ -70,10 +70,7 @@ use crate::{
     strand::{InterruptMask, Strand},
     sym::{self, Sym},
     unpack,
-    value::{
-        BinEmbryo, Input, Root, Slot, TypeObject, Value, fmt::Format, private::Sealed,
-        with_u8_slice,
-    },
+    value::{BinEmbryo, Input, Root, Slot, TypeObject, Value, private::Sealed, with_u8_slice},
     vm::{AllocExt, Vm},
     with_slots,
 };
@@ -102,6 +99,9 @@ unsafe impl Collect for Io {
 }
 
 impl<'v> Protocol<'v> for Io {
+    const MODULE: &'v str = "io";
+    const NAME: &'v str = "Io";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -123,14 +123,6 @@ impl<'v> Protocol<'v> for Io {
                 .sinkable
                 .eq(strand, supertype)
                 .unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type io.Io>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -622,20 +614,15 @@ impl<'v> crate::gc::Annex for Chunks<'v> {
 pub(crate) type ChunksObj<'v> = crate::gc::Imm<Chunks<'v>>;
 
 impl<'v> Protocol<'v> for ChunksObj<'v> {
+    const MODULE: &'v str = "io";
+    const NAME: &'v str = "Chunks";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<io.Chunks>")
     }
 
     async fn op_iter<'a, 's>(

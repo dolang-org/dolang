@@ -36,6 +36,9 @@ unsafe impl Collect for Value {
 }
 
 impl<'v> Protocol<'v> for Value {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Value";
+
     fn op_req<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -73,14 +76,6 @@ impl<'v> Protocol<'v> for Value {
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Value>")
     }
 
     fn op_get<'a, 's>(
@@ -142,6 +137,9 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Type";
+
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
@@ -157,14 +155,6 @@ impl<'v> Protocol<'v> for Type {
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type>")
     }
 
     /// A type object is called to construct its instances, so it is a `Func`
@@ -281,20 +271,15 @@ unsafe impl Collect for ArgAccType {
 }
 
 impl<'v> Protocol<'v> for Bool {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Bool";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Bool>")
     }
 
     async fn op_call<'a, 's>(
@@ -385,6 +370,9 @@ impl<'v> Protocol<'v> for Bool {
 }
 
 impl<'v> Protocol<'v> for ArgAccType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArgAcc";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -401,31 +389,18 @@ impl<'v> Protocol<'v> for ArgAccType {
         supertype.eq(strand, &this).unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.ArgAcc>")
-    }
 }
 
 impl<'v> Protocol<'v> for NilType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Nil";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Nil>")
     }
 
     // Final, so no class inherits these members. The lists stay empty until
@@ -463,11 +438,11 @@ impl<'v> Protocol<'v> for AdapterTypeObj {
     ) {
         strand.store(out, &strand.singletons().type_obj);
     }
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type {}>", this.get().0)
+        crate::fmt!(strand, w, "{}", this.get().0)
     }
 }

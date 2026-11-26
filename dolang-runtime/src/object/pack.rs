@@ -555,20 +555,15 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "PackIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<pack iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -694,6 +689,9 @@ unsafe impl<'v> Collect for Rest<'v> {
 }
 
 impl<'v> Protocol<'v> for Rest<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "PackRest";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -719,14 +717,6 @@ impl<'v> Protocol<'v> for Rest<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         super::iter::iterable_mcall(strand, &this, method, args, out).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<pack rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -1165,6 +1155,9 @@ unsafe impl Collect for Class {
 }
 
 impl<'v> Protocol<'v> for Class {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Pack";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1183,14 +1176,6 @@ impl<'v> Protocol<'v> for Class {
                 .eq(strand, &strand.singletons().iterable)
                 .unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Pack>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

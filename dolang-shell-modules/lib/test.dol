@@ -624,12 +624,8 @@ do -> Json
       if (backtrace != nil)
         for frame = backtrace
           frames.push $(frame_record frame)
-      # A type's string form is `<type module.Name>`.
-      let type_name = str (type error)
-      if (type_name.starts_with "<type " && type_name.ends_with ">")
-        type_name = type_name[6..type_name.len - 1]
       let details @ Json = $
-        type: $type_name
+        type: $(str (type error))
         rendered: $(str (shell.render_error error backtrace: backtrace))
         backtrace: $frames
       if (type error Assert)

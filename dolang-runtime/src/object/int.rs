@@ -851,20 +851,15 @@ unsafe impl Collect for Int {
 }
 
 impl<'v> Protocol<'v> for Int {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Int";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<type std.Int>")
     }
 
     fn op_subtype<'a, 's>(

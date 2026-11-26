@@ -110,7 +110,7 @@ assert_eq $copied.len 0
 assert_eq $copied (record())
 
 assert_throws $TypeError do r.len()
-assert_eq (str (type r)) "<type std.Record>"
+assert_eq (str (type r)) "std.Record"
 
 # `BaseRecord` is a type-only split of `Record`, the same class at runtime
 assert_eq $std.BaseRecord $Record

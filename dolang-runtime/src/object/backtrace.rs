@@ -1,7 +1,5 @@
 use std::ops::ControlFlow;
 
-use crate::value::fmt::Format;
-
 use crate::{
     arg::Args,
     error::{BacktraceEntry, BacktraceIter, Error, Result, UnwindEntry},
@@ -95,20 +93,15 @@ fn store_frame<'v>(
 }
 
 impl<'v> Protocol<'v> for BacktraceObj<'v> {
+    const MODULE: &'v str = "inspect";
+    const NAME: &'v str = "Backtrace";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().backtrace)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<backtrace>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -282,20 +275,15 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "inspect";
+    const NAME: &'v str = "BacktraceIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<backtrace.iter>")
     }
 
     async fn op_next<'a, 's>(
@@ -374,20 +362,15 @@ impl<'v> crate::gc::Annex for Frame<'v> {
 pub(crate) type FrameObj<'v> = crate::gc::Imm<Frame<'v>>;
 
 impl<'v> Protocol<'v> for FrameObj<'v> {
+    const MODULE: &'v str = "inspect";
+    const NAME: &'v str = "Frame";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().backtrace_frame)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<backtrace frame>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -456,6 +439,9 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "inspect";
+    const NAME: &'v str = "Backtrace";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -479,14 +465,6 @@ impl<'v> Protocol<'v> for Type {
                 .eq(strand, &strand.singletons().iterable)
                 .unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type inspect.Backtrace>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -530,6 +508,9 @@ unsafe impl Collect for FrameType {
 }
 
 impl<'v> Protocol<'v> for FrameType {
+    const MODULE: &'v str = "inspect";
+    const NAME: &'v str = "Frame";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -545,14 +526,6 @@ impl<'v> Protocol<'v> for FrameType {
     ) -> bool {
         supertype.eq(strand, &this).unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type inspect.Frame>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

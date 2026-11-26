@@ -14,7 +14,7 @@ use crate::{
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Input, Slot, Value, fmt::Format, prim::Prim},
+    value::{Input, Slot, Value, prim::Prim},
     vm::{AllocExt, Vm},
 };
 
@@ -237,6 +237,9 @@ pub(crate) fn float_mcall<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for Num {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Num";
+
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -265,14 +268,6 @@ impl<'v> Protocol<'v> for Num {
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        fmt!(strand, w, "<type std.Num>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

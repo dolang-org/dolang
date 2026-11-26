@@ -1,7 +1,5 @@
 use std::ops::ControlFlow;
 
-use crate::value::fmt::Format;
-
 use crate::{
     arg::{Arg, Args},
     error::Result,
@@ -61,20 +59,15 @@ unsafe impl<'v> Collect for ArgAcc<'v> {
 }
 
 impl<'v> Protocol<'v> for ArgAcc<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArgAcc";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().arg_acc)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<arg accumulator>")
     }
 
     async fn op_spread<'a, 's>(

@@ -614,6 +614,9 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "TupleIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -621,14 +624,6 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<tuple iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -738,6 +733,9 @@ unsafe impl<'v> Collect for Pairs<'v> {
 }
 
 impl<'v> Protocol<'v> for Pairs<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "TuplePairs";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -745,14 +743,6 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<tuple pair iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -864,6 +854,9 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Tuple";
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -895,14 +888,6 @@ impl<'v> Protocol<'v> for Type {
                 .eq(strand, &strand.singletons().iterable)
                 .unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Tuple>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {

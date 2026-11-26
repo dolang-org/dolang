@@ -136,7 +136,7 @@ assert (type no_items ShapeError)
 
 # `ShapeError` covers arity mismatches from calls and destructuring, and
 # unpacking a value with no items.
-assert_throws $ShapelessError str: "shape error: cannot unpack <type std.Int>" do
+assert_throws $ShapelessError str: "shape error: cannot unpack std.Int" do
   let _x _y = 1
 def two a b
   (a + b)

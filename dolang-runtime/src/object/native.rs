@@ -3657,6 +3657,9 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
 }
 
 impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
+    const MODULE: &'v str = T::MODULE;
+    const NAME: &'v str = T::NAME;
+
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -3670,14 +3673,6 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             ty: this.ty(strand.vm()),
         };
         embryo.finish_imm(strand, proxy, out);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type {}.{}>", T::MODULE, T::NAME)
     }
 
     fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -3929,6 +3924,14 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeScope<'v, T>> {
         this.get().native.op_debug(strand, w)
     }
 
+    fn op_display<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        this.get().native.op_display(strand, w)
+    }
+
     async fn op_mcall<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -4018,6 +4021,15 @@ impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         crate::fmt!(strand, w, "<type of {}.{}>", T::MODULE, T::NAME)
+    }
+
+    /// A metatype has no name of its own, so it displays as its debug form.
+    fn op_display<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_debug(this, strand, w)
     }
 
     fn op_get<'a, 's>(

@@ -467,7 +467,7 @@ async fn build<'v, 's>(
                 .is_some_and(|inspect| inspect.is_final),
         };
         if is_final {
-            let name = sup.to_debug(strand)?;
+            let name = sup.to_string(strand)?;
             return Err(Error::type_error(
                 strand,
                 format!("cannot inherit from final type {name}"),
@@ -834,12 +834,12 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.{}>", this.get().0.name())
+        crate::fmt!(strand, w, "std.{}", this.get().0.name())
     }
 
     async fn op_call<'a, 's>(
@@ -1341,16 +1341,16 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         ClassTypeProxy::create(strand, &this, out)
     }
 
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let this = this.annex();
         if let Some(module_name) = &this.module_name {
-            crate::fmt!(strand, w, "<type {module_name}.{}>", this.name)
+            crate::fmt!(strand, w, "{module_name}.{}", this.name)
         } else {
-            crate::fmt!(strand, w, "<type {}>", this.name)
+            crate::fmt!(strand, w, "{}", this.name)
         }
     }
 
@@ -1903,6 +1903,15 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         } else {
             crate::fmt!(strand, w, "<type of {}>", class.name)
         }
+    }
+
+    /// A metatype has no name of its own, so it displays as its debug form.
+    fn op_display<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_debug(this, strand, w)
     }
 
     /// Class-level methods and protocol accessors are unbound. Class fields

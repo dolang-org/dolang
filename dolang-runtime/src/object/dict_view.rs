@@ -974,13 +974,9 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<dictionary view iterator>")
-    }
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictViewIter";
+
     async fn op_iter<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1091,6 +1087,9 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictView";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1109,14 +1108,6 @@ impl<'v> Protocol<'v> for Type {
                 .eq(strand, &strand.singletons().iterable)
                 .unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.DictView>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -1146,13 +1137,8 @@ impl<'v> Protocol<'v> for Type {
 }
 
 impl<'v> Protocol<'v> for RestObj<'v> {
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<dictionary view rest>")
-    }
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictViewRest";
 
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,

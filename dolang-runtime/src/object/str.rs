@@ -650,6 +650,9 @@ unsafe impl<'v> Collect for UnicodeIter<'v> {
 }
 
 impl<'v> Protocol<'v> for UnicodeIter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "UnicodeIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -657,14 +660,6 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<str unicode iter>")
     }
 
     fn op_type<'a, 's>(
@@ -955,20 +950,15 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Str";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Str>")
     }
 
     async fn op_call<'a, 's>(

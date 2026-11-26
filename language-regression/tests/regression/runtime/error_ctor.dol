@@ -140,6 +140,6 @@ assert_throws $TypeError str: "type error: std.MissingItemError is not instantia
 assert_throws $TypeError str: "type error: std.UnexpectedItemError is not instantiable" do UnexpectedItemError()
 
 # Error types render under their std names
-assert_eq (str ConcurrencyError) "<type std.ConcurrencyError>"
-assert_eq (str TimedOutError) "<type std.TimedOutError>"
-assert_eq (str SinkStop) "<type std.SinkStop>"
+assert_eq (str ConcurrencyError) "std.ConcurrencyError"
+assert_eq (str TimedOutError) "std.TimedOutError"
+assert_eq (str SinkStop) "std.SinkStop"

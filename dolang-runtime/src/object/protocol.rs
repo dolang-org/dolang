@@ -108,6 +108,14 @@ pub trait Spread<'v, 's> {
 }
 
 pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
+    /// Module of the type named by [`NAME`](Self::NAME).
+    const MODULE: &'v str = "";
+    /// Name of the type the default [`op_display`](Self::op_display) and
+    /// [`op_debug`](Self::op_debug) print. A type object's impl names the type itself,
+    /// as `std.Int`; an instance's impl names the type it prints as, which may differ
+    /// from its [`op_type`](Self::op_type). An impl that overrides both leaves it empty.
+    const NAME: &'v str = "";
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -182,19 +190,37 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         Self::op_display(this, strand, w)
     }
 
+    /// A type object displays as its qualified name, and anything else as its debug
+    /// form.
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        Self::op_debug(this, strand, w)
+        if is_type_object(strand, &this) {
+            debug_assert!(!Self::NAME.is_empty(), "type object without a name");
+            crate::fmt!(strand, w, "{}.{}", Self::MODULE, Self::NAME)
+        } else {
+            Self::op_debug(this, strand, w)
+        }
     }
 
+    /// A type object debugs as its display form in `<type …>`, and anything else as
+    /// `<MODULE.NAME>`.
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()>;
+    ) -> Result<'v, 's, ()> {
+        if is_type_object(strand, &this) {
+            w.write_str(strand, "<type ")?;
+            Self::op_display(this, strand, w)?;
+            w.write_str(strand, ">")
+        } else {
+            debug_assert!(!Self::NAME.is_empty(), "object without a debug form");
+            crate::fmt!(strand, w, "<{}.{}>", Self::MODULE, Self::NAME)
+        }
+    }
 
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -3170,6 +3196,17 @@ pub(crate) async fn recv_special_mcall<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
         });
     }
     instance_mcall_fallback(strand, this, method, args, out)
+}
+
+/// Whether `this` is a type object.
+pub(crate) fn is_type_object<'v, T: ?Sized + Protocol<'v>>(
+    strand: &mut Strand<'v, '_>,
+    this: &Recv<'v, '_, T>,
+) -> bool {
+    with_slots!(strand, |mut receiver| {
+        strand.store(Slot::reborrow(&mut receiver), this);
+        receiver.is_instance_of(strand, TypeObject::Type)
+    })
 }
 
 pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
