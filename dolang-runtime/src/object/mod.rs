@@ -665,6 +665,8 @@ impl<'v> gc::Annex for BoundMethod<'v> {
 pub(crate) type BoundMethodObj<'v> = gc::Imm<BoundMethod<'v>>;
 
 impl<'v> Protocol<'v> for BoundMethodObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

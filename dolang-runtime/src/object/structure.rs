@@ -132,6 +132,9 @@ fn snapshot<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for Struct<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Struct";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

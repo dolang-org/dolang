@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     hash::{DefaultHasher, Hasher},
     marker::PhantomData,
     ptr::{self, NonNull},
@@ -10,6 +11,7 @@ use dolang_bytecode::{Rest, Variadic};
 use crate::{
     arg::Args,
     error::{Error, Result},
+    frame::Native,
     gc::{
         self, Boxable, Boxed, Collect,
         arena::{self, Arena, Upcast},
@@ -19,7 +21,7 @@ use crate::{
     strand::{PinScope, Pinned, Strand},
     sym::{self, Sym},
     unpack,
-    value::{Input, Output, Slot, StrEmbryo, TypeObject, Value, ValueCell, private::Sealed},
+    value::{Case, Input, Output, Slot, StrEmbryo, TypeObject, Value, ValueCell, private::Sealed},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
 };
@@ -113,8 +115,15 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
     /// Name of the type the default [`op_display`](Self::op_display) and
     /// [`op_debug`](Self::op_debug) print. A type object's impl names the type itself,
     /// as `std.Int`; an instance's impl names the type it prints as, which may differ
-    /// from its [`op_type`](Self::op_type). An impl that overrides both leaves it empty.
+    /// from its [`op_type`](Self::op_type). It also names the impl's native frames, so
+    /// an impl leaves it empty only if it overrides both and turns
+    /// [`NATIVE_FRAMES`](Self::NATIVE_FRAMES) off.
     const NAME: &'v str = "";
+    /// Whether the vtbl glue pushes a native frame named `MODULE.NAME` around each
+    /// operation not reached through a delegator. An impl whose operations run Do code,
+    /// which the interpreter frames, or that frames itself turns it off. An impl with
+    /// frames on must set [`NAME`](Self::NAME).
+    const NATIVE_FRAMES: bool = true;
 
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1194,6 +1203,10 @@ pub(crate) struct Vtbl<'v> {
     /// Ensure 'v is invariant.
     /// This prevents "mixing" of objects from different GC arenas.
     phantom: PhantomData<&'v mut &'v ()>,
+    /// The type's [`Protocol::MODULE`].
+    pub(crate) module: &'v str,
+    /// The type's [`Protocol::NAME`] if it has native frames on, else empty.
+    pub(crate) frame_name: &'v str,
     op_type: for<'a, 's> fn(
         this: ErasedRecv<'v, 'a>,
         strand: &'a mut Strand<'v, 's>,
@@ -1353,9 +1366,17 @@ pub(crate) struct Vtbl<'v> {
 
 impl<'v> Vtbl<'v> {
     pub(crate) fn new<T: ?Sized + Boxable<Header> + Protocol<'v>>() -> Self {
+        const {
+            assert!(
+                !T::NATIVE_FRAMES || !T::NAME.is_empty(),
+                "a `Protocol` impl with native frames on must set `NAME`"
+            )
+        };
         Self {
             base: *Boxed::<Header, T>::vtbl(),
             phantom: PhantomData,
+            module: T::MODULE,
+            frame_name: if T::NATIVE_FRAMES { T::NAME } else { "" },
             op_type: op_type_glue::<T>,
             op_subtype: op_subtype_glue::<T>,
             op_inspect: op_inspect_glue::<T>,
@@ -1779,6 +1800,103 @@ impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
     }
 }
 
+/// Run `$body` with `$strand` rebound to `T`'s native frame for `$method`, unless `T`
+/// turns [`Protocol::NATIVE_FRAMES`] off or `$this` has a delegator: delegation is
+/// transparent, so the delegator's side frames it.  `owning` copies the method name into
+/// an error's backtrace, for a name that lives only as long as the call.
+macro_rules! glue_frame {
+    ($T:ident, $this:ident, $strand:ident, $method:expr, $body:expr $(,)?) => {
+        glue_frame!(@finish finish, $T, $this, $strand, $method, $body)
+    };
+    (owning $T:ident, $this:ident, $strand:ident, $method:expr, $body:expr $(,)?) => {
+        glue_frame!(@finish finish_owning_method, $T, $this, $strand, $method, $body)
+    };
+    (@finish $finish:ident, $T:ident, $this:ident, $strand:ident, $method:expr, $body:expr) => {{
+        if $T::NATIVE_FRAMES && $this.delegator.is_none() {
+            let frame = Native {
+                module: Cow::Borrowed($T::MODULE),
+                receiver: Cow::Borrowed($T::NAME),
+                method: $method,
+                parent: Some($strand.fp),
+            };
+            // SAFETY: the scope is a local of this block that nothing can move or forget
+            #[allow(unused_unsafe)]
+            let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
+            let $strand = &mut *scope;
+            let res = $body;
+            scope.$finish(res)
+        } else {
+            $body
+        }
+    }};
+}
+
+/// The name of `method` as a frame's method, for `glue_frame!` and `delegated_frame!` with
+/// `owning`.
+///
+/// # Safety
+///
+/// The name must not outlive the call that holds `method`.
+pub(crate) unsafe fn frame_method<'v>(method: Sym<'v, '_>, vm: &Vm<'v>) -> &'v str {
+    // SAFETY: the caller keeps the name within the call, which holds `method`
+    unsafe { &*ptr::from_ref(method.as_str(vm)) }
+}
+
+/// The module and name of the native frame for an operation on `value`, or `None` if
+/// `value` is not an object or its type turns [`Protocol::NATIVE_FRAMES`] off.
+pub(crate) fn frame_names<'v>(value: &Value<'v>) -> Option<(&'v str, &'v str)> {
+    let Case::Object(obj) = value.case() else {
+        return None;
+    };
+    // SAFETY: every object's header carries a protocol vtbl
+    let vtbl: &Vtbl<'v> = unsafe { obj.header().vtbl() };
+    (!vtbl.frame_name.is_empty()).then_some((vtbl.module, vtbl.frame_name))
+}
+
+/// Run `$body` with `$strand` rebound to the native frame of `$receiver`'s type for
+/// `$method`, for an operation an impl with frames off, such as a class instance,
+/// delegates to a native supertype.  The glue never frames a delegated operation, so
+/// the delegating side does; this does nothing for a `$receiver` whose type has frames
+/// off.  With `owning`, `$method` is the method's [`Sym`], whose name the frame borrows
+/// and an error's backtrace copies.
+macro_rules! delegated_frame {
+    ($strand:ident, $receiver:expr, $method:expr, $body:expr $(,)?) => {
+        $crate::object::protocol::delegated_frame!(@finish finish, $strand, $receiver, $method, $body)
+    };
+    (owning $strand:ident, $receiver:expr, $method:expr, $body:expr $(,)?) => {
+        $crate::object::protocol::delegated_frame!(
+            @finish finish_owning_method,
+            $strand,
+            $receiver,
+            // SAFETY: the frame lives within the call, and `owning` copies the name out
+            Some(::std::borrow::Cow::Borrowed(unsafe {
+                $crate::object::protocol::frame_method($method, $strand.vm())
+            })),
+            $body
+        )
+    };
+    (@finish $finish:ident, $strand:ident, $receiver:expr, $method:expr, $body:expr) => {{
+        match $crate::object::protocol::frame_names($receiver) {
+            Some((module, receiver)) => {
+                let frame = $crate::frame::Native {
+                    module: ::std::borrow::Cow::Borrowed(module),
+                    receiver: ::std::borrow::Cow::Borrowed(receiver),
+                    method: $method,
+                    parent: Some($strand.fp),
+                };
+                // SAFETY: the scope is a local of this block that nothing can move or forget
+                #[allow(unused_unsafe)]
+                let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
+                let $strand = &mut *scope;
+                let res = $body;
+                scope.$finish(res)
+            }
+            None => $body,
+        }
+    }};
+}
+pub(crate) use delegated_frame;
+
 #[derive(Clone, Copy)]
 struct ErasedRecv<'v, 'a> {
     header: NonNull<Header>,
@@ -1818,7 +1936,9 @@ fn op_fill_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     native: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_fill(Recv::from_erased(this), strand, type_obj, native) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(fill)")), unsafe {
+        T::op_fill(Recv::from_erased(this), strand, type_obj, native)
+    })
 }
 
 fn op_provide_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1826,7 +1946,13 @@ fn op_provide_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     request: &mut Request<'v, 's, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_provide(Recv::from_erased(this), request) }
+    let (strand, answer) = request.parts();
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(provide)")), unsafe {
+        T::op_provide(
+            Recv::from_erased(this),
+            &mut Request::new(strand, &mut *answer),
+        )
+    })
 }
 
 fn op_call_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1838,7 +1964,13 @@ fn op_call_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_call(Recv::from_erased(this), strand, args, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                None,
+                T::op_call(Recv::from_erased(this), strand, args, out).await
+            )
         })
     }
 }
@@ -1853,7 +1985,9 @@ fn op_mcall_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_mcall(Recv::from_erased(this), strand, method, args, out).await
+            // SAFETY: the frame lives within the call, and `owning` copies the name out
+            let name = frame_method(method, strand.vm());
+            glue_frame!(owning T, this, strand, Some(Cow::Borrowed(name)), T::op_mcall(Recv::from_erased(this), strand, method, args, out).await)
         })
     }
 }
@@ -1865,14 +1999,19 @@ fn op_convert_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     w: &mut dyn Format<'v>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        FmtOp::Verbatim => "(verbatim)",
+        FmtOp::Display => "(str)",
+        FmtOp::Debug => "(dbg)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             FmtOp::Verbatim => T::op_verbatim(this, strand, w),
             FmtOp::Display => T::op_display(this, strand, w),
             FmtOp::Debug => T::op_debug(this, strand, w),
         }
-    }
+    })
 }
 
 fn op_fmt_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1882,7 +2021,9 @@ fn op_fmt_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     w: &mut dyn Format<'v>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_fmt(Recv::from_erased(this), strand, spec, w) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(fmt)")), unsafe {
+        T::op_fmt(Recv::from_erased(this), strand, spec, w)
+    })
 }
 
 fn to_bool_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1890,7 +2031,9 @@ fn to_bool_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     strand: &'a mut Strand<'v, 's>,
     _: &'a &'v (),
 ) -> Result<'v, 's, bool> {
-    unsafe { T::op_bool(Recv::from_erased(this), strand) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(bool)")), unsafe {
+        T::op_bool(Recv::from_erased(this), strand)
+    })
 }
 
 fn op_unary_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1900,13 +2043,17 @@ fn op_unary_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        UnaryOp::Neg => "(neg)",
+        UnaryOp::Bnot => "(bnot)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             UnaryOp::Neg => T::op_neg(this, strand, out),
             UnaryOp::Bnot => T::op_bnot(this, strand, out),
         }
-    }
+    })
 }
 
 fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1917,7 +2064,35 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        BinOp::Eq => "(eq)",
+        BinOp::Req => "(req)",
+        BinOp::Ne => "(ne)",
+        BinOp::Rne => "(rne)",
+        BinOp::Band => "(band)",
+        BinOp::Rband => "(rband)",
+        BinOp::Bor => "(bor)",
+        BinOp::Rbor => "(rbor)",
+        BinOp::Bxor => "(bxor)",
+        BinOp::Rbxor => "(rbxor)",
+        BinOp::Shl => "(shl)",
+        BinOp::Rshl => "(rshl)",
+        BinOp::Shr => "(shr)",
+        BinOp::Rshr => "(rshr)",
+        BinOp::Add => "(add)",
+        BinOp::Radd => "(radd)",
+        BinOp::Sub => "(sub)",
+        BinOp::Rsub => "(rsub)",
+        BinOp::Mul => "(mul)",
+        BinOp::Rmul => "(rmul)",
+        BinOp::Div => "(div)",
+        BinOp::Rdiv => "(rdiv)",
+        BinOp::Ediv => "(ediv)",
+        BinOp::Rediv => "(rediv)",
+        BinOp::Mod => "(mod)",
+        BinOp::Rmod => "(rmod)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             BinOp::Eq => T::op_eq(this, strand, other, out),
@@ -1947,7 +2122,7 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
             BinOp::Mod => T::op_mod(this, strand, other, out),
             BinOp::Rmod => T::op_rmod(this, strand, other, out),
         }
-    }
+    })
 }
 
 fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1958,7 +2133,13 @@ fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        CmpOp::Lt => "(lt)",
+        CmpOp::Lte => "(lte)",
+        CmpOp::Gt => "(gt)",
+        CmpOp::Gte => "(gte)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             CmpOp::Lt => T::op_lt(this, strand, other, out),
@@ -1966,7 +2147,7 @@ fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
             CmpOp::Gt => T::op_gt(this, strand, other, out),
             CmpOp::Gte => T::op_gte(this, strand, other, out),
         }
-    }
+    })
 }
 
 fn op_get_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1976,7 +2157,9 @@ fn op_get_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_get(Recv::from_erased(this), strand, field, out) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(get)")), unsafe {
+        T::op_get(Recv::from_erased(this), strand, field, out)
+    })
 }
 
 fn op_set_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1986,7 +2169,9 @@ fn op_set_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     value: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_set(Recv::from_erased(this), strand, field, value) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(set)")), unsafe {
+        T::op_set(Recv::from_erased(this), strand, field, value)
+    })
 }
 
 fn op_index_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1996,7 +2181,9 @@ fn op_index_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_index(Recv::from_erased(this), strand, index, out) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(index)")), unsafe {
+        T::op_index(Recv::from_erased(this), strand, index, out)
+    })
 }
 
 fn op_assign_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -2006,7 +2193,9 @@ fn op_assign_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     value: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_assign(Recv::from_erased(this), strand, index, value) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(assign)")), unsafe {
+        T::op_assign(Recv::from_erased(this), strand, index, value)
+    })
 }
 
 fn op_hash_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -2015,7 +2204,9 @@ fn op_hash_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     hasher: &mut DefaultHasher,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_hash(Recv::from_erased(this), strand, hasher) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(hash)")), unsafe {
+        T::op_hash(Recv::from_erased(this), strand, hasher)
+    })
 }
 
 fn op_next_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -2026,7 +2217,13 @@ fn op_next_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, bool> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_next(Recv::from_erased(this), strand, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(next)")),
+                T::op_next(Recv::from_erased(this), strand, out).await
+            )
         })
     }
 }
@@ -2039,7 +2236,13 @@ fn op_put_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_put(Recv::from_erased(this), strand, item).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(put)")),
+                T::op_put(Recv::from_erased(this), strand, item).await
+            )
         })
     }
 }
@@ -2052,7 +2255,13 @@ fn op_iter_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_iter(Recv::from_erased(this), strand, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(iter)")),
+                T::op_iter(Recv::from_erased(this), strand, out).await
+            )
         })
     }
 }
@@ -2065,7 +2274,13 @@ fn op_sink_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_sink(Recv::from_erased(this), strand, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(sink)")),
+                T::op_sink(Recv::from_erased(this), strand, out).await
+            )
         })
     }
 }
@@ -2079,7 +2294,13 @@ fn op_spread_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_spread(Recv::from_erased(this), strand, context, sink).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(spread)")),
+                T::op_spread(Recv::from_erased(this), strand, context, sink).await
+            )
         })
     }
 }
@@ -2092,7 +2313,13 @@ fn op_unpack_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_unpack(Recv::from_erased(this), strand, unpack).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(unpack)")),
+                T::op_unpack(Recv::from_erased(this), strand, unpack).await
+            )
         })
     }
 }

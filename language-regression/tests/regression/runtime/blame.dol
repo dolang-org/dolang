@@ -1,12 +1,12 @@
 # An error is blamed on the whole expression or statement that raised it, not
 # only its operator or keyword.
 
-# Zero-based line, column and length of the code `depth` frames out
+# Zero-based line, column and length of the code `depth` located frames out
 def blame f depth = 0
   try
     f()
   catch _
-    let frames = [...strand.error_backtrace()]
+    let frames = [for frame = strand.error_backtrace() => if frame.location => frame]
     let loc = frames[depth].location
     return [loc.line, loc.column, loc.len]
   throw "did not raise"

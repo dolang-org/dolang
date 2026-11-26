@@ -431,6 +431,8 @@ impl gc::Annex for AdapterType {
 pub(crate) type AdapterTypeObj = gc::Imm<AdapterType>;
 
 impl<'v> Protocol<'v> for AdapterTypeObj {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

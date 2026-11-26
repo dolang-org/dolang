@@ -49,6 +49,9 @@ impl<'v> GcObj<'v, SymObj> {
 }
 
 impl<'v> Protocol<'v> for SymObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Sym";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

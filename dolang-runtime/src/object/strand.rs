@@ -185,6 +185,9 @@ async fn wait_handle<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for Handle<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Task";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -956,6 +959,9 @@ fn observe_mcall<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for StrandRefObj {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Strand";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1116,6 +1122,9 @@ impl<'v> crate::gc::Annex for StrandInfo<'v> {
 pub(crate) type StrandInfoObj<'v> = crate::gc::Imm<StrandInfo<'v>>;
 
 impl<'v> Protocol<'v> for StrandInfoObj<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "StrandInfo";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

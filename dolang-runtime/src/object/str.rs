@@ -90,6 +90,9 @@ impl<'v, 'a> GcObjPin<'v, 'a, StrObj> {
 }
 
 impl<'v> Protocol<'v> for StrObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Str";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -840,6 +843,9 @@ unsafe impl<'v> Collect for Split<'v> {
 }
 
 impl<'v> Protocol<'v> for Split<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "StrSplit";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

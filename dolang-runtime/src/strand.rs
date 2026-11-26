@@ -399,7 +399,19 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
     ///
     /// A Do frame's entry records its pc as of this call.
     #[inline]
-    pub(crate) fn finish<R>(mut self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+    pub(crate) fn finish<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+        self.finish_entry(res, false)
+    }
+
+    /// As [`Self::finish`], but the entry owns a copy of the native frame's method name,
+    /// for a name that lives only as long as the call.
+    #[inline]
+    pub(crate) fn finish_owning_method<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+        self.finish_entry(res, true)
+    }
+
+    #[inline]
+    fn finish_entry<R>(mut self, res: Result<'v, 's, R>, own_method: bool) -> Result<'v, 's, R> {
         res.map_err(|mut e| {
             let entry = match self.entry {
                 // SAFETY: the entry moves straight into the error's backtrace, which
@@ -412,7 +424,10 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
                 FrameEntry::Native(frame) => UnwindEntry::Native {
                     module: frame.module.clone(),
                     receiver: frame.receiver.clone(),
-                    method: frame.method.clone(),
+                    method: match &frame.method {
+                        Some(method) if own_method => Some(Cow::Owned(method.to_string())),
+                        method => method.clone(),
+                    },
                 },
             };
             e.push_backtrace(&mut self.strand, entry);
@@ -1380,7 +1395,7 @@ impl<'v, 's> Strand<'v, 's> {
 
     /// Enter the native `frame` one call level deeper, as for [`Self::enter_do_frame`].
     ///
-    /// This backs [`in_native_frame!`].
+    /// This backs [`in_native_frame!`] and the frames the `Protocol` vtbl glue pushes.
     ///
     /// # Safety
     ///

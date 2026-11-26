@@ -281,6 +281,9 @@ impl<'v> gc::TailAnnex<Value<'v>> for () {
 }
 
 impl<'v> Protocol<'v> for TupleObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Tuple";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

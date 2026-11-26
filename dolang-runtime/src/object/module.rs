@@ -90,6 +90,8 @@ impl<'v> Module<'v> {
 }
 
 impl<'v> Protocol<'v> for ModuleObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -311,6 +313,8 @@ impl<'v> Native<'v> {
 }
 
 impl<'v> Protocol<'v> for NativeObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -507,6 +511,8 @@ impl<'v> Namespace<'v> {
 }
 
 impl<'v> Protocol<'v> for Namespace<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

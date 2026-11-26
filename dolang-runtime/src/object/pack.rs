@@ -794,6 +794,9 @@ impl<'v> Protocol<'v> for Rest<'v> {
 // ── Pack protocol ─────────────────────────────────────────────────
 
 impl<'v> Protocol<'v> for PackObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Pack";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

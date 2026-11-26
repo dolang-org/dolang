@@ -690,6 +690,9 @@ impl<'v> Array<'v> {
 }
 
 impl<'v> Protocol<'v> for Array<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Array";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,

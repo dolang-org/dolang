@@ -216,6 +216,9 @@ pub(crate) fn slice<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for RangeObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Range";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

@@ -194,6 +194,9 @@ impl<'v> StrBuf<'v> {
 }
 
 impl<'v> Protocol<'v> for StrBuf<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "StrBuf";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

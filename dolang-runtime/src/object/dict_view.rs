@@ -743,6 +743,9 @@ fn debug<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for ViewObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictView";
+
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,

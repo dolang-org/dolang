@@ -1,5 +1,4 @@
 use std::{
-    borrow::Cow,
     cell::RefCell,
     future,
     hash::Hasher,
@@ -21,7 +20,7 @@ use crate::{
         with_pin,
     },
     object::protocol::{Delegated, Dispatch, GcObjPin, Recv, Vtbl},
-    strand::{PinScope, Pinned, SlotCells, Strand, in_native_frame},
+    strand::{PinScope, Pinned, SlotCells, Strand},
     sym::{self, Sym},
     unpack,
     value::{Case, Input, Output, Slot, TypeObject, Value, ValueCell, private::Sealed},
@@ -1468,19 +1467,16 @@ impl<'v, 'a, T: Object<'v>> Recv<'v, 'a, ObjectWrap<'v, T>> {
 }
 
 impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
+    const MODULE: &'v str = T::MODULE;
+    const NAME: &'v str = T::NAME;
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         spec: &Spec,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(fmt)")),
-            T::fmt(Instance::from_recv(&this), strand, spec, w)
-        )
+        T::fmt(Instance::from_recv(&this), strand, spec, w)
     }
 
     fn op_display<'a, 's>(
@@ -1488,13 +1484,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(str)")),
-            T::display(Instance::from_recv(&this), strand, w)
-        )
+        T::display(Instance::from_recv(&this), strand, w)
     }
 
     fn op_verbatim<'a, 's>(
@@ -1502,13 +1492,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(verbatim)")),
-            T::verbatim(Instance::from_recv(&this), strand, w)
-        )
+        T::verbatim(Instance::from_recv(&this), strand, w)
     }
 
     fn op_debug<'a, 's>(
@@ -1516,13 +1500,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(dbg)")),
-            T::debug(Instance::from_recv(&this), strand, w)
-        )
+        T::debug(Instance::from_recv(&this), strand, w)
     }
 
     fn op_bool<'a, 's>(
@@ -1537,18 +1515,12 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         request: &mut Request<'v, 's, '_>,
     ) -> Result<'v, 's, ()> {
         let (strand, answer) = request.parts();
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(provide)")),
-            {
-                T::provide(
-                    Instance::from_recv(&this),
-                    &mut Request::new(strand, &mut *answer),
-                )
-            }
-        )?;
+        {
+            T::provide(
+                Instance::from_recv(&this),
+                &mut Request::new(strand, &mut *answer),
+            )
+        }?;
         if answer.is_done() {
             return Ok(());
         }
@@ -1573,13 +1545,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            None,
-            T::call(Instance::from_recv(&this), strand, args, out).await,
-        )
+        T::call(Instance::from_recv(&this), strand, args, out).await
     }
 
     async fn op_mcall<'a, 's>(
@@ -1589,31 +1555,24 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand);
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed(name)),
-                match entry {
-                    Entry::Method(handler) => unsafe {
-                        handler
-                            .call(this.as_header(), this.delegator(), strand, args, out)
-                            .await
-                    },
-                    Entry::Delegate(idx, MemberKind::Method) => {
-                        let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
-                        with_slots!(strand, |mut delegator| {
-                            strand.store(Slot::reborrow(&mut delegator), &this);
-                            Delegated::new(supertype, &delegator)
-                                .op_mcall(strand, method, args, out)
-                                .await
-                        })
-                    }
-                    _ => Err(Error::field(strand, method)),
+        if let Some(entry) = this.vtbl().entry(method) {
+            match entry {
+                Entry::Method(handler) => unsafe {
+                    handler
+                        .call(this.as_header(), this.delegator(), strand, args, out)
+                        .await
                 },
-            )
+                Entry::Delegate(idx, MemberKind::Method) => {
+                    let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
+                    with_slots!(strand, |mut delegator| {
+                        strand.store(Slot::reborrow(&mut delegator), &this);
+                        Delegated::new(supertype, &delegator)
+                            .op_mcall(strand, method, args, out)
+                            .await
+                    })
+                }
+                _ => Err(Error::field(strand, method)),
+            }
         } else {
             if is_special_mcall(method.tag()) {
                 instance_mcall_fallback(strand, &this, method, args, out)
@@ -1629,30 +1588,24 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(get)")),
-            match this.entry(field) {
-                Some(Entry::Getter(handler) | Entry::Property(handler, _)) => unsafe {
-                    handler.call(this.as_header(), this.delegator(), strand, out)
-                },
-                Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method)) => {
-                    BoundMethod::create(strand, &this, field, out);
-                    Ok(())
-                }
-                Some(Entry::Delegate(idx, MemberKind::Getter | MemberKind::Property)) => {
-                    let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
-                    with_slots!(strand, |mut delegator| {
-                        strand.store(Slot::reborrow(&mut delegator), &this);
-                        Delegated::new(supertype, &delegator).op_get(strand, field, out)
-                    })
-                }
-                Some(Entry::Setter(_) | Entry::Delegate(_, _)) => Err(Error::field(strand, field)),
-                None => T::get(Instance::from_recv(&this), strand, field, out),
+        match this.entry(field) {
+            Some(Entry::Getter(handler) | Entry::Property(handler, _)) => unsafe {
+                handler.call(this.as_header(), this.delegator(), strand, out)
+            },
+            Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method)) => {
+                BoundMethod::create(strand, &this, field, out);
+                Ok(())
             }
-        )
+            Some(Entry::Delegate(idx, MemberKind::Getter | MemberKind::Property)) => {
+                let supertype = instance_supertype::<T>(this.clone(), strand, *idx);
+                with_slots!(strand, |mut delegator| {
+                    strand.store(Slot::reborrow(&mut delegator), &this);
+                    Delegated::new(supertype, &delegator).op_get(strand, field, out)
+                })
+            }
+            Some(Entry::Setter(_) | Entry::Delegate(_, _)) => Err(Error::field(strand, field)),
+            None => T::get(Instance::from_recv(&this), strand, field, out),
+        }
     }
 
     fn op_set<'a, 's>(
@@ -1661,19 +1614,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         field: Sym<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(set)")),
-            match this.entry(field) {
-                Some(Entry::Setter(handler) | Entry::Property(_, handler)) => unsafe {
-                    handler.call(this.as_header(), this.delegator(), strand, value)
-                },
-                Some(Entry::Getter(_)) => Err(Error::immutable(strand)),
-                _ => T::set(Instance::from_recv(&this), strand, field, value),
-            }
-        )
+        match this.entry(field) {
+            Some(Entry::Setter(handler) | Entry::Property(_, handler)) => unsafe {
+                handler.call(this.as_header(), this.delegator(), strand, value)
+            },
+            Some(Entry::Getter(_)) => Err(Error::immutable(strand)),
+            _ => T::set(Instance::from_recv(&this), strand, field, value),
+        }
     }
 
     fn op_index<'a, 's>(
@@ -1682,13 +1629,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(index)")),
-            T::index(Instance::from_recv(&this), strand, index, out)
-        )
+        T::index(Instance::from_recv(&this), strand, index, out)
     }
 
     fn op_assign<'a, 's>(
@@ -1697,13 +1638,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         index: Slot<'v, 'a>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(assign)")),
-            T::assign(Instance::from_recv(&this), strand, index, value)
-        )
+        T::assign(Instance::from_recv(&this), strand, index, value)
     }
 
     fn op_type<'a, 's>(
@@ -1729,13 +1664,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(iter)")),
-            T::iter(Instance::from_recv(&this), strand, out).await,
-        )
+        T::iter(Instance::from_recv(&this), strand, out).await
     }
 
     async fn op_next<'a, 's>(
@@ -1743,13 +1672,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, bool> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(next)")),
-            T::next(Instance::from_recv(&this), strand, out).await,
-        )
+        T::next(Instance::from_recv(&this), strand, out).await
     }
 
     async fn op_sink<'a, 's>(
@@ -1757,13 +1680,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(sink)")),
-            T::sink(Instance::from_recv(&this), strand, out).await,
-        )
+        T::sink(Instance::from_recv(&this), strand, out).await
     }
 
     async fn op_put<'a, 's>(
@@ -1771,13 +1688,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(put)")),
-            T::put(Instance::from_recv(&this), strand, value).await,
-        )
+        T::put(Instance::from_recv(&this), strand, value).await
     }
 
     fn op_hash<'a, 's>(
@@ -1794,13 +1705,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(eq)")),
-            T::eq(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::eq(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -1811,13 +1716,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(req)")),
-            T::req(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::req(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -1828,13 +1727,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(ne)")),
-            T::ne(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::ne(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -1844,13 +1737,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rne)")),
-            T::rne(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::rne(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -1860,13 +1747,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(neg)")),
-            T::neg(Instance::from_recv(&this), strand, out)
-        )
+        T::neg(Instance::from_recv(&this), strand, out)
     }
 
     fn op_bnot<'a, 's>(
@@ -1874,13 +1755,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(bnot)")),
-            T::bnot(Instance::from_recv(&this), strand, out)
-        )
+        T::bnot(Instance::from_recv(&this), strand, out)
     }
 
     fn op_band<'a, 's>(
@@ -1889,13 +1764,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(band)")),
-            { T::band(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::band(Instance::from_recv(&this), strand, other, out)
     }
     fn op_rband<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1903,13 +1772,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rband)")),
-            { T::rband(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rband(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_bor<'a, 's>(
@@ -1918,13 +1781,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(bor)")),
-            { T::bor(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::bor(Instance::from_recv(&this), strand, other, out)
     }
     fn op_rbor<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1932,13 +1789,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rbor)")),
-            { T::rbor(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rbor(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_bxor<'a, 's>(
@@ -1947,13 +1798,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(bxor)")),
-            { T::bxor(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::bxor(Instance::from_recv(&this), strand, other, out)
     }
     fn op_rbxor<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1961,13 +1806,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rbxor)")),
-            { T::rbxor(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rbxor(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_shl<'a, 's>(
@@ -1976,13 +1815,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(shl)")),
-            { T::shl(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::shl(Instance::from_recv(&this), strand, other, out)
     }
     fn op_rshl<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1990,13 +1823,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rshl)")),
-            { T::rshl(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rshl(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_shr<'a, 's>(
@@ -2005,13 +1832,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(shr)")),
-            { T::shr(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::shr(Instance::from_recv(&this), strand, other, out)
     }
     fn op_rshr<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2019,13 +1840,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rshr)")),
-            { T::rshr(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rshr(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_add<'a, 's>(
@@ -2034,13 +1849,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(add)")),
-            { T::add(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::add(Instance::from_recv(&this), strand, other, out)
     }
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2048,13 +1857,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(radd)")),
-            { T::radd(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::radd(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_sub<'a, 's>(
@@ -2063,13 +1866,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(sub)")),
-            { T::sub(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::sub(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_rsub<'a, 's>(
@@ -2078,13 +1875,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rsub)")),
-            { T::rsub(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rsub(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_mul<'a, 's>(
@@ -2093,13 +1884,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(mul)")),
-            { T::mul(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::mul(Instance::from_recv(&this), strand, other, out)
     }
     fn op_rmul<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -2107,13 +1892,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rmul)")),
-            { T::rmul(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rmul(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_div<'a, 's>(
@@ -2122,13 +1901,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(div)")),
-            { T::div(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::div(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_rdiv<'a, 's>(
@@ -2137,13 +1910,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rdiv)")),
-            { T::rdiv(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rdiv(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_ediv<'a, 's>(
@@ -2152,13 +1919,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(ediv)")),
-            { T::ediv(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::ediv(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_rediv<'a, 's>(
@@ -2167,13 +1928,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rediv)")),
-            { T::redv(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::redv(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_mod<'a, 's>(
@@ -2182,13 +1937,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(mod)")),
-            { T::rem(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rem(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_rmod<'a, 's>(
@@ -2197,13 +1946,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(rmod)")),
-            { T::rrem(Instance::from_recv(&this), strand, other, out,) }
-        )
+        T::rrem(Instance::from_recv(&this), strand, other, out)
     }
 
     fn op_lt<'a, 's>(
@@ -2212,13 +1955,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(lt)")),
-            T::lt(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::lt(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -2229,13 +1966,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(lte)")),
-            T::lte(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::lte(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -2246,13 +1977,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(gt)")),
-            T::gt(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::gt(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -2263,13 +1988,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         other: &Value<'v>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        let result = in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(gte)")),
-            T::gte(Instance::from_recv(&this), strand, other)
-        )?;
+        let result = T::gte(Instance::from_recv(&this), strand, other)?;
         strand.store(&mut out, Value::from_bool(result));
         Ok(())
     }
@@ -2279,13 +1998,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         strand: &'a mut Strand<'v, 's>,
         unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(unpack)")),
-            { T::unpack(Instance::from_recv(&this), strand, unpack).await },
-        )
+        T::unpack(Instance::from_recv(&this), strand, unpack).await
     }
 
     async fn op_spread<'a, 's>(
@@ -2294,13 +2007,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         context: protocol::SpreadContext,
         sink: &'a mut dyn protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(spread)")),
-            T::spread(Instance::from_recv(&this), strand, context, sink).await,
-        )
+        T::spread(Instance::from_recv(&this), strand, context, sink).await
     }
 }
 
@@ -2611,14 +2318,6 @@ impl<'v> ObjectVtbl<'v> {
             .binary_search_by_key(&sym, |&(s, _)| s)
             .ok()
             .map(|i| &self.entries[i].1)
-    }
-
-    #[inline(never)]
-    fn entry_with_sym(&self, sym: Sym<'v, '_>) -> Option<(Sym<'v, 'v>, &Entry<'v>)> {
-        self.entries
-            .binary_search_by_key(&sym, |&(s, _)| s)
-            .ok()
-            .map(|i| (self.entries[i].0, &self.entries[i].1))
     }
 }
 
@@ -3533,34 +3232,21 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some((sym, entry)) = this.vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand);
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed(name)),
-                match entry {
-                    Entry::Method(handler) => unsafe {
-                        handler
-                            .call(this.as_header(), this.delegator(), strand, args, out)
-                            .await
-                    },
-                    _ => Err(Error::field(strand, method)),
+        if let Some(entry) = this.vtbl().entry(method) {
+            match entry {
+                Entry::Method(handler) => unsafe {
+                    handler
+                        .call(this.as_header(), this.delegator(), strand, args, out)
+                        .await
                 },
-            )
+                _ => Err(Error::field(strand, method)),
+            }
         } else if method.tag() == sym::CALL_METHOD {
             Self::op_call(this, strand, args, out).await
         } else if is_special_mcall(method.tag()) {
             instance_mcall_fallback(strand, &this, method, args, out)
         } else {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Owned(method.as_str(strand).to_owned())),
-                { T::type_method(this.ty(strand.vm()), strand, method, args, out).await },
-            )
+            T::type_method(this.ty(strand.vm()), strand, method, args, out).await
         }
     }
 
@@ -3572,13 +3258,9 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
     ) -> Result<'v, 's, ()> {
         if let Some(entry) = this.entry(field) {
             return match entry {
-                Entry::Getter(handler) | Entry::Property(handler, _) => in_native_frame!(
-                    strand,
-                    Cow::Borrowed(T::MODULE),
-                    Cow::Borrowed(T::NAME),
-                    Some(Cow::Borrowed("(get)")),
-                    unsafe { handler.call(this.as_header(), this.delegator(), strand, out) }
-                ),
+                Entry::Getter(handler) | Entry::Property(handler, _) => unsafe {
+                    handler.call(this.as_header(), this.delegator(), strand, out)
+                },
                 Entry::Method(_) => {
                     Self::bind_type_method(this, strand, field, out);
                     Ok(())
@@ -3591,13 +3273,7 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
             Self::bind_type_method(this, strand, field, out);
             Ok(())
         } else {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(get)")),
-                T::type_get(this.ty(strand.vm()), strand, field, out)
-            )
+            T::type_get(this.ty(strand.vm()), strand, field, out)
         }
     }
 
@@ -3609,24 +3285,14 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
     ) -> Result<'v, 's, ()> {
         if let Some(entry) = this.entry(field) {
             match entry {
-                Entry::Setter(handler) | Entry::Property(_, handler) => in_native_frame!(
-                    strand,
-                    Cow::Borrowed(T::MODULE),
-                    Cow::Borrowed(T::NAME),
-                    Some(Cow::Borrowed("(set)")),
-                    unsafe { handler.call(this.as_header(), this.delegator(), strand, value) }
-                ),
+                Entry::Setter(handler) | Entry::Property(_, handler) => unsafe {
+                    handler.call(this.as_header(), this.delegator(), strand, value)
+                },
                 Entry::Getter(_) => Err(Error::immutable(strand)),
                 _ => Err(Error::field(strand, field)),
             }
         } else {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(set)")),
-                T::type_set(this.ty(strand.vm()), strand, field, value)
-            )
+            T::type_set(this.ty(strand.vm()), strand, field, value)
         }
     }
 
@@ -3691,13 +3357,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let ty = this.ty(strand.vm());
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            None,
-            T::new(ty, strand, args, out).await,
-        )
+        T::new(ty, strand, args, out).await
     }
 
     async fn op_mcall<'a, 's>(
@@ -3716,72 +3376,54 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             this.inst_entry(method),
             Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method))
         );
-        if unbound && let Some((sym, entry)) = this.inst_vtbl().entry_with_sym(method) {
-            let name = sym.as_str(strand);
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed(name)),
-                async {
-                    match entry {
-                        Entry::Method(handler) => {
-                            // Downcast the explicit self argument to the precise native
-                            // type (handling Do subclasses via native slots) and invoke
-                            // the handler directly.
-                            unpack!(strand, args => inst, ...trailing);
-                            let inst = inst
-                                .downcast_native(strand, unsafe {
-                                    TypeHandle::<ObjectWrap<'v, T>>::new(
-                                        this.vtbl().inst_vtbl.cast(),
-                                    )
-                                })
-                                .ok_or_else(|| {
-                                    Error::type_error(
-                                        strand,
-                                        format!("expected {}.{}", T::MODULE, T::NAME),
-                                    )
-                                })
-                                .map(gc::Base::as_ptr)?
-                                .cast();
-                            unsafe { handler.call(inst, None, strand, trailing, out).await }
-                        }
-                        Entry::Delegate(idx, MemberKind::Method) => {
-                            unpack!(strand, args => instance, ...trailing);
-                            if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
-                                return Err(Error::type_error(
+        if unbound && let Some(entry) = this.inst_vtbl().entry(method) {
+            async {
+                match entry {
+                    Entry::Method(handler) => {
+                        // Downcast the explicit self argument to the precise native
+                        // type (handling Do subclasses via native slots) and invoke
+                        // the handler directly.
+                        unpack!(strand, args => inst, ...trailing);
+                        let inst = inst
+                            .downcast_native(strand, unsafe {
+                                TypeHandle::<ObjectWrap<'v, T>>::new(this.vtbl().inst_vtbl.cast())
+                            })
+                            .ok_or_else(|| {
+                                Error::type_error(
                                     strand,
-                                    "invalid native object type",
-                                ));
-                            }
-                            let supertype = &this.annex().supertypes[*idx];
-                            Delegated::new(supertype, &instance)
-                                .op_mcall(strand, method, trailing, out)
-                                .await
-                        }
-                        _ => unreachable!("an instance method"),
+                                    format!("expected {}.{}", T::MODULE, T::NAME),
+                                )
+                            })
+                            .map(gc::Base::as_ptr)?
+                            .cast();
+                        unsafe { handler.call(inst, None, strand, trailing, out).await }
                     }
+                    Entry::Delegate(idx, MemberKind::Method) => {
+                        unpack!(strand, args => instance, ...trailing);
+                        if !instance.is_instance_of(strand, this.singleton(strand.vm())) {
+                            return Err(Error::type_error(strand, "invalid native object type"));
+                        }
+                        let supertype = &this.annex().supertypes[*idx];
+                        Delegated::new(supertype, &instance)
+                            .op_mcall(strand, method, trailing, out)
+                            .await
+                    }
+                    _ => unreachable!("an instance method"),
                 }
-                .await,
-            )
+            }
+            .await
         } else if this.entry(method).is_some() {
             Self::type_mcall(this, strand, method, args, out).await
         } else if method.tag() == sym::INIT_METHOD {
-            in_native_frame!(
-                strand,
-                Cow::Borrowed(T::MODULE),
-                Cow::Borrowed(T::NAME),
-                Some(Cow::Borrowed("(init)")),
-                async {
-                    let mut out = out;
-                    unpack!(strand, args => inst, ...trailing);
-                    let ty = this.ty(strand.vm());
-                    T::new(ty, strand, trailing, Slot::reborrow(&mut out)).await?;
-                    let singleton = this.singleton(strand.vm());
-                    inst.op_fill(strand, singleton, out)
-                }
-                .await,
-            )
+            async {
+                let mut out = out;
+                unpack!(strand, args => inst, ...trailing);
+                let ty = this.ty(strand.vm());
+                T::new(ty, strand, trailing, Slot::reborrow(&mut out)).await?;
+                let singleton = this.singleton(strand.vm());
+                inst.op_fill(strand, singleton, out)
+            }
+            .await
         } else {
             // Fall through to type_mcall_fallback for protocol/special
             // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
@@ -3831,13 +3473,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
         index: &Value<'v>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        in_native_frame!(
-            strand,
-            Cow::Borrowed(T::MODULE),
-            Cow::Borrowed(T::NAME),
-            Some(Cow::Borrowed("(index)")),
-            T::type_index(this.ty(strand.vm()), strand, index, out)
-        )
+        T::type_index(this.ty(strand.vm()), strand, index, out)
     }
 
     fn op_hash<'a, 's>(
@@ -3908,6 +3544,9 @@ impl<'v, T: Object<'v>> gc::Annex for NativeTypeScope<'v, T> {
 }
 
 impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeScope<'v, T>> {
+    const MODULE: &'v str = T::MODULE;
+    const NAME: &'v str = T::NAME;
+
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -3969,6 +3608,9 @@ impl<'v, T: Object<'v>> gc::Annex for NativeTypeProxy<'v, T> {
 }
 
 impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
+    const MODULE: &'v str = T::MODULE;
+    const NAME: &'v str = T::NAME;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -4116,14 +3758,6 @@ impl<'v> TypeVtbl<'v> {
             .binary_search_by_key(&sym, |&(s, _)| s)
             .ok()
             .map(|i| &self.entries[i].1)
-    }
-
-    #[inline(never)]
-    fn entry_with_sym(&self, sym: Sym<'v, '_>) -> Option<(Sym<'v, 'v>, &Entry<'v>)> {
-        self.entries
-            .binary_search_by_key(&sym, |&(s, _)| s)
-            .ok()
-            .map(|i| (self.entries[i].0, &self.entries[i].1))
     }
 }
 

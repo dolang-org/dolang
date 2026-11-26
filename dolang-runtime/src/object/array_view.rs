@@ -567,6 +567,9 @@ fn positional<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for ViewObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayView";
+
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -788,6 +791,9 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
 }
 
 impl<'v> Protocol<'v> for IterObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayViewIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -883,6 +889,9 @@ impl<'v> Protocol<'v> for IterObj<'v> {
 }
 
 impl<'v> Protocol<'v> for RestObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayViewRest";
+
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,

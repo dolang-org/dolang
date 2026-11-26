@@ -207,6 +207,8 @@ impl<'v> NativeFunction<'v> {
 }
 
 impl<'v> Protocol<'v> for NativeFunctionObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -301,6 +303,8 @@ impl<'v> Function<'v> {
 }
 
 impl<'v> Protocol<'v> for FunctionObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

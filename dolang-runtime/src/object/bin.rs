@@ -106,6 +106,9 @@ impl<'v, 'a> GcObjPin<'v, 'a, BinObj> {
 }
 
 impl<'v> Protocol<'v> for BinObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Bin";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -690,6 +693,9 @@ unsafe impl<'v> Collect for Split<'v> {
 }
 
 impl<'v> Protocol<'v> for Split<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "BinSplit";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

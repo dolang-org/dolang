@@ -61,6 +61,9 @@ fn rbinop<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for IntObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Int";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -392,6 +395,9 @@ impl crate::gc::Annex for Verbatim {
 pub(crate) type VerbatimObj = crate::gc::Imm<Verbatim>;
 
 impl<'v> Protocol<'v> for VerbatimObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Int";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,

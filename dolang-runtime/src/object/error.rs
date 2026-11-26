@@ -146,6 +146,9 @@ impl<'v> crate::gc::Annex for Boxed<'v> {
 pub(crate) type BoxedObj<'v> = crate::gc::Imm<dolang_util::alias::Box<Boxed<'v>>>;
 
 impl<'v> Protocol<'v> for BoxedObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Error";
+
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -267,6 +270,8 @@ impl crate::gc::Annex for VariantType {
 pub(crate) type VariantTypeObj = crate::gc::Imm<VariantType>;
 
 impl<'v> Protocol<'v> for VariantTypeObj {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

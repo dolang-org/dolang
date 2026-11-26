@@ -1550,6 +1550,9 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
 // ── Protocol: Dict ──────────────────────────────────────────────────
 
 impl<'v> Protocol<'v> for Dict<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Dict";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,

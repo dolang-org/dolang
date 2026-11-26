@@ -61,6 +61,9 @@ fn rbinop<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for FloatObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Float";
+
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -289,6 +292,9 @@ impl crate::gc::Annex for Verbatim {
 pub(crate) type VerbatimObj = crate::gc::Imm<Verbatim>;
 
 impl<'v> Protocol<'v> for VerbatimObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Float";
+
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

@@ -215,6 +215,9 @@ impl<'v> BinBuf<'v> {
 }
 
 impl<'v> Protocol<'v> for BinBuf<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "BinBuf";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

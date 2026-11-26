@@ -411,6 +411,9 @@ async fn fallback<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for Record<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Record";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

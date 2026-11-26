@@ -1,0 +1,42 @@
+import io
+
+# The native frames of the error `f` raises, innermost first, from the frame
+# `after` frames out up to the next Do frame
+def native_frames f :after = 0
+  try
+    f()
+  catch _
+    let out = []
+    for frame = strand.error_backtrace()[after..]
+      if frame.location
+        return out
+      out.push "$(frame.module).$(frame.receiver) $(frame.method)"
+    return out
+  throw "did not raise"
+
+def boom _x
+  throw "boom"
+
+# Builtin operations raise under a frame for the type and operation
+assert_eq (native_frames do [1][5]) ["std.Array (index)"]
+assert_eq (native_frames do {a: 1}[:b:]) ["std.Dict (index)"]
+let unpacked = native_frames do
+  let _a _b = [1, 2, 3]
+assert_eq $unpacked ["std.Array (unpack)"]
+
+# A callback's error passes through the frames of the iterator that called it
+let mapped = native_frames after: 1 do [...[1].map(boom)]
+assert_eq $mapped ["std.Map (next)", "std.Map (spread)"]
+
+# A Do method gets no native frame
+class Mine
+  pub def boom _self
+    throw "boom"
+assert_eq (native_frames do Mine().boom()) []
+
+# Delegation is transparent: a native method reached through a Do subclass,
+# an explicit superclass call or the native type itself gets one frame
+class Cur: io.Cursor
+assert_eq (native_frames do Cur("abc").write "x") ["io.Cursor write"]
+assert_eq (native_frames do io.Cursor.write(Cur("abc"), "x")) ["io.Cursor write"]
+assert_eq (native_frames do io.Cursor("abc").write "x") ["io.Cursor write"]

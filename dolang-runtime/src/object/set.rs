@@ -446,6 +446,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Set<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Set";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
