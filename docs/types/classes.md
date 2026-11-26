@@ -172,7 +172,7 @@ class Connection
   field port @ Int = :UNSET:
   pub field retries @ Int = 3
 
-  def (init) self host @ Str port @ Int
+  def (init) self host@Str port@Int
     self.#host = host
     self.#port = port
 ```
@@ -198,7 +198,7 @@ class Server
   field host @ Str = nil
   field port @ Int = nil
 
-  def (init) self host @ Str port @ Int
+  def (init) self host@Str port@Int
     self.#host = host
     self.#port = port
     self.listen()
@@ -252,7 +252,7 @@ class Animal
 class Dog: Animal
   field breed @ Str = nil
 
-  def (init) self name @ Str breed @ Str
+  def (init) self name@Str breed@Str
     self.#breed = breed
     Animal.(init) $self $name
     echo "$(self.name) the $(self.#breed)"

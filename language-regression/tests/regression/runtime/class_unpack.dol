@@ -139,12 +139,12 @@ let :actual = fields(Explicit())
 assert_eq $actual 1
 
 # Instances without (unpack) reject even empty patterns.
-assert_throws $std.UnsupportedError do let ..._ = example
+assert_throws $std.ShapelessError do let ..._ = example
 class Empty
   pub def method _self
     nil
-assert_throws $std.UnsupportedError do let ..._ = Empty()
-assert_throws $std.UnsupportedError do let direct: _direct = example
+assert_throws $std.ShapelessError do let ..._ = Empty()
+assert_throws $std.ShapelessError do let direct: _direct = example
 
 # Proxy reads and writes are live, and only declared capabilities are exposed.
 let proxy_fields = fields(example)

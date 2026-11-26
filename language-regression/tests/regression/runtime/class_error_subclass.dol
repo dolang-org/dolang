@@ -5,6 +5,7 @@ import
     - MissingKeyError
     - RuntimeError
     - ShapeError
+    - ShapelessError
     - TypeError
     - TimedOutError
     - ValueError
@@ -124,7 +125,19 @@ class SubShape: ShapeError
 
 assert_throws $TypeError str: "type error: std.ShapeError cannot be subclassed" do SubShape()
 
-# `ShapeError` covers arity mismatches from calls and destructuring.
+# `ShapelessError` is concrete, so it can be subclassed.
+class NoItems: ShapelessError
+  def (init) self what
+    ShapelessError.(init) $self "nothing to unpack in $what"
+
+let no_items = NoItems widget
+assert_eq (str no_items) "shape error: nothing to unpack in widget"
+assert (type no_items ShapeError)
+
+# `ShapeError` covers arity mismatches from calls and destructuring, and
+# unpacking a value with no items.
+assert_throws $ShapelessError str: "shape error: cannot unpack std.Int" do
+  let _x _y = 1
 def two a b
   (a + b)
 

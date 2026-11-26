@@ -31,7 +31,7 @@ use super::{
     BoundMethod, index, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
     tuple,
 };
@@ -138,7 +138,7 @@ impl<'v> Dict<'v> {
         instance: Option<i64>,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
         let mut hasher = strand.vm().hasher();
-        index.op_hash(strand, &mut hasher)?;
+        index.hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         Ok(self.find(strand, hash, index)?.and_then(|pair| unsafe {
             let pair = pair.as_ref();
@@ -384,7 +384,7 @@ impl<'v> Dict<'v> {
         key: &Value<'v>,
     ) -> Result<'v, 's, bool> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let Some(bucket) = self.find(strand, hash, key)? else {
             return Ok(false);
@@ -490,6 +490,7 @@ impl<'v> Dict<'v> {
             let key = match args.next() {
                 Some(Arg::Pos(key)) => key,
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    let _op = strand.start_op();
                     expand
                         .op_spread(strand, SpreadContext::Pairs, &mut sink)
                         .await?;
@@ -534,7 +535,7 @@ impl<'b, 'v> DictPairs<'b, 'v> {
         mut value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = self
             .dict
@@ -605,20 +606,15 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<dict iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -631,11 +627,11 @@ impl<'v> Protocol<'v> for Iter<'v> {
     }
 
     async fn op_unpack<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         _unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking"))
+        Err(Error::cannot_unpack(strand, &this))
     }
 
     async fn op_next<'a, 's>(
@@ -890,20 +886,15 @@ impl<'v> Dict<'v> {
 }
 
 impl<'v> Protocol<'v> for Values<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictValues";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<values iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -999,20 +990,15 @@ impl<'v> Protocol<'v> for Values<'v> {
 }
 
 impl<'v> Protocol<'v> for KeyValues<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictKeyValues";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<key values iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1120,20 +1106,15 @@ impl<'v> Protocol<'v> for KeyValues<'v> {
 }
 
 impl<'v> Protocol<'v> for Keys<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictKeys";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<keys iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1348,6 +1329,9 @@ impl<'v> Unpack<'v> {
 }
 
 impl<'v> Protocol<'v> for Unpack<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictRest";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1373,14 +1357,6 @@ impl<'v> Protocol<'v> for Unpack<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         super::iter::iterable_mcall(strand, &this, method, args, out).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<dict rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -1490,20 +1466,15 @@ unsafe impl<'v> Collect for UnpackIter<'v> {
 }
 
 impl<'v> Protocol<'v> for UnpackIter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "DictRestIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<dict rest iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -1516,11 +1487,11 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
     }
 
     async fn op_unpack<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         _unpack: ProtoUnpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking"))
+        Err(Error::cannot_unpack(strand, &this))
     }
 
     async fn op_next<'a, 's>(
@@ -1580,6 +1551,9 @@ impl<'v> Protocol<'v> for UnpackIter<'v> {
 // ── Protocol: Dict ──────────────────────────────────────────────────
 
 impl<'v> Protocol<'v> for Dict<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Dict";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -1643,10 +1617,10 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 if let Some(sym) = bucket.as_ref().key.downcast_ref(strand.builtin_types().sym) {
                     crate::fmt!(strand, w, "{}", sym.name())?;
                 } else {
-                    bucket.as_ref().key.op_debug(strand, w)?;
+                    bucket.as_ref().key.debug(strand, w)?;
                 }
                 crate::fmt!(strand, w, ": ")?;
-                bucket.as_ref().value.at(subindex).op_debug(strand, w)?;
+                bucket.as_ref().value.at(subindex).debug(strand, w)?;
             }
         }
         crate::fmt!(strand, w, "}}")
@@ -1684,7 +1658,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 }
                 let elem = elem.as_ref();
                 elem.hash.hash(hasher);
-                elem.value.at(subindex).op_hash(strand, hasher)?;
+                elem.value.at(subindex).hash(strand, hasher)?;
                 i += 1;
             }
         }
@@ -1793,7 +1767,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        index.op_hash(strand, &mut hasher)?;
+        index.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
         match dict.find(strand, hv, index)? {
@@ -1812,7 +1786,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut borrow = this.borrow_mut(strand)?;
         borrow.insert(
@@ -1882,7 +1856,7 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 let epoch = this.borrow(strand)?.epoch;
                 if let Some(key) = key {
                     let mut hasher = strand.vm().hasher();
-                    key.op_hash(strand, &mut hasher)?;
+                    key.hash(strand, &mut hasher)?;
                     let hv = hasher.finish();
                     let bucket = this.borrow(strand)?.find(strand, hv, &key)?;
                     let embryo = strand.builtin_types().dict_key_values.embryo(strand);
@@ -1933,9 +1907,6 @@ impl<'v> Protocol<'v> for Dict<'v> {
                 strand,
                 "dict.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -2186,7 +2157,7 @@ impl<'v> Dict<'v> {
         skip: &mut Skip,
     ) -> Result<'v, 's, Option<&Value<'v>>> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         Ok(self.find(strand, hv, key)?.and_then(|bucket| {
             let instance = skip.add(&bucket);
@@ -2248,7 +2219,7 @@ impl<'v> Dict<'v> {
         mut value: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let mut dict = this.borrow_mut(strand)?;
         dict.insert(
@@ -2302,7 +2273,7 @@ impl<'v> Dict<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let else_key = Sym::well_known(sym::ELSE);
         if default.is_some() && or_else.is_some() {
@@ -2395,7 +2366,7 @@ impl<'v> Dict<'v> {
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        key.op_hash(strand, &mut hasher)?;
+        key.hash(strand, &mut hasher)?;
         let hv = hasher.finish();
         let dict = this.borrow(strand)?;
         let found = match dict.find(strand, hv, &key)? {
@@ -2442,7 +2413,7 @@ impl<'v> Dict<'v> {
         let dict = this.borrow(strand)?;
         let count = if let Some(key) = key {
             let mut hasher = strand.vm().hasher();
-            key.op_hash(strand, &mut hasher)?;
+            key.hash(strand, &mut hasher)?;
             let hv = hasher.finish();
             dict.find(strand, hv, &key)?
                 .map(|bucket| unsafe { bucket.as_ref().value.len() })
@@ -2472,6 +2443,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Dict";
+    const TYPE_OBJECT: bool = true;
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -2485,6 +2460,7 @@ impl<'v> Protocol<'v> for Type {
             .builtin_types()
             .dict
             .create(strand, Dict::new(), Slot::reborrow(&mut out));
+        let _op = strand.start_op();
         items
             .op_spread(strand, SpreadContext::Pairs, &mut DictPairs { dict: &out })
             .await
@@ -2510,14 +2486,6 @@ impl<'v> Protocol<'v> for Type {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Dict>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -2529,13 +2497,10 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::CLEAR),
                 Method(sym::INSERT),

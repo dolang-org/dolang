@@ -34,7 +34,7 @@ use super::{
     pack::{self, ArgItem},
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
     tuple,
 };
@@ -411,6 +411,9 @@ async fn fallback<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for Record<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Record";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -462,7 +465,7 @@ impl<'v> Protocol<'v> for Record<'v> {
                 strand.check_trap()?;
             }
             key.as_ref().map(|key| key.tag()).hash(hasher);
-            value.op_hash(strand, hasher)?;
+            value.hash(strand, hasher)?;
         }
         Ok(())
     }
@@ -751,9 +754,6 @@ impl<'v> Protocol<'v> for Record<'v> {
                 strand,
                 "record.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -864,20 +864,15 @@ impl<'v> Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "RecordIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<record iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -890,11 +885,11 @@ impl<'v> Protocol<'v> for Iter<'v> {
     }
 
     async fn op_unpack<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking"))
+        Err(Error::cannot_unpack(strand, &this))
     }
 
     async fn op_next<'a, 's>(
@@ -995,6 +990,10 @@ unsafe impl Collect for Class {
 }
 
 impl<'v> Protocol<'v> for Class {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Record";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1015,14 +1014,6 @@ impl<'v> Protocol<'v> for Class {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Record>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -1034,12 +1025,9 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::CLEAR),
                 Method(sym::INSERT),

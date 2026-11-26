@@ -18,10 +18,7 @@ use crate::{
 
 use super::{
     BoundMethod, index, iter,
-    protocol::{
-        GcObj, GcObjPin, Header, Inspect, Spread, SpreadContext, instance_mcall_fallback,
-        is_special_mcall, type_mcall_fallback,
-    },
+    protocol::{GcObj, GcObjPin, Header, Inspect, Spread, SpreadContext, type_mcall_fallback},
     range,
 };
 
@@ -191,6 +188,7 @@ pub(crate) async fn from_builtin_args<'v, 's>(
                 // SAFETY: the value moves straight into the borrowed sink
                 Some(Arg::Pos(item)) => strand.store(sink.0.push(), item),
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    let _op = strand.start_op();
                     expand
                         .op_spread(strand, SpreadContext::Sequence, sink)
                         .await?;
@@ -281,6 +279,9 @@ impl<'v> gc::TailAnnex<Value<'v>> for () {
 }
 
 impl<'v> Protocol<'v> for TupleObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Tuple";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -298,10 +299,10 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
         let items = this.items();
         let mut iter = items.iter();
         if let Some(first) = iter.next() {
-            first.op_debug(strand, w)?;
+            first.debug(strand, w)?;
             for item in iter {
                 crate::fmt!(strand, w, ", ")?;
-                item.op_debug(strand, w)?;
+                item.debug(strand, w)?;
             }
         }
         // Match the literal syntax, where `(x)` is only a group
@@ -329,7 +330,7 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 strand.check_trap()?;
             }
             let elem = unsafe { inner.get_unchecked(i) };
-            elem.op_hash(strand, hasher)?;
+            elem.hash(strand, hasher)?;
         }
         Ok(())
     }
@@ -568,9 +569,6 @@ impl<'v> Protocol<'v> for TupleObj<'v> {
                 strand,
                 "tuple.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -614,6 +612,9 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "TupleIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -621,14 +622,6 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<tuple iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -738,6 +731,9 @@ unsafe impl<'v> Collect for Pairs<'v> {
 }
 
 impl<'v> Protocol<'v> for Pairs<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "TuplePairs";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -745,14 +741,6 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<tuple pair iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -864,6 +852,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Tuple";
+    const TYPE_OBJECT: bool = true;
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -897,14 +889,6 @@ impl<'v> Protocol<'v> for Type {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Tuple>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -916,14 +900,11 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
                 Method(sym::SPREAD_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::GET),
                 Method(sym::PAIRS),

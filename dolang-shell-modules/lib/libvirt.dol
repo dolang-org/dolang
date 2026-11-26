@@ -499,10 +499,10 @@ pub class NoDomainError: std.RuntimeError
     self.name = name
     std.RuntimeError.(init) $self "libvirt domain does not exist: $name"
 
-def virsh connect_uri @ Str *args @ Value -> Str
+def virsh connect_uri@Str *args@Value -> Str
   cli virsh --quiet --connect $connect_uri ...args
 
-def capture_virsh connect_uri @ Str stderr @ Array[Str] *args @ Value -> Str
+def capture_virsh connect_uri@Str stderr@Array[Str] *args@Value -> Str
   capture virsh $stderr --quiet --connect $connect_uri ...args
 
 def error_text lines @ Array[Str] -> Str
@@ -2491,7 +2491,7 @@ def parse_installer spec @ InstallerSpec -> Installer
 # Only an `init:` `add:` admits the three `write_files` keys, which mean
 # something only where the entry is rendered into the seed rather than
 # uploaded over a VFS.
-def parse_add spec @ InitAddSpec name @ Str -> Add
+def parse_add spec@InitAddSpec name@Str -> Add
   let target = spec.get :target: else: do
     throw std.ValueError "$name: missing target"
   # A call the checker never saw can still give both.

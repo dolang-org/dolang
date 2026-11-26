@@ -390,6 +390,7 @@ enum FrameEntry<'v, 'f> {
 pub(crate) struct FrameScope<'v, 's, 'f> {
     strand: Strand<'v, 's>,
     prior: Option<frame::Ptr<'v>>,
+    prior_link: bool,
     entry: FrameEntry<'v, 'f>,
     _borrow: PhantomData<&'f mut Strand<'v, 's>>,
 }
@@ -399,7 +400,19 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
     ///
     /// A Do frame's entry records its pc as of this call.
     #[inline]
-    pub(crate) fn finish<R>(mut self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+    pub(crate) fn finish<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+        self.finish_entry(res, false)
+    }
+
+    /// As [`Self::finish`], but the entry owns a copy of the native frame's method name,
+    /// for a name that lives only as long as the call.
+    #[inline]
+    pub(crate) fn finish_owning_method<R>(self, res: Result<'v, 's, R>) -> Result<'v, 's, R> {
+        self.finish_entry(res, true)
+    }
+
+    #[inline]
+    fn finish_entry<R>(mut self, res: Result<'v, 's, R>, own_method: bool) -> Result<'v, 's, R> {
         res.map_err(|mut e| {
             let entry = match self.entry {
                 // SAFETY: the entry moves straight into the error's backtrace, which
@@ -412,7 +425,10 @@ impl<'v, 's> FrameScope<'v, 's, '_> {
                 FrameEntry::Native(frame) => UnwindEntry::Native {
                     module: frame.module.clone(),
                     receiver: frame.receiver.clone(),
-                    method: frame.method.clone(),
+                    method: match &frame.method {
+                        Some(method) if own_method => Some(Cow::Owned(method.to_string())),
+                        method => method.clone(),
+                    },
                 },
             };
             e.push_backtrace(&mut self.strand, entry);
@@ -442,6 +458,7 @@ impl Drop for FrameScope<'_, '_, '_> {
     fn drop(&mut self) {
         let inner = self.strand.inner;
         inner.sp.set(self.prior);
+        inner.link_frame.set(self.prior_link);
         inner.call_depth.update(|depth| depth - 1);
     }
 }
@@ -453,20 +470,46 @@ impl Drop for FrameScope<'_, '_, '_> {
 /// error it evaluates to gets the frame's backtrace entry; an error leaving through `?` or
 /// `return` does not, so wrap such a body in `async { … }.await`.  Exceeding the call
 /// depth returns the error from the enclosing function.
+///
+/// The frame is pushed only if it links, at the start of a logical operation (see
+/// [`Strand::start_op`]); otherwise the expression runs in the caller's frame, still one
+/// call level deeper.  With `owning`, `$method` is the method's [`Sym`], whose name the
+/// frame borrows and an error's backtrace copies.
 macro_rules! in_native_frame {
-    ($strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {{
-        let frame = $crate::frame::Native {
-            module: $module,
-            receiver: $receiver,
-            method: $method,
-            parent: Some($strand.fp),
-        };
-        // Safety: the scope is a local of this block that nothing can move or forget
-        #[allow(unused_unsafe)]
-        let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
-        let $strand = &mut *scope;
-        let res = $body;
-        scope.finish(res)
+    ($strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {
+        $crate::strand::in_native_frame!(@finish finish, $strand, $module, $receiver, $method, $body)
+    };
+    (owning $strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {
+        $crate::strand::in_native_frame!(
+            @finish finish_owning_method,
+            $strand,
+            $module,
+            $receiver,
+            // SAFETY: the frame lives within the call, and `owning` copies the name out
+            Some(::std::borrow::Cow::Borrowed(unsafe {
+                $crate::object::protocol::frame_method($method, $strand.vm())
+            })),
+            $body
+        )
+    };
+    (@finish $finish:ident, $strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr) => {{
+        if $strand.links_frame() {
+            let frame = $crate::frame::Native {
+                module: $module,
+                receiver: $receiver,
+                method: $method,
+                parent: Some($strand.fp),
+            };
+            // Safety: the scope is a local of this block that nothing can move or forget
+            #[allow(unused_unsafe)]
+            let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
+            let $strand = &mut *scope;
+            let res = $body;
+            scope.$finish(res)
+        } else {
+            let _depth = $strand.inner.push_call_depth()?;
+            $body
+        }
     }};
 }
 pub(crate) use in_native_frame;
@@ -824,6 +867,9 @@ pub(crate) struct StrandInner<'v> {
     sync_depth: Cell<u32>,
     // Logical callable frame depth (Do + native frames only)
     call_depth: Cell<u32>,
+    /// Whether the next native frame links into the backtrace: set while a logical
+    /// operation has started and no native frame has taken it yet.
+    link_frame: Cell<bool>,
     sp: Cell<Option<frame::Ptr<'v>>>,
     start: ValueCell<'v>,
     is_leader: Cell<bool>,
@@ -842,6 +888,21 @@ pub(crate) struct SpGuard<'v, 'a> {
 
 pub(crate) struct CallDepthGuard<'v, 'a> {
     inner: &'a StrandInner<'v>,
+}
+
+/// Marks the start of a logical operation, so that the next native frame links, until
+/// dropped.  See [`Strand::start_op`].
+#[must_use]
+pub(crate) struct OpGuard<'v, 'a> {
+    inner: &'a StrandInner<'v>,
+    prior: bool,
+}
+
+impl Drop for OpGuard<'_, '_> {
+    #[inline]
+    fn drop(&mut self) {
+        self.inner.link_frame.set(self.prior);
+    }
 }
 
 pub(crate) struct ErrorFocusGuard<'v, 'a> {
@@ -940,6 +1001,7 @@ impl<'v> StrandInner<'v> {
             interrupt_registered: Cell::new(false),
             interrupt_mask: Cell::new(InterruptMask::empty()),
             call_depth: Cell::new(0),
+            link_frame: Cell::new(false),
             sp: Cell::new(None),
             start: ValueCell::default(),
             is_leader: Cell::new(false),
@@ -1010,6 +1072,7 @@ impl<'v> StrandInner<'v> {
             interrupt_registered: Cell::new(false),
             interrupt_mask: Cell::new(InterruptMask::empty()),
             call_depth: Cell::new(strand.inner.call_depth.get()),
+            link_frame: Cell::new(false),
             sp: Cell::new(None),
             start: ValueCell::default(),
             is_leader: Cell::new(false),
@@ -1378,9 +1441,34 @@ impl<'v, 's> Strand<'v, 's> {
         unsafe { self.enter_frame(FrameEntry::Do(frame)) }
     }
 
+    /// Start a logical operation: the next native frame links into the backtrace, until
+    /// the guard drops and restores the prior state.
+    ///
+    /// The public ways of operating on a value, such as [`Value::call`] and
+    /// [`Value::next`], start one; the `op_*` methods continue the current one.  Native
+    /// code consuming another value on the user's behalf starts one.
+    ///
+    /// [`Value::call`]: crate::value::Value::call
+    /// [`Value::next`]: crate::value::Value::next
+    #[inline]
+    pub(crate) fn start_op(&self) -> OpGuard<'v, 's> {
+        OpGuard {
+            inner: self.inner,
+            prior: self.inner.link_frame.replace(true),
+        }
+    }
+
+    /// Whether a native frame entered now links into the backtrace.  An unlinked frame
+    /// is not pushed; it only counts a call level, through
+    /// [`StrandInner::push_call_depth`].
+    #[inline]
+    pub(crate) fn links_frame(&self) -> bool {
+        self.inner.link_frame.get()
+    }
+
     /// Enter the native `frame` one call level deeper, as for [`Self::enter_do_frame`].
     ///
-    /// This backs [`in_native_frame!`].
+    /// This backs [`in_native_frame!`] and the frames the `Protocol` vtbl glue pushes.
     ///
     /// # Safety
     ///
@@ -1404,10 +1492,13 @@ impl<'v, 's> Strand<'v, 's> {
             return Err(Error::call_depth_raw(inner));
         }
         inner.call_depth.update(|depth| depth.strict_add(1));
-        let fp = match entry {
-            FrameEntry::Do(frame) => frame::Ptr::Do(NonNull::from_ref(frame)),
-            FrameEntry::Native(frame) => frame::Ptr::Native(NonNull::from_ref(frame)),
+        // A Do frame's instructions each start a logical operation; a native frame's
+        // hops continue its own.
+        let (fp, link) = match entry {
+            FrameEntry::Do(frame) => (frame::Ptr::Do(NonNull::from_ref(frame)), true),
+            FrameEntry::Native(frame) => (frame::Ptr::Native(NonNull::from_ref(frame)), false),
         };
+        let prior_link = inner.link_frame.replace(link);
         // Keep `sp` at the innermost frame so a suspended strand's backtrace includes the
         // frame it's blocked in.  The GC skips native frames.
         let prior = inner.sp.replace(Some(fp));
@@ -1418,6 +1509,7 @@ impl<'v, 's> Strand<'v, 's> {
                 phantom: PhantomData,
             },
             prior,
+            prior_link,
             entry,
             _borrow: PhantomData,
         })

@@ -677,7 +677,7 @@ do -> Proc
   block @ (Proc -> R)
 do -> R
 
-pub def open target @ Value ...block @ Value -> Value
+pub def open target@Value ...block@Value -> Value
   ...
 
 # Runs a block with temporary process termination defaults.

@@ -8,9 +8,9 @@ assert_throws $std.RuntimeError str: "unexpected key item: 2" do
   let 0: _a 1: _b = {0: "zero", 1: "one", 2: "two"}
 
 # str() of the values/keys iterator types themselves
-assert_eq (str ({a: 1}.values())) "<values iterator>"
-assert_eq (str ({a: 1}.keys())) "<keys iterator>"
-assert_eq (str ({a: 1, b: 2, a: 3}.values :a:)) "<key values iterator>"
+assert_eq (str ({a: 1}.values())) "<std.DictValues>"
+assert_eq (str ({a: 1}.keys())) "<std.DictKeys>"
+assert_eq (str ({a: 1, b: 2, a: 3}.values :a:)) "<std.DictKeyValues>"
 
 # ...rest captures remaining pairs as a structural rest, continuing bucket order,
 # skipping already-matched keys

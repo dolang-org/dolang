@@ -137,12 +137,21 @@ let result = match next_value()
   (2) => :two:
 assert_eq [result, calls] [:two:, [1]]
 
+# A value that can't be unpacked tries later arms.
+let arm = match 1
+  (_x) => :UNPACKED:
+  Int(_) => :INT:
+assert_eq $arm :INT:
+
 # An error other than a mismatch propagates rather than trying later arms.
+class Failing
+  def (unpack) _self
+    throw std.ValueError "from unpack"
 let raised = try
-  match 1
+  match Failing()
     (_x) => false
     _ => false
-catch _
+catch std.ValueError: _
   true
 assert $raised
 

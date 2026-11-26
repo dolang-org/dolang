@@ -92,14 +92,25 @@ catch std.RuntimeError: e
   str $e
 assert_eq $error "`bind` else block did not diverge"
 
+# A value that can't be unpacked is a mismatch.
+def unpackable v
+  let _x _y = v
+  else return false
+  true
+assert $!(unpackable 42)
+assert (unpackable [1, 2])
+
 # Errors other than a mismatch propagate without running else.
+class Failing
+  def (unpack) _self
+    throw std.ValueError "from unpack"
 let entered = false
 let caught = try
-  let _x _y = 42
+  let _x _y = Failing()
   else
     entered = true
-    throw std.ValueError "wrong branch"
-catch std.TypeError: _
+    throw std.StateError "wrong branch"
+catch std.ValueError: _
   true
 assert $caught
 assert $!entered

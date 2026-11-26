@@ -20,6 +20,7 @@ use crate::{
     unpack,
     value::{Slot, TypeObject, Value as DoValue},
     vm::{AllocExt, Vm},
+    with_slots,
 };
 
 pub(crate) struct Value;
@@ -36,6 +37,10 @@ unsafe impl Collect for Value {
 }
 
 impl<'v> Protocol<'v> for Value {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Value";
+    const TYPE_OBJECT: bool = true;
+
     fn op_req<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -58,6 +63,51 @@ impl<'v> Protocol<'v> for Value {
             .op_ne_direct(strand, other, out)
     }
 
+    /// The default source form of a value is its string form, whatever that is.
+    fn op_verbatim<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        match this.delegator() {
+            Some(delegator) => delegator.op_display(strand, w),
+            None => Self::op_display(this, strand, w),
+        }
+    }
+
+    /// The default string form of a value is its debug form, whatever that is.
+    fn op_display<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        match this.delegator() {
+            Some(delegator) => delegator.op_debug(strand, w),
+            None => crate::fmt!(strand, w, "{}.{}", Self::MODULE, Self::NAME),
+        }
+    }
+
+    /// The default debug form of a value names its type, as `<std.Int>`.
+    fn op_debug<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        match this.delegator() {
+            Some(delegator) => with_slots!(strand, |mut ty| {
+                delegator.op_type(strand, Slot::reborrow(&mut ty));
+                w.write_str(strand, "<")?;
+                ty.op_display(strand, w)?;
+                w.write_str(strand, ">")
+            }),
+            None => {
+                w.write_str(strand, "<type ")?;
+                Self::op_display(this, strand, w)?;
+                w.write_str(strand, ">")
+            }
+        }
+    }
+
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
@@ -73,14 +123,6 @@ impl<'v> Protocol<'v> for Value {
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type Value>")
     }
 
     fn op_get<'a, 's>(
@@ -114,7 +156,7 @@ impl<'v> Protocol<'v> for Value {
                 strand.store(out, same == (tag == sym::EQ_METHOD));
                 Ok(())
             }
-            _ => recv_special_mcall(strand, &this, method, args, out).await,
+            _ => recv_special_mcall(strand, this, method, args, out).await,
         }
     }
 
@@ -142,6 +184,23 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Type";
+    const TYPE_OBJECT: bool = true;
+
+    /// The string form of a type is its qualified name, which only the type itself
+    /// knows.
+    fn op_display<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        match this.delegator() {
+            Some(delegator) => delegator.op_display(strand, w),
+            None => crate::fmt!(strand, w, "{}.{}", Self::MODULE, Self::NAME),
+        }
+    }
+
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: true,
@@ -157,14 +216,6 @@ impl<'v> Protocol<'v> for Type {
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type>")
     }
 
     /// A type object is called to construct its instances, so it is a `Func`
@@ -214,7 +265,7 @@ impl<'v> Protocol<'v> for Type {
                 }
             }
             sym::INIT_METHOD if this.delegator().is_none() => abstract_init(strand, &this, args),
-            _ => recv_special_mcall(strand, &this, method, args, out).await,
+            _ => recv_special_mcall(strand, this, method, args, out).await,
         }
     }
 
@@ -281,20 +332,16 @@ unsafe impl Collect for ArgAccType {
 }
 
 impl<'v> Protocol<'v> for Bool {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Bool";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Bool>")
     }
 
     async fn op_call<'a, 's>(
@@ -322,13 +369,8 @@ impl<'v> Protocol<'v> for Bool {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
+                ..Value,
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
-                Method(sym::REQ_METHOD),
-                Method(sym::NE_METHOD),
-                Method(sym::RNE_METHOD),
                 Method(sym::BAND_METHOD),
                 Method(sym::RBAND_METHOD),
                 Method(sym::BOR_METHOD),
@@ -337,7 +379,6 @@ impl<'v> Protocol<'v> for Bool {
                 Method(sym::RBXOR_METHOD),
                 Method(sym::BNOT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
             ],
         })
     }
@@ -385,6 +426,10 @@ impl<'v> Protocol<'v> for Bool {
 }
 
 impl<'v> Protocol<'v> for ArgAccType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArgAcc";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -401,17 +446,13 @@ impl<'v> Protocol<'v> for ArgAccType {
         supertype.eq(strand, &this).unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.ArgAcc>")
-    }
 }
 
 impl<'v> Protocol<'v> for NilType {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Nil";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -420,21 +461,13 @@ impl<'v> Protocol<'v> for NilType {
         strand.store(out, &strand.singletons().type_obj)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Nil>")
-    }
-
     // Final, so no class inherits these members. The lists stay empty until
     // inspection serves something besides inheritance.
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: &[],
         })
     }
@@ -456,6 +489,9 @@ impl gc::Annex for AdapterType {
 pub(crate) type AdapterTypeObj = gc::Imm<AdapterType>;
 
 impl<'v> Protocol<'v> for AdapterTypeObj {
+    const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -463,11 +499,11 @@ impl<'v> Protocol<'v> for AdapterTypeObj {
     ) {
         strand.store(out, &strand.singletons().type_obj);
     }
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type {}>", this.get().0)
+        crate::fmt!(strand, w, "{}", this.get().0)
     }
 }

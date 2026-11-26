@@ -1,0 +1,78 @@
+# A refutable pattern fails to match a value with no `(unpack)`, so it warns
+# and unpacks only the members that have one; the rest stay in the leftover.
+pub def arms value @ (Int | Array[Int])
+  let result = match value
+    # warning: `std.Int` is not unpackable, so this pattern never matches it
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   let result = match value
+    #    |                      ^^^^^
+    #    |
+    #    = help: test the type first, as in `Array(...)`, or match it in an earlier arm
+    (a _)
+      let _ = a
+      #       ^: flow std.Int
+      a
+    rest
+      let _ = rest
+      #       ^~~~: flow std.Array[std.Int] | std.Int
+      0
+  let _ = result
+  #       ^~~~~~: flow std.Int
+
+# Narrowing the scalars out first leaves nothing to warn of.
+pub def ordered value @ (Int | Array[Int])
+  match value
+    Int(n) => n
+    (a _) => a
+
+# A non-exhaustive `match` still gives `nil` for what no arm matched.
+pub def unmatched value @ (Int | Array[Int]) -> Int
+  match value
+    # error: `nil` does not fit the declared result `std.Int`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   match value
+    #    |   ^^^^^
+    # warning: `std.Int` is not unpackable, so this pattern never matches it
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   match value
+    #    |         ^^^^^
+    #    |
+    #    = help: test the type first, as in `Array(...)`, or match it in an earlier arm
+    (a _) => a
+
+pub def binding_else value @ (Int | (Int, Int)) -> Int
+  let a _b = value
+  # warning: `std.Int` is not unpackable, so this pattern never matches it
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let a _b = value
+  #    |              ^^^^^
+  #    |
+  #    = help: test the type first, as in `Array(...)`, or match it in an earlier arm
+  else return 0
+  let _ = a
+  #       ^: flow std.Int
+  a
+
+pub def optional_nil d @ Dict[Sym, (Array[Int] | nil)]
+  if let ?k: (_a = 1) = d
+    # warning: `nil` is not unpackable, so this pattern never matches it
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   if let ?k: (_a = 1) = d
+    #    |              ^^^^^^^^
+    #    |
+    #    = help: test the type first, as in `Array(...)`, or match it in an earlier arm
+    nil
+
+# An irrefutable pattern raises instead, so it stays an error.
+pub def irrefutable value @ (Int | (Int, Int))
+  let _a _b = value
+  # error: `(std.Int, std.Int) | std.Int` is not unpackable
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _a _b = value
+  #    |               ^^^^^

@@ -567,6 +567,9 @@ fn positional<'v, 'a, 's>(
 }
 
 impl<'v> Protocol<'v> for ViewObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayView";
+
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -788,6 +791,9 @@ impl<'v> Protocol<'v> for ViewObj<'v> {
 }
 
 impl<'v> Protocol<'v> for IterObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayViewIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -883,6 +889,9 @@ impl<'v> Protocol<'v> for IterObj<'v> {
 }
 
 impl<'v> Protocol<'v> for RestObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayViewRest";
+
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -1114,6 +1123,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayView";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1134,19 +1147,11 @@ impl<'v> Protocol<'v> for Type {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.ArrayView>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),

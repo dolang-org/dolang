@@ -692,7 +692,7 @@ macro_rules! call {
             #[allow(unused_unsafe)]
             let (strand, args) = unsafe { scope.enter(&mut inputs, &sig) };
             let out = $crate::value::Slot::from_output(&mut out);
-            $crate::value::Value::op_call(&rcvr, strand, args, out).await
+            $crate::value::Value::call(&rcvr, strand, args, out).await
         }
     };
     ($strand: expr, $rcvr: expr, $($rest: tt)+) => {
@@ -750,7 +750,7 @@ macro_rules! method {
             #[allow(unused_unsafe)]
             let (strand, args) = unsafe { scope.enter(&mut inputs, &sig) };
             let out = $crate::value::Slot::from_output(&mut out);
-            $crate::value::Value::op_mcall(&rcvr, strand, method, args, out).await
+            $crate::value::Value::method(&rcvr, strand, method, args, out).await
         }
     };
     ($strand: expr, $rcvr: expr, $method: expr, $($rest: tt)+) => {

@@ -20,7 +20,7 @@ use crate::{
 
 use super::{
     BoundMethod, iter,
-    protocol::{Inspect, Protocol, Recv, instance_mcall_fallback, type_mcall_fallback},
+    protocol::{Inspect, Protocol, Recv, type_mcall_fallback},
     range,
 };
 
@@ -106,6 +106,9 @@ impl<'v, 'a> GcObjPin<'v, 'a, BinObj> {
 }
 
 impl<'v> Protocol<'v> for BinObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Bin";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -545,7 +548,7 @@ impl<'v> Protocol<'v> for BinObj {
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -580,7 +583,7 @@ impl<'v> Protocol<'v> for BinObj {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -690,6 +693,9 @@ unsafe impl<'v> Collect for Split<'v> {
 }
 
 impl<'v> Protocol<'v> for Split<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "BinSplit";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -800,20 +806,16 @@ unsafe impl Collect for Class {
 }
 
 impl<'v> Protocol<'v> for Class {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Bin";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn fmt::Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Bin>")
     }
 
     async fn op_call<'a, 's>(
@@ -839,14 +841,11 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::PACK),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::STARTS_WITH),
                 Method(sym::WITHOUT_PREFIX),

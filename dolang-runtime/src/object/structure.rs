@@ -25,7 +25,7 @@ use super::{
     pack::{self, ArgItem},
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, is_universal_member, type_mcall_fallback,
+        type_mcall_fallback,
     },
     sym::SymObj,
 };
@@ -132,6 +132,9 @@ fn snapshot<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for Struct<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Struct";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -264,9 +267,6 @@ impl<'v> Protocol<'v> for Struct<'v> {
         field: Sym<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if is_universal_member(field) {
-            return instance_get_fallback(strand, &this, field, out);
-        }
         let borrow = this.borrow(strand)?;
         match borrow.position(field) {
             Some(index) => {
@@ -297,9 +297,6 @@ impl<'v> Protocol<'v> for Struct<'v> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if is_special_mcall(method.tag()) {
-            return instance_mcall_fallback(strand, &this, method, args, out);
-        }
         // A plain name calls its item
         with_slots!(strand, |mut slot| {
             {
@@ -373,20 +370,16 @@ unsafe impl Collect for Class {
 }
 
 impl<'v> Protocol<'v> for Class {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Struct";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Struct>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -402,15 +395,10 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::CONTAINS),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::GET_METHOD),
-                Method(sym::SET_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Method(sym::INDEX_METHOD),
                 Method(sym::ASSIGN_METHOD),
                 Method(sym::ITER_METHOD),

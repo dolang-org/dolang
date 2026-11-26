@@ -27,7 +27,7 @@ use super::{
     iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
     sym::SymObj,
     tuple,
@@ -185,7 +185,7 @@ pub(crate) fn debug_items<'v, 's>(
         if let Some(key) = key {
             crate::fmt!(strand, w, "{}: ", key.name())?;
         }
-        value.op_debug(strand, w)?;
+        value.debug(strand, w)?;
     }
     if braces {
         return crate::fmt!(strand, w, "}}");
@@ -207,7 +207,7 @@ pub(crate) fn hash_items<'v, 's>(
             strand.check_trap()?;
         }
         key.as_ref().map(|key| key.tag()).hash(hasher);
-        value.op_hash(strand, hasher)?;
+        value.hash(strand, hasher)?;
     }
     Ok(())
 }
@@ -555,20 +555,15 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "PackIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<pack iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -694,6 +689,9 @@ unsafe impl<'v> Collect for Rest<'v> {
 }
 
 impl<'v> Protocol<'v> for Rest<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "PackRest";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -719,14 +717,6 @@ impl<'v> Protocol<'v> for Rest<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         super::iter::iterable_mcall(strand, &this, method, args, out).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<pack rest>")
     }
 
     async fn op_unpack<'a, 's>(
@@ -804,6 +794,9 @@ impl<'v> Protocol<'v> for Rest<'v> {
 // ── Pack protocol ─────────────────────────────────────────────────
 
 impl<'v> Protocol<'v> for PackObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Pack";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1026,9 +1019,6 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                 strand,
                 "pack.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -1165,6 +1155,10 @@ unsafe impl Collect for Class {
 }
 
 impl<'v> Protocol<'v> for Class {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Pack";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1185,14 +1179,6 @@ impl<'v> Protocol<'v> for Class {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Pack>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -1204,13 +1190,10 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::GET),
                 Method(sym::WITH),
@@ -1310,6 +1293,7 @@ pub(crate) async fn source_items<'v, 's>(
         Slot::reborrow(&mut acc),
     );
     let mut sink = PackPairs { pack: &acc };
+    let _op = strand.start_op();
     source
         .op_spread(strand, SpreadContext::Pairs, &mut sink)
         .await

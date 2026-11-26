@@ -1869,7 +1869,7 @@ do -> R
 # [`RawFile`](fs.RawFile) with `buffer: false`. The default mode is `"r"`.
 #
 # With a block, passes it the file and closes the file when the block exits.
-pub def open path @ (Str | Path) ...options @ Value -> Value
+pub def open path@(Str | Path) ...options@Value -> Value
   ...
 
 # Reads the entire contents of a file in one call.

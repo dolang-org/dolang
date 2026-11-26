@@ -11,7 +11,7 @@ use crate::{
     error::{Error, Result},
     object::{
         num,
-        protocol::{instance_get_fallback, instance_mcall_fallback, is_special_mcall},
+        protocol::{instance_get_fallback, instance_mcall_fallback, is_value_special_mcall},
     },
     strand::Strand,
     sym::Sym,
@@ -77,6 +77,16 @@ impl Display for Prim {
 }
 
 impl Prim {
+    /// The name of this value's type in `std`, which names its native frames.
+    pub(crate) fn type_name(&self) -> &'static str {
+        match self {
+            Prim::Nil => "Nil",
+            Prim::Int(_) => "Int",
+            Prim::F64(_) => "Float",
+            Prim::Bool(_) => "Bool",
+        }
+    }
+
     pub(crate) fn op_get<'v, 'a, 's>(
         self,
         receiver: &'a Value<'v>,
@@ -98,12 +108,12 @@ impl Prim {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
+        if is_value_special_mcall(method.tag()) {
+            return instance_mcall_fallback(strand, self, method, args, out);
+        }
         match self {
             Prim::Int(value) => num::int_mcall(strand, self, value, method, args, out),
             Prim::F64(value) => num::float_mcall(strand, self, value, method, args, out),
-            Prim::Nil | Prim::Bool(_) if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, self, method, args, out)
-            }
             _ => Err(Error::type_error(strand, "method call not supported")),
         }
     }

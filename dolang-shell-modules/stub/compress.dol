@@ -148,7 +148,7 @@ do -> R
   func @ (Decompressor -> R)
 do -> R
 
-pub def decompress source @ (Str | Path | Io) ...options @ Value -> Value
+pub def decompress source@(Str | Path | Io) ...options@Value -> Value
   ...
 
 # Opens a compressing stream into `sink`.

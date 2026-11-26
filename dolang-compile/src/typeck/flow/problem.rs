@@ -111,6 +111,12 @@ pub(crate) enum Problem {
         span: Span,
         found: Shown,
     },
+    /// A refutable pattern unpacking a value whose type, or some members of it,
+    /// has no `(unpack)`: those values fail to match at run time
+    NeverUnpacks {
+        span: Span,
+        found: Shown,
+    },
     /// A value that doesn't fit a variable's annotation, or a function's declared
     /// result
     Annotation {
@@ -272,6 +278,7 @@ impl Report for Problem {
             | Problem::KeyedSpread { span, .. }
             | Problem::PositionalSpread { span, .. }
             | Problem::Impossible { span, .. }
+            | Problem::NeverUnpacks { span, .. }
             | Problem::Annotation { span, .. }
             | Problem::Cast { span, .. }
             | Problem::Assertion { span, .. }
@@ -299,7 +306,8 @@ impl Report for Problem {
             | Self::Assertion { .. }
             | Self::Unreachable { .. }
             | Self::ElseFallthrough { .. }
-            | Self::Unguaranteed { .. } => Severity::Warning,
+            | Self::Unguaranteed { .. }
+            | Self::NeverUnpacks { .. } => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -356,6 +364,10 @@ impl Report for Problem {
                 .map(|reason| (NoteKind::Info, reason.clone()))
                 .collect(),
             Problem::Unguaranteed { note, .. } => vec![(NoteKind::Info, note.clone())],
+            Problem::NeverUnpacks { .. } => vec![(
+                NoteKind::Help,
+                "test the type first, as in `Array(...)`, or match it in an earlier arm".to_owned(),
+            )],
             Problem::KeyedSpread { .. } => vec![(
                 NoteKind::Help,
                 "spread its `.iter()` for `(key, value)` pairs".to_owned(),
@@ -485,6 +497,12 @@ impl Report for Problem {
             }
             Problem::Impossible { found, .. } => {
                 write!(w, "{found} can never unpack as this pattern")
+            }
+            Problem::NeverUnpacks { found, .. } => {
+                write!(
+                    w,
+                    "{found} is not unpackable, so this pattern never matches it"
+                )
             }
             Problem::Unguaranteed {
                 found,

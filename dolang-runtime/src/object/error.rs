@@ -36,6 +36,7 @@ pub(crate) enum Boxed<'v> {
     Immutable,
     Concurrency(Option<Cow<'v, str>>),
     Type(Cow<'v, str>),
+    Shapeless(Cow<'v, str>),
     Value(Cow<'v, str>),
     Data(Cow<'v, str>),
     State(Cow<'v, str>),
@@ -67,6 +68,7 @@ impl<'v> Boxed<'v> {
             Immutable => ErrorKind::Immutable,
             Concurrency(_) => ErrorKind::Concurrency,
             Type(_) => ErrorKind::Type,
+            Shapeless(_) => ErrorKind::Shapeless,
             Value(_) => ErrorKind::Value,
             Data(_) => ErrorKind::Data,
             State(_) => ErrorKind::State,
@@ -102,6 +104,7 @@ impl<'v> Display for Boxed<'v> {
             Concurrency(None) => write!(f, "conflicting concurrent operation"),
             Concurrency(Some(msg)) => write!(f, "conflicting concurrent operation: {msg}"),
             Type(msg) => write!(f, "type error: {msg}"),
+            Shapeless(msg) => write!(f, "shape error: {msg}"),
             Value(msg) => write!(f, "value error: {msg}"),
             Data(msg) => write!(f, "data error: {msg}"),
             State(msg) => write!(f, "state error: {msg}"),
@@ -143,6 +146,9 @@ impl<'v> crate::gc::Annex for Boxed<'v> {
 pub(crate) type BoxedObj<'v> = crate::gc::Imm<dolang_util::alias::Box<Boxed<'v>>>;
 
 impl<'v> Protocol<'v> for BoxedObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Error";
+
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -186,20 +192,16 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Error";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Error>")
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
@@ -238,7 +240,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => abstract_init(strand, &this, args),
-            _ => recv_special_mcall(strand, &this, method, args, out).await,
+            _ => recv_special_mcall(strand, this, method, args, out).await,
         }
     }
 
@@ -269,6 +271,9 @@ impl crate::gc::Annex for VariantType {
 pub(crate) type VariantTypeObj = crate::gc::Imm<VariantType>;
 
 impl<'v> Protocol<'v> for VariantTypeObj {
+    const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -303,24 +308,19 @@ impl<'v> Protocol<'v> for VariantTypeObj {
         false
     }
 
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.{}>", type_name(this.get().0))
+        crate::fmt!(strand, w, "std.{}", type_name(this.get().0))
     }
 
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
             is_final: false,
-            members: members![
-                Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
-                Method(sym::FMT_METHOD),
-            ],
+            members: members![..Value, Method(sym::INIT_METHOD), Method(sym::FMT_METHOD),],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),
@@ -409,6 +409,11 @@ fn construct<'v, 's>(
             unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
             Error::type_error(strand, msg)
+        }
+        ErrorKind::Shapeless => {
+            unpack!(strand, args => msg);
+            let msg = expect_string(strand, &msg)?;
+            Error::shapeless(strand, msg)
         }
         ErrorKind::Value => {
             unpack!(strand, args => msg);
@@ -533,6 +538,7 @@ fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<
         ErrorKind::Value => &class.error_value,
         ErrorKind::Data => &class.error_data,
         ErrorKind::Shape => &class.error_shape,
+        ErrorKind::Shapeless => &class.error_shapeless,
         ErrorKind::MissingItem => &class.error_missing_item,
         ErrorKind::UnexpectedItem => &class.error_unexpected_item,
         ErrorKind::State => &class.error_state,
@@ -565,6 +571,7 @@ fn type_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Value => "ValueError",
         ErrorKind::Data => "DataError",
         ErrorKind::Shape => "ShapeError",
+        ErrorKind::Shapeless => "ShapelessError",
         ErrorKind::MissingItem => "MissingItemError",
         ErrorKind::UnexpectedItem => "UnexpectedItemError",
         ErrorKind::State => "StateError",

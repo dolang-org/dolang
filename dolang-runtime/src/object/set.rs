@@ -23,7 +23,7 @@ use super::{
     BoundMethod, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
 };
 
@@ -317,7 +317,7 @@ impl<'a, 'v, 's> Spread<'v, 's> for SetSpread<'a, 'v> {
         value: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
         let mut hasher = strand.vm().hasher();
-        value.op_hash(strand, &mut hasher)?;
+        value.hash(strand, &mut hasher)?;
         let hash = hasher.finish();
         let set = self
             .0
@@ -368,20 +368,15 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "SetIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<set iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -451,6 +446,9 @@ impl<'v> Protocol<'v> for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Set<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Set";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -475,7 +473,7 @@ impl<'v> Protocol<'v> for Set<'v> {
                 if !first {
                     crate::fmt!(strand, w, ", ")?;
                 }
-                bucket.as_ref().value.op_debug(strand, w)?;
+                bucket.as_ref().value.debug(strand, w)?;
                 first = false;
             }
         }
@@ -502,7 +500,7 @@ impl<'v> Protocol<'v> for Set<'v> {
         unsafe {
             for bucket in borrow.inner.iter() {
                 let mut elem_hasher = strand.vm().hasher();
-                bucket.as_ref().value.op_hash(strand, &mut elem_hasher)?;
+                bucket.as_ref().value.hash(strand, &mut elem_hasher)?;
                 digests.push(elem_hasher.finish());
             }
         }
@@ -590,7 +588,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::ADD => {
                 unpack!(strand, args => value);
                 let mut hasher = strand.vm().hasher();
-                value.op_hash(strand, &mut hasher)?;
+                value.hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let mut borrow = this.borrow_mut(strand)?;
                 borrow.insert(strand, value, hash)?;
@@ -599,7 +597,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::DELETE => {
                 unpack!(strand, args => value);
                 let mut hasher = strand.vm().hasher();
-                value.op_hash(strand, &mut hasher)?;
+                value.hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let deleted = {
                     let mut borrow = this.borrow_mut(strand)?;
@@ -626,7 +624,7 @@ impl<'v> Protocol<'v> for Set<'v> {
             sym::CONTAINS => {
                 unpack!(strand, args => value);
                 let mut hasher = strand.vm().hasher();
-                value.op_hash(strand, &mut hasher)?;
+                value.hash(strand, &mut hasher)?;
                 let hash = hasher.finish();
                 let contains = this.borrow(strand)?.contains(strand, &value, hash)?;
                 strand.store(out, contains);
@@ -764,9 +762,6 @@ impl<'v> Protocol<'v> for Set<'v> {
                 strand,
                 "set.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -825,6 +820,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Set";
+    const TYPE_OBJECT: bool = true;
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -864,14 +863,6 @@ impl<'v> Protocol<'v> for Type {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Set>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -883,13 +874,10 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
                 Method(sym::SPREAD_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::ADD),
                 Method(sym::DELETE),

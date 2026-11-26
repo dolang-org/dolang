@@ -27,7 +27,7 @@ def normalize_app app @ (Str | nil) -> Str
     throw std.RuntimeError "cache app name must not be empty"
   app
 
-def module_name path @ fs.Path name @ (Str | nil) -> Str
+def module_name path@fs.Path name@(Str | nil) -> Str
   if (name != nil)
     name
   else
@@ -50,7 +50,7 @@ def cache_root app @ (Str | nil) -> fs.Path
 def synthetic_module_name key @ Str -> Str
   "\$$key\$"
 
-def cache_usable cache @ fs.Path path @ fs.Path -> Bool
+def cache_usable cache@fs.Path path@fs.Path -> Bool
   (cache.exists() && path.metadata().modified < cache.metadata().modified)
 
 # Values a script reads as the fields of an imported module.
@@ -68,7 +68,7 @@ class Namespace
   def (get) self name @ Sym -> Value
     self.#values.get $name else: do throw std.FieldError $name
 
-  def (set) _self _name @ Sym _value @ Value
+  def (set) _self _name@Sym _value@Value
     throw std.ImmutableError()
 
 def normalize_imports imports @ BaseDict[Str | Sym, Value] -> Dict[Str, Value]

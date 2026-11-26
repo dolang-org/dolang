@@ -1,7 +1,5 @@
 use std::{collections::VecDeque, ops::ControlFlow};
 
-use crate::value::fmt::Format;
-
 use bitvec::bitbox;
 
 use crate::{
@@ -103,6 +101,9 @@ fn create_pairs<'v>(strand: &mut Strand<'v, '_>, fields: &FieldProxy<'v>, out: S
 }
 
 impl<'v> Protocol<'v> for FieldProxy<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "FieldProxy";
+
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -289,14 +290,6 @@ impl<'v> Protocol<'v> for FieldProxy<'v> {
         strand.store(out, TypeObject::Iterable)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<fields>")
-    }
-
     async fn op_unpack<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -455,6 +448,9 @@ unsafe impl<'v> Collect for FieldPairs<'v> {
 }
 
 impl<'v> Protocol<'v> for FieldPairs<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "FieldPairs";
+
     fn op_get<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -489,14 +485,6 @@ impl<'v> Protocol<'v> for FieldPairs<'v> {
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, TypeObject::Iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<field iterator>")
     }
 
     async fn op_iter<'a, 's>(

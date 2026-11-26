@@ -27,7 +27,7 @@ class TestCase
   pub field info @ TestInfo
   pub field func @ TestFn[{}]
 
-  def (init) self info @ TestInfo func @ TestFn[{}]
+  def (init) self info@TestInfo func@TestFn[{}]
     self.info = info
     self.func = func
 
@@ -124,7 +124,7 @@ pub class Tagged[T]
   # Tags contributed to the cases that select the value.
   pub field tags @ Tuple[*Str]
 
-  def (init) self value @ T tags @ Tuple[*Str]
+  def (init) self value@T tags@Tuple[*Str]
     if (type value Tagged)
       throw std.TypeError "tagged: value is already tagged"
     self.value = value
@@ -159,7 +159,7 @@ do -> Tagged[T]
   Tagged $value $(check_tags "tagged" values)
 
 # Checks that every tag is a string, which the caller's types may not ensure.
-def check_tags who @ Str tags @ Iterable[Value] -> Tuple[*Str]
+def check_tags who@Str tags@Iterable[Value] -> Tuple[*Str]
   let tag_values @ Array[Str] = []
   for tag = tags
     if !(type tag Str)
@@ -240,7 +240,7 @@ class ModuleCompileError: std.RuntimeError
   pub field path @ Path
   pub field output @ compile.Unit
 
-  def (init) self path @ Path output @ compile.Unit
+  def (init) self path@Path output@compile.Unit
     self.path = path
     self.output = output
     std.RuntimeError.(init) $self "compilation failed: $path"
@@ -283,7 +283,7 @@ class ModuleResult
   pub field output @ (Str | nil) = nil
   pub field cases @ Array[TestCase] = []
 
-  def (init) self path @ Path status @ ModuleStatus
+  def (init) self path@Path status@ModuleStatus
     self.path = path
     self.status = status
 
@@ -305,7 +305,7 @@ class EventWriter
       for line = recv
         sink.put $line
 
-  pub def emit self name @ Str record @ Json
+  pub def emit self name@Str record@Json
     self.#send.put "$(json.encode {event: name, ...record})\n"
 
   pub def close self
@@ -316,7 +316,11 @@ class EventWriter
 
 # Whether a diagnostic is shown at the levels: at or above `diagnose`, or
 # failing the compile
-def shown diag @ compile.Diagnostic diagnose @ compile.Severity fail @ compile.Severity -> Bool
+def shown
+  diag @ compile.Diagnostic
+  diagnose @ compile.Severity
+  fail @ compile.Severity
+do -> Bool
   (diag.at_least(diagnose) || diag.at_least(fail))
 
 # Prints a module's compiler diagnostics, indented under its report line.
@@ -326,7 +330,11 @@ def print_diagnostics diagnostics @ Iterable[compile.Diagnostic]
 
 # Prints a failure, skip or ignore in the run report's style, with the
 # compiler diagnostics shown at the levels.
-def print_failure failure @ Failure diagnose @ compile.Severity fail @ compile.Severity
+def print_failure
+  failure @ Failure
+  diagnose @ compile.Severity
+  fail @ compile.Severity
+do
   let e = failure.error
   let module = module_name $failure.path
   let test = failure.test
@@ -401,7 +409,7 @@ class Harness
   def matches_filter self case @ TestCase -> Bool
     self.#filter $case.info
 
-  def emit self name @ Str record @ Json
+  def emit self name@Str record@Json
     let events = self.#events
     if events
       events.emit $name $record
@@ -424,7 +432,7 @@ class Harness
     self.#errors.push $Failure(error, backtrace, path, test, output)
 
   # Runs `func`, with `output` in place of the caller's output when redirecting.
-  def with_capture[R, O] self output @ BinBuf func @ ((>(O | BinBuf)) -> R) >O -> R
+  def with_capture[R, O] self output@BinBuf func@((>(O | BinBuf)) -> R) >O -> R
     if !self.#capture
       return func()
     let console = term.IoConsole $output can_style: $!self.#plain
@@ -460,7 +468,7 @@ class Harness
       self.#record_error $error $backtrace $case.info.module $case.info.name $captured
     self.#emit test-end $(test_end_record case outcome error backtrace captured duration)
 
-  def run_module self path @ Path cases @ Array[TestCase] >Sink[Value]
+  def run_module self path@Path cases@Array[TestCase] >Sink[Value]
     progress.show message: (module_name path) icon: ▶ total: $cases.len do |w|
       strand.fork
         for case = cases
@@ -616,12 +624,8 @@ do -> Json
       if (backtrace != nil)
         for frame = backtrace
           frames.push $(frame_record frame)
-      # A type's string form is `<type module.Name>`.
-      let type_name = str (type error)
-      if (type_name.starts_with "<type " && type_name.ends_with ">")
-        type_name = type_name[6..type_name.len - 1]
       let details @ Json = $
-        type: $type_name
+        type: $(str (type error))
         rendered: $(str (shell.render_error error backtrace: backtrace))
         backtrace: $frames
       if (type error Assert)
@@ -645,7 +649,7 @@ do -> Json
     record[:output:] = output
   record
 
-def diagnostic_record diag @ compile.Diagnostic path @ Path -> Json
+def diagnostic_record diag@compile.Diagnostic path@Path -> Json
   let span = diag.span.span
   let severity = match diag.severity
     :ERROR: => "error"
@@ -691,7 +695,11 @@ def module_record result @ ModuleResult -> Json
       _ => nil
   record
 
-def print_listing results @ Array[ModuleResult] diagnose @ compile.Severity fail @ compile.Severity
+def print_listing
+  results @ Array[ModuleResult]
+  diagnose @ compile.Severity
+  fail @ compile.Severity
+do
   let tests = 0
   let modules = 0
   for result = results
@@ -800,7 +808,7 @@ do -> Value
   register $name $tag_values $func
 
 # Registers each case of a test function, returning the function.
-def register name @ (Str | nil) tags @ Tuple[*Str] func @ TestFn[{}] -> TestFn[{}]
+def register name@(Str | nil) tags@Tuple[*Str] func@TestFn[{}] -> TestFn[{}]
   let test_def = to_test_def $func
   let base = (name || test_def.base)
   for case = test_def.cases
@@ -932,7 +940,7 @@ pub class Assert: std.RuntimeError
   # assertion doesn't compare two values.
   pub field expected @ (Str | nil) = nil
 
-  def (init) self message @ (Str | nil) :actual @ Str = nil :expected @ Str = nil
+  def (init) self message@(Str | nil) :actual@Str = nil :expected@Str = nil
     std.RuntimeError.(init) $self
       if (message != nil)
         "assertion failed: $message"

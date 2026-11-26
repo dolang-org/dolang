@@ -18,7 +18,11 @@ do -> Bin
 
 # Edits Do input with syntax highlighting and multiline validation.
 pub class Editor
-  pub def (init) self history_path @ (Str | fs.Path | nil) :prelude @ compiler.Prelude = ...
+  pub def (init)
+    self
+    history_path @ (Str | fs.Path | nil)
+    :prelude @ compiler.Prelude = ...
+  do
     ...
 
   # Returns input, EOF, or an interrupted prompt.

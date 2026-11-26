@@ -296,10 +296,10 @@ def iterator_spreads_are_positional()
   assert_eq $found.len 2
   assert_eq (str found[0]) "a"
   assert_eq (str found[1]) "b"
-  assert_throws $std.UnsupportedError do
+  assert_throws $std.ShapelessError do
     let _ _ = words.find "a"
   let matches = words.find "a b"
-  assert_throws $std.UnsupportedError do
+  assert_throws $std.ShapelessError do
     let ..._rest = matches
   let matched = matches.next()
   assert_eq (str matched) "a"

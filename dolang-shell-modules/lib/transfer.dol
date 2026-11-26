@@ -224,7 +224,7 @@ def file_size path @ Path -> (Int | nil)
 # The resume offset for a retained partial, or `nil` to start over. The actual
 # size of the sidecar is authoritative; metadata only says whether the bytes
 # can be trusted and what the whole representation is expected to look like.
-def partial_offset part @ Path metadata @ Partial -> (Int | nil)
+def partial_offset part@Path metadata@Partial -> (Int | nil)
   let size = (file_size part)
   if (size == nil || size == 0)
     return nil
@@ -1213,7 +1213,7 @@ pub class ArchiveError: std.RuntimeError
   # The decompressor's error message.
   pub field detail @ (Str | nil) = nil
 
-  def (init) self source @ Path detail @ Str = nil
+  def (init) self source@Path detail@Str = nil
     self.source = source
     self.detail = detail
     std.RuntimeError.(init) $self

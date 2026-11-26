@@ -263,20 +263,15 @@ impl<'v> crate::gc::Annex for Iter<'v> {
 pub(crate) type IterObj<'v> = crate::gc::Imm<Iter<'v>>;
 
 impl<'v> Protocol<'v> for IterObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "FlagsIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<flags iterator>")
     }
 
     async fn op_iter<'a, 's>(

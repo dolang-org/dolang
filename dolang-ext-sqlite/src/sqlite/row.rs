@@ -51,14 +51,6 @@ impl<'v> Object<'v> for Rows {
         Ok(())
     }
 
-    async fn unpack<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        _unpack: Unpack<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking a row"))
-    }
-
     async fn spread<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -793,14 +785,6 @@ impl<'v> Object<'v> for RowRestIter {
     ) -> Result<'v, 's, ()> {
         strand.store(out, this);
         Ok(())
-    }
-
-    async fn unpack<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        _unpack: Unpack<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking a row"))
     }
 
     async fn spread<'a, 's>(

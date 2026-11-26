@@ -24,7 +24,7 @@ use crate::{
 
 use super::{
     BoundMethod, iter,
-    protocol::{Inspect, Protocol, Recv, instance_mcall_fallback, type_mcall_fallback},
+    protocol::{Inspect, Protocol, Recv, type_mcall_fallback},
     range,
 };
 
@@ -90,6 +90,9 @@ impl<'v, 'a> GcObjPin<'v, 'a, StrObj> {
 }
 
 impl<'v> Protocol<'v> for StrObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Str";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -361,11 +364,11 @@ impl<'v> Protocol<'v> for StrObj {
                     }
                     let mut acc = StrEmbryo::new();
                     if input.next(strand, &mut value).await? {
-                        value.op_display(strand, &mut acc)?;
+                        value.display(strand, &mut acc)?;
                     }
                     while input.next(strand, &mut value).await? {
                         acc.extend(strand, this.str());
-                        value.op_display(strand, &mut acc)?;
+                        value.display(strand, &mut acc)?;
                         strand.check_trap_gc()?;
                     }
                     acc.finish(strand, out);
@@ -505,7 +508,7 @@ impl<'v> Protocol<'v> for StrObj {
                 strand,
                 "Str.len is a field, not a method",
             )),
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -546,7 +549,7 @@ impl<'v> Protocol<'v> for StrObj {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -650,6 +653,9 @@ unsafe impl<'v> Collect for UnicodeIter<'v> {
 }
 
 impl<'v> Protocol<'v> for UnicodeIter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "UnicodeIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -657,14 +663,6 @@ impl<'v> Protocol<'v> for UnicodeIter<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<str unicode iter>")
     }
 
     fn op_type<'a, 's>(
@@ -845,6 +843,9 @@ unsafe impl<'v> Collect for Split<'v> {
 }
 
 impl<'v> Protocol<'v> for Split<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "StrSplit";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -955,20 +956,16 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Str";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Str>")
     }
 
     async fn op_call<'a, 's>(
@@ -1004,14 +1001,11 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::SCALARS),
                 Method(sym::SCALAR_BOUNDS),

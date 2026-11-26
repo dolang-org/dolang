@@ -216,7 +216,7 @@ pub class Key
     func @ (Key -> R)
   do -> R
 
-  pub def create self subpath @ Str ...options @ Value -> Value
+  pub def create self subpath@Str ...options@Value -> Value
     ...
 
   # Deletes a subkey.
@@ -393,7 +393,7 @@ pub class Key
     func @ (Key -> R)
   do -> R
 
-  pub def open self subpath @ Str ...options @ Value -> Value
+  pub def open self subpath@Str ...options@Value -> Value
     ...
 
   # Reads a registry link without following it.
@@ -629,5 +629,5 @@ do -> Key
   func @ (Key -> R)
 do -> R
 
-pub def open root @ RegistryRoot ...options @ Value -> Value
+pub def open root@RegistryRoot ...options@Value -> Value
   ...

@@ -1152,7 +1152,7 @@ impl<'v> Vm<'v> {
                         let matched =
                             match value.op_unpack(strand, ProtoUnpack::new(sig, slice)).await {
                                 Ok(()) => true,
-                                Err(e) if e.is_unpack_mismatch() => false,
+                                Err(e) if e.is_shape_error() => false,
                                 Err(e) => return Err(e),
                             };
                         if !matched {

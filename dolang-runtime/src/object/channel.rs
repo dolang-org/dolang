@@ -6,8 +6,6 @@ use std::{
     task::{self, Poll, Waker},
 };
 
-use crate::value::fmt::Format;
-
 use crate::{
     arg::Args,
     error::{Error, Result},
@@ -212,20 +210,15 @@ impl<'v> Drop for Receiver<'v> {
 }
 
 impl<'v> Protocol<'v> for Receiver<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Receiver";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<channel recv>")
     }
 
     fn op_next<'a, 's>(
@@ -331,20 +324,15 @@ impl<'v> gc::Annex for Sender<'v> {
 pub(crate) type SenderObj<'v> = gc::Imm<Sender<'v>>;
 
 impl<'v> Protocol<'v> for SenderObj<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Sender";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().output_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<channel send>")
     }
 
     fn op_put<'a, 's>(

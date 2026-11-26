@@ -467,7 +467,7 @@ async fn build<'v, 's>(
                 .is_some_and(|inspect| inspect.is_final),
         };
         if is_final {
-            let name = sup.to_debug(strand)?;
+            let name = sup.to_string(strand)?;
             return Err(Error::type_error(
                 strand,
                 format!("cannot inherit from final type {name}"),
@@ -779,6 +779,8 @@ impl<'v> Annex for Accessor<'v> {
 pub(crate) type AccessorObj<'v> = gc::Imm<Accessor<'v>>;
 
 impl<'v> Protocol<'v> for AccessorObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -817,6 +819,9 @@ impl gc::Annex for AccessorType {
 pub(crate) type AccessorTypeObj = gc::Imm<AccessorType>;
 
 impl<'v> Protocol<'v> for AccessorTypeObj {
+    const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -834,12 +839,12 @@ impl<'v> Protocol<'v> for AccessorTypeObj {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.{}>", this.get().0.name())
+        crate::fmt!(strand, w, "std.{}", this.get().0.name())
     }
 
     async fn op_call<'a, 's>(
@@ -1323,6 +1328,9 @@ impl<'v> ClassObject<'v> {
 }
 
 impl<'v> Protocol<'v> for ClassObject<'v> {
+    const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
+
     fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         let annex = this.annex();
         Some(Inspect {
@@ -1341,16 +1349,16 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
         ClassTypeProxy::create(strand, &this, out)
     }
 
-    fn op_debug<'a, 's>(
+    fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         let this = this.annex();
         if let Some(module_name) = &this.module_name {
-            crate::fmt!(strand, w, "<type {module_name}.{}>", this.name)
+            crate::fmt!(strand, w, "{module_name}.{}", this.name)
         } else {
-            crate::fmt!(strand, w, "<type {}>", this.name)
+            crate::fmt!(strand, w, "{}", this.name)
         }
     }
 
@@ -1667,13 +1675,13 @@ impl<'v> Protocol<'v> for ClassObject<'v> {
                     }
                     Some(ClassTypeEntry::Delegate(type_obj, _)) => {
                         let delegator_obj = this.clone();
-                        return with_slots!(strand, |mut ty, mut delegator| {
+                        with_slots!(strand, |mut ty, mut delegator| {
                             strand.store(Slot::reborrow(&mut ty), type_obj);
                             strand.store(Slot::reborrow(&mut delegator), &delegator_obj);
                             Delegated::new(&*ty, &delegator)
                                 .op_mcall(strand, method, args, out)
                                 .await
-                        });
+                        })
                     }
                     None => Err(Error::field(strand, method)),
                 }
@@ -1841,6 +1849,9 @@ impl<'v> gc::Annex for ClassTypeProxy<'v> {
 pub(crate) type ClassTypeProxyObj<'v> = gc::Imm<ClassTypeProxy<'v>>;
 
 impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+    const SPECIAL_MCALL: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1903,6 +1914,15 @@ impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
         } else {
             crate::fmt!(strand, w, "<type of {}>", class.name)
         }
+    }
+
+    /// A metatype has no name of its own, so it displays as its debug form.
+    fn op_display<'a, 's>(
+        this: Recv<'v, 'a, Self>,
+        strand: &'a mut Strand<'v, 's>,
+        w: &mut dyn Format<'v>,
+    ) -> Result<'v, 's, ()> {
+        Self::op_debug(this, strand, w)
     }
 
     /// Class-level methods and protocol accessors are unbound. Class fields
@@ -2208,14 +2228,24 @@ fn class_sync_binary_op_entry<'v, 'a, 's>(
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             with_slots!(strand, |mut delegator| {
                 strand.store(Slot::reborrow(&mut delegator), &this);
-                let native = Delegated::new(native, &delegator);
-                class_dispatch_binary_op(native, strand, method_sym, other, out)
+                class_dispatch_binary_op(
+                    Delegated::new(native, &delegator),
+                    strand,
+                    method_sym,
+                    other,
+                    out,
+                )
             })
         }
         ClassEntry::Abstract(type_obj, _) => with_slots!(strand, |mut delegator| {
             strand.store(Slot::reborrow(&mut delegator), &this);
-            let abstract_type = Delegated::new(type_obj, &delegator);
-            class_dispatch_binary_op(abstract_type, strand, method_sym, other, out)
+            class_dispatch_binary_op(
+                Delegated::new(type_obj, &delegator),
+                strand,
+                method_sym,
+                other,
+                out,
+            )
         }),
         _ => Err(Error::runtime(
             strand,
@@ -2264,11 +2294,13 @@ fn class_sync_reverse_comparison<'v, 'a, 's>(
             .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
         return with_slots!(strand, |mut delegator| {
             strand.store(Slot::reborrow(&mut delegator), &this);
-            let native = Delegated::new(native, &delegator);
-            if inclusive {
-                native.op_gte(strand, other, out)
-            } else {
-                native.op_gt(strand, other, out)
+            {
+                let native = Delegated::new(native, &delegator);
+                if inclusive {
+                    native.op_gte(strand, other, out)
+                } else {
+                    native.op_gt(strand, other, out)
+                }
             }
         });
     }
@@ -2299,11 +2331,13 @@ fn class_sync_unary_op<'v, 'a, 's>(
                 .ok_or_else(|| Error::runtime(strand, "native slot uninitialized"))?;
             with_slots!(strand, |mut delegator| {
                 strand.store(Slot::reborrow(&mut delegator), &this);
-                let native = Delegated::new(native, &delegator);
-                match method_sym {
-                    sym::NEG_METHOD => native.op_neg(strand, out),
-                    sym::BNOT_METHOD => native.op_bnot(strand, out),
-                    _ => unreachable!(),
+                {
+                    let native = Delegated::new(native, &delegator);
+                    match method_sym {
+                        sym::NEG_METHOD => native.op_neg(strand, out),
+                        sym::BNOT_METHOD => native.op_bnot(strand, out),
+                        _ => unreachable!(),
+                    }
                 }
             })
         }
@@ -2345,6 +2379,9 @@ fn default_fmt<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for ClassInstance<'v> {
+    const NATIVE_FRAMES: bool = false;
+    const SPECIAL_MCALL: bool = false;
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -2802,7 +2839,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .await
                 })
             }
-            _ => Err(Error::unsupported(strand, "unpacking")),
+            _ => Err(Error::cannot_unpack(strand, &this)),
         }
     }
 

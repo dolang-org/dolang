@@ -16,7 +16,7 @@ use crate::{
     vm::{AllocExt, Vm},
 };
 
-use super::protocol::{GcObj, Inspect, Protocol, Recv};
+use super::protocol::{GcObj, Inspect, Protocol, Recv, members};
 
 pub(crate) struct SymData {
     pub(crate) tag: Tag,
@@ -49,6 +49,9 @@ impl<'v> GcObj<'v, SymObj> {
 }
 
 impl<'v> Protocol<'v> for SymObj {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Sym";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -136,6 +139,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Sym";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -144,21 +151,13 @@ impl<'v> Protocol<'v> for Type {
         strand.store(out, &strand.singletons().type_obj)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Sym>")
-    }
-
     // Final, so no class inherits these members. The lists stay empty until
     // inspection serves something besides inheritance.
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: &[],
         })
     }

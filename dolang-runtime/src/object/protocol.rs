@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     hash::{DefaultHasher, Hasher},
     marker::PhantomData,
     ptr::{self, NonNull},
@@ -9,7 +10,8 @@ use dolang_bytecode::{Rest, Variadic};
 
 use crate::{
     arg::Args,
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
+    frame::Native,
     gc::{
         self, Boxable, Boxed, Collect,
         arena::{self, Arena, Upcast},
@@ -64,7 +66,24 @@ impl<'v, 'a> Member<'v, 'a> {
     }
 }
 
+/// A static member list. A leading `..Value` includes the members every value has,
+/// which a concrete type implements itself.
 macro_rules! members {
+    (..Value $(, $($rest:tt)*)?) => {
+        $crate::object::protocol::members![
+            Method($crate::sym::HASH_METHOD),
+            Method($crate::sym::EQ_METHOD),
+            Method($crate::sym::REQ_METHOD),
+            Method($crate::sym::NE_METHOD),
+            Method($crate::sym::RNE_METHOD),
+            Method($crate::sym::STR_METHOD),
+            Method($crate::sym::DBG_METHOD),
+            Method($crate::sym::VERBATIM_METHOD),
+            Method($crate::sym::GET_METHOD),
+            Method($crate::sym::SET_METHOD),
+            $($($rest)*)?
+        ]
+    };
     ($($kind:ident($tag:expr)),* $(,)?) => {{
         const MEMBERS: &[$crate::object::protocol::Member<'static, 'static>] = &[
             $($crate::object::protocol::Member::new(
@@ -108,6 +127,33 @@ pub trait Spread<'v, 's> {
 }
 
 pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
+    /// Module of the type named by [`NAME`](Self::NAME).
+    const MODULE: &'v str = "";
+    /// Name of the type the default [`op_display`](Self::op_display) and
+    /// [`op_debug`](Self::op_debug) print. A type object's impl names the type itself,
+    /// as `std.Int`; an instance's impl names the type it prints as, which may differ
+    /// from its [`op_type`](Self::op_type). It also names the impl's native frames, so
+    /// an impl leaves it empty only if it overrides both and turns
+    /// [`NATIVE_FRAMES`](Self::NATIVE_FRAMES) off.
+    const NAME: &'v str = "";
+    /// Whether the vtbl glue pushes a native frame named `MODULE.NAME` around an
+    /// operation that is the first native step of a logical operation, delegated or
+    /// not (see [`Strand::start_op`]). An impl whose operations run Do code, which the
+    /// interpreter frames, or that frames itself turns it off. An impl with frames on
+    /// must set [`NAME`](Self::NAME).
+    const NATIVE_FRAMES: bool = true;
+    /// Whether this impl is a type object, whose special methods called by name take
+    /// the instance as their first argument; see [`type_mcall_fallback`]. It also
+    /// selects the type-object forms of the default [`op_display`](Self::op_display)
+    /// and [`op_debug`](Self::op_debug).
+    const TYPE_OBJECT: bool = false;
+    /// Whether the vtbl glue dispatches a special method called by name, such as
+    /// `x.(get) :f:`, straight to the matching operation without calling
+    /// [`op_mcall`](Self::op_mcall), and binds a member every value has without
+    /// calling [`op_get`](Self::op_get). An impl that resolves some special names
+    /// itself turns it off and calls [`recv_special_mcall`] for the rest.
+    const SPECIAL_MCALL: bool = !Self::TYPE_OBJECT;
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -125,7 +171,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, &this, method, args, out).await;
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
         with_slots!(strand, |mut func| {
             Self::op_get(this, strand, method, Slot::reborrow(&mut func))?;
@@ -182,19 +228,37 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         Self::op_display(this, strand, w)
     }
 
+    /// A type object displays as its qualified name, and anything else as its debug
+    /// form.
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
-        Self::op_debug(this, strand, w)
+        if displays_as_type(strand, &this) {
+            debug_assert!(!Self::NAME.is_empty(), "type object without a name");
+            crate::fmt!(strand, w, "{}.{}", Self::MODULE, Self::NAME)
+        } else {
+            Self::op_debug(this, strand, w)
+        }
     }
 
+    /// A type object debugs as its display form in `<type …>`, and anything else as
+    /// `<MODULE.NAME>`.
     fn op_debug<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()>;
+    ) -> Result<'v, 's, ()> {
+        if displays_as_type(strand, &this) {
+            w.write_str(strand, "<type ")?;
+            Self::op_display(this, strand, w)?;
+            w.write_str(strand, ">")
+        } else {
+            debug_assert!(!Self::NAME.is_empty(), "object without a debug form");
+            crate::fmt!(strand, w, "<{}.{}>", Self::MODULE, Self::NAME)
+        }
+    }
 
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -548,12 +612,16 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         Err(Error::type_error(strand, "index assignment not supported"))
     }
 
+    /// The default hash is of identity: the delegator's, if there is one.
     fn op_hash<'a, 's>(
         this: Recv<'v, 'a, Self>,
         _strand: &'a mut Strand<'v, 's>,
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
-        ptr::hash(gc::Pin::into_raw(this.receiver).as_ptr(), hasher);
+        match this.delegator() {
+            Some(delegator) => delegator.repr_hash(hasher),
+            None => ptr::hash(gc::Pin::into_raw(this.receiver).as_ptr(), hasher),
+        }
         Ok(())
     }
 
@@ -614,7 +682,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &'a mut Strand<'v, 's>,
         unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking"))
+        Err(Error::cannot_unpack(strand, &this))
     }
 }
 
@@ -1327,6 +1395,12 @@ pub(crate) struct Vtbl<'v> {
 
 impl<'v> Vtbl<'v> {
     pub(crate) fn new<T: ?Sized + Boxable<Header> + Protocol<'v>>() -> Self {
+        const {
+            assert!(
+                !T::NATIVE_FRAMES || !T::NAME.is_empty(),
+                "a `Protocol` impl with native frames on must set `NAME`"
+            )
+        };
         Self {
             base: *Boxed::<Header, T>::vtbl(),
             phantom: PhantomData,
@@ -1753,6 +1827,51 @@ impl<'v, T: ?Sized + Protocol<'v>> Input<'v> for &GcObj<'v, T> {
     }
 }
 
+/// Run `$body` with `$strand` rebound to `T`'s native frame for `$method`, if the frame
+/// links: `T` leaves [`Protocol::NATIVE_FRAMES`] on and the operation is the first native
+/// step of a logical operation (see [`Strand::start_op`]).  Otherwise `$body` runs in the
+/// caller's frame, one call level deeper for a type with frames.  `owning` copies the
+/// method name into an error's backtrace, for a name that lives only as long as the call.
+macro_rules! glue_frame {
+    ($T:ident, $this:ident, $strand:ident, $method:expr, $body:expr $(,)?) => {
+        glue_frame!(@finish finish, $T, $this, $strand, $method, $body)
+    };
+    (owning $T:ident, $this:ident, $strand:ident, $method:expr, $body:expr $(,)?) => {
+        glue_frame!(@finish finish_owning_method, $T, $this, $strand, $method, $body)
+    };
+    (@finish $finish:ident, $T:ident, $this:ident, $strand:ident, $method:expr, $body:expr) => {{
+        if $T::NATIVE_FRAMES && $strand.links_frame() {
+            let frame = Native {
+                module: Cow::Borrowed($T::MODULE),
+                receiver: Cow::Borrowed($T::NAME),
+                method: $method,
+                parent: Some($strand.fp),
+            };
+            // SAFETY: the scope is a local of this block that nothing can move or forget
+            #[allow(unused_unsafe)]
+            let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
+            let $strand = &mut *scope;
+            let res = $body;
+            scope.$finish(res)
+        } else if $T::NATIVE_FRAMES {
+            let _depth = $strand.inner.push_call_depth()?;
+            $body
+        } else {
+            $body
+        }
+    }};
+}
+
+/// The name of `method` as a frame's method, for `glue_frame!` with `owning`.
+///
+/// # Safety
+///
+/// The name must not outlive the call that holds `method`.
+pub(crate) unsafe fn frame_method<'v>(method: Sym<'v, '_>, vm: &Vm<'v>) -> &'v str {
+    // SAFETY: the caller keeps the name within the call, which holds `method`
+    unsafe { &*ptr::from_ref(method.as_str(vm)) }
+}
+
 #[derive(Clone, Copy)]
 struct ErasedRecv<'v, 'a> {
     header: NonNull<Header>,
@@ -1792,7 +1911,9 @@ fn op_fill_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     native: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_fill(Recv::from_erased(this), strand, type_obj, native) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(fill)")), unsafe {
+        T::op_fill(Recv::from_erased(this), strand, type_obj, native)
+    })
 }
 
 fn op_provide_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1800,7 +1921,13 @@ fn op_provide_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     request: &mut Request<'v, 's, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_provide(Recv::from_erased(this), request) }
+    let (strand, answer) = request.parts();
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(provide)")), unsafe {
+        T::op_provide(
+            Recv::from_erased(this),
+            &mut Request::new(strand, &mut *answer),
+        )
+    })
 }
 
 fn op_call_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1812,7 +1939,13 @@ fn op_call_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_call(Recv::from_erased(this), strand, args, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                None,
+                T::op_call(Recv::from_erased(this), strand, args, out).await
+            )
         })
     }
 }
@@ -1827,7 +1960,16 @@ fn op_mcall_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_mcall(Recv::from_erased(this), strand, method, args, out).await
+            // SAFETY: the frame lives within the call, and `owning` copies the name out
+            let name = frame_method(method, strand.vm());
+            glue_frame!(owning T, this, strand, Some(Cow::Borrowed(name)), {
+                let this = Recv::from_erased(this);
+                if T::SPECIAL_MCALL && is_special_mcall(method.tag()) {
+                    special_mcall_direct(this, strand, method, args, out).await
+                } else {
+                    T::op_mcall(this, strand, method, args, out).await
+                }
+            })
         })
     }
 }
@@ -1839,14 +1981,19 @@ fn op_convert_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     w: &mut dyn Format<'v>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        FmtOp::Verbatim => "(verbatim)",
+        FmtOp::Display => "(str)",
+        FmtOp::Debug => "(dbg)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             FmtOp::Verbatim => T::op_verbatim(this, strand, w),
             FmtOp::Display => T::op_display(this, strand, w),
             FmtOp::Debug => T::op_debug(this, strand, w),
         }
-    }
+    })
 }
 
 fn op_fmt_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1856,7 +2003,9 @@ fn op_fmt_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     w: &mut dyn Format<'v>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_fmt(Recv::from_erased(this), strand, spec, w) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(fmt)")), unsafe {
+        T::op_fmt(Recv::from_erased(this), strand, spec, w)
+    })
 }
 
 fn to_bool_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1864,7 +2013,9 @@ fn to_bool_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     strand: &'a mut Strand<'v, 's>,
     _: &'a &'v (),
 ) -> Result<'v, 's, bool> {
-    unsafe { T::op_bool(Recv::from_erased(this), strand) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(bool)")), unsafe {
+        T::op_bool(Recv::from_erased(this), strand)
+    })
 }
 
 fn op_unary_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1874,13 +2025,17 @@ fn op_unary_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        UnaryOp::Neg => "(neg)",
+        UnaryOp::Bnot => "(bnot)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             UnaryOp::Neg => T::op_neg(this, strand, out),
             UnaryOp::Bnot => T::op_bnot(this, strand, out),
         }
-    }
+    })
 }
 
 fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1891,7 +2046,35 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        BinOp::Eq => "(eq)",
+        BinOp::Req => "(req)",
+        BinOp::Ne => "(ne)",
+        BinOp::Rne => "(rne)",
+        BinOp::Band => "(band)",
+        BinOp::Rband => "(rband)",
+        BinOp::Bor => "(bor)",
+        BinOp::Rbor => "(rbor)",
+        BinOp::Bxor => "(bxor)",
+        BinOp::Rbxor => "(rbxor)",
+        BinOp::Shl => "(shl)",
+        BinOp::Rshl => "(rshl)",
+        BinOp::Shr => "(shr)",
+        BinOp::Rshr => "(rshr)",
+        BinOp::Add => "(add)",
+        BinOp::Radd => "(radd)",
+        BinOp::Sub => "(sub)",
+        BinOp::Rsub => "(rsub)",
+        BinOp::Mul => "(mul)",
+        BinOp::Rmul => "(rmul)",
+        BinOp::Div => "(div)",
+        BinOp::Rdiv => "(rdiv)",
+        BinOp::Ediv => "(ediv)",
+        BinOp::Rediv => "(rediv)",
+        BinOp::Mod => "(mod)",
+        BinOp::Rmod => "(rmod)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             BinOp::Eq => T::op_eq(this, strand, other, out),
@@ -1921,7 +2104,7 @@ fn op_bin_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
             BinOp::Mod => T::op_mod(this, strand, other, out),
             BinOp::Rmod => T::op_rmod(this, strand, other, out),
         }
-    }
+    })
 }
 
 fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1932,7 +2115,13 @@ fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, '_>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe {
+    let method = match op {
+        CmpOp::Lt => "(lt)",
+        CmpOp::Lte => "(lte)",
+        CmpOp::Gt => "(gt)",
+        CmpOp::Gte => "(gte)",
+    };
+    glue_frame!(T, this, strand, Some(Cow::Borrowed(method)), unsafe {
         let this = Recv::from_erased(this);
         match op {
             CmpOp::Lt => T::op_lt(this, strand, other, out),
@@ -1940,7 +2129,7 @@ fn op_cmp_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
             CmpOp::Gt => T::op_gt(this, strand, other, out),
             CmpOp::Gte => T::op_gte(this, strand, other, out),
         }
-    }
+    })
 }
 
 fn op_get_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1950,7 +2139,15 @@ fn op_get_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_get(Recv::from_erased(this), strand, field, out) }
+    // SAFETY: the vtbl matches the receiver
+    let recv = unsafe { Recv::<T>::from_erased(this) };
+    if T::SPECIAL_MCALL && is_universal_member(field) {
+        BoundMethod::create(strand, &recv, field, out);
+        return Ok(());
+    }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(get)")), {
+        T::op_get(recv, strand, field, out)
+    })
 }
 
 fn op_set_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1960,7 +2157,9 @@ fn op_set_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     value: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_set(Recv::from_erased(this), strand, field, value) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(set)")), unsafe {
+        T::op_set(Recv::from_erased(this), strand, field, value)
+    })
 }
 
 fn op_index_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1970,7 +2169,9 @@ fn op_index_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     out: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_index(Recv::from_erased(this), strand, index, out) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(index)")), unsafe {
+        T::op_index(Recv::from_erased(this), strand, index, out)
+    })
 }
 
 fn op_assign_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1980,7 +2181,9 @@ fn op_assign_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     value: Slot<'v, 'a>,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_assign(Recv::from_erased(this), strand, index, value) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(assign)")), unsafe {
+        T::op_assign(Recv::from_erased(this), strand, index, value)
+    })
 }
 
 fn op_hash_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -1989,7 +2192,9 @@ fn op_hash_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     hasher: &mut DefaultHasher,
     _: &'a &'v (),
 ) -> Result<'v, 's, ()> {
-    unsafe { T::op_hash(Recv::from_erased(this), strand, hasher) }
+    glue_frame!(T, this, strand, Some(Cow::Borrowed("(hash)")), unsafe {
+        T::op_hash(Recv::from_erased(this), strand, hasher)
+    })
 }
 
 fn op_next_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
@@ -2000,7 +2205,13 @@ fn op_next_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, bool> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_next(Recv::from_erased(this), strand, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(next)")),
+                T::op_next(Recv::from_erased(this), strand, out).await
+            )
         })
     }
 }
@@ -2013,7 +2224,13 @@ fn op_put_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_put(Recv::from_erased(this), strand, item).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(put)")),
+                T::op_put(Recv::from_erased(this), strand, item).await
+            )
         })
     }
 }
@@ -2026,7 +2243,13 @@ fn op_iter_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_iter(Recv::from_erased(this), strand, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(iter)")),
+                T::op_iter(Recv::from_erased(this), strand, out).await
+            )
         })
     }
 }
@@ -2039,7 +2262,13 @@ fn op_sink_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_sink(Recv::from_erased(this), strand, out).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(sink)")),
+                T::op_sink(Recv::from_erased(this), strand, out).await
+            )
         })
     }
 }
@@ -2053,7 +2282,13 @@ fn op_spread_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_spread(Recv::from_erased(this), strand, context, sink).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(spread)")),
+                T::op_spread(Recv::from_erased(this), strand, context, sink).await
+            )
         })
     }
 }
@@ -2066,7 +2301,13 @@ fn op_unpack_glue<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
 ) -> Pinned<'v, 's, 'a, ()> {
     unsafe {
         strand.pin_future_call(async move |strand| {
-            T::op_unpack(Recv::from_erased(this), strand, unpack).await
+            glue_frame!(
+                T,
+                this,
+                strand,
+                Some(Cow::Borrowed("(unpack)")),
+                T::op_unpack(Recv::from_erased(this), strand, unpack).await
+            )
         })
     }
 }
@@ -3035,15 +3276,15 @@ pub(crate) fn abstract_call<'v, 's>(strand: &mut Strand<'v, 's>, name: &str) -> 
     Error::type_error(strand, format!("{name} is abstract"))
 }
 
-/// Dispatch a type-object method call, converting from explicit-self calling convention to
-/// normal receiver convention.
+/// Dispatch a method called unbound on the type object `ty`, which takes the instance
+/// as its first argument.
 ///
-/// `self_val` is the instance (first positional argument of the type-object call).  All
-/// `ClassInstance` delegation is already handled by the `Value`-level operations, so this
-/// function simply dispatches to the appropriate `Value` op.
-///
-/// Protocol-level special method symbols are shimmed to the corresponding `Value`-level
-/// operation.  All other symbols are forwarded to `self_val.op_mcall(strand, method, trailing, out)`.
+/// The instance is type-tested here, under the type object's frame, so a wrong or
+/// missing instance is blamed on the type. An instance of a concrete type then runs
+/// its own impl of `method`, and the native slot of a Do subclass instance runs it
+/// with the instance as delegator. An abstract type runs its own impl of `method` on
+/// the instance, which it receives as the delegator, as a supertype call does:
+/// `Value.(hash) x` is `Value`'s default hash of `x`, whatever `x`'s own.
 pub(crate) async fn type_mcall_fallback<'v, 's>(
     strand: &mut Strand<'v, 's>,
     ty: &Value<'v>,
@@ -3056,42 +3297,32 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
     strand
         .pin_future_call(async |strand| {
             unpack!(strand, args => this, ...trailing);
-            let (receiver, delegator) = if ty
+            if ty
                 .op_inspect(strand)
                 .is_some_and(|inspect| inspect.is_abstract)
             {
                 if !this.is_instance_of(strand, ty) {
                     return Err(Error::type_error(strand, "invalid type for unbound method"));
                 }
-                (&*this, None)
-            } else if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
-                (
-                    get_native_slot(inst, ty)
-                        .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?,
-                    Some(&*this),
-                )
-            } else {
-                with_slots!(strand, |mut tmp| {
-                    this.op_type(strand, Slot::reborrow(&mut tmp));
-                    if !tmp.repr_eq(ty) {
-                        return Err(Error::type_error(strand, "invalid native object type"));
-                    }
-                    Ok((&*this, None))
-                })?
-            };
-
-            if is_special_mcall(method.tag()) {
-                special_mcall(strand, receiver, delegator, method, trailing, out)
-            } else {
-                match delegator {
-                    Some(delegator) => {
-                        Delegated::new(receiver, delegator)
-                            .op_mcall(strand, method, trailing, out)
-                            .await
-                    }
-                    None => receiver.op_mcall(strand, method, trailing, out).await,
-                }
+                return Delegated::new(ty, &this)
+                    .op_mcall(strand, method, trailing, out)
+                    .await;
             }
+            if let Some(inst) = this.downcast_ref(strand.builtin_types().class_instance) {
+                let receiver = get_native_slot(inst, ty)
+                    .ok_or_else(|| Error::type_error(strand, "not a native object subclass"))?;
+                return Delegated::new(receiver, &this)
+                    .op_mcall(strand, method, trailing, out)
+                    .await;
+            }
+            with_slots!(strand, |mut tmp| {
+                this.op_type(strand, Slot::reborrow(&mut tmp));
+                if !tmp.repr_eq(ty) {
+                    return Err(Error::type_error(strand, "invalid native object type"));
+                }
+                Ok(())
+            })?;
+            this.op_mcall(strand, method, trailing, out).await
         })
         .await
 }
@@ -3099,18 +3330,7 @@ pub(crate) async fn type_mcall_fallback<'v, 's>(
 /// The members every value has, which `Value` advertises. Any value can be
 /// asked for a field by name with `(get)` and `(set)`, though it may refuse.
 pub(crate) fn value_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
-    members![
-        Method(sym::HASH_METHOD),
-        Method(sym::EQ_METHOD),
-        Method(sym::REQ_METHOD),
-        Method(sym::NE_METHOD),
-        Method(sym::RNE_METHOD),
-        Method(sym::STR_METHOD),
-        Method(sym::DBG_METHOD),
-        Method(sym::VERBATIM_METHOD),
-        Method(sym::GET_METHOD),
-        Method(sym::SET_METHOD),
-    ]
+    members![..Value]
 }
 
 /// Whether `field` is a member every value has.
@@ -3133,8 +3353,9 @@ pub(crate) fn instance_get_fallback<'v, 'a, 's>(
     }
 }
 
-/// Handle the special methods supported by qualified native method calls.
-/// Any other symbol is a missing field.
+/// Handle the special methods every value supports when called by name, for a
+/// receiver whose `Protocol` impl, if any, doesn't dispatch them itself: a primitive or
+/// a class instance. Any other symbol is a missing field.
 pub(crate) fn instance_mcall_fallback<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     receiver: impl Input<'v>,
@@ -3142,7 +3363,7 @@ pub(crate) fn instance_mcall_fallback<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if !is_special_mcall(method.tag()) {
+    if !is_value_special_mcall(method.tag()) {
         return Err(Error::field(strand, method));
     }
     with_slots!(strand, |mut receiver_slot| {
@@ -3151,28 +3372,214 @@ pub(crate) fn instance_mcall_fallback<'v, 'a, 's>(
     })
 }
 
-/// Handle a special method called through `this`, which may be delegated to. A
-/// type object called directly takes the instance as its first argument, as for
-/// [`type_mcall_fallback`]. Any other symbol is a missing field.
+/// Handle a special method called by name on `this`, for an impl that turns
+/// [`Protocol::SPECIAL_MCALL`] off. A type object called directly takes the instance as
+/// its first argument, as for [`type_mcall_fallback`]; anything else, including a type
+/// object reached through a delegator, runs `T`'s own operation. Any other symbol is a
+/// missing field.
 pub(crate) async fn recv_special_mcall<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
     strand: &mut Strand<'v, 's>,
-    this: &Recv<'v, 'a, T>,
+    this: Recv<'v, 'a, T>,
     method: Sym<'v, 'a>,
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if this.delegator().is_none() && is_special_mcall(method.tag()) {
-        with_slots!(strand, |mut receiver| {
-            strand.store(Slot::reborrow(&mut receiver), this);
-            if receiver.is_instance_of(strand, TypeObject::Type) {
-                return type_mcall_fallback(strand, &receiver, method, args, out).await;
-            }
-        });
+    if !is_special_mcall(method.tag()) {
+        return Err(Error::field(strand, method));
     }
-    instance_mcall_fallback(strand, this, method, args, out)
+    match this.delegator() {
+        None if T::TYPE_OBJECT => {
+            with_slots!(strand, |mut receiver| {
+                strand.store(Slot::reborrow(&mut receiver), &this);
+                type_mcall_fallback(strand, &receiver, method, args, out).await
+            })
+        }
+        _ => special_mcall_direct(this, strand, method, args, out).await,
+    }
 }
 
+/// Whether `this` displays as a type: a type object reached directly, or through a
+/// delegator that is itself a type, such as a native type's metatype proxy.
+fn displays_as_type<'v, T: ?Sized + Protocol<'v>>(
+    strand: &mut Strand<'v, '_>,
+    this: &Recv<'v, '_, T>,
+) -> bool {
+    T::TYPE_OBJECT
+        && this
+            .delegator()
+            .is_none_or(|delegator| delegator.is_instance_of(strand, TypeObject::Type))
+}
+
+/// Whether `tag` names a special method that a method call by that name dispatches
+/// to the matching operation.
 pub(crate) fn is_special_mcall(tag: sym::Tag) -> bool {
+    is_value_special_mcall(tag)
+        || matches!(
+            tag,
+            sym::CALL_METHOD
+                | sym::ITER_METHOD
+                | sym::NEXT_METHOD
+                | sym::SINK_METHOD
+                | sym::PUT_METHOD
+                | sym::INDEX_METHOD
+                | sym::ASSIGN_METHOD
+        )
+}
+
+/// Dispatch the special method `method` on `this` straight to `T`'s operation, which
+/// pushes no frame of its own.
+pub(crate) async fn special_mcall_direct<'v, 'a, 's, T: ?Sized + Protocol<'v>>(
+    this: Recv<'v, 'a, T>,
+    strand: &mut Strand<'v, 's>,
+    method: Sym<'v, 'a>,
+    args: Args<'v, 'a>,
+    out: Slot<'v, 'a>,
+) -> Result<'v, 's, ()> {
+    macro_rules! fmt_op {
+        ($op:ident $(, $arg:expr)*) => {{
+            let mut format = StrEmbryo::new();
+            T::$op(this, strand $(, $arg)*, &mut format)?;
+            format.finish(strand, out);
+        }};
+    }
+    // An operator called by name is the receiver's own, with no reflection, which
+    // belongs to the operators. A refused `(eq)` or `(ne)` falls back to `Value`'s
+    // default, which compares the identity of the delegator, if there is one.
+    macro_rules! binary {
+        ($op:ident $(, identity $same:literal)?) => {{
+            unpack!(strand, args => other);
+            let mut out = out;
+            match T::$op(this.clone(), strand, &other, Slot::reborrow(&mut out)) {
+                $(Err(err) if err.kind() == ErrorKind::Unsupported => match this.delegator() {
+                    Some(delegator) => strand.store(out, delegator.repr_eq(&other) == $same),
+                    None => with_slots!(strand, |mut receiver| {
+                        strand.store(Slot::reborrow(&mut receiver), &this);
+                        strand.store(out, receiver.repr_eq(&other) == $same);
+                    }),
+                },)?
+                result => result?,
+            }
+        }};
+    }
+
+    match method.tag() {
+        sym::CALL_METHOD => return T::op_call(this, strand, args, out).await,
+        sym::ITER_METHOD => {
+            unpack!(strand, args =>);
+            T::op_iter(this, strand, out).await?;
+        }
+        sym::SINK_METHOD => {
+            unpack!(strand, args =>);
+            T::op_sink(this, strand, out).await?;
+        }
+        sym::NEXT_METHOD => {
+            unpack!(strand, args =>);
+            if !T::op_next(this, strand, out).await? {
+                return Err(Error::iter_stop(strand));
+            }
+        }
+        sym::PUT_METHOD => {
+            unpack!(strand, args => item);
+            T::op_put(this, strand, item).await?;
+        }
+        sym::INDEX_METHOD => {
+            unpack!(strand, args => index);
+            T::op_index(this, strand, &index, out)?;
+        }
+        sym::ASSIGN_METHOD => {
+            unpack!(strand, args => index, value);
+            T::op_assign(this, strand, index, value)?;
+        }
+        sym::GET_METHOD => {
+            unpack!(strand, args => field);
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
+            // As the `op_get` glue would
+            if T::SPECIAL_MCALL && is_universal_member(field) {
+                BoundMethod::create(strand, &this, field, out);
+            } else {
+                T::op_get(this, strand, field, out)?;
+            }
+        }
+        sym::SET_METHOD => {
+            unpack!(strand, args => field, value);
+            let field = field
+                .as_sym(strand)
+                .ok_or_else(|| Error::type_error(strand, "field: expected `Sym`"))?;
+            T::op_set(this, strand, field, value)?;
+        }
+        sym::VERBATIM_METHOD => {
+            unpack!(strand, args =>);
+            fmt_op!(op_verbatim)
+        }
+        sym::STR_METHOD => {
+            unpack!(strand, args =>);
+            fmt_op!(op_display)
+        }
+        sym::DBG_METHOD => {
+            unpack!(strand, args =>);
+            fmt_op!(op_debug)
+        }
+        sym::FMT_METHOD => {
+            unpack!(strand, args => spec);
+            let spec = crate::stdlib::fmt::spec_of(strand, &spec)?;
+            fmt_op!(op_fmt, &spec)
+        }
+        sym::BOOL_METHOD => {
+            unpack!(strand, args =>);
+            let b = T::op_bool(this, strand)?;
+            strand.store(out, b);
+        }
+        sym::HASH_METHOD => {
+            unpack!(strand, args =>);
+            let mut hasher = strand.vm().hasher();
+            T::op_hash(this, strand, &mut hasher)?;
+            strand.store(out, hasher.finish());
+        }
+        sym::NEG_METHOD => {
+            unpack!(strand, args =>);
+            T::op_neg(this, strand, out)?;
+        }
+        sym::BNOT_METHOD => {
+            unpack!(strand, args =>);
+            T::op_bnot(this, strand, out)?;
+        }
+        sym::EQ_METHOD => binary!(op_eq, identity true),
+        sym::REQ_METHOD => binary!(op_req),
+        sym::NE_METHOD => binary!(op_ne, identity false),
+        sym::RNE_METHOD => binary!(op_rne),
+        sym::LT_METHOD => binary!(op_lt),
+        sym::ADD_METHOD => binary!(op_add),
+        sym::RADD_METHOD => binary!(op_radd),
+        sym::SUB_METHOD => binary!(op_sub),
+        sym::RSUB_METHOD => binary!(op_rsub),
+        sym::MUL_METHOD => binary!(op_mul),
+        sym::RMUL_METHOD => binary!(op_rmul),
+        sym::DIV_METHOD => binary!(op_div),
+        sym::RDIV_METHOD => binary!(op_rdiv),
+        sym::EDIV_METHOD => binary!(op_ediv),
+        sym::REDIV_METHOD => binary!(op_rediv),
+        sym::MOD_METHOD => binary!(op_mod),
+        sym::RMOD_METHOD => binary!(op_rmod),
+        sym::BAND_METHOD => binary!(op_band),
+        sym::RBAND_METHOD => binary!(op_rband),
+        sym::BOR_METHOD => binary!(op_bor),
+        sym::RBOR_METHOD => binary!(op_rbor),
+        sym::BXOR_METHOD => binary!(op_bxor),
+        sym::RBXOR_METHOD => binary!(op_rbxor),
+        sym::SHL_METHOD => binary!(op_shl),
+        sym::RSHL_METHOD => binary!(op_rshl),
+        sym::SHR_METHOD => binary!(op_shr),
+        sym::RSHR_METHOD => binary!(op_rshr),
+        _ => unreachable!("special_mcall_direct requires a special method"),
+    }
+    Ok(())
+}
+
+/// Whether `tag` names a special method that [`instance_mcall_fallback`] dispatches
+/// through `Value`: the synchronous value operations.
+pub(crate) fn is_value_special_mcall(tag: sym::Tag) -> bool {
     matches!(
         tag,
         sym::GET_METHOD
@@ -3231,7 +3638,12 @@ fn special_mcall<'v, 'a, 's>(
             }
         };
     }
-
+    macro_rules! binary {
+        ($op:ident) => {{
+            unpack!(strand, args => other);
+            dispatch!($op, &other, out)?;
+        }};
+    }
     match method.tag() {
         sym::GET_METHOD => {
             unpack!(strand, args => field);
@@ -3278,120 +3690,39 @@ fn special_mcall<'v, 'a, 's>(
             dispatch!(op_hash, &mut hasher)?;
             strand.store(out, hasher.finish());
         }
-        sym::EQ_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_eq, &other, out)?;
-        }
-        sym::REQ_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_req, &other, out)?;
-        }
-        sym::NE_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_ne, &other, out)?;
-        }
-        sym::RNE_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rne, &other, out)?;
-        }
-        sym::LT_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_lt, &other, out)?;
-        }
+        sym::EQ_METHOD => binary!(op_eq),
+        sym::REQ_METHOD => binary!(op_req),
+        sym::NE_METHOD => binary!(op_ne),
+        sym::RNE_METHOD => binary!(op_rne),
+        sym::LT_METHOD => binary!(op_lt),
         sym::NEG_METHOD => {
             dispatch!(op_neg, out)?;
         }
         sym::BNOT_METHOD => {
             dispatch!(op_bnot, out)?;
         }
-        sym::ADD_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_add, &other, out)?;
-        }
-        sym::RADD_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_radd, &other, out)?;
-        }
-        sym::SUB_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_sub, &other, out)?;
-        }
-        sym::RSUB_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rsub, &other, out)?;
-        }
-        sym::MUL_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_mul, &other, out)?;
-        }
-        sym::RMUL_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rmul, &other, out)?;
-        }
-        sym::DIV_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_div, &other, out)?;
-        }
-        sym::RDIV_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rdiv, &other, out)?;
-        }
-        sym::EDIV_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_ediv, &other, out)?;
-        }
-        sym::REDIV_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rediv, &other, out)?;
-        }
-        sym::MOD_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_mod, &other, out)?;
-        }
-        sym::RMOD_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rmod, &other, out)?;
-        }
-        sym::BAND_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_band, &other, out)?;
-        }
-        sym::RBAND_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rband, &other, out)?;
-        }
-        sym::BOR_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_bor, &other, out)?;
-        }
-        sym::RBOR_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rbor, &other, out)?;
-        }
-        sym::BXOR_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_bxor, &other, out)?;
-        }
-        sym::RBXOR_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rbxor, &other, out)?;
-        }
-        sym::SHL_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_shl, &other, out)?;
-        }
-        sym::RSHL_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rshl, &other, out)?;
-        }
-        sym::SHR_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_shr, &other, out)?;
-        }
-        sym::RSHR_METHOD => {
-            unpack!(strand, args => other);
-            dispatch!(op_rshr, &other, out)?;
-        }
+        sym::ADD_METHOD => binary!(op_add),
+        sym::RADD_METHOD => binary!(op_radd),
+        sym::SUB_METHOD => binary!(op_sub),
+        sym::RSUB_METHOD => binary!(op_rsub),
+        sym::MUL_METHOD => binary!(op_mul),
+        sym::RMUL_METHOD => binary!(op_rmul),
+        sym::DIV_METHOD => binary!(op_div),
+        sym::RDIV_METHOD => binary!(op_rdiv),
+        sym::EDIV_METHOD => binary!(op_ediv),
+        sym::REDIV_METHOD => binary!(op_rediv),
+        sym::MOD_METHOD => binary!(op_mod),
+        sym::RMOD_METHOD => binary!(op_rmod),
+        sym::BAND_METHOD => binary!(op_band),
+        sym::RBAND_METHOD => binary!(op_rband),
+        sym::BOR_METHOD => binary!(op_bor),
+        sym::RBOR_METHOD => binary!(op_rbor),
+        sym::BXOR_METHOD => binary!(op_bxor),
+        sym::RBXOR_METHOD => binary!(op_rbxor),
+        sym::SHL_METHOD => binary!(op_shl),
+        sym::RSHL_METHOD => binary!(op_rshl),
+        sym::SHR_METHOD => binary!(op_shr),
+        sym::RSHR_METHOD => binary!(op_rshr),
         _ => unreachable!("special_mcall requires a supported symbol"),
     }
     Ok(())

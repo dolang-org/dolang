@@ -448,9 +448,9 @@ else
 `match` runs the first arm whose pattern (and optional `if` guard) matches. A
 body on the same line follows `=>`; an indented block follows the pattern or
 guard directly, with no `do`. A bare name matches anything, so `_` is the
-fallback arm (`match` has no `else`), and no match gives `nil`. Unpacking a
-value that isn't a sequence or keyed value raises rather than trying the next
-arm, so type-test first:
+fallback arm (`match` has no `else`), and no match gives `nil`. A value that
+isn't a sequence or keyed value fails to match an unpacking arm, but the
+checker warns, so type-test first:
 
 ```
 let label = match value
@@ -731,9 +731,10 @@ quantifiers, implicit `<T`/`>T` parameters, vertical schemas):
 [`docs/types/`](./docs/types/index.md).
 
 `@` and a type follow a bound name and precede any default. Write a space on
-each side of `@`, except where several bindings share a line: there write none,
-so whitespace separates only bindings. `->` gives a return type after the
-parameters (or after the `do` ending vertical parameters):
+each side of `@`, except where several annotations share a line: there write
+none, so whitespace separates only bindings (`self x@Int y@Int`, but
+`self x @ Int`). `->` gives a return type after the parameters (or after the
+`do` ending vertical parameters):
 
 ```
 let count @ Int = 0

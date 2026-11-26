@@ -189,7 +189,9 @@ def frame_of_snapshot()
   let kick = spawn do nil
   kick.wait()
   let info = strand.snapshot().filter(do |info| info.strand == task).next()
-  let line = str $shell.render_frame(info.backtrace[0], code: false)
+  # Past the native frames of the receiver it waits on
+  let frame = info.backtrace.filter(do |frame| frame.location != nil).next()
+  let line = str $shell.render_frame(frame, code: false)
   assert (line.contains "waiter")
   send.put nil
   task.join()

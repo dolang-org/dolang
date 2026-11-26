@@ -50,8 +50,8 @@ def cache_settings_and_execution_errors()
   isolated do |dir|
     let script = (dir / "main.dol")
     script.write "echo \$value\n"
-    assert_eq (run_script(script, "--import-item", "std.Int=value")) "<type std.Int>\n"
-    assert_eq (run_script(script, "--import-item", "std.Str=value")) "<type std.Str>\n"
+    assert_eq (run_script(script, "--import-item", "std.Int=value")) "std.Int\n"
+    assert_eq (run_script(script, "--import-item", "std.Str=value")) "std.Str\n"
     assert_eq $(entries dir).len 2
     let error_script = (dir / "failure.dol")
     let marker = (dir / "marker")

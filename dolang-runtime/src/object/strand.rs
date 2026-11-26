@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     backtrace, iter,
-    protocol::{GcObj, Protocol, Recv, instance_get_fallback, instance_mcall_fallback},
+    protocol::{GcObj, Protocol, Recv},
     tuple,
 };
 
@@ -185,6 +185,9 @@ async fn wait_handle<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for Handle<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Task";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -260,7 +263,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 let cell = this.borrow(strand)?.cell.clone();
                 observe_mcall(strand, &cell, method, args, out)
             }
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -289,7 +292,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 super::BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -353,20 +356,15 @@ unsafe impl<'v> Collect for StreamIter<'v> {
 }
 
 impl<'v> Protocol<'v> for StreamIter<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "StreamIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<strand.Stream.iter>")
     }
 
     async fn op_iter<'a, 's>(
@@ -474,20 +472,15 @@ unsafe impl<'v> Collect for StreamSink<'v> {
 }
 
 impl<'v> Protocol<'v> for StreamSink<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "StreamSink";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().output_iter);
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<strand.Stream.sink>")
     }
 
     async fn op_sink<'a, 's>(
@@ -555,20 +548,15 @@ impl<'v> Protocol<'v> for StreamSink<'v> {
 }
 
 impl<'v> Protocol<'v> for StreamObj<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Stream";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().stream)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<strand.Stream>")
     }
 
     fn op_eq<'a, 's>(
@@ -721,20 +709,16 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Task";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type strand.Task>")
     }
 
     fn op_subtype<'a, 's>(
@@ -768,6 +752,10 @@ unsafe impl Collect for StreamType {
 }
 
 impl<'v> Protocol<'v> for StreamType {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Stream";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -803,14 +791,6 @@ impl<'v> Protocol<'v> for StreamType {
                 .sinkable
                 .eq(strand, supertype)
                 .unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type strand.Stream>")
     }
 }
 
@@ -915,7 +895,7 @@ fn observe_mcall<'v, 's>(
             let full = Sym::well_known(sym::FULL);
             unpack!(strand, args => ?:full);
             let full = match full {
-                Some(full) => full.op_bool(strand)?,
+                Some(full) => full.to_bool(strand)?,
                 None => false,
             };
             match (cell.state(), cell.get()) {
@@ -981,6 +961,9 @@ fn observe_mcall<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for StrandRefObj {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Strand";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1035,7 +1018,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
             tag if is_observe_method(tag) => observe_mcall(strand, &cell, method, args, out),
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -1060,7 +1043,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
                 strand.store(out, id);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -1080,20 +1063,16 @@ unsafe impl Collect for StrandType {
 }
 
 impl<'v> Protocol<'v> for StrandType {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "Strand";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type strand.Strand>")
     }
 }
 
@@ -1146,6 +1125,9 @@ impl<'v> crate::gc::Annex for StrandInfo<'v> {
 pub(crate) type StrandInfoObj<'v> = crate::gc::Imm<StrandInfo<'v>>;
 
 impl<'v> Protocol<'v> for StrandInfoObj<'v> {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "StrandInfo";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1207,7 +1189,7 @@ impl<'v> Protocol<'v> for StrandInfoObj<'v> {
                 *state = InfoBacktrace::Built(unsafe { out.dup() });
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -1227,19 +1209,15 @@ unsafe impl Collect for StrandInfoType {
 }
 
 impl<'v> Protocol<'v> for StrandInfoType {
+    const MODULE: &'v str = "strand";
+    const NAME: &'v str = "StrandInfo";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type strand.StrandInfo>")
     }
 }

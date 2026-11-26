@@ -22,7 +22,7 @@ use super::{
     BoundMethod, index, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
     range, tuple,
 };
@@ -96,6 +96,9 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayIter";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -103,14 +106,6 @@ impl<'v> Protocol<'v> for Iter<'v> {
         sink: &'a mut dyn crate::object::protocol::Spread<'v, 's>,
     ) -> Result<'v, 's, ()> {
         super::iter::spread_iter(strand, &this, sink).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<array iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -223,6 +218,9 @@ impl<'v> crate::gc::Annex for Rest<'v> {
 pub(crate) type RestObj<'v> = crate::gc::Imm<Rest<'v>>;
 
 impl<'v> Protocol<'v> for RestObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayRest";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -248,14 +246,6 @@ impl<'v> Protocol<'v> for RestObj<'v> {
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         super::iter::iterable_mcall(strand, &this, method, args, out).await
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<array rest>")
     }
 
     async fn op_iter<'a, 's>(
@@ -351,20 +341,15 @@ impl<'v> crate::gc::Annex for Sink<'v> {
 pub(crate) type SinkObj<'v> = crate::gc::Imm<Sink<'v>>;
 
 impl<'v> Protocol<'v> for SinkObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArraySink";
+
     fn op_display<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<array sink>")
     }
 
     async fn op_sink<'a, 's>(
@@ -439,6 +424,9 @@ unsafe impl<'v> Collect for Pairs<'v> {
 }
 
 impl<'v> Protocol<'v> for Pairs<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArrayPairs";
+
     async fn op_spread<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -454,14 +442,6 @@ impl<'v> Protocol<'v> for Pairs<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<array pair iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -627,6 +607,7 @@ impl<'v> Array<'v> {
             match args.next() {
                 Some(Arg::Pos(item)) => sink.push(strand, item)?,
                 Some(Arg::Key(sym, expand)) if sym.tag() == sym::ITER => {
+                    let _op = strand.start_op();
                     expand
                         .op_spread(strand, SpreadContext::Sequence, &mut sink)
                         .await?;
@@ -710,6 +691,9 @@ impl<'v> Array<'v> {
 }
 
 impl<'v> Protocol<'v> for Array<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Array";
+
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
         strand: &mut Strand<'v, 's>,
@@ -771,13 +755,13 @@ impl<'v> Protocol<'v> for Array<'v> {
         let inner = &this_borrow.inner;
         let mut iter = inner.iter();
         if let Some(first) = iter.next() {
-            first.op_debug(strand, w)?;
+            first.debug(strand, w)?;
             for i in 1..inner.len() {
                 if (i + 1) % crate::INTERRUPT_INTERVAL == 0 {
                     strand.check_trap()?;
                 }
                 crate::fmt!(strand, w, ", ")?;
-                unsafe { inner.get_unchecked(i) }.op_debug(strand, w)?;
+                unsafe { inner.get_unchecked(i) }.debug(strand, w)?;
             }
         }
         crate::fmt!(strand, w, "]")
@@ -803,7 +787,7 @@ impl<'v> Protocol<'v> for Array<'v> {
                 strand.check_trap()?;
             }
             let elem = unsafe { inner.get_unchecked(i) };
-            elem.op_hash(strand, hasher)?;
+            elem.hash(strand, hasher)?;
         }
         Ok(())
     }
@@ -1210,9 +1194,6 @@ impl<'v> Protocol<'v> for Array<'v> {
                 strand,
                 "Array.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_sinkable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -1340,6 +1321,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Array";
+    const TYPE_OBJECT: bool = true;
+
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -1379,14 +1364,6 @@ impl<'v> Protocol<'v> for Type {
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
     }
 
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Array>")
-    }
-
     fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         Some(Inspect {
             is_abstract: false,
@@ -1398,14 +1375,11 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
                 Method(sym::SPREAD_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::PUSH),
                 Method(sym::INSERT),

@@ -20,7 +20,7 @@ use crate::{
     object::protocol::{GcObj, Protocol, Recv, Spread, SpreadContext, Unpack, WeakObj},
     strand::Strand,
     sym::Sym,
-    value::{Output, Slot, Value, fmt::Format},
+    value::{Output, Slot, Value},
     vm::AllocExt,
     with_slots,
 };
@@ -146,20 +146,15 @@ impl<'v> BufferState<'v> {
 }
 
 impl<'v> Protocol<'v> for BufferState<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "BufferState";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<buffer state>")
     }
 }
 
@@ -248,20 +243,15 @@ async fn fill<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for CursorObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Buffer";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().input_iter)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<std.Buffer>")
     }
 
     async fn op_iter<'a, 's>(

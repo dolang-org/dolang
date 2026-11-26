@@ -1102,14 +1102,6 @@ impl<'v> Object<'v> for Find<'v> {
         Ok(())
     }
 
-    async fn unpack<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        _unpack: Unpack<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking a `Regex`"))
-    }
-
     async fn next<'a, 's>(
         this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,

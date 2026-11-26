@@ -437,6 +437,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) error_value: Value<'v>,
     pub(crate) error_data: Value<'v>,
     pub(crate) error_shape: Value<'v>,
+    pub(crate) error_shapeless: Value<'v>,
     pub(crate) error_missing_item: Value<'v>,
     pub(crate) error_unexpected_item: Value<'v>,
     pub(crate) error_state: Value<'v>,
@@ -557,6 +558,10 @@ impl<'v> Singletons<'v> {
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Shape)
             ),
+            error_shapeless: imm!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::Shapeless)
+            ),
             error_missing_item: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::MissingItem)
@@ -660,6 +665,8 @@ impl<'v> gc::Annex for BoundMethod<'v> {
 pub(crate) type BoundMethodObj<'v> = gc::Imm<BoundMethod<'v>>;
 
 impl<'v> Protocol<'v> for BoundMethodObj<'v> {
+    const NATIVE_FRAMES: bool = false;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -675,7 +682,7 @@ impl<'v> Protocol<'v> for BoundMethodObj<'v> {
     ) -> Result<'v, 's, ()> {
         let me = this.receiver.get();
         crate::fmt!(strand, w, "<bound method: {} receiver: ", me.method.name())?;
-        me.rcvr.op_debug(strand, w)?;
+        me.rcvr.debug(strand, w)?;
         crate::fmt!(strand, w, ">")
     }
 

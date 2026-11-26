@@ -4271,6 +4271,16 @@ impl<'a> Flow<'a, '_> {
         let Some(unpack) = self.designated(Designated::Unpack) else {
             return Some((vec![unknown; items.len()], Group::default()));
         };
+        // A refutable pattern fails to match a value with no `(unpack)` rather
+        // than raising, so it unpacks only the rest; those values stay in the
+        // leftover, as no shape is guaranteed of them
+        let value = match irrefutable {
+            true => value,
+            false => self.unpackable(value, span),
+        };
+        if value == bottom {
+            return Some((vec![value; items.len()], Group::default()));
+        }
         // What's unpacked is what the value's `(unpack)` gives
         let each = self.send_special_each(at, state, value, "unpack", span);
         let value = match &each {
@@ -4406,6 +4416,33 @@ impl<'a> Flow<'a, '_> {
                 .collect()
         });
         Some((types, Group::default()))
+    }
+
+    /// The members of `value` with an `(unpack)`, warning of the rest, which a
+    /// refutable pattern never matches
+    fn unpackable(&mut self, value: TypeId, span: Span) -> TypeId {
+        let bottom = self.db.bottom();
+        let mut alternatives = Vec::new();
+        if !self.expand(value, &mut alternatives) {
+            alternatives = vec![Some(value)];
+        } else if alternatives.contains(&None) {
+            return value;
+        }
+        let (mut kept, mut never) = (bottom, bottom);
+        for alternative in alternatives.into_iter().flatten() {
+            match self.lacks_special(alternative, "unpack", span) {
+                true => never = self.lub(never, alternative),
+                false => kept = self.lub(kept, alternative),
+            }
+        }
+        if never == bottom {
+            return value;
+        }
+        if self.observing() {
+            let found = self.subject(never);
+            self.problem(Problem::NeverUnpacks { span, found });
+        }
+        kept
     }
 
     /// The columns of a pattern's items walked against what each alternative's

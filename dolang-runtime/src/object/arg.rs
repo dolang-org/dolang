@@ -1,10 +1,8 @@
 use std::ops::ControlFlow;
 
-use crate::value::fmt::Format;
-
 use crate::{
     arg::{Arg, Args},
-    error::Result,
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::{self, Sym},
@@ -15,7 +13,7 @@ use crate::{
 
 use super::{
     pack::ArgItem,
-    protocol::{Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback},
+    protocol::{Protocol, Recv, Spread, SpreadContext},
 };
 
 pub(crate) struct ArgAcc<'v> {
@@ -61,20 +59,15 @@ unsafe impl<'v> Collect for ArgAcc<'v> {
 }
 
 impl<'v> Protocol<'v> for ArgAcc<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "ArgAcc";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         out: Slot<'v, 'a>,
     ) {
         strand.store(out, &strand.singletons().arg_acc)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<arg accumulator>")
     }
 
     async fn op_spread<'a, 's>(
@@ -109,7 +102,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::PUSH => {
@@ -129,7 +122,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
                 }
                 Ok(())
             }
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 }

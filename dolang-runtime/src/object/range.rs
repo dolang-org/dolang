@@ -216,6 +216,9 @@ pub(crate) fn slice<'v, 's>(
 }
 
 impl<'v> Protocol<'v> for RangeObj<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Range";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -239,14 +242,14 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
     ) -> Result<'v, 's, ()> {
         let borrow = this.get();
         crate::fmt!(strand, w, "<Range start: ")?;
-        borrow.start.op_debug(strand, &mut *w)?;
+        borrow.start.debug(strand, &mut *w)?;
         if !borrow.end.is_nil() {
             crate::fmt!(strand, w, ", end: ")?;
-            borrow.end.op_debug(strand, &mut *w)?;
+            borrow.end.debug(strand, &mut *w)?;
         }
         if !borrow.step.is_nil() {
             crate::fmt!(strand, w, ", step: ")?;
-            borrow.step.op_debug(strand, &mut *w)?;
+            borrow.step.debug(strand, &mut *w)?;
         }
         crate::fmt!(strand, w, ">")
     }
@@ -277,9 +280,9 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
         hasher: &mut DefaultHasher,
     ) -> Result<'v, 's, ()> {
         let this = this.get();
-        this.start.op_hash(strand, hasher)?;
-        this.end.op_hash(strand, hasher)?;
-        this.step.op_hash(strand, hasher)
+        this.start.hash(strand, hasher)?;
+        this.end.hash(strand, hasher)?;
+        this.step.hash(strand, hasher)
     }
 
     async fn op_iter<'a, 's>(
@@ -360,6 +363,7 @@ impl<'v> Protocol<'v> for RangeObj<'v> {
                     let contained = match borrow.step() {
                         Some(step) if in_bounds => {
                             with_slots!(strand, |mut zero, mut offset, mut rem| {
+                                let _op = strand.start_op();
                                 step.op_sub(strand, step, Slot::reborrow(&mut zero))?;
                                 value.op_sub(strand, &start, Slot::reborrow(&mut offset))?;
                                 offset.op_mod(strand, step, Slot::reborrow(&mut rem))?;
@@ -426,6 +430,7 @@ fn direction<'v, 's>(
     let ascending = match step {
         None => true,
         Some(step) => with_slots!(strand, |mut next| {
+            let _op = strand.start_op();
             start.op_add(strand, step, Slot::reborrow(&mut next))?;
             if next.gt(strand, start)? {
                 Ok(true)
@@ -492,6 +497,9 @@ unsafe impl<'v> Collect for Iter<'v> {
 }
 
 impl<'v> Protocol<'v> for Iter<'v> {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "RangeIter";
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -506,14 +514,6 @@ impl<'v> Protocol<'v> for Iter<'v> {
         w: &mut dyn Format<'v>,
     ) -> Result<'v, 's, ()> {
         Self::op_debug(this, strand, w)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<range iterator>")
     }
 
     async fn op_iter<'a, 's>(
@@ -541,6 +541,7 @@ impl<'v> Protocol<'v> for Iter<'v> {
         if res {
             strand.store(out, &borrow.cur);
             with_slots!(strand, |mut next| {
+                let _op = strand.start_op();
                 borrow
                     .cur
                     .op_add(strand, &annex.step, Slot::reborrow(&mut next))?;
@@ -597,6 +598,10 @@ unsafe impl Collect for Type {
 }
 
 impl<'v> Protocol<'v> for Type {
+    const MODULE: &'v str = "std";
+    const NAME: &'v str = "Range";
+    const TYPE_OBJECT: bool = true;
+
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
@@ -615,14 +620,6 @@ impl<'v> Protocol<'v> for Type {
                 .eq(strand, &strand.singletons().iterable)
                 .unwrap_or(false)
             || supertype.eq(strand, TypeObject::Value).unwrap_or(false)
-    }
-
-    fn op_debug<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        w: &mut dyn Format<'v>,
-    ) -> Result<'v, 's, ()> {
-        crate::fmt!(strand, w, "<type std.Range>")
     }
 
     async fn op_call<'a, 's>(

@@ -131,7 +131,7 @@ type argument, which includes the element of an array or the item of a tuple,
 
 ```
 @let Id = (@[T] (T) -> T)
-def apply f @ Id x @ Int -> Int
+def apply f@Id x@Int -> Int
   f $x
 let fs @ Array[Id] = []    # error
 ```

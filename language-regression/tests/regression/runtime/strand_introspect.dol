@@ -62,7 +62,8 @@ assert (s_info != nil)
 assert_eq $s_info.strand $s
 assert_eq $s_info.parent nil
 let s_receivers = receivers $s_info.backtrace
-assert_eq $s_receivers[0] "next"
+# Innermost is the input the stream waits on, read by `next`
+assert_eq $s_receivers[1] "next"
 assert (s_receivers.contains "waiter")
 assert (s_receivers.contains "spawn")
 # The backtrace is cached once built

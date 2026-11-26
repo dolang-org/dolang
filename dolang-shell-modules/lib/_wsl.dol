@@ -28,7 +28,7 @@ do -> Array[Value]
   argv.push ...(_vfs.vfs_args cd env) --stdio
   argv
 
-pub def with_command[R] argv @ Array[Value] block @ (() -> R) -> R
+pub def with_command[R] argv@Array[Value] block@(() -> R) -> R
   # `command` items are passed verbatim, the program included
   let program *args = argv
   else throw std.ValueError "command: expected a program"

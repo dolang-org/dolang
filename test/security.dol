@@ -8,6 +8,7 @@ import sys
     - FieldError
     - ImmutableError
     - MissingKeyError
+    - ShapelessError
     - TypeError
     - UnexpectedKeyError
     - UnexpectedPosError
@@ -582,7 +583,7 @@ def ace_runtime_classes()
       assert_eq $object_type $entry.object_type
     else
       assert_eq $object_type nil
-    assert_throws $UnsupportedError do let ..._ = entry
+    assert_throws $ShapelessError do let ..._ = entry
     assert_eq (Acl([entry]).aces[0].to_bin()) $entry.to_bin()
     if (type entry CustomAce)
       assert_throws $FieldError do entry.sid

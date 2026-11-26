@@ -1,0 +1,100 @@
+import io
+
+# The native frames of the error `f` raises, innermost first, from the frame
+# `after` frames out up to the next Do frame
+def native_frames f :after = 0
+  try
+    f()
+  catch _
+    let out = []
+    for frame = strand.error_backtrace()[after..]
+      if frame.location
+        return out
+      out.push "$(frame.module).$(frame.receiver) $(frame.method)"
+    return out
+  throw "did not raise"
+
+def boom _x
+  throw "boom"
+
+# Builtin operations raise under a frame for the type and operation
+assert_eq (native_frames do [1][5]) ["std.Array (index)"]
+assert_eq (native_frames do {a: 1}[:b:]) ["std.Dict (index)"]
+let unpacked = native_frames do
+  let _a _b = [1, 2, 3]
+assert_eq $unpacked ["std.Array (unpack)"]
+
+# A primitive's operation raises under a frame for its type
+let five = 5
+assert_eq (native_frames do [...five]) ["std.Int (spread)"]
+assert_eq (native_frames do five()) ["std.Int (call)"]
+assert_eq (native_frames do five.nope) ["std.Int (get)"]
+assert_eq (native_frames do (five / 0)) ["std.Int (div)"]
+assert_eq (native_frames do nil[0]) ["std.Nil (index)"]
+let iterated = native_frames do
+  for _x = 1.5 => nil
+assert_eq $iterated ["std.Float (iter)"]
+
+# A callback's error passes through the frame of the operation that called it.
+# Spreading pulls the iterator's own items within the one operation
+let mapped = native_frames after: 1 do [...[1].map(boom)]
+assert_eq $mapped ["std.Map (spread)"]
+
+# An adapter pulling from its input starts an operation on it
+let chained = native_frames after: 1 do [...[1].map(boom).map(do |x| x)]
+assert_eq $chained ["std.Map (next)", "std.Map (spread)"]
+
+# An operation on an element starts an operation of its own, which may run Do code
+class BadHash
+  pub def (hash) _self
+    throw "boom"
+let nested = native_frames after: 1 do std.hash [[BadHash()]]
+assert_eq $nested ["std.Array (hash)", "std.Array (hash)", "std.hash nil"]
+assert_eq (native_frames after: 1 do {[BadHash()]: 1}) ["std.Array (hash)"]
+
+# A Do method gets no native frame
+class Mine
+  pub def boom _self
+    throw "boom"
+assert_eq (native_frames do Mine().boom()) []
+
+# Delegation is transparent: a native method reached through a Do subclass,
+# an explicit superclass call or the native type itself gets one frame
+class Cur: io.Cursor
+assert_eq (native_frames do Cur("abc").write "x") ["io.Cursor write"]
+assert_eq (native_frames do io.Cursor.write(Cur("abc"), "x")) ["io.Cursor write"]
+assert_eq (native_frames do io.Cursor("abc").write "x") ["io.Cursor write"]
+
+# A special method called by name runs its operation under one frame
+assert_eq (native_frames do [1].(get) :x:) ["std.Array (get)"]
+assert_eq (native_frames do {a: 1}.(index) :b:) ["std.Dict (index)"]
+
+# Each special method called by name forwards to its operation
+let arr = [1, 2]
+assert_eq $arr.(index)(0) 1
+arr.(assign) 0 5
+assert_eq $arr [5, 2]
+let it = [1].(iter)()
+assert_eq $it.(next)() 1
+assert_throws $std.IterStop do it.(next)()
+let sunk = []
+sunk.(sink)().(put) 1
+assert_eq $sunk [1]
+assert_eq (str.(call) 5) "5"
+
+# An unbound call on a type object runs the instance's own operation, or that of a
+# Do subclass's native part, under the type's frame
+class Sub: Dict
+  def (init) self
+    Dict.(init) $self {a: 1}
+let sub = Sub()
+assert_eq (Dict.(index) sub :a:) 1
+assert_eq (native_frames do Dict.(index) {a: 1} :b:) ["std.Dict (index)"]
+assert_eq (native_frames do Dict.(index) sub :b:) ["std.Dict (index)"]
+assert_eq (native_frames do Dict.keys 5) ["std.Dict keys"]
+assert_throws $std.TypeError do Array.(get) "x" :f:
+
+# Unbound operators keep their meaning
+assert_eq (Int.(add) 1 2) 3
+let same = Value.(eq) [1] [1]
+assert_eq $same false

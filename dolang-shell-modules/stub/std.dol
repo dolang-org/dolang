@@ -268,7 +268,7 @@ do -> Int
   ...
 
 @def int value @ (Num | Str) -> Int
-@def int value @ Str :base @ Int -> Int
+@def int value@Str :base@Int -> Int
 
 # Coerces or parses a value as an [`Int`](std.Int).
 #
@@ -482,13 +482,15 @@ pub class RuntimeError: Error
     ...
 
 
-# Supertype of errors where items are missing or unexpected, in a call's
-# arguments or a destructured value.
+# Supertype of errors where a value doesn't have the shape a call's arguments
+# or a destructuring pattern call for: it has no items at all, or items are
+# missing or unexpected.
 #
 # Binding arguments and destructuring share one mechanism, so `def f x y`,
-# `bind args`, and `let a b = parts` all raise the same errors. `ShapeError`
-# is abstract: catch it, but construct or subclass one of its concrete
-# subtypes.
+# `bind args`, and `let a b = parts` all raise the same errors. A conditional
+# pattern, such as a `match` arm, fails to match on any `ShapeError` rather than
+# raising it. `ShapeError` is abstract: catch it, but construct or subclass one
+# of its concrete subtypes.
 pub class ShapeError: RuntimeError
 
 
@@ -623,7 +625,7 @@ pub @class AssignMixed[S @ {...}]: Assign[S]
 
 # A [`Mixed`](std.Mixed) supporting assignment and removal.
 pub @class MutMixed[S @ {...}]: Mixed[S] AssignMixed[S]
-  @def delete[K] self @ MutMixed[Deletable[S, K]] key @ K -> Bool
+  @def delete[K] self@MutMixed[Deletable[S, K]] key@K -> Bool
 
   # Removes every value of a key, reporting whether any were present.
   pub def delete self key @ Value -> Bool
@@ -664,7 +666,7 @@ pub @class Map[S @ {*(Value): Value}]: Mixed[S]
   pub def len self -> Int
 
   # Tests for a key, or for a matching key and value.
-  pub def contains self key @ Value value @ Value = ... -> Bool
+  pub def contains self key@Value value@Value = ... -> Bool
 
   # Counts distinct keys, or the values of one key. Missing keys count as zero.
   pub def count self key @ Value = ... -> Int
@@ -2402,7 +2404,7 @@ pub class Dict[S @ {*(Value): Value}]: BaseDict[S] @MutMap[S] @Assign[S]
   pub def copy self -> Dict[S]
     ...
 
-  @def delete[K] self @ Dict[Deletable[S, K]] key @ K -> Bool
+  @def delete[K] self@Dict[Deletable[S, K]] key@K -> Bool
 
   # Indicates whether any values were removed. Removes all values for the key.
   #
@@ -2624,7 +2626,7 @@ pub class Record[...Ts @ {*Value, *(Sym): Value}]: BaseRecord[...Ts] @MutMixed[T
   pub def copy self -> Record[...Ts]
     ...
 
-  @def delete[K] self @ Record[...Deletable[Ts, K]] key @ K -> Bool
+  @def delete[K] self@Record[...Deletable[Ts, K]] key@K -> Bool
 
   # Removes a positional item, shifting the ones after it, or every value of a
   # key. Indicates whether anything was removed.
@@ -3403,7 +3405,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   pub def len self -> Int
     ...
 
-  @def format[B @ {*Value, *(Sym): Value}] self @ Fmt[V, B] ...bindings @ B -> Str
+  @def format[B @ {*Value, *(Sym): Value}] self@Fmt[V, B] ...bindings@B -> Str
 
   # Expands the sequence and returns the result: literal text as it stands, and
   # each interpolation through its own specification. This is the only way to get
@@ -4273,6 +4275,24 @@ pub @class Setter[T, V]
   field func @Phantom[((T, V) -> nil)]
 
 
+# Raised when a value with no items is unpacked, such as an `Int`, or an
+# instance of a class without an
+# [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) method.
+#
+# An `(unpack)` method can raise it to decline, so that a conditional pattern
+# fails to match. `Str` and `Bin` raise it too: unpack a view such as
+# `s.scalars()` instead.
+#[mixable]
+pub class ShapelessError: ShapeError
+  # Builds an error describing a value that cannot be unpacked.
+  pub def (init)
+    self
+    # description of the value
+    message @ Str
+  do
+    ...
+
+
 # Error raised to signal that a sink has been closed.
 pub class SinkStop: Error
   # Builds the signal that a sink has been closed.
@@ -5105,7 +5125,7 @@ do
   # assert (!Struct.contains(s, :port:))
   # ```
   #[class]
-  pub def contains self target @ BaseStruct[...] key @ (Int | Sym) -> Bool
+  pub def contains self target@BaseStruct[...] key@(Int | Sym) -> Bool
     ...
 
   # Reads the item a name keys, as in `s.name`.
