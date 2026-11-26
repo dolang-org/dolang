@@ -4,6 +4,7 @@ pub(crate) mod repr;
 pub mod view;
 
 use std::{
+    borrow::Cow,
     cell::UnsafeCell,
     convert::Into,
     hash::DefaultHasher,
@@ -18,7 +19,7 @@ use dolang_util::mono::MonoVec;
 
 use crate::{
     arg::Args,
-    error::{Error, ErrorKind, Result},
+    error::{Error, ErrorKind, Result, UnwindEntry},
     frame::Frame,
     gc::{self, Base, BaseWeak, Collect, Gc, arena},
     method,
@@ -34,7 +35,7 @@ use crate::{
         str::StrObj,
     },
     stdlib::fmt as fmt_obj,
-    strand::{PinScope, Strand},
+    strand::{PinScope, Strand, in_native_frame},
     sym::{self, Sym},
     vm::{Alloc, AllocExt, Vm},
     with_slots,
@@ -42,6 +43,59 @@ use crate::{
 
 use prim::Prim;
 use repr::{Decode, Repr};
+
+/// Run `$body` in a native frame for `$prim`'s type and `$method`, as the `Protocol` glue
+/// does for an object's operation.  With `owning`, `$method` is the method's [`Sym`].
+macro_rules! prim_frame {
+    ($strand:ident, $prim:expr, $method:expr, $body:expr $(,)?) => {
+        in_native_frame!(
+            $strand,
+            Cow::Borrowed("std"),
+            Cow::Borrowed($prim.type_name()),
+            Some(Cow::Borrowed($method)),
+            $body
+        )
+    };
+    (owning $strand:ident, $prim:expr, $method:expr, $body:expr $(,)?) => {
+        in_native_frame!(
+            owning $strand,
+            Cow::Borrowed("std"),
+            Cow::Borrowed($prim.type_name()),
+            $method,
+            $body
+        )
+    };
+}
+
+/// A binary operator's implementation for two primitives, and the method that names its
+/// native frame.
+struct PrimOp<'v, 's> {
+    method: &'static str,
+    apply: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
+}
+
+/// Add the backtrace entry of `prim`'s native frame for `method` to `res`'s error, if the
+/// operation links.  An operation between primitives never re-enters, so it needs only
+/// the entry, not a frame.
+#[inline]
+fn prim_frame_entry<'v, 's, R>(
+    strand: &mut Strand<'v, 's>,
+    prim: &Prim,
+    method: &'static str,
+    res: Result<'v, 's, R>,
+) -> Result<'v, 's, R> {
+    res.map_err(|mut err| {
+        if strand.links_frame() {
+            let entry = UnwindEntry::Native {
+                module: Cow::Borrowed("std"),
+                receiver: Cow::Borrowed(prim.type_name()),
+                method: Some(Cow::Borrowed(method)),
+            };
+            err.push_backtrace(strand, entry);
+        }
+        err
+    })
+}
 use view::{
     Array, Bin, Dict, Fmt, FmtParam, FmtValue, ObjectView, Range, Set, Str, Struct, Tuple, View,
 };
@@ -296,10 +350,12 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_call(strand, args, out).await,
-            Case::Prim(o) => Err(Error::type_error(
+            Case::Prim(o) => prim_frame!(
                 strand,
-                format!("call not supported: {o}"),
-            )),
+                o,
+                "(call)",
+                Err(Error::type_error(strand, "call not supported"))
+            ),
         }
     }
 
@@ -315,7 +371,9 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_mcall(strand, method, args, out).await,
-            Case::Prim(prim) => prim.op_mcall(strand, method, args, out),
+            Case::Prim(prim) => {
+                prim_frame!(owning strand, prim, method, prim.op_mcall(strand, method, args, out))
+            }
         }
     }
 
@@ -553,7 +611,8 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match &self.case() {
             Case::Prim(prim) => {
-                let value = prim.op_neg(strand)?;
+                let value = prim.op_neg(strand);
+                let value = prim_frame_entry(strand, prim, "(neg)", value)?;
                 strand.store(out, value);
                 Ok(())
             }
@@ -578,7 +637,8 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match &self.case() {
             Case::Prim(prim) => {
-                let value = prim.op_bnot(strand)?;
+                let value = prim.op_bnot(strand);
+                let value = prim_frame_entry(strand, prim, "(bnot)", value)?;
                 strand.store(out, value);
                 Ok(())
             }
@@ -590,7 +650,7 @@ impl<'v> Value<'v> {
         &self,
         strand: &'a mut Strand<'v, 's>,
         other: &'a Value<'v>,
-        prim: fn(&Prim, &mut Strand<'v, 's>, &Prim) -> Result<'v, 's, Prim>,
+        prim: PrimOp<'v, 's>,
         lobj: for<'b, 'c> fn(
             &'b gc::Base<'v, Header>,
             &'b mut Strand<'v, 's>,
@@ -605,9 +665,9 @@ impl<'v> Value<'v> {
         ) -> Result<'v, 's, ()>,
         mut out: Slot<'v, '_>,
     ) -> Result<'v, 's, ()> {
-        match match (self.case(), other.case()) {
+        let res = match match (self.case(), other.case()) {
             // Both primitives: dispatch to primitive handler
-            (Case::Prim(left), Case::Prim(right)) => prim(&left, strand, &right).map(|v| {
+            (Case::Prim(left), Case::Prim(right)) => (prim.apply)(&left, strand, &right).map(|v| {
                 strand.store(out, v);
             }),
             // Object only on left: dispatch to left object handler
@@ -628,6 +688,10 @@ impl<'v> Value<'v> {
                 Err(Error::type_error(strand, "no overload available"))
             }
             other => other,
+        };
+        match (self.case(), other.case()) {
+            (Case::Prim(left), Case::Prim(_)) => prim_frame_entry(strand, &left, prim.method, res),
+            _ => res,
         }
     }
 
@@ -716,7 +780,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_band,
+            PrimOp {
+                method: "(band)",
+                apply: Prim::op_band,
+            },
             |this, strand, other, out| this.op_band(strand, other, out),
             |this, strand, other, out| this.op_rband(strand, other, out),
             out,
@@ -732,7 +799,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_bor,
+            PrimOp {
+                method: "(bor)",
+                apply: Prim::op_bor,
+            },
             |this, strand, other, out| this.op_bor(strand, other, out),
             |this, strand, other, out| this.op_rbor(strand, other, out),
             out,
@@ -748,7 +818,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_bxor,
+            PrimOp {
+                method: "(bxor)",
+                apply: Prim::op_bxor,
+            },
             |this, strand, other, out| this.op_bxor(strand, other, out),
             |this, strand, other, out| this.op_rbxor(strand, other, out),
             out,
@@ -764,7 +837,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_shl,
+            PrimOp {
+                method: "(shl)",
+                apply: Prim::op_shl,
+            },
             |this, strand, other, out| this.op_shl(strand, other, out),
             |this, strand, other, out| this.op_rshl(strand, other, out),
             out,
@@ -780,7 +856,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_shr,
+            PrimOp {
+                method: "(shr)",
+                apply: Prim::op_shr,
+            },
             |this, strand, other, out| this.op_shr(strand, other, out),
             |this, strand, other, out| this.op_rshr(strand, other, out),
             out,
@@ -796,7 +875,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_add,
+            PrimOp {
+                method: "(add)",
+                apply: Prim::op_add,
+            },
             |this, strand, other, out| this.op_add(strand, other, out),
             |this, strand, other, out| this.op_radd(strand, other, out),
             out,
@@ -812,7 +894,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_sub,
+            PrimOp {
+                method: "(sub)",
+                apply: Prim::op_sub,
+            },
             |this, strand, other, out| this.op_sub(strand, other, out),
             |this, strand, other, out| this.op_rsub(strand, other, out),
             out,
@@ -828,7 +913,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_mul,
+            PrimOp {
+                method: "(mul)",
+                apply: Prim::op_mul,
+            },
             |this, strand, other, out| this.op_mul(strand, other, out),
             |this, strand, other, out| this.op_rmul(strand, other, out),
             out,
@@ -844,7 +932,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_div,
+            PrimOp {
+                method: "(div)",
+                apply: Prim::op_div,
+            },
             |this, strand, other, out| this.op_div(strand, other, out),
             |this, strand, other, out| this.op_rdiv(strand, other, out),
             out,
@@ -860,7 +951,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_ediv,
+            PrimOp {
+                method: "(ediv)",
+                apply: Prim::op_ediv,
+            },
             |this, strand, other, out| this.op_ediv(strand, other, out),
             |this, strand, other, out| this.op_rediv(strand, other, out),
             out,
@@ -876,7 +970,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_mod,
+            PrimOp {
+                method: "(mod)",
+                apply: Prim::op_mod,
+            },
             |this, strand, other, out| this.op_mod(strand, other, out),
             |this, strand, other, out| this.op_rmod(strand, other, out),
             out,
@@ -894,7 +991,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_add,
+            PrimOp {
+                method: "(radd)",
+                apply: Prim::op_add,
+            },
             |this, strand, other, out| this.op_radd(strand, other, out),
             |this, strand, other, out| this.op_add(strand, other, out),
             out,
@@ -910,7 +1010,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_mul,
+            PrimOp {
+                method: "(rmul)",
+                apply: Prim::op_mul,
+            },
             |this, strand, other, out| this.op_rmul(strand, other, out),
             |this, strand, other, out| this.op_mul(strand, other, out),
             out,
@@ -926,7 +1029,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_band,
+            PrimOp {
+                method: "(rband)",
+                apply: Prim::op_band,
+            },
             |this, strand, other, out| this.op_rband(strand, other, out),
             |this, strand, other, out| this.op_band(strand, other, out),
             out,
@@ -942,7 +1048,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_bor,
+            PrimOp {
+                method: "(rbor)",
+                apply: Prim::op_bor,
+            },
             |this, strand, other, out| this.op_rbor(strand, other, out),
             |this, strand, other, out| this.op_bor(strand, other, out),
             out,
@@ -958,7 +1067,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_bxor,
+            PrimOp {
+                method: "(rbxor)",
+                apply: Prim::op_bxor,
+            },
             |this, strand, other, out| this.op_rbxor(strand, other, out),
             |this, strand, other, out| this.op_bxor(strand, other, out),
             out,
@@ -974,7 +1086,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            |left, strand, right| right.op_shl(strand, left),
+            PrimOp {
+                method: "(rshl)",
+                apply: |left, strand, right| right.op_shl(strand, left),
+            },
             |this, strand, other, out| this.op_rshl(strand, other, out),
             |this, strand, other, out| this.op_shl(strand, other, out),
             out,
@@ -990,7 +1105,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            |left, strand, right| right.op_shr(strand, left),
+            PrimOp {
+                method: "(rshr)",
+                apply: |left, strand, right| right.op_shr(strand, left),
+            },
             |this, strand, other, out| this.op_rshr(strand, other, out),
             |this, strand, other, out| this.op_shr(strand, other, out),
             out,
@@ -1006,7 +1124,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_rsub,
+            PrimOp {
+                method: "(rsub)",
+                apply: Prim::op_rsub,
+            },
             |this, strand, other, out| this.op_rsub(strand, other, out),
             |this, strand, other, out| this.op_sub(strand, other, out),
             out,
@@ -1022,7 +1143,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_rdiv,
+            PrimOp {
+                method: "(rdiv)",
+                apply: Prim::op_rdiv,
+            },
             |this, strand, other, out| this.op_rdiv(strand, other, out),
             |this, strand, other, out| this.op_div(strand, other, out),
             out,
@@ -1038,7 +1162,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_rediv,
+            PrimOp {
+                method: "(rediv)",
+                apply: Prim::op_rediv,
+            },
             |this, strand, other, out| this.op_rediv(strand, other, out),
             |this, strand, other, out| this.op_ediv(strand, other, out),
             out,
@@ -1054,7 +1181,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_rmod,
+            PrimOp {
+                method: "(rmod)",
+                apply: Prim::op_rmod,
+            },
             |this, strand, other, out| this.op_rmod(strand, other, out),
             |this, strand, other, out| this.op_mod(strand, other, out),
             out,
@@ -1216,8 +1346,10 @@ impl<'v> Value<'v> {
         match self.case() {
             Case::Object(this) => this.op_lt(strand, other, out),
             Case::Prim(this) => {
-                let other = other.to_prim(strand)?;
-                let value = this.op_lt(strand, &other)?;
+                let value = other
+                    .to_prim(strand)
+                    .and_then(|other| this.op_lt(strand, &other));
+                let value = prim_frame_entry(strand, &this, "(lt)", value)?;
                 strand.store(out, value);
                 Ok(())
             }
@@ -1233,8 +1365,10 @@ impl<'v> Value<'v> {
         match self.case() {
             Case::Object(this) => this.op_lte(strand, other, out),
             Case::Prim(this) => {
-                let other = other.to_prim(strand)?;
-                let value = this.op_lte(strand, &other)?;
+                let value = other
+                    .to_prim(strand)
+                    .and_then(|other| this.op_lte(strand, &other));
+                let value = prim_frame_entry(strand, &this, "(lte)", value)?;
                 strand.store(out, value);
                 Ok(())
             }
@@ -1250,7 +1384,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_lt,
+            PrimOp {
+                method: "(lt)",
+                apply: Prim::op_lt,
+            },
             |this, strand, other, out| this.op_lt(strand, other, out),
             |this, strand, other, out| this.op_gt(strand, other, out),
             out,
@@ -1266,7 +1403,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_gt,
+            PrimOp {
+                method: "(gt)",
+                apply: Prim::op_gt,
+            },
             |this, strand, other, out| this.op_gt(strand, other, out),
             |this, strand, other, out| this.op_lt(strand, other, out),
             out,
@@ -1282,7 +1422,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_lte,
+            PrimOp {
+                method: "(lte)",
+                apply: Prim::op_lte,
+            },
             |this, strand, other, out| this.op_lte(strand, other, out),
             |this, strand, other, out| this.op_gte(strand, other, out),
             out,
@@ -1298,7 +1441,10 @@ impl<'v> Value<'v> {
         self.binop(
             strand,
             other,
-            Prim::op_gte,
+            PrimOp {
+                method: "(gte)",
+                apply: Prim::op_gte,
+            },
             |this, strand, other, out| this.op_gte(strand, other, out),
             |this, strand, other, out| this.op_lte(strand, other, out),
             out,
@@ -1320,7 +1466,9 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_get(strand, field, out),
-            Case::Prim(prim) => prim.op_get(self, strand, field, out),
+            Case::Prim(prim) => {
+                prim_frame!(strand, prim, "(get)", prim.op_get(self, strand, field, out))
+            }
         }
     }
 
@@ -1332,7 +1480,14 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_set(strand, field, value),
-            _ => Err(Error::type_error(strand, "field set not supported")),
+            Case::Prim(prim) => {
+                prim_frame!(
+                    strand,
+                    prim,
+                    "(set)",
+                    Err(Error::type_error(strand, "field set not supported"))
+                )
+            }
         }
     }
 
@@ -1344,7 +1499,14 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_index(strand, index, out),
-            _ => Err(Error::type_error(strand, "indexing not supported")),
+            Case::Prim(prim) => {
+                prim_frame!(
+                    strand,
+                    prim,
+                    "(index)",
+                    Err(Error::type_error(strand, "indexing not supported"))
+                )
+            }
         }
     }
 
@@ -1356,7 +1518,14 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_assign(strand, index, value),
-            _ => Err(Error::type_error(strand, "index assignment not supported")),
+            Case::Prim(prim) => {
+                prim_frame!(
+                    strand,
+                    prim,
+                    "(assign)",
+                    Err(Error::type_error(strand, "index assignment not supported"))
+                )
+            }
         }
     }
 
@@ -1381,7 +1550,15 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, bool> {
         match self.case() {
             Case::Object(o) => o.op_next(strand, out).await,
-            _ => Err(Error::type_error(strand, "iterator `next` not supported")),
+            Case::Prim(prim) => prim_frame!(
+                strand,
+                prim,
+                "(next)",
+                Err(Error::type_error(
+                    strand,
+                    "iteration protocol not supported"
+                ))
+            ),
         }
     }
 
@@ -1392,7 +1569,12 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_put(strand, item).await,
-            Case::Prim(_) => Err(Error::type_error(strand, "sink `put` not supported")),
+            Case::Prim(prim) => prim_frame!(
+                strand,
+                prim,
+                "(put)",
+                Err(Error::type_error(strand, "sink protocol not supported"))
+            ),
         }
     }
 
@@ -1403,7 +1585,15 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_iter(strand, out).await,
-            Case::Prim(_) => Err(Error::type_error(strand, "iteration not supported")),
+            Case::Prim(prim) => prim_frame!(
+                strand,
+                prim,
+                "(iter)",
+                Err(Error::type_error(
+                    strand,
+                    "iteration protocol not supported"
+                ))
+            ),
         }
     }
 
@@ -1414,7 +1604,12 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_sink(strand, out).await,
-            Case::Prim(_) => Err(Error::type_error(strand, "sink protocol not supported")),
+            Case::Prim(prim) => prim_frame!(
+                strand,
+                prim,
+                "(sink)",
+                Err(Error::type_error(strand, "sink protocol not supported"))
+            ),
         }
     }
 
@@ -1426,7 +1621,15 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_spread(strand, context, sink).await,
-            Case::Prim(_) => Err(Error::type_error(strand, "spread not supported")),
+            Case::Prim(prim) => prim_frame!(
+                strand,
+                prim,
+                "(spread)",
+                Err(Error::type_error(
+                    strand,
+                    "spreading protocol not supported"
+                ))
+            ),
         }
     }
 
@@ -1437,7 +1640,12 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_unpack(strand, unpack).await,
-            Case::Prim(_) => Err(Error::cannot_unpack(strand, self)),
+            Case::Prim(prim) => prim_frame!(
+                strand,
+                prim,
+                "(unpack)",
+                Err(Error::cannot_unpack(strand, self))
+            ),
         }
     }
 

@@ -562,10 +562,7 @@ pub trait Object<'v>: Sized + 'v {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        future::ready(Err(Error::type_error(
-            strand,
-            format!("call not supported: {}", Self::NAME),
-        )))
+        future::ready(Err(Error::type_error(strand, "call not supported")))
     }
 
     /// Register methods and fields during type registration.
@@ -737,7 +734,7 @@ pub trait Object<'v>: Sized + 'v {
     ) -> impl Future<Output = Result<'v, 's, bool>> {
         future::ready(Err(Error::type_error(
             strand,
-            format!("iterator `next` not supported: {}", Self::NAME),
+            "iteration protocol not supported",
         )))
     }
 
@@ -1362,10 +1359,7 @@ async fn default_object_sink<'v, 'a, 's, T: Object<'v>>(
     let Some(&Entry::Delegate(supertype_index, MemberKind::Method)) =
         recv.vtbl().entry(Sym::well_known(sym::SINK_METHOD))
     else {
-        return Err(Error::type_error(
-            strand,
-            format!("sink coercion not supported: {}", T::NAME),
-        ));
+        return Err(Error::type_error(strand, "sink protocol not supported"));
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
     with_slots!(strand, |mut delegator| {
@@ -1385,10 +1379,7 @@ async fn default_object_put<'v, 'a, 's, T: Object<'v>>(
     let Some(&Entry::Delegate(supertype_index, MemberKind::Method)) =
         recv.vtbl().entry(Sym::well_known(sym::PUT_METHOD))
     else {
-        return Err(Error::type_error(
-            strand,
-            format!("sink `put` not supported: {}", T::NAME),
-        ));
+        return Err(Error::type_error(strand, "sink protocol not supported"));
     };
     let supertype = instance_supertype::<T>(recv, strand, supertype_index);
     with_slots!(strand, |mut delegator| {

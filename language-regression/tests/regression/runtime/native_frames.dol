@@ -24,6 +24,17 @@ let unpacked = native_frames do
   let _a _b = [1, 2, 3]
 assert_eq $unpacked ["std.Array (unpack)"]
 
+# A primitive's operation raises under a frame for its type
+let five = 5
+assert_eq (native_frames do [...five]) ["std.Int (spread)"]
+assert_eq (native_frames do five()) ["std.Int (call)"]
+assert_eq (native_frames do five.nope) ["std.Int (get)"]
+assert_eq (native_frames do (five / 0)) ["std.Int (div)"]
+assert_eq (native_frames do nil[0]) ["std.Nil (index)"]
+let iterated = native_frames do
+  for _x = 1.5 => nil
+assert_eq $iterated ["std.Float (iter)"]
+
 # A callback's error passes through the frame of the operation that called it.
 # Spreading pulls the iterator's own items within the one operation
 let mapped = native_frames after: 1 do [...[1].map(boom)]

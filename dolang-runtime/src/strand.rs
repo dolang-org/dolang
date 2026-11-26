@@ -473,9 +473,26 @@ impl Drop for FrameScope<'_, '_, '_> {
 ///
 /// The frame is pushed only if it links, at the start of a logical operation (see
 /// [`Strand::start_op`]); otherwise the expression runs in the caller's frame, still one
-/// call level deeper.
+/// call level deeper.  With `owning`, `$method` is the method's [`Sym`], whose name the
+/// frame borrows and an error's backtrace copies.
 macro_rules! in_native_frame {
-    ($strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {{
+    ($strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {
+        $crate::strand::in_native_frame!(@finish finish, $strand, $module, $receiver, $method, $body)
+    };
+    (owning $strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr $(,)?) => {
+        $crate::strand::in_native_frame!(
+            @finish finish_owning_method,
+            $strand,
+            $module,
+            $receiver,
+            // SAFETY: the frame lives within the call, and `owning` copies the name out
+            Some(::std::borrow::Cow::Borrowed(unsafe {
+                $crate::object::protocol::frame_method($method, $strand.vm())
+            })),
+            $body
+        )
+    };
+    (@finish $finish:ident, $strand:ident, $module:expr, $receiver:expr, $method:expr, $body:expr) => {{
         if $strand.links_frame() {
             let frame = $crate::frame::Native {
                 module: $module,
@@ -488,7 +505,7 @@ macro_rules! in_native_frame {
             let mut scope = unsafe { $strand.enter_native_frame(&frame) }?;
             let $strand = &mut *scope;
             let res = $body;
-            scope.finish(res)
+            scope.$finish(res)
         } else {
             let _depth = $strand.inner.push_call_depth()?;
             $body

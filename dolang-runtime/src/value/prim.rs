@@ -77,6 +77,16 @@ impl Display for Prim {
 }
 
 impl Prim {
+    /// The name of this value's type in `std`, which names its native frames.
+    pub(crate) fn type_name(&self) -> &'static str {
+        match self {
+            Prim::Nil => "Nil",
+            Prim::Int(_) => "Int",
+            Prim::F64(_) => "Float",
+            Prim::Bool(_) => "Bool",
+        }
+    }
+
     pub(crate) fn op_get<'v, 'a, 's>(
         self,
         receiver: &'a Value<'v>,
