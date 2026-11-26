@@ -174,9 +174,8 @@ class DoLexer(Lexer):
         "STRING_DELIM": 0,
         "VARIABLE": 0,
         "SIGIL": 0,
-        # Diagnostic severities, synthesized as low-priority candidates
+        # Errors, synthesized as low-priority candidates
         "ERROR": 100,  # Low priority - overshadowed by regular tokens
-        "WARNING": 100,  # Low priority - filtered out anyway, but explicit here
     }
 
     def _get_token_priority(self, kind: str) -> int:
@@ -187,14 +186,16 @@ class DoLexer(Lexer):
         line_starts = self._line_starts(source_text)
         nodes = payload.get("nodes", [])
 
-        # Diagnostics ride through the same span/priority pipeline as tokens,
-        # as low-priority candidates: a real token at the same span always
-        # wins, but an uncovered error span still surfaces (as Token.Error,
-        # logged below) rather than silently vanishing.
+        # Errors ride through the same span/priority pipeline as tokens, as
+        # low-priority candidates: a real token at the same span always wins,
+        # but an uncovered error span still surfaces (as Token.Error, logged
+        # below) rather than silently vanishing. Warnings and lints don't
+        # affect highlighting.
         candidates = list(payload.get("tokens", [])) + [
-            {"kind": d.get("severity"), "span": (d.get("span") or {}).get("span")}
+            {"kind": "ERROR", "span": (d.get("span") or {}).get("span")}
             for d in payload.get("diagnostics", [])
-            if (d.get("span") or {}).get("unit") is None
+            if d.get("severity") == "ERROR"
+            and (d.get("span") or {}).get("unit") is None
         ]
 
         # First, collect all valid tokens with their metadata
@@ -236,17 +237,19 @@ class DoLexer(Lexer):
         # Sort by start offset, then by priority (lower priority number = higher priority)
         token_candidates.sort(key=lambda x: (x[0], x[1]))
 
-        # Keep only the first (highest priority) token at each start offset
+        # Keep the first (highest priority) token at each start offset, and
+        # drop any that starts inside one already kept, which would repeat
+        # its text in the output
         processed = []
-        seen_starts = {}
+        end = 0
 
         for start_offset, priority, token_type, token_text in token_candidates:
-            if start_offset in seen_starts:
-                continue  # Skip - a higher priority token already exists at this position
+            if start_offset < end:
+                continue
             if token_type == Token.Error:
                 print(f"WARNING: error in block\n{source_text}")
             processed.append((start_offset, token_type, token_text))
-            seen_starts[start_offset] = True
+            end = start_offset + len(token_text)
 
         return processed
 
