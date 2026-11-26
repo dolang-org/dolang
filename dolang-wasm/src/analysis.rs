@@ -1,11 +1,12 @@
 //! Playground-local adaptation of the LSP's semantic classification and type
 //! checking.
 use crate::{
-    hover::{self, Checked, Hover, Reference},
+    hover::{self, Checked, Hover, Occurrence, Reference},
     typelibs::typelibs,
 };
 use dolang::compile::{
-    Context, Diag, ErrorKind, Kind, NodeId, Severity, Span, Token, Unit, UnitId, typeck,
+    AnnotationKind, Context, Diag, ErrorKind, Kind, NodeId, NoteKind, Severity, SourceSpan, Span,
+    Token, Unit, UnitId, typeck,
 };
 use dolang_util::utf16::Offsets;
 use serde::Serialize;
@@ -27,12 +28,57 @@ pub(crate) struct TokenRange {
     pub to: usize,
     pub kind: &'static str,
 }
-#[derive(Serialize)]
+/// A problem the compiler or checker found, as `annotate-snippets` would show
+/// it: where it is, what is labelled around it, notes, and fixes.
+#[derive(Debug, Serialize)]
 pub(crate) struct Diagnostic {
     pub from: usize,
     pub to: usize,
+    /// `error`, `warning` or `lint`
     pub severity: &'static str,
     pub message: String,
+    pub labels: Vec<Label>,
+    pub notes: Vec<Note>,
+    pub fixes: Vec<Fix>,
+}
+
+/// A labelled span: the cause of a diagnostic or context for it.
+#[derive(Debug, Serialize)]
+pub(crate) struct Label {
+    pub primary: bool,
+    /// May be empty, for a label that only marks its span
+    pub message: String,
+    pub at: Place,
+}
+
+/// Where a label is.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub(crate) enum Place {
+    /// In the source, as a UTF-16 range
+    Here { from: usize, to: usize },
+    /// In a bundled module, which has no text here
+    Elsewhere {
+        module: String,
+        line: u32,
+        column: u32,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Note {
+    /// `info` or `help`
+    pub kind: &'static str,
+    pub message: String,
+}
+
+/// A suggested change: replacing a UTF-16 range of the source with `insert`.
+#[derive(Debug, Serialize)]
+pub(crate) struct Fix {
+    pub from: usize,
+    pub to: usize,
+    pub insert: String,
+    pub title: String,
 }
 
 /// A span's UTF-16 range; all positions exposed to the editor are UTF-16.
@@ -41,51 +87,62 @@ fn range(offsets: &Offsets, unit: &Unit<'_>, span: Span) -> (usize, usize) {
     (offsets.utf16(range.start), offsets.utf16(range.end))
 }
 
-/// Converts a diagnostic located in the source, appending it and its
-/// annotations to `out`.
+/// Converts a diagnostic located in the source.
 ///
-/// `foreign` locates an annotation in another unit, which has no source here,
+/// `foreign` places a span in another unit, which has no source here,
 /// returning `None` for one in the source itself.
 fn convert(
     offsets: &Offsets,
     unit: &Unit<'_>,
     diag: &Diag,
-    foreign: impl Fn(&dolang::compile::SourceSpan) -> Option<String>,
-    out: &mut Vec<Diagnostic>,
-) {
+    foreign: impl Fn(&SourceSpan) -> Option<Place>,
+) -> Diagnostic {
     let (from, to) = range(offsets, unit, diag.span().span());
-    let mut message = diag.message().to_string();
-    for note in diag.notes() {
-        message.push_str(&format!("\n{}", note.message()));
-    }
-    out.push(Diagnostic {
+    let here = |span: &SourceSpan| {
+        let (from, to) = range(offsets, unit, span.span());
+        Place::Here { from, to }
+    };
+    Diagnostic {
         from,
         to,
         severity: match diag.severity() {
             Severity::Error => "error",
             Severity::Warning => "warning",
-            _ => "info",
+            _ => "lint",
         },
-        message,
-    });
-    for annotation in diag.annotations() {
-        let message = annotation.message().to_string();
-        if message.is_empty() {
-            continue;
-        }
-        let span = annotation.span();
-        // An annotation elsewhere is named in the message, on the
-        // diagnostic's own range
-        let (range, message) = match foreign(&span) {
-            Some(location) => ((from, to), format!("{location}: {message}")),
-            None => (range(offsets, unit, span.span()), message),
-        };
-        out.push(Diagnostic {
-            from: range.0,
-            to: range.1,
-            severity: "info",
-            message,
-        });
+        message: diag.message().to_string(),
+        labels: (diag.annotations())
+            .map(|annotation| {
+                let span = annotation.span();
+                Label {
+                    primary: matches!(annotation.kind(), AnnotationKind::Primary),
+                    message: annotation.message().to_string(),
+                    at: foreign(&span).unwrap_or_else(|| here(&span)),
+                }
+            })
+            .collect(),
+        notes: (diag.notes())
+            .map(|note| Note {
+                kind: match note.kind() {
+                    NoteKind::Help => "help",
+                    _ => "info",
+                },
+                message: note.message().to_string(),
+            })
+            .collect(),
+        // A change elsewhere can't be made here
+        fixes: (diag.patches())
+            .filter(|patch| foreign(&patch.span()).is_none())
+            .map(|patch| {
+                let (from, to) = range(offsets, unit, patch.span().span());
+                Fix {
+                    from,
+                    to,
+                    insert: patch.sub().to_owned(),
+                    title: patch.message().to_owned(),
+                }
+            })
+            .collect(),
     }
 }
 
@@ -96,7 +153,7 @@ fn diagnostics(unit: &Unit<'_>, offsets: &Offsets) -> Vec<Diagnostic> {
             diag.span().unit().is_none(),
             "playground diagnostics must be local"
         );
-        convert(offsets, unit, &diag, |_| None, &mut result);
+        result.push(convert(offsets, unit, &diag, |_| None));
     }
     result
 }
@@ -206,8 +263,8 @@ impl Analyzed {
             let mut result = Vec::new();
             for diag in check.diagnostics() {
                 if diag.span().unit() == Some(id) {
-                    let foreign = |span: &dolang::compile::SourceSpan| foreign(&check, id, span);
-                    convert(offsets, unit, diag, foreign, &mut result);
+                    let foreign = |span: &SourceSpan| foreign(&check, id, span);
+                    result.push(convert(offsets, unit, diag, foreign));
                 }
             }
             let name = check.name(id);
@@ -222,11 +279,22 @@ impl Analyzed {
         result
     }
 
+    fn refs(&self) -> &[Reference] {
+        self.refs.get_or_init(|| hover::references(&self.unit))
+    }
+
+    /// The names of the declaration that the name at the UTF-16 offset
+    /// `pos` names, that one included, or none if nothing there names a
+    /// declaration.
+    pub(crate) fn occurrences(&self, pos: usize) -> Vec<Occurrence> {
+        hover::occurrences(&self.unit, &self.offsets, self.refs(), pos)
+    }
+
     /// What hover shows at the UTF-16 offsets `from` to `to`: a position when
     /// they're equal, else a range. Before a check, only what the source
     /// declares.
     pub(crate) fn hover(&self, from: usize, to: usize) -> Option<Hover> {
-        let refs = self.refs.get_or_init(|| hover::references(&self.unit));
+        let refs = self.refs();
         hover::hover(
             &self.unit,
             &self.offsets,
@@ -238,20 +306,15 @@ impl Analyzed {
     }
 }
 
-/// Where a span in a unit other than `id` lies, as `path:line:column`.
-fn foreign(
-    check: &typeck::Checked,
-    id: UnitId,
-    span: &dolang::compile::SourceSpan,
-) -> Option<String> {
+/// Where a span in a unit other than `id` lies.
+fn foreign(check: &typeck::Checked, id: UnitId, span: &SourceSpan) -> Option<Place> {
     let unit = span.unit().filter(|&unit| unit != id)?;
     let start = span.span().start();
-    Some(format!(
-        "{}:{}:{}",
-        check.path(unit).display(),
-        start.line_number(),
-        start.column_number()
-    ))
+    Some(Place::Elsewhere {
+        module: check.name(unit),
+        line: start.line_number(),
+        column: start.column_number(),
+    })
 }
 
 fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'static str {
@@ -440,10 +503,10 @@ pub mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn lint_is_reported_as_info() {
+    fn lint_carries_its_label_and_fixes() {
         let source = "let name = \"é\"\necho name $name";
-        let byte = source.rfind("name $").unwrap();
-        let from = source[..byte].encode_utf16().count();
+        let utf16 = |byte: usize| source[..byte].encode_utf16().count();
+        let from = utf16(source.rfind("name $").unwrap());
         let lint = Analyzed::new(source.to_owned())
             .diagnostics()
             .into_iter()
@@ -451,8 +514,39 @@ pub mod tests {
             .expect("a bareword lint");
         assert_eq!(
             (lint.from, lint.to, lint.severity),
-            (from, from + 4, "info")
+            (from, from + 4, "lint")
         );
+        let labels: Vec<_> = (lint.labels.iter())
+            .map(|label| match label.at {
+                Place::Here { from, to } => (label.primary, &label.message[..], from, to),
+                Place::Elsewhere { .. } => panic!("a label elsewhere: {label:?}"),
+            })
+            .collect();
+        assert_eq!(labels, [(false, "variable bound here", 4, 8)]);
+        let fixes: Vec<_> = (lint.fixes.iter())
+            .map(|fix| (fix.from, fix.to, &fix.insert[..]))
+            .collect();
+        assert_eq!(
+            fixes,
+            [(from, from + 4, "$name"), (from, from + 4, "\"name\"")]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_label_in_a_bundled_module_names_it() {
+        let source =
+            "class C: @std.BaseIter[Int]\n  pub def (next) _self -> Str => \"a\"\necho (C())";
+        let error = (Analyzed::new(source.to_owned()).check().into_iter())
+            .find(|diag| diag.severity == "error")
+            .expect("a conformance error");
+        let from = source.find("Str").unwrap();
+        let labels: Vec<_> = (error.labels.iter())
+            .map(|label| match &label.at {
+                Place::Here { from, to } => (*from, *to, ""),
+                Place::Elsewhere { module, .. } => (0, 0, &module[..]),
+            })
+            .collect();
+        assert_eq!(labels, [(from, from + 3, ""), (0, 0, "std")]);
     }
 
     #[wasm_bindgen_test]

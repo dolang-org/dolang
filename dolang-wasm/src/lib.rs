@@ -7,8 +7,13 @@ mod typelibs;
 use dolang::{
     compile::Config,
     extension::Extension,
-    runtime::{Bytecode, Error, Frame, error::ErrorKind, vm::Builder},
+    runtime::{
+        Bytecode, Error, Frame,
+        error::ErrorKind,
+        vm::{Builder, Span},
+    },
 };
+use dolang_util::utf16::Offsets;
 use futures::future::{self, Either};
 use serde::Serialize;
 use std::{path::Path, pin::pin};
@@ -19,8 +24,81 @@ pub use host::{AbortSignal, Host};
 #[derive(Default, Serialize)]
 struct RunResult {
     result: Option<String>,
-    error: Option<String>,
+    error: Option<RunError>,
     canceled: bool,
+}
+
+/// An error a run raised, or its source's failure to compile
+#[derive(Debug, Serialize)]
+struct RunError {
+    message: String,
+    /// The backtrace, innermost frame first
+    frames: Vec<RunFrame>,
+}
+
+#[derive(Debug, Serialize)]
+struct RunFrame {
+    module: String,
+    receiver: String,
+    method: Option<String>,
+    /// The code running in the frame, if it has any
+    at: Option<FramePlace>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum FramePlace {
+    /// In the source run, in UTF-16 offsets
+    Here { from: usize, to: usize },
+    Elsewhere {
+        path: String,
+        line: u32,
+        column: u32,
+    },
+}
+
+/// The path the source runs under
+const SOURCE_PATH: &str = "playground.dol";
+
+/// The UTF-16 offsets `span` covers in `source`, stopping short at its end
+fn utf16_range(source: &str, offsets: &Offsets, span: Span) -> (usize, usize) {
+    let start = span.start();
+    let line: usize = (source.split_inclusive('\n'))
+        .take(start.line_offset() as usize)
+        .map(str::len)
+        .sum();
+    let advance = |from: usize, count: u32| {
+        (source[from..].char_indices())
+            .nth(count as usize)
+            .map_or(source.len(), |(offset, _)| from + offset)
+    };
+    let begin = advance(line, start.column_offset());
+    (
+        offsets.utf16(begin),
+        offsets.utf16(advance(begin, span.len())),
+    )
+}
+
+fn run_frame(source: &str, offsets: &Offsets, frame: impl Frame) -> RunFrame {
+    let at = frame.source().map(|(path, span)| {
+        if path == SOURCE_PATH {
+            let (from, to) = utf16_range(source, offsets, span);
+            FramePlace::Here { from, to }
+        } else {
+            let start = span.start();
+            FramePlace::Elsewhere {
+                path: path.into_owned(),
+                line: start.line_number(),
+                column: start.column_number(),
+            }
+        }
+    });
+    RunFrame {
+        module: frame.module().into_owned(),
+        receiver: frame.receiver().into_owned(),
+        method: frame.method().map(Into::into),
+        at,
+    }
 }
 
 fn config() -> Config<'static> {
@@ -75,12 +153,17 @@ fn config() -> Config<'static> {
 async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
     let mut response = RunResult::default();
     let config = config();
-    let unit = config.unit(Path::new("playground.dol"), source.as_str());
+    let unit = config.unit(Path::new(SOURCE_PATH), source.as_str());
     let mut bytes = Vec::new();
     if let Err(error) = unit.emit(&mut bytes) {
-        response.error = Some(error.to_string());
+        response.error = Some(RunError {
+            message: error.to_string(),
+            frames: Vec::new(),
+        });
         return response;
     }
+    let source = source.as_str();
+    let offsets = &Offsets::new(source);
     let result = Builder::build(async move |builder| {
         dolang_ext_base64::Base64Ext.apply_vm(builder).unwrap();
         dolang_ext_compile::CompileExt.apply_vm(builder).unwrap();
@@ -125,19 +208,11 @@ async fn execute(source: String, host: Host, signal: AbortSignal) -> RunResult {
                     Ok(value) => Ok(value),
                     Err(error) => {
                         let canceled = error.kind() == ErrorKind::Canceled;
-                        let mut message = error.display(strand).to_string();
-                        for frame in error.backtrace(strand) {
-                            message.push_str(&format!(
-                                "\n  at {}::{}",
-                                frame.module(),
-                                frame.receiver()
-                            ));
-                            if let Some((path, span)) = frame.source() {
-                                message
-                                    .push_str(&format!(" ({path}:{})", span.start().line_number()));
-                            }
-                        }
-                        Err((message, canceled))
+                        let message = error.display(strand).to_string();
+                        let frames = (error.backtrace(strand))
+                            .map(|frame| run_frame(source, offsets, frame))
+                            .collect();
+                        Err((RunError { message, frames }, canceled))
                     }
                 }
             })
@@ -179,15 +254,23 @@ impl Analyzed {
         serde_wasm_bindgen::to_value(&self.0.tokens()).map_err(Into::into)
     }
 
-    /// The compiler's diagnostics.
+    /// The compiler's diagnostics, each with its labels, notes and fixes.
     pub fn diagnostics(&self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.0.diagnostics()).map_err(Into::into)
     }
 
-    /// Type checks the source, reporting the checker's diagnostics, and keeps
-    /// what it concluded for hover.
+    /// Type checks the source, reporting the checker's diagnostics as
+    /// `diagnostics` does, and keeps what it concluded for hover.
     pub fn check(&mut self) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.0.check()).map_err(Into::into)
+    }
+
+    /// The UTF-16 ranges, as `{ from, to, write }`, of the names referring
+    /// to the same declaration as the name at the UTF-16 offset `pos`, that
+    /// one included; `write` marks the name the declaration binds. Empty when
+    /// nothing there names a declaration.
+    pub fn occurrences(&self, pos: usize) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.0.occurrences(pos)).map_err(Into::into)
     }
 
     /// What hover shows at the UTF-16 offsets `from` to `to`, a position when
@@ -321,7 +404,7 @@ term.console.write c b"d\n"
             "return { chunks: [], write() { return Promise.reject(new Error('host refused')); } };",
         );
         let (result, _) = run_with("echo hi", &host, never_aborted()).await;
-        assert!(result.error.unwrap().contains("host refused"));
+        assert!(result.error.unwrap().message.contains("host refused"));
         let (result, _) = run_with(
             "try\n  echo hi\n  false\ncatch _\n  true",
             &host,
@@ -335,10 +418,36 @@ term.console.write c b"d\n"
     async fn errors_preserve_output() {
         let (result, output) = run_source("echo hello 42\nthrow std.RuntimeError \"oops\"").await;
         assert_eq!(output, "hello 42\n");
-        assert!(result.error.unwrap().contains("oops"));
+        assert!(result.error.unwrap().message.contains("oops"));
         assert!(!result.canceled);
         let (result, _) = run_source("let =").await;
         assert!(result.error.is_some());
+    }
+
+    #[wasm_bindgen_test]
+    async fn errors_carry_their_backtrace() {
+        let source = "def fail x\n  throw std.RuntimeError \"bad $x\"\necho \"é😀\" (fail 1)\n";
+        let utf16: Vec<u16> = source.encode_utf16().collect();
+        let error = run_source(source).await.0.error.unwrap();
+        assert_eq!(error.message, "bad 1");
+        let frames: Vec<_> = (error.frames.iter())
+            .map(|frame| {
+                let Some(FramePlace::Here { from, to }) = frame.at else {
+                    panic!("{frame:?}");
+                };
+                (
+                    frame.receiver.as_str(),
+                    String::from_utf16(&utf16[from..to]).unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            frames,
+            [
+                ("fail", "throw std.RuntimeError \"bad $x\"".into()),
+                ("<main>", "fail 1".into())
+            ]
+        );
     }
 
     #[wasm_bindgen_test]
@@ -351,7 +460,7 @@ term.console.write c b"d\n"
         )
         .await;
         assert!(result.canceled, "{:?}", result.error);
-        assert!(result.error.unwrap().contains("canceled"));
+        assert!(result.error.unwrap().message.contains("canceled"));
         assert_eq!(output, "cleanup\n");
     }
 
@@ -391,8 +500,10 @@ term.console.write c b"d\n"
             let (result, _) = run_source(&format!("import http\nhttp.Client {option}: nil")).await;
             let error = result.error.expect(option);
             assert!(
-                error.contains(&format!("unsupported operation: `{option}` in the browser")),
-                "{error}"
+                error
+                    .message
+                    .contains(&format!("unsupported operation: `{option}` in the browser")),
+                "{error:?}"
             );
         }
     }
@@ -409,8 +520,8 @@ term.console.write c b"d\n"
         assert!(
             result
                 .error
-                .as_deref()
-                .is_some_and(|error| error.contains("assertion failed: 1 == 2: oops")),
+                .as_ref()
+                .is_some_and(|error| error.message.contains("assertion failed: 1 == 2: oops")),
             "{:?}",
             result.error
         );

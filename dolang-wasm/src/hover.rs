@@ -183,6 +183,54 @@ pub(crate) fn references(unit: &Unit<'_>) -> Vec<Reference> {
     refs
 }
 
+/// The reference under the byte offset `start` when `end` is the same, or
+/// else the one covering `start..end` exactly.
+fn reference_at(refs: &[Reference], start: usize, end: usize) -> Option<&Reference> {
+    let before = refs.partition_point(|reference| reference.start <= start);
+    refs.get(before.checked_sub(1)?)
+        .filter(|reference| match start == end {
+            true => start < reference.end,
+            false => (reference.start, reference.end) == (start, end),
+        })
+}
+
+/// A token naming a declaration, by UTF-16 offsets
+#[derive(Debug, Serialize)]
+pub(crate) struct Occurrence {
+    pub from: usize,
+    pub to: usize,
+    /// Whether it's the name the declaration binds, as a `let` or a
+    /// parameter does, which is the only write one unit can be sure of
+    pub write: bool,
+}
+
+/// Every token naming the declaration that the token under the UTF-16
+/// offset `pos` names, its own name included, in source order. Nothing there
+/// names a declaration if it's empty.
+pub(crate) fn occurrences(
+    unit: &Unit<'_>,
+    offsets: &Offsets,
+    refs: &[Reference],
+    pos: usize,
+) -> Vec<Occurrence> {
+    let start = offsets.byte(pos);
+    let Some(id) = reference_at(refs, start, start).map(|reference| reference.id) else {
+        return Vec::new();
+    };
+    let definition = unit
+        .node(id)
+        .and_then(|node| node.definition())
+        .map(|span| unit.byte_range(span));
+    refs.iter()
+        .filter(|reference| reference.id == id)
+        .map(|reference| Occurrence {
+            from: offsets.utf16(reference.start),
+            to: offsets.utf16(reference.end),
+            write: definition == Some(reference.start..reference.end),
+        })
+        .collect()
+}
+
 /// What hover shows of `unit` at the UTF-16 offsets `from` to `to`: a
 /// position when they're equal, else the innermost node containing the range.
 pub(crate) fn hover(
@@ -197,17 +245,7 @@ pub(crate) fn hover(
     if end < start {
         return None;
     }
-    // The token under the position naming a declaration, or for a range, the
-    // one it covers exactly
-    let reference = refs
-        .get(
-            refs.partition_point(|reference| reference.start <= start)
-                .checked_sub(1)?,
-        )
-        .filter(|reference| match start == end {
-            true => start < reference.end,
-            false => (reference.start, reference.end) == (start, end),
-        });
+    let reference = reference_at(refs, start, end);
     // A module has no node of its own, so the check's is the path through it,
     // which says nothing about the module
     let module = reference.is_some_and(|reference| {
@@ -287,28 +325,33 @@ pub(crate) fn hover(
 /// does, at the bytes `start` to `end` of the source: a position in the item's
 /// name, or a range that is exactly it. Gives the module, the item, and where
 /// its name is.
+///
+/// The index has no nodes for types outside declarations, such as a cast's,
+/// so the path is read from the tokens: the module's name refers to its
+/// import, and the item's name, just after the dot, refers to nothing. That
+/// covers only a single step through a module, not a deeper path or a type
+/// held in a local; it stands in until the check judges what a type names
+/// wherever it's written.
 fn type_item_at<'u>(
     unit: &'u Unit<'_>,
     start: usize,
     end: usize,
 ) -> Option<(&'u str, &'u str, Range<usize>)> {
-    unit.nodes().find_map(|(_, node)| {
-        let Kind::NameType {
-            head,
-            target: Some(target),
-        } = node.kind()
-        else {
+    let mut types = Vec::new();
+    unit.tokens(&mut |token, span: Span, node: Option<NodeId>, _| {
+        if matches!(token, Token::Type) {
+            types.push((unit.byte_range(span), node));
+        }
+    });
+    types.sort_by_key(|(range, _)| range.start);
+    let source = unit.source();
+    types.windows(2).find_map(|pair| {
+        let [(head, Some(target)), (item, None)] = pair else {
             return None;
         };
-        let source = unit.source();
-        let dot = unit.byte_range(head).end;
-        // The span covers any grouping parentheses
-        let path = source.get(dot..unit.byte_range(node.span()?).end)?;
-        let rest = path.strip_prefix('.')?;
-        let len = rest
-            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .unwrap_or(rest.len());
-        let item = dot + 1..dot + 1 + len;
+        if source.get(head.end..item.start) != Some(".") {
+            return None;
+        }
         let under = match start == end {
             true => (item.start..=item.end).contains(&start),
             false => (item.start, item.end) == (start, end),
@@ -316,12 +359,12 @@ fn type_item_at<'u>(
         if !under {
             return None;
         }
-        let module = match unit.node(target)?.kind() {
+        let module = match unit.node(*target)?.kind() {
             Kind::ImportModule { module, .. } => unit.text(module),
             Kind::PreludeModule { module, .. } => module,
             _ => return None,
         };
-        Some((module, &source[item.clone()], item))
+        Some((module, &source[item.clone()], item.clone()))
     })
 }
 
@@ -1004,6 +1047,62 @@ mod tests {
             .collect()
     }
 
+    /// The occurrences of the name at `at`, as the start of each, the text
+    /// it covers and whether it's a write
+    fn occurrences_at(source: &str, at: usize) -> Vec<(usize, String, bool)> {
+        let units: Vec<u16> = source.encode_utf16().collect();
+        Analyzed::new(source.to_owned())
+            .occurrences(at)
+            .into_iter()
+            .map(|span| {
+                let text = String::from_utf16(&units[span.from..span.to]).unwrap();
+                (span.from, text, span.write)
+            })
+            .collect()
+    }
+
+    #[wasm_bindgen_test]
+    fn occurrences_are_the_names_of_one_declaration() {
+        // Characters before them are two and four bytes, and one and two code
+        // units
+        let source = "# é 😀\nlet x = 1\nlet x = (x + 1)\necho $x\n";
+        let x = |at: usize, write| (at, "x".to_owned(), write);
+        let second = last(source, "x = (");
+        assert_eq!(
+            occurrences_at(source, last(source, "x")),
+            [x(second, true), x(last(source, "x"), false)]
+        );
+        let first = source[..source.find("x = 1").unwrap()]
+            .encode_utf16()
+            .count();
+        assert_eq!(
+            occurrences_at(source, first),
+            [x(first, true), x(last(source, "x + 1"), false)]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn a_parameter_is_written_where_it_is_declared() {
+        let source = "def double n\n  (n * 2)\n";
+        let n = |at: usize, write| (at, "n".to_owned(), write);
+        assert_eq!(
+            occurrences_at(source, last(source, "n")),
+            [n(last(source, "n\n"), true), n(last(source, "n"), false)]
+        );
+    }
+
+    #[wasm_bindgen_test]
+    fn occurrences_of_a_prelude_item_and_of_nothing() {
+        // A prelude binding is bound by no name in the source
+        let source = "echo a\necho b";
+        let echo = |at: usize| (at, "echo".to_owned(), false);
+        assert_eq!(
+            occurrences_at(source, last(source, "echo")),
+            [echo(0), echo(7)]
+        );
+        assert!(occurrences_at(source, last(source, "b")).is_empty());
+    }
+
     #[wasm_bindgen_test]
     fn variable_read_has_its_type_and_declaration() {
         // Characters before it are two and four bytes, and one and two code
@@ -1184,12 +1283,14 @@ let f = twice";
 
     #[wasm_bindgen_test]
     fn type_item_through_a_module_names_a_bundled_item() {
-        let source = "import json: j\ndef f() -> std.Never\n  throw std.ValueError \"x\"\ndef g _v@(j.DecodeValue | nil)\n  nil\n";
+        let source = "import json: j\nimport toml\ndef f() -> std.Never\n  throw std.ValueError \"x\"\ndef g _v@(j.DecodeValue | nil)\n  nil\nlet v = ({a: 1} !@ toml.EncodeValue)\n";
         let analyzed = checked(source);
-        // Through the prelude's module, and through an import inside a group
+        // Through the prelude's module, through an import inside a group, and
+        // in a cast, which is outside any declaration
         for (needle, module, item) in [
             ("Never", "std", "Never"),
             ("DecodeValue", "json", "DecodeValue"),
+            ("EncodeValue", "toml", "EncodeValue"),
         ] {
             let at = last(source, needle);
             let hover = analyzed.hover(at + 2, at + 2).unwrap();
