@@ -8,7 +8,7 @@ use crate::{
         BoundMethod,
         protocol::{
             Inspect, Member, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback,
-            instance_mcall_fallback, members, type_mcall_fallback,
+            is_special_mcall, members, recv_special_mcall,
         },
     },
     strand::Strand,
@@ -165,11 +165,7 @@ async fn fallback_mcall<'v, 'a, 's>(
             let msg = format!("abstract method `{}`", method.as_str(strand));
             Err(Error::unsupported(strand, msg))
         }
-        _ => {
-            let mut args = args;
-            args.prepend_self(strand, rcvr);
-            type_mcall_fallback(strand, &strand.singletons().num, method, args, out).await
-        }
+        _ => Err(Error::field(strand, method)),
     }
 }
 
@@ -199,7 +195,7 @@ pub(crate) fn int_mcall<'v, 'a, 's>(
             Ok(())
         }
         sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out),
-        _ => instance_mcall_fallback(strand, rcvr, method, args, out),
+        _ => Err(Error::field(strand, method)),
     }
 }
 
@@ -232,13 +228,14 @@ pub(crate) fn float_mcall<'v, 'a, 's>(
     } else if matches!(method.tag(), sym::MIN | sym::MAX | sym::CLAMP) {
         default_mcall(strand, rcvr, method, args, out)
     } else {
-        instance_mcall_fallback(strand, rcvr, method, args, out)
+        Err(Error::field(strand, method))
     }
 }
 
 impl<'v> Protocol<'v> for Num {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Num";
+    const TYPE_OBJECT: bool = true;
 
     fn op_radd<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -306,6 +303,9 @@ impl<'v> Protocol<'v> for Num {
     ) -> Result<'v, 's, ()> {
         if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
             return abstract_init(strand, &this, args);
+        }
+        if is_special_mcall(method.tag()) {
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
         fallback_mcall(strand, &this, method, args, out).await
     }

@@ -40,3 +40,40 @@ class Cur: io.Cursor
 assert_eq (native_frames do Cur("abc").write "x") ["io.Cursor write"]
 assert_eq (native_frames do io.Cursor.write(Cur("abc"), "x")) ["io.Cursor write"]
 assert_eq (native_frames do io.Cursor("abc").write "x") ["io.Cursor write"]
+
+# A special method called by name runs its operation under one frame
+assert_eq (native_frames do [1].(get) :x:) ["std.Array (get)"]
+assert_eq (native_frames do {a: 1}.(index) :b:) ["std.Dict (index)"]
+
+# Each special method called by name forwards to its operation
+let arr = [1, 2]
+assert_eq $arr.(index)(0) 1
+arr.(assign) 0 5
+assert_eq $arr [5, 2]
+let it = [1].(iter)()
+assert_eq $it.(next)() 1
+assert_throws $std.IterStop do it.(next)()
+let sunk = []
+sunk.(sink)().(put) 1
+assert_eq $sunk [1]
+assert_eq (str.(call) 5) "5"
+
+# An unbound call on a type object runs the instance's own operation, or that of a
+# Do subclass's native part, under the type's frame
+class Sub: Dict
+  def (init) self
+    Dict.(init) $self {a: 1}
+let sub = Sub()
+assert_eq (Dict.(index) sub :a:) 1
+# The instance's operation pushes a second frame until frames link by logical
+# operation (#1923)
+let frames = native_frames do Dict.(index) {a: 1} :b:
+assert_eq $frames ["std.Dict (index)", "std.Dict (index)"]
+assert_eq (native_frames do Dict.(index) sub :b:) ["std.Dict (index)"]
+assert_eq (native_frames do Dict.keys 5) ["std.Dict keys"]
+assert_throws $std.TypeError do Array.(get) "x" :f:
+
+# Unbound operators keep their meaning
+assert_eq (Int.(add) 1 2) 3
+let same = Value.(eq) [1] [1]
+assert_eq $same false

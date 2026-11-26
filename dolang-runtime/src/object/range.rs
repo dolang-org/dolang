@@ -597,6 +597,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Range";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

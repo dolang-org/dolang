@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     backtrace, iter,
-    protocol::{GcObj, Protocol, Recv, instance_get_fallback, instance_mcall_fallback},
+    protocol::{GcObj, Protocol, Recv},
     tuple,
 };
 
@@ -263,7 +263,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 let cell = this.borrow(strand)?.cell.clone();
                 observe_mcall(strand, &cell, method, args, out)
             }
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -292,7 +292,7 @@ impl<'v> Protocol<'v> for Handle<'v> {
                 super::BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -711,6 +711,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "strand";
     const NAME: &'v str = "Task";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -753,6 +754,7 @@ unsafe impl Collect for StreamType {
 impl<'v> Protocol<'v> for StreamType {
     const MODULE: &'v str = "strand";
     const NAME: &'v str = "Stream";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1016,7 +1018,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
             }
             sym::DONE | sym::ID => Err(field_not_method(strand, method)),
             tag if is_observe_method(tag) => observe_mcall(strand, &cell, method, args, out),
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -1041,7 +1043,7 @@ impl<'v> Protocol<'v> for StrandRefObj {
                 strand.store(out, id);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -1063,6 +1065,7 @@ unsafe impl Collect for StrandType {
 impl<'v> Protocol<'v> for StrandType {
     const MODULE: &'v str = "strand";
     const NAME: &'v str = "Strand";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1186,7 +1189,7 @@ impl<'v> Protocol<'v> for StrandInfoObj<'v> {
                 *state = InfoBacktrace::Built(unsafe { out.dup() });
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -1208,6 +1211,7 @@ unsafe impl Collect for StrandInfoType {
 impl<'v> Protocol<'v> for StrandInfoType {
     const MODULE: &'v str = "strand";
     const NAME: &'v str = "StrandInfo";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

@@ -22,10 +22,16 @@ def check value
   assert_eq (hashing()) (hash value) msg: (dbg value)
   assert_eq (equal value) (value == value)
 
-  assert_eq (Value.(str) value) (str value)
-  assert_eq (Value.(dbg) value) (dbg value)
-  assert_eq (Value.(verbatim) value) (verbatim value)
-  assert_eq (Value.(hash) value) (hash value)
+  check_value_defaults $value
+
+# `Value`'s own members are its defaults, whatever the value's own: a debug form
+# naming its type, a string form that is its debug form, a source form that is
+# its string form, and identity
+def check_value_defaults value
+  assert_eq (Value.(dbg) value) "<$(type value)>"
+  assert_eq (Value.(str) value) (dbg value)
+  assert_eq (Value.(verbatim) value) (str value)
+  assert_eq (Value.(hash) value) (Value.(hash) value)
   assert (Value.(eq) value value)
   assert_eq (Value.(ne) value value) false
 
@@ -54,27 +60,28 @@ let values = [
 for value = values
   check $value
 
+# A class without its own special methods inherits `Value`'s
 assert (plain != Plain())
-assert_eq (Plain.(str) plain) (str plain)
+assert_eq (Plain.(str) plain) "<Plain>"
 let unbound = Plain.(str)
-assert_eq (unbound plain) (str plain)
+assert_eq (unbound plain) "<Plain>"
 assert_eq (Plain.(eq) plain plain) true
-assert_eq (Plain.(hash) plain) (hash plain)
-assert_eq (Plain.(dbg) plain) (dbg plain)
-assert_eq (Plain.(verbatim) plain) (verbatim plain)
+let other_plain = Plain()
+assert_eq (Plain.(eq) plain other_plain) false
+assert_eq (Plain.(hash) plain) (Value.(hash) plain)
+assert_eq (Plain.(dbg) plain) "<Plain>"
+assert_eq (Plain.(verbatim) plain) "<Plain>"
 assert_eq (Array.(verbatim)([1])) (verbatim([1]))
 assert_eq (Int.(verbatim) 1) "1"
 assert_eq (Bool.(eq) true false) false
 let function = do 1
 assert_eq (Func.(hash) function) (hash function)
 
-# Type-object members are unbound; Value accepts type objects as receivers too.
+# Type objects are values too, and `Value`'s defaults ignore their names
 for value = [Value, Type, Int, Bool, Func, Array, Plain, type(Plain)]
-  assert_eq (Value.(str) value) (str value)
-  assert_eq (Value.(dbg) value) (dbg value)
-  assert_eq (Value.(verbatim) value) (verbatim value)
-  assert_eq (Value.(hash) value) (hash value)
-  assert_eq (Value.(eq) value value) true
+  check_value_defaults $value
+assert_eq (Value.(dbg) Int) "<std.Type>"
+assert_eq (Value.(str) Int) "<type std.Int>"
 
 # Overrides still receive self, including inherited and extracted methods.
 class Custom
@@ -102,13 +109,26 @@ let saved = custom.(hash)
 assert_eq (saved()) 42
 assert_eq (Custom.(hash) custom) 42
 assert_eq (CustomChild.(str) custom) "custom"
-assert_eq (Value.(str) custom) "custom"
-assert_eq (Value.(hash) custom) (hash custom)
+assert_eq (Value.(dbg) custom) "<CustomChild>"
+assert_eq (Value.(str) custom) "debug"
+assert_eq (Value.(verbatim) custom) "custom"
+let other_custom = Custom()
+assert_eq (Value.(eq) custom other_custom) false
 
 class NativeChild: Native
 let native_child = NativeChild()
 check $native_child
 assert_eq (Native.(str) native_child) (str native_child)
+
+# A subclass of a concrete type inherits the type's own universal members, not
+# `Value`'s, so equal items compare equal
+class Items: Array
+let items = Items([1])
+let twin = Items([1])
+check $items
+assert_eq $items.(ne)(twin) false
+assert_eq (Items.(ne) items twin) false
+assert_eq $items.(verbatim)() "[1]"
 
 # Concrete type calls keep their receiver validation.
 assert_throws $std.TypeError do Int.(str) "text"
@@ -118,8 +138,8 @@ assert_throws $std.MissingPosError do Value.(str)()
 
 let universal_str = Value.(str)
 assert_eq (universal_str nil) "nil"
-assert_eq (universal_str plain) (str plain)
-assert_eq (universal_str function) (str function)
+assert_eq (universal_str plain) "<Plain>"
+assert_eq (universal_str function) (dbg function)
 let type_get = Type.(get)
 let class_str = type_get $Plain (sym "(str)")
 assert_eq (class_str plain) (str plain)

@@ -7,15 +7,12 @@ use crate::{
     object::{index, iter, protocol::members, range},
     strand::Strand,
     sym::{self, Sym},
-    unpack,
     value::{Output, Slot, TypeObject, Value},
     vm::{AllocExt, Vm},
     with_slots,
 };
 
-use super::protocol::{
-    Inspect, Protocol, Recv, Spread, SpreadContext, Unpack, instance_get_fallback,
-};
+use super::protocol::{Inspect, Protocol, Recv, Spread, SpreadContext, Unpack};
 
 /// Creates a backtrace object of the entries `entries` returns.
 ///
@@ -109,6 +106,7 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
             is_abstract: false,
             is_final: false,
             members: members![
+                ..Value,
                 Getter(sym::LEN),
                 Method(sym::ITER_METHOD),
                 Method(sym::FMT_METHOD),
@@ -153,10 +151,6 @@ impl<'v> Protocol<'v> for BacktraceObj<'v> {
                 strand,
                 "backtrace.len is a field, not a method",
             )),
-            sym::ITER_METHOD => {
-                unpack!(strand, args => _self_val);
-                Self::op_iter(this, strand, out).await
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -378,6 +372,7 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
             is_abstract: false,
             is_final: true,
             members: members![
+                ..Value,
                 Getter(sym::MODULE),
                 Getter(sym::RECEIVER),
                 Getter(sym::METHOD),
@@ -420,7 +415,7 @@ impl<'v> Protocol<'v> for FrameObj<'v> {
                 }
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -441,6 +436,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "inspect";
     const NAME: &'v str = "Backtrace";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -471,7 +467,7 @@ impl<'v> Protocol<'v> for Type {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),
@@ -510,6 +506,7 @@ unsafe impl Collect for FrameType {
 impl<'v> Protocol<'v> for FrameType {
     const MODULE: &'v str = "inspect";
     const NAME: &'v str = "Frame";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -532,7 +529,7 @@ impl<'v> Protocol<'v> for FrameType {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),

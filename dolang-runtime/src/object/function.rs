@@ -372,6 +372,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Func";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -418,7 +419,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => abstract_init(strand, &this, args),
-            _ => recv_special_mcall(strand, &this, method, args, out).await,
+            _ => recv_special_mcall(strand, this, method, args, out).await,
         }
     }
 

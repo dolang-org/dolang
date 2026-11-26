@@ -20,10 +20,7 @@ use crate::{
 
 use super::{
     BoundMethod, index, iter,
-    protocol::{
-        GcObj, Inspect, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
-        is_special_mcall, type_mcall_fallback,
-    },
+    protocol::{GcObj, Inspect, Protocol, Recv, instance_get_fallback, type_mcall_fallback},
     range,
 };
 
@@ -445,9 +442,6 @@ impl<'v> Protocol<'v> for StrBuf<'v> {
                 strand,
                 "StrBuf.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::sink_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -522,6 +516,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "StrBuf";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -571,14 +566,11 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::APPEND),
                 Method(sym::EXTEND),

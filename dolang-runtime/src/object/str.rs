@@ -24,7 +24,7 @@ use crate::{
 
 use super::{
     BoundMethod, iter,
-    protocol::{Inspect, Protocol, Recv, instance_mcall_fallback, type_mcall_fallback},
+    protocol::{Inspect, Protocol, Recv, type_mcall_fallback},
     range,
 };
 
@@ -508,7 +508,7 @@ impl<'v> Protocol<'v> for StrObj {
                 strand,
                 "Str.len is a field, not a method",
             )),
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 
@@ -549,7 +549,7 @@ impl<'v> Protocol<'v> for StrObj {
                 BoundMethod::create(strand, &this, field, out);
                 Ok(())
             }
-            _ => instance_get_fallback(strand, &this, field, out),
+            _ => Err(Error::field(strand, field)),
         }
     }
 }
@@ -958,6 +958,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Str";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1000,14 +1001,11 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::SCALARS),
                 Method(sym::SCALAR_BOUNDS),

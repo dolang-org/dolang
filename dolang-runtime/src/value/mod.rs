@@ -128,6 +128,11 @@ impl<'v> Value<'v> {
         self.0 == other.0
     }
 
+    /// Hash the representation, consistently with [`repr_eq`](Self::repr_eq).
+    pub(crate) fn repr_hash(&self, hasher: &mut impl std::hash::Hasher) {
+        std::hash::Hash::hash(&self.0, hasher);
+    }
+
     /// Compare against an object by identity, without taking a reference to it.
     pub(crate) fn repr_eq_obj<T: arena::Upcast<arena::Header>>(&self, other: NonNull<T>) -> bool {
         match self.0.decode() {

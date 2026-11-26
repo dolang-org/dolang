@@ -587,6 +587,7 @@ unsafe impl Collect for Float {
 impl<'v> Protocol<'v> for Float {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Float";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -636,9 +637,8 @@ impl<'v> Protocol<'v> for Float {
                 Getter(sym::NAN_CONST),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
                 Method(sym::ADD_METHOD),
                 Method(sym::RADD_METHOD),
@@ -653,13 +653,8 @@ impl<'v> Protocol<'v> for Float {
                 Method(sym::MOD_METHOD),
                 Method(sym::RMOD_METHOD),
                 Method(sym::NEG_METHOD),
-                Method(sym::EQ_METHOD),
-                Method(sym::REQ_METHOD),
-                Method(sym::NE_METHOD),
-                Method(sym::RNE_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Method(sym::ABS),
                 Method(sym::SIGNUM),
                 Method(sym::ROUND),

@@ -859,6 +859,7 @@ unsafe impl Collect for Int {
 impl<'v> Protocol<'v> for Int {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Int";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -895,9 +896,8 @@ impl<'v> Protocol<'v> for Int {
                 Getter(sym::MAX_CONST),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
                 Method(sym::ADD_METHOD),
                 Method(sym::RADD_METHOD),
@@ -923,13 +923,8 @@ impl<'v> Protocol<'v> for Int {
                 Method(sym::RSHR_METHOD),
                 Method(sym::NEG_METHOD),
                 Method(sym::BNOT_METHOD),
-                Method(sym::EQ_METHOD),
-                Method(sym::REQ_METHOD),
-                Method(sym::NE_METHOD),
-                Method(sym::RNE_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Method(sym::ABS),
                 Method(sym::SIGNUM),
                 Method(sym::ROUND),

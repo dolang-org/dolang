@@ -1092,6 +1092,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "DictView";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1117,7 +1118,7 @@ impl<'v> Protocol<'v> for Type {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),

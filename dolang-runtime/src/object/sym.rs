@@ -16,7 +16,7 @@ use crate::{
     vm::{AllocExt, Vm},
 };
 
-use super::protocol::{GcObj, Inspect, Protocol, Recv};
+use super::protocol::{GcObj, Inspect, Protocol, Recv, members};
 
 pub(crate) struct SymData {
     pub(crate) tag: Tag,
@@ -141,6 +141,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Sym";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -156,7 +157,7 @@ impl<'v> Protocol<'v> for Type {
         Some(Inspect {
             is_abstract: false,
             is_final: true,
-            members: &[],
+            members: members![..Value],
             type_members: &[],
         })
     }

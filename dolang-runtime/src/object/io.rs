@@ -101,6 +101,7 @@ unsafe impl Collect for Io {
 impl<'v> Protocol<'v> for Io {
     const MODULE: &'v str = "io";
     const NAME: &'v str = "Io";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -199,7 +200,7 @@ impl<'v> Protocol<'v> for Io {
             return abstract_init(strand, &this, args);
         }
         if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, &this, method, args, out).await;
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
         // `Sink` methods, as `Sink` answers them.
         if classify(method.tag()) == Some(Surface::Sinkable) {

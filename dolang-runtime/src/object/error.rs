@@ -194,6 +194,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Error";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -239,7 +240,7 @@ impl<'v> Protocol<'v> for Type {
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::INIT_METHOD => abstract_init(strand, &this, args),
-            _ => recv_special_mcall(strand, &this, method, args, out).await,
+            _ => recv_special_mcall(strand, this, method, args, out).await,
         }
     }
 
@@ -271,6 +272,7 @@ pub(crate) type VariantTypeObj = crate::gc::Imm<VariantType>;
 
 impl<'v> Protocol<'v> for VariantTypeObj {
     const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -318,12 +320,7 @@ impl<'v> Protocol<'v> for VariantTypeObj {
         Some(Inspect {
             is_abstract: false,
             is_final: false,
-            members: members![
-                Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
-                Method(sym::FMT_METHOD),
-            ],
+            members: members![..Value, Method(sym::INIT_METHOD), Method(sym::FMT_METHOD),],
             type_members: members![
                 Method(sym::VERBATIM_METHOD),
                 Method(sym::STR_METHOD),

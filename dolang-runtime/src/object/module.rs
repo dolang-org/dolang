@@ -12,7 +12,7 @@ use crate::{
     gc::{Collect, Gc, arena::Visit, with_pin},
     object::{
         iter,
-        protocol::{GcObj, Protocol, Recv, instance_get_fallback, is_universal_member},
+        protocol::{GcObj, Protocol, Recv},
         tuple,
     },
     strand::{Strand, in_native_frame},
@@ -136,7 +136,7 @@ impl<'v> Protocol<'v> for ModuleObj<'v> {
             }
             // No `Iterable` fallback: a module's namespace is reserved for its
             // exports, so it does not claim the supertype (see `Type` below).
-            Err(_) => instance_get_fallback(strand, &this, field, out),
+            Err(_) => Err(Error::field(strand, field)),
         }
     }
 
@@ -363,7 +363,7 @@ impl<'v> Protocol<'v> for NativeObj<'v> {
                     getter(strand, out)
                 ),
             },
-            Err(_) => instance_get_fallback(strand, &this, field, out),
+            Err(_) => Err(Error::field(strand, field)),
         }
     }
 
@@ -553,10 +553,6 @@ impl<'v> Protocol<'v> for Namespace<'v> {
         field: Sym<'v, 'a>,
         mut out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        // Bind these before a custom inner value can bind them to itself.
-        if is_universal_member(field) {
-            return instance_get_fallback(strand, &this, field, out);
-        }
         let re = this.borrow(strand)?;
         match &re.inner {
             NamespaceInner::Normal(module) => {
@@ -658,6 +654,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Module";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

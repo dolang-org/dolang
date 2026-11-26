@@ -24,10 +24,7 @@ use super::{
     BoundMethod, index,
     io::{provide_bridge, recv_get, recv_mcall},
     iter,
-    protocol::{
-        GcObj, Inspect, Protocol, Recv, instance_get_fallback, instance_mcall_fallback,
-        is_special_mcall, type_mcall_fallback,
-    },
+    protocol::{GcObj, Inspect, Protocol, Recv, instance_get_fallback, type_mcall_fallback},
     range,
 };
 
@@ -553,9 +550,6 @@ impl<'v> Protocol<'v> for BinBuf<'v> {
                 Ok(())
             }
             sym::LEN => Err(Error::type_error(strand, "len is a field, not a method")),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => recv_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -656,6 +650,7 @@ unsafe impl Collect for Class {
 impl<'v> Protocol<'v> for Class {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "BinBuf";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -705,14 +700,11 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
                 Method(sym::BOOL_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::APPEND),
                 Method(sym::PUSH),

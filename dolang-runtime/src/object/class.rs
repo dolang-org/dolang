@@ -821,6 +821,7 @@ pub(crate) type AccessorTypeObj = gc::Imm<AccessorType>;
 
 impl<'v> Protocol<'v> for AccessorTypeObj {
     const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1334,6 +1335,7 @@ impl<'v> ClassObject<'v> {
 
 impl<'v> Protocol<'v> for ClassObject<'v> {
     const NATIVE_FRAMES: bool = false;
+    const TYPE_OBJECT: bool = true;
 
     fn op_inspect<'a>(this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
         let annex = this.annex();
@@ -1894,6 +1896,7 @@ pub(crate) type ClassTypeProxyObj<'v> = gc::Imm<ClassTypeProxy<'v>>;
 
 impl<'v> Protocol<'v> for ClassTypeProxyObj<'v> {
     const NATIVE_FRAMES: bool = false;
+    const SPECIAL_MCALL: bool = false;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -2444,6 +2447,7 @@ fn default_fmt<'v, 's>(
 
 impl<'v> Protocol<'v> for ClassInstance<'v> {
     const NATIVE_FRAMES: bool = false;
+    const SPECIAL_MCALL: bool = false;
 
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,

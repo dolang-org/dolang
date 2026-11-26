@@ -13,8 +13,8 @@ use crate::{
         io::{provide_bridge, recv_get, recv_mcall},
         protocol::{
             Delegated, Dispatch, Inspect, Member, Protocol, Recv, Spread, SpreadContext, Unpack,
-            abstract_call, abstract_init, instance_get_fallback, instance_mcall_fallback,
-            is_special_mcall, members, recv_special_mcall,
+            abstract_call, abstract_init, instance_get_fallback, is_special_mcall, members,
+            recv_special_mcall,
         },
         tuple,
     },
@@ -460,10 +460,6 @@ pub(crate) async fn iter_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out);
-    }
-
     if method.tag() == sym::ITER {
         iterable_mcall(strand, rcvr, method, args, out).await
     } else {
@@ -498,6 +494,7 @@ pub(crate) async fn unpack_iter_mcall<'v, 'a, 's>(
 impl<'v> Protocol<'v> for Iterable {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Iterable";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -545,7 +542,7 @@ impl<'v> Protocol<'v> for Iterable {
             return abstract_init(strand, &this, args);
         }
         if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, &this, method, args, out).await;
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
 
         if let Some(delegator) = this.delegator() {
@@ -579,6 +576,7 @@ impl<'v> Protocol<'v> for Iterable {
 impl<'v> Protocol<'v> for Sinkable {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Sinkable";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -626,7 +624,7 @@ impl<'v> Protocol<'v> for Sinkable {
             return abstract_init(strand, &this, args);
         }
         if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, &this, method, args, out).await;
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
 
         if let Some(delegator) = this.delegator() {
@@ -676,10 +674,6 @@ pub(crate) async fn sink_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out);
-    }
-
     if method.tag() == sym::SINK {
         sinkable_mcall(strand, rcvr, method, args, out).await
     } else {
@@ -721,10 +715,6 @@ pub(crate) async fn iterable_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out);
-    }
-
     with_slots!(strand, |mut delegator| {
         strand.store(Slot::reborrow(&mut delegator), rcvr);
         let receiver = &strand.vm().singletons().iterable;
@@ -758,10 +748,6 @@ pub(crate) async fn sinkable_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out);
-    }
-
     with_slots!(strand, |mut delegator| {
         strand.store(Slot::reborrow(&mut delegator), rcvr);
         let receiver = &strand.vm().singletons().sinkable;
@@ -827,10 +813,6 @@ pub(crate) async fn iterable_sinkable_mcall<'v, 'a, 's>(
     args: Args<'v, 'a>,
     out: Slot<'v, 'a>,
 ) -> Result<'v, 's, ()> {
-    if is_special_mcall(method.tag()) {
-        return instance_mcall_fallback(strand, rcvr, method, args, out);
-    }
-
     match classify(method.tag()) {
         Some(Surface::Iterable) => iterable_mcall(strand, rcvr, method, args, out).await,
         Some(Surface::Sinkable) => sinkable_mcall(strand, rcvr, method, args, out).await,
@@ -1440,6 +1422,7 @@ impl<'v> Protocol<'v> for IterSpread<'v> {
 impl<'v> Protocol<'v> for Iter {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Iter";
+    const TYPE_OBJECT: bool = true;
 
     // The default `(iter)` of a class that subclasses `Iter`: an iterator
     // iterates as itself.
@@ -1527,7 +1510,7 @@ impl<'v> Protocol<'v> for Iter {
             return abstract_init(strand, &this, args);
         }
         if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, &this, method, args, out).await;
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
 
         if let Some(delegator) = this.delegator() {
@@ -1650,6 +1633,7 @@ impl<'v> Protocol<'v> for Iter {
 impl<'v> Protocol<'v> for Sink {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Sink";
+    const TYPE_OBJECT: bool = true;
 
     // The default `(sink)` of a class that subclasses `Sink`: a sink accepts
     // values as itself.
@@ -1725,7 +1709,7 @@ impl<'v> Protocol<'v> for Sink {
             return abstract_init(strand, &this, args);
         }
         if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, &this, method, args, out).await;
+            return recv_special_mcall(strand, this, method, args, out).await;
         }
 
         if let Some(delegator) = this.delegator() {
@@ -2692,6 +2676,7 @@ unsafe impl Collect for MapType {
 impl<'v> Protocol<'v> for MapType {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Map";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -2729,6 +2714,7 @@ unsafe impl Collect for FilterType {
 impl<'v> Protocol<'v> for FilterType {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Filter";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -3061,6 +3047,7 @@ unsafe impl Collect for NullType {
 impl<'v> Protocol<'v> for NullType {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Null";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

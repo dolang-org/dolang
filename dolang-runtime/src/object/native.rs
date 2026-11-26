@@ -32,8 +32,8 @@ use super::{
     BoundMethod,
     interface::Request,
     protocol::{
-        self, GcObj, Inspect, Member, MemberKind, Protocol, TypeHandle, instance_mcall_fallback,
-        is_special_mcall, type_mcall_fallback,
+        self, GcObj, Inspect, Member, MemberKind, Protocol, TypeHandle, is_special_mcall,
+        special_mcall_direct, type_mcall_fallback,
     },
 };
 use dolang_util::alias;
@@ -1469,6 +1469,8 @@ impl<'v, 'a, T: Object<'v>> Recv<'v, 'a, ObjectWrap<'v, T>> {
 impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
     const MODULE: &'v str = T::MODULE;
     const NAME: &'v str = T::NAME;
+    // Registered entries may carry special names, which win
+    const SPECIAL_MCALL: bool = false;
 
     fn op_fmt<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -1555,7 +1557,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
         args: Args<'v, 'a>,
         out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        if let Some(entry) = this.vtbl().entry(method) {
+        // A special name inherited from an abstract supertype is the operation, which
+        // the type implements itself
+        let entry = this
+            .vtbl()
+            .entry(method)
+            .filter(|entry| !is_special_mcall(method.tag()) || matches!(entry, Entry::Method(_)));
+        if let Some(entry) = entry {
             match entry {
                 Entry::Method(handler) => unsafe {
                     handler
@@ -1575,7 +1583,7 @@ impl<'v, T: Object<'v>> Protocol<'v> for ObjectWrap<'v, T> {
             }
         } else {
             if is_special_mcall(method.tag()) {
-                instance_mcall_fallback(strand, &this, method, args, out)
+                special_mcall_direct(this, strand, method, args, out).await
             } else {
                 T::method(Instance::from_recv(&this), strand, method, args, out).await
             }
@@ -3244,7 +3252,7 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
         } else if method.tag() == sym::CALL_METHOD {
             Self::op_call(this, strand, args, out).await
         } else if is_special_mcall(method.tag()) {
-            instance_mcall_fallback(strand, &this, method, args, out)
+            special_mcall_direct(this, strand, method, args, out).await
         } else {
             T::type_method(this.ty(strand.vm()), strand, method, args, out).await
         }
@@ -3325,6 +3333,7 @@ impl<'v, T: Object<'v>> TypeObjectWrap<'v, T> {
 impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
     const MODULE: &'v str = T::MODULE;
     const NAME: &'v str = T::NAME;
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -3372,10 +3381,13 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             return Self::type_mcall(this, strand, method, args, out).await;
         }
         // Instance methods take priority, called unbound on an explicit instance
-        let unbound = matches!(
-            this.inst_entry(method),
-            Some(Entry::Method(_) | Entry::Delegate(_, MemberKind::Method))
-        );
+        // A special name inherited from an abstract supertype is the instance's
+        // operation, which `type_mcall_fallback` runs
+        let unbound = match this.inst_entry(method) {
+            Some(Entry::Method(_)) => true,
+            Some(Entry::Delegate(_, MemberKind::Method)) => !is_special_mcall(method.tag()),
+            _ => false,
+        };
         if unbound && let Some(entry) = this.inst_vtbl().entry(method) {
             async {
                 match entry {
@@ -3425,9 +3437,8 @@ impl<'v, T: Object<'v>> Protocol<'v> for TypeObjectWrap<'v, T> {
             }
             .await
         } else {
-            // Fall through to type_mcall_fallback for protocol/special
-            // methods (str, dbg, bool, hash, arithmetic, comparison, etc.).
-            // It will error for unsupported operations.
+            // A special method takes the instance first, and runs the instance's own
+            // operation
             if is_special_mcall(method.tag()) {
                 let singleton = this.singleton(strand.vm());
                 type_mcall_fallback(strand, singleton, method, args, out).await
@@ -3546,6 +3557,7 @@ impl<'v, T: Object<'v>> gc::Annex for NativeTypeScope<'v, T> {
 impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeScope<'v, T>> {
     const MODULE: &'v str = T::MODULE;
     const NAME: &'v str = T::NAME;
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         this: Recv<'v, 'a, Self>,
@@ -3610,6 +3622,7 @@ impl<'v, T: Object<'v>> gc::Annex for NativeTypeProxy<'v, T> {
 impl<'v, T: Object<'v>> Protocol<'v> for gc::Imm<NativeTypeProxy<'v, T>> {
     const MODULE: &'v str = T::MODULE;
     const NAME: &'v str = T::NAME;
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,

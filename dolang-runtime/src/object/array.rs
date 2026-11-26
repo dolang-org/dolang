@@ -22,7 +22,7 @@ use super::{
     BoundMethod, index, iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
     range, tuple,
 };
@@ -1193,9 +1193,6 @@ impl<'v> Protocol<'v> for Array<'v> {
                 strand,
                 "Array.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_sinkable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -1325,6 +1322,7 @@ unsafe impl Collect for Type {
 impl<'v> Protocol<'v> for Type {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Array";
+    const TYPE_OBJECT: bool = true;
 
     async fn op_call<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1376,14 +1374,11 @@ impl<'v> Protocol<'v> for Type {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
                 Method(sym::SPREAD_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::PUSH),
                 Method(sym::INSERT),

@@ -2,7 +2,7 @@ use std::ops::ControlFlow;
 
 use crate::{
     arg::{Arg, Args},
-    error::Result,
+    error::{Error, Result},
     gc::{Collect, arena::Visit},
     strand::Strand,
     sym::{self, Sym},
@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     pack::ArgItem,
-    protocol::{Protocol, Recv, Spread, SpreadContext, instance_mcall_fallback},
+    protocol::{Protocol, Recv, Spread, SpreadContext},
 };
 
 pub(crate) struct ArgAcc<'v> {
@@ -102,7 +102,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
         strand: &'a mut Strand<'v, 's>,
         method: Sym<'v, 'a>,
         args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
+        _out: Slot<'v, 'a>,
     ) -> Result<'v, 's, ()> {
         match method.tag() {
             sym::PUSH => {
@@ -122,7 +122,7 @@ impl<'v> Protocol<'v> for ArgAcc<'v> {
                 }
                 Ok(())
             }
-            _ => instance_mcall_fallback(strand, &this, method, args, out),
+            _ => Err(Error::field(strand, method)),
         }
     }
 }

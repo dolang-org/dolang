@@ -27,7 +27,7 @@ use super::{
     iter,
     protocol::{
         GcObj, Inspect, Protocol, Recv, Spread, SpreadContext, instance_get_fallback,
-        instance_mcall_fallback, is_special_mcall, type_mcall_fallback,
+        type_mcall_fallback,
     },
     sym::SymObj,
     tuple,
@@ -1019,9 +1019,6 @@ impl<'v> Protocol<'v> for PackObj<'v> {
                 strand,
                 "pack.len is a field, not a method",
             )),
-            _ if is_special_mcall(method.tag()) => {
-                instance_mcall_fallback(strand, &this, method, args, out)
-            }
             _ => iter::iterable_mcall(strand, &this, method, args, out).await,
         }
     }
@@ -1160,6 +1157,7 @@ unsafe impl Collect for Class {
 impl<'v> Protocol<'v> for Class {
     const MODULE: &'v str = "std";
     const NAME: &'v str = "Pack";
+    const TYPE_OBJECT: bool = true;
 
     fn op_type<'a, 's>(
         _this: Recv<'v, 'a, Self>,
@@ -1192,13 +1190,10 @@ impl<'v> Protocol<'v> for Class {
                 Method(sym::CALL_METHOD),
             ],
             members: members![
+                ..Value,
                 Method(sym::INIT_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
                 Method(sym::FMT_METHOD),
-                Method(sym::EQ_METHOD),
                 Method(sym::LT_METHOD),
-                Method(sym::HASH_METHOD),
                 Getter(sym::LEN),
                 Method(sym::GET),
                 Method(sym::WITH),

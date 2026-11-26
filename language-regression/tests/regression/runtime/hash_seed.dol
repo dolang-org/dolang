@@ -11,7 +11,6 @@ def check_key x y
   assert_eq $x $y
   assert_eq (hash x) (hash y)
   assert_eq (hash x) (hash x)
-  assert_eq (Value.(hash) x) (hash x)
   let d = {}
   d[x] = "found"
   assert_eq $d[y] "found"
