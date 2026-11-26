@@ -507,12 +507,12 @@ impl Parser<'_> {
         self.add_indent(sep.end);
         let expr = match self.peek()? {
             Some(token!(Op(Op::Minus))) => {
-                let minus_span = self.advance();
+                let inner_span = self.advance();
                 // Decide if this is actually a sub-list
                 match self.peek()? {
                     Some(token!(ArgSep)) => {
                         // Yep
-                        let args = vec![self.parse_cmd_vert_dash_arg(scope, minus_span)?];
+                        let args = vec![self.parse_cmd_vert_dash_arg(scope, inner_span)?];
                         let expr = self.parse_data(scope, args, false)?;
                         // This consumed remainder of this indentation scope, so exit early
                         return Ok(Arg::Pos(Single {
@@ -524,7 +524,7 @@ impl Parser<'_> {
                         // Nevermind
                         self.parse_implicit_concat(
                             scope,
-                            Some(Expr::Literal(minus_span)),
+                            Some(Expr::Literal(inner_span)),
                             UnquotedMode::Data,
                         )?
                     }

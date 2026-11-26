@@ -1,0 +1,17 @@
+# A dash item holding a sub-list: each `-` is its own delimiter, the outer one
+# included.
+def take ...items => items
+
+take
+  - - 1
+# ^: delim
+    - 2
+#   ^: delim
+  - - 1
+#   ^: delim
+
+let nested = $
+  - - 1
+# ^: delim
+    - 2
+#   ^: delim
