@@ -1,6 +1,6 @@
 import init, { Analyzed } from '../pkg/dolang_wasm.js';
 import wasmUrl from '../pkg/dolang_wasm_bg.wasm?url';
-import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover, TokenRange } from './protocol';
+import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover, Occurrence, TokenRange } from './protocol';
 import { html, markdown, spans, type BundledKey, type Described } from './hover';
 import { Docs, link, type ModuleJson, type Pages } from './docs';
 
@@ -91,6 +91,13 @@ async function hover(id: number, version: number, pos: number) {
   reply({ type: 'hover', id, version, value });
 }
 
+// Names for a replaced version are none; the page ignores them anyway.
+function occurrences(id: number, version: number, pos: number) {
+  const entry = current;
+  const spans: Occurrence[] = entry?.version === version ? entry.analyzed.occurrences(pos) : [];
+  reply({ type: 'occurrences', id, version, spans });
+}
+
 // Requests that arrive while loading wait for it; compiling is synchronous, so
 // replies keep request order. Each analysis cancels the pending check of the
 // one before it.
@@ -101,6 +108,7 @@ self.onmessage = (event: MessageEvent<AnalysisRequest>) => {
   loaded.then(() => {
     if (request.type === 'analyze') analyze(request.id, request.version, request.source);
     else if (request.type === 'docs') locateDocs(request.url);
+    else if (request.type === 'occurrences') occurrences(request.id, request.version, request.pos);
     else return hover(request.id, request.version, request.pos);
   }).catch(error => reply({ type: 'failure', message: String(error) }));
 };

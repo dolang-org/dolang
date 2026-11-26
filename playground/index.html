@@ -16,51 +16,60 @@
       <a href="../">Documentation ↗</a>
     </header>
     <main>
-      <div class="intro"><p>Edit an example and run it in your browser. Press Ctrl+Enter (Cmd+Enter on macOS) to run.</p></div>
       <div class="toolbar">
-        <label for="example">Example</label><select id="example"></select>
+        <label for="example">Example</label><select id="example"></select><button id="revert" disabled title="Discard your edits">Revert</button>
         <button id="run" disabled>Run</button><button id="stop" disabled>Stop</button>
-        <button id="share" disabled>Share link</button>
+        <button id="share" disabled>Share link</button><button id="help" aria-haspopup="dialog">Help</button>
         <span id="status" role="status">Loading…</span>
       </div>
-      <div class="workspace">
-        <section aria-label="Source"><div class="panel-title">playground.dol</div><div id="editor"></div></section>
-        <section aria-label="Execution"><div class="panel-title">Output <span id="snapshot"></span></div><pre id="output"></pre><div id="error-section" hidden><h2>Errors</h2><pre id="error" role="alert"></pre></div></section>
+      <div class="workspace" id="workspace">
+        <section aria-label="Source"><div class="panel-title">playground.dol<span class="panel-actions"><button id="toggle-output" aria-controls="execution">Hide results</button></span></div><div id="editor"></div></section>
+        <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="Resize editor and results" aria-controls="execution" tabindex="0"></div>
+        <section aria-label="Results" id="execution"><div class="panel-title"><div class="tabs" role="tablist" aria-label="Results"><button role="tab" id="output-tab" aria-controls="output-panel" aria-selected="true">Output</button><button role="tab" id="problems-tab" aria-controls="problems-panel" aria-selected="false" tabindex="-1">Problems<span id="problems-count" class="count"></span></button></div><span class="panel-actions" id="output-actions"><span id="snapshot"></span><button id="copy-output">Copy</button><button id="clear-output">Clear</button></span></div>
+          <div class="tabpanel" role="tabpanel" id="output-panel" aria-labelledby="output-tab"><pre id="output"></pre><div id="run-summary"></div><div id="error-section" hidden><h2>Errors</h2><pre id="error" role="alert"></pre><ol id="backtrace" aria-label="Backtrace"></ol></div></div>
+          <div class="tabpanel" role="tabpanel" id="problems-panel" aria-labelledby="problems-tab" hidden><ul id="problems"></ul></div></section>
       </div>
-      <section class="diagnostics" id="diagnostics-section" hidden><h2>Diagnostics</h2><ul id="diagnostics"></ul></section>
-      <details class="playground-help">
-        <summary>Using the playground</summary>
-        <h2>Available prelude</h2>
-        <p>The <a href="../language/prelude/">core prelude</a> is available, plus these functions from <a href="../api/term/"><code>term</code></a>:</p>
-        <ul class="names">
-          <li><a href="../api/term/#term.echo"><code>echo</code></a></li>
-          <li><a href="../api/term/#term.print"><code>print</code></a></li>
-        </ul>
-        <h2>Available modules</h2>
-        <ul class="names">
-          <li><a href="../api/base64/"><code>base64</code></a></li>
-          <li><a href="../api/compile/"><code>compile</code></a></li>
-          <li><a href="../api/digest/"><code>digest</code></a></li>
-          <li><a href="../api/glob/"><code>glob</code></a></li>
-          <li><a href="../api/http/"><code>http</code></a></li>
-          <li><a href="../api/io/"><code>io</code></a></li>
-          <li><a href="../api/json/"><code>json</code></a></li>
-          <li><a href="../api/load/"><code>load</code></a></li>
-          <li><a href="../api/rand/"><code>rand</code></a></li>
-          <li><a href="../api/regex/"><code>regex</code></a></li>
-          <li><a href="../api/std/"><code>std</code></a></li>
-          <li><a href="../api/strand/"><code>strand</code></a></li>
-          <li><a href="../api/term/"><code>term</code></a></li>
-          <li><a href="../api/test/"><code>test</code></a> (assertions only)</li>
-          <li><a href="../api/time/"><code>time</code></a></li>
-          <li><a href="../api/toml/"><code>toml</code></a></li>
-          <li><a href="../api/url/"><code>url</code></a></li>
-          <li><a href="../api/uuid/"><code>uuid</code></a></li>
-          <li><a href="../api/xml/"><code>xml</code></a></li>
-          <li><a href="../api/yaml/"><code>yaml</code></a></li>
-        </ul>
-      </details>
-      <footer>Runs entirely in your browser. Shell commands and filesystem access are unavailable.</footer>
+      <dialog id="help-dialog" aria-labelledby="help-title">
+        <div class="dialog-title"><h2 id="help-title">Using the playground</h2><form method="dialog"><button aria-label="Close">✕</button></form></div>
+        <div class="dialog-body">
+          <h3>Keyboard shortcuts</h3>
+          <dl class="shortcuts">
+            <dt><kbd data-mod>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>Run</dd>
+            <dt><kbd>F8</kbd> / <kbd>Shift</kbd>+<kbd>F8</kbd></dt><dd>Next or previous problem</dd>
+            <dt><kbd data-mod>Ctrl</kbd>+<kbd>F</kbd></dt><dd>Search and replace</dd>
+            <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Indent or dedent the selection</dd>
+            <dt><kbd>Esc</kbd> then <kbd>Tab</kbd></dt><dd>Leave the editor</dd>
+          </dl>
+          <h3>Prelude</h3>
+          <p>The <a href="../language/prelude/">core prelude</a> is available, plus <a href="../api/term/#term.echo"><code>echo</code></a> and <a href="../api/term/#term.print"><code>print</code></a> from <a href="../api/term/"><code>term</code></a>.</p>
+          <h3>Modules</h3>
+          <ul class="modules">
+            <li data-module="base64"><a href="../api/base64/"><code>base64</code></a><span class="module-summary"></span></li>
+            <li data-module="compile"><a href="../api/compile/"><code>compile</code></a><span class="module-summary"></span></li>
+            <li data-module="digest"><a href="../api/digest/"><code>digest</code></a><span class="module-summary"></span></li>
+            <li data-module="glob"><a href="../api/glob/"><code>glob</code></a><span class="module-summary"></span></li>
+            <li data-module="http"><a href="../api/http/"><code>http</code></a><span class="module-summary"></span></li>
+            <li data-module="io"><a href="../api/io/"><code>io</code></a><span class="module-summary"></span></li>
+            <li data-module="json"><a href="../api/json/"><code>json</code></a><span class="module-summary"></span></li>
+            <li data-module="load"><a href="../api/load/"><code>load</code></a><span class="module-summary"></span></li>
+            <li data-module="rand"><a href="../api/rand/"><code>rand</code></a><span class="module-summary"></span></li>
+            <li data-module="regex"><a href="../api/regex/"><code>regex</code></a><span class="module-summary"></span></li>
+            <li data-module="std"><a href="../api/std/"><code>std</code></a><span class="module-summary"></span></li>
+            <li data-module="strand"><a href="../api/strand/"><code>strand</code></a><span class="module-summary"></span></li>
+            <li data-module="term"><a href="../api/term/"><code>term</code></a><span class="module-summary"></span></li>
+            <li data-module="test"><a href="../api/test/"><code>test</code></a><span class="module-summary"><span class="module-note"> Only its assertions are available here.</span></span></li>
+            <li data-module="time"><a href="../api/time/"><code>time</code></a><span class="module-summary"></span></li>
+            <li data-module="toml"><a href="../api/toml/"><code>toml</code></a><span class="module-summary"></span></li>
+            <li data-module="url"><a href="../api/url/"><code>url</code></a><span class="module-summary"></span></li>
+            <li data-module="uuid"><a href="../api/uuid/"><code>uuid</code></a><span class="module-summary"></span></li>
+            <li data-module="xml"><a href="../api/xml/"><code>xml</code></a><span class="module-summary"></span></li>
+            <li data-module="yaml"><a href="../api/yaml/"><code>yaml</code></a><span class="module-summary"></span></li>
+          </ul>
+          <h3>Limits</h3>
+          <p>Everything runs in your browser. Shell commands and filesystem access are unavailable.</p>
+        </div>
+      </dialog>
+      <footer>Runs entirely in your browser.</footer>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

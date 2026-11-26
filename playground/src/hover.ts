@@ -19,8 +19,12 @@ export type BundledKey = Omit<Extract<Declaration, { kind: 'bundled' }>, 'kind'>
 /** Finds a bundled item's docs, each overload's in turn, or none. */
 export type Bundled = (key: BundledKey) => Described[];
 
-/** The widest a signature is written on one line (`signature::WIDTH`) */
-const width = 80;
+/**
+ * The widest a signature is written on one line. Narrower than the LSP's
+ * `signature::WIDTH`, so a signature leaves room in a tooltip sized for
+ * 80-column examples.
+ */
+const width = 72;
 
 // `Param::render`: the parameter with `@` written as `at`
 function param(param: Param, at: string): string {
