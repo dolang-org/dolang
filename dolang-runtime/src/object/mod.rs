@@ -437,6 +437,7 @@ pub(crate) struct Singletons<'v> {
     pub(crate) error_value: Value<'v>,
     pub(crate) error_data: Value<'v>,
     pub(crate) error_shape: Value<'v>,
+    pub(crate) error_shapeless: Value<'v>,
     pub(crate) error_missing_item: Value<'v>,
     pub(crate) error_unexpected_item: Value<'v>,
     pub(crate) error_state: Value<'v>,
@@ -556,6 +557,10 @@ impl<'v> Singletons<'v> {
             error_shape: imm!(
                 builtin_types.error_variant_type,
                 error::VariantType(ErrorKind::Shape)
+            ),
+            error_shapeless: imm!(
+                builtin_types.error_variant_type,
+                error::VariantType(ErrorKind::Shapeless)
             ),
             error_missing_item: imm!(
                 builtin_types.error_variant_type,

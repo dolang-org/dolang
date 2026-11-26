@@ -50,15 +50,15 @@ if let ?k: (a = 1) = {}
 else
   assert false
 
-# A present `nil` is present, and cannot be unpacked even by `if let`
-let caught = try
-  if let ?k: (_a = 1) = {k: nil}
-    false
-  else
-    false
-catch _
+# A present `nil` is present, so `if let` fails to match it rather than
+# taking the default
+let matched = if let ?k: (_a = 1) = {k: nil}
   true
-assert $caught
+else
+  false
+assert $!matched
+assert_throws $std.ShapelessError do
+  let ?k: (_a = 1) = {k: nil}
 
 # Non-constant defaults evaluate when absent, and may read earlier bindings
 let n = 10

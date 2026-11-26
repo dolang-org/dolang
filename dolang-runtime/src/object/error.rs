@@ -36,6 +36,7 @@ pub(crate) enum Boxed<'v> {
     Immutable,
     Concurrency(Option<Cow<'v, str>>),
     Type(Cow<'v, str>),
+    Shapeless(Cow<'v, str>),
     Value(Cow<'v, str>),
     Data(Cow<'v, str>),
     State(Cow<'v, str>),
@@ -67,6 +68,7 @@ impl<'v> Boxed<'v> {
             Immutable => ErrorKind::Immutable,
             Concurrency(_) => ErrorKind::Concurrency,
             Type(_) => ErrorKind::Type,
+            Shapeless(_) => ErrorKind::Shapeless,
             Value(_) => ErrorKind::Value,
             Data(_) => ErrorKind::Data,
             State(_) => ErrorKind::State,
@@ -102,6 +104,7 @@ impl<'v> Display for Boxed<'v> {
             Concurrency(None) => write!(f, "conflicting concurrent operation"),
             Concurrency(Some(msg)) => write!(f, "conflicting concurrent operation: {msg}"),
             Type(msg) => write!(f, "type error: {msg}"),
+            Shapeless(msg) => write!(f, "shape error: {msg}"),
             Value(msg) => write!(f, "value error: {msg}"),
             Data(msg) => write!(f, "data error: {msg}"),
             State(msg) => write!(f, "state error: {msg}"),
@@ -410,6 +413,11 @@ fn construct<'v, 's>(
             let msg = expect_string(strand, &msg)?;
             Error::type_error(strand, msg)
         }
+        ErrorKind::Shapeless => {
+            unpack!(strand, args => msg);
+            let msg = expect_string(strand, &msg)?;
+            Error::shapeless(strand, msg)
+        }
         ErrorKind::Value => {
             unpack!(strand, args => msg);
             let msg = expect_string(strand, &msg)?;
@@ -533,6 +541,7 @@ fn variant_singleton<'v>(strand: &Strand<'v, '_>, kind: ErrorKind) -> &'v Value<
         ErrorKind::Value => &class.error_value,
         ErrorKind::Data => &class.error_data,
         ErrorKind::Shape => &class.error_shape,
+        ErrorKind::Shapeless => &class.error_shapeless,
         ErrorKind::MissingItem => &class.error_missing_item,
         ErrorKind::UnexpectedItem => &class.error_unexpected_item,
         ErrorKind::State => &class.error_state,
@@ -565,6 +574,7 @@ fn type_name(kind: ErrorKind) -> &'static str {
         ErrorKind::Value => "ValueError",
         ErrorKind::Data => "DataError",
         ErrorKind::Shape => "ShapeError",
+        ErrorKind::Shapeless => "ShapelessError",
         ErrorKind::MissingItem => "MissingItemError",
         ErrorKind::UnexpectedItem => "UnexpectedItemError",
         ErrorKind::State => "StateError",

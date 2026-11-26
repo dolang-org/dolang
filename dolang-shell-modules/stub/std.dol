@@ -482,13 +482,15 @@ pub class RuntimeError: Error
     ...
 
 
-# Supertype of errors where items are missing or unexpected, in a call's
-# arguments or a destructured value.
+# Supertype of errors where a value doesn't have the shape a call's arguments
+# or a destructuring pattern call for: it has no items at all, or items are
+# missing or unexpected.
 #
 # Binding arguments and destructuring share one mechanism, so `def f x y`,
-# `bind args`, and `let a b = parts` all raise the same errors. `ShapeError`
-# is abstract: catch it, but construct or subclass one of its concrete
-# subtypes.
+# `bind args`, and `let a b = parts` all raise the same errors. A conditional
+# pattern, such as a `match` arm, fails to match on any `ShapeError` rather than
+# raising it. `ShapeError` is abstract: catch it, but construct or subclass one
+# of its concrete subtypes.
 pub class ShapeError: RuntimeError
 
 
@@ -4271,6 +4273,24 @@ pub class Set[T]: Iterable[T] @Spread[T]
 # returns this type by calling `setter` itself.
 pub @class Setter[T, V]
   field func @Phantom[((T, V) -> nil)]
+
+
+# Raised when a value with no items is unpacked, such as an `Int`, or an
+# instance of a class without an
+# [`(unpack)`](../../language/classes.md#unpack-pattern-unpacking) method.
+#
+# An `(unpack)` method can raise it to decline, so that a conditional pattern
+# fails to match. `Str` and `Bin` raise it too: unpack a view such as
+# `s.scalars()` instead.
+#[mixable]
+pub class ShapelessError: ShapeError
+  # Builds an error describing a value that cannot be unpacked.
+  pub def (init)
+    self
+    # description of the value
+    message @ Str
+  do
+    ...
 
 
 # Error raised to signal that a sink has been closed.

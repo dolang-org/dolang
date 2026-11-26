@@ -140,6 +140,7 @@ Error
     ├── TypeError
     ├── ValueError
     ├── ShapeError
+    │   ├── ShapelessError
     │   ├── MissingItemError
     │   │   ├── MissingKeyError
     │   │   └── MissingPosError
@@ -157,9 +158,10 @@ never swallows them.
 
 [`TypeError`](std.TypeError), [`ShapeError`](std.ShapeError), and
 [`ValueError`](std.ValueError) say what is wrong with a value a caller passed:
-its kind, its items (missing or unexpected, in a call's arguments or a
-destructured value), or its contents. Failures like these are bugs in the
-calling code, mostly caught by type checking, and are seldom worth catching.
+its kind, its items (absent altogether, or missing or unexpected, in a call's
+arguments or a destructured value), or its contents. Failures like these are
+bugs in the calling code, mostly caught by type checking, and are seldom worth
+catching.
 
 A failure that type checking can't rule out needs a type callers can catch:
 

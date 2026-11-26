@@ -59,9 +59,12 @@ pub enum ErrorKind {
     MissingPos,
     /// Missing key argument (in call) or element (in destructuring bind)
     MissingKey,
-    /// Abstract supertype of [`MissingItem`](Self::MissingItem) and
-    /// [`UnexpectedItem`](Self::UnexpectedItem); never the kind of a concrete error
+    /// Abstract supertype of [`Shapeless`](Self::Shapeless),
+    /// [`MissingItem`](Self::MissingItem) and [`UnexpectedItem`](Self::UnexpectedItem);
+    /// never the kind of a concrete error
     Shape,
+    /// Value has no items to destructure (in a pattern or argument expansion)
+    Shapeless,
     /// Abstract supertype of [`MissingPos`](Self::MissingPos) and
     /// [`MissingKey`](Self::MissingKey); never the kind of a concrete error
     MissingItem,
@@ -101,7 +104,7 @@ impl ErrorKind {
         match self {
             MissingPos | MissingKey => Some(MissingItem),
             UnexpectedPos | UnexpectedKey => Some(UnexpectedItem),
-            MissingItem | UnexpectedItem => Some(Shape),
+            Shapeless | MissingItem | UnexpectedItem => Some(Shape),
             Unsupported | Immutable | Concurrency | Type | Value | Data | State | Index | Field
             | Shape | Overflow | ZeroDiv | TimedOut | CyclicImport | Import | Compile => {
                 Some(Runtime)
@@ -814,6 +817,28 @@ impl<'v, 's> Error<'v, 's> {
         Self::new_info(strand, Boxed::Type(msg.into()))
     }
 
+    /// Create error: value has no items to destructure
+    pub fn shapeless(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
+        Self::new_info(strand, Boxed::Shapeless(msg.into()))
+    }
+
+    /// Create error: `value` cannot be unpacked, naming its type
+    ///
+    /// The default for a value without an `(unpack)` implementation.
+    pub fn cannot_unpack(strand: &mut Strand<'v, 's>, input: impl Input<'v>) -> Self {
+        with_slots!(strand, |mut value, mut ty| {
+            strand.store(Slot::reborrow(&mut value), input);
+            value.op_type(strand, Slot::reborrow(&mut ty));
+            match ty.to_string(strand) {
+                Ok(name) => {
+                    let msg = format!("cannot unpack {name}");
+                    Self::shapeless(strand, msg)
+                }
+                Err(e) => e,
+            }
+        })
+    }
+
     /// Create error: invalid value with otherwise acceptable type
     pub fn value(strand: &mut Strand<'v, 's>, msg: impl Into<Cow<'v, str>>) -> Self {
         Self::new_info(strand, Boxed::Value(msg.into()))
@@ -1033,20 +1058,18 @@ impl<'v, 's> Error<'v, 's> {
         !matches!(self.inner, Variant::NonLocalJump(..)) && !matches!(self.kind(), ErrorKind::Abort)
     }
 
-    /// Does error indicate that a value simply did not have the shape a destructuring
-    /// pattern called for?
+    /// Is error a [`ErrorKind::Shape`] error: a value did not have the shape a
+    /// destructuring pattern or call called for?
     ///
     /// This is the set of failures that a conditional unpack treats as "no match" and
-    /// turns into a branch rather than propagating.  It is deliberately narrow: only
-    /// arity and key mismatches qualify.  In particular [`ErrorKind::Unsupported`] does
-    /// *not*, so destructuring a value that has no unpack implementation at all remains
-    /// a hard error rather than silently failing to match.
+    /// turns into a branch rather than propagating: a value with no items to
+    /// destructure, and arity and key mismatches.
     ///
     /// Note that this classifies by kind alone.  An error of one of these kinds raised
     /// from inside a user-defined `(unpack)` method -- including one from a destructuring
     /// it performs itself -- is indistinguishable from one raised by the unpack of the
     /// receiver, and is likewise treated as a failed match.
-    pub fn is_unpack_mismatch(&self) -> bool {
+    pub fn is_shape_error(&self) -> bool {
         !matches!(self.inner, Variant::NonLocalJump(..))
             && self.kind().is_subkind_of(ErrorKind::Shape)
     }

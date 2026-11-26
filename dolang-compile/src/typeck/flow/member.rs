@@ -431,6 +431,16 @@ impl Flow<'_, '_> {
         true
     }
 
+    /// Whether a receiver certainly lacks a special member, as a value with no
+    /// `(unpack)` does. Reports nothing; a dynamic receiver doesn't lack it.
+    pub(super) fn lacks_special(&mut self, receiver: TypeId, name: &str, span: Span) -> bool {
+        let member = self.special(name);
+        matches!(
+            self.resolve(receiver, member, Access::Any, span, false),
+            Resolved::Missing | Resolved::Fallback { get: None, .. }
+        )
+    }
+
     /// Report a missing member, of an alternative of the union `within` if given,
     /// with the reasons a fallback refused its name. The alternatives a use finds
     /// without it are reported together. Without `(spread)` or `(unpack)`, the

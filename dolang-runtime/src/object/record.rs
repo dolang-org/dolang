@@ -890,11 +890,11 @@ impl<'v> Protocol<'v> for Iter<'v> {
     }
 
     async fn op_unpack<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
+        this: Recv<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking"))
+        Err(Error::cannot_unpack(strand, &this))
     }
 
     async fn op_next<'a, 's>(

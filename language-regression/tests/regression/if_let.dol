@@ -91,17 +91,13 @@ catch err
 
 assert_eq $caught boom
 
-# `Unsupported` is a hard error, not a silent no-match
-let caught = try
-  if let a b = 42
-    assert false msg: "should not have matched: $a $b"
-  else
-    assert false msg: "should not have taken the failure edge"
-  "no-throw"
-catch _
-  "unsupported"
+# A value that can't be unpacked takes the failure edge
+let taken = if let a b = 42
+  assert false msg: "should not have matched: $a $b"
+else
+  "else"
 
-assert_eq $caught unsupported
+assert_eq $taken else
 
 # output: END
 # too-few

@@ -317,6 +317,8 @@ let parts = $
 
 A pattern fails to match, taking the `else` branch, when:
 
+- the value has no items to unpack, such as an `Int` or an instance of a class
+  without [`(unpack)`](./classes.md#unpack-pattern-unpacking),
 - an unpack finds too few or too many positional items,
 - a key is missing or unexpected, or
 - a type test or constant comparison fails.
@@ -324,8 +326,10 @@ A pattern fails to match, taking the `else` branch, when:
 A default fills in a missing item, so an item with a default never fails for
 being missing. A nested pattern matches only if every level does.
 
-Any other error propagates as usual. In particular, unpacking a value that
-can't be unpacked raises:
+A plain `let`, `bind` or `for` raises instead: a
+[`ShapeError`](std.ShapeError) for a value's items, and a `TypeError` for a
+failed type test or constant. Any other error propagates as usual, even from a
+conditional pattern.
 
 ```
 # Takes the else branch: [1, 2] unpacks, but not into three items
@@ -334,12 +338,15 @@ if let a b c = [1, 2]
 else
   echo "wrong arity"
 
-# Raises: an Int cannot be unpacked
+# Takes the else branch: an Int has no items
 if let a b = 42
   echo unreachable
 else
-  echo also-unreachable
+  echo "not unpackable"
 ```
+
+The type checker warns of a conditional pattern that unpacks a type with no
+items, since it can never match.
 
 ### Binding a Single Name
 
@@ -577,7 +584,8 @@ assert_eq $second 2
 ```
 
 A present item must still match its pattern. A present `nil` isn't absent:
-unpacking it raises an error, even in a conditional pattern. `?()` matches an
+it has no items, so it fails to match a conditional pattern and raises in a
+plain one. `?()` matches an
 absent item or an empty value.
 
 `?` applies only to its own item. In the following, `k` may be absent, but a
@@ -688,9 +696,10 @@ no truthiness test as in `if let`. So `_` makes a catch-all arm.
 An arm whose body is a lambda puts it after `=>`, as in `_ => do |x| x + 1`.
 
 A failure to match moves on to the next arm, but other errors propagate, as
-described in [What Counts as a Match](./patterns.md#what-counts-as-a-match).
-Unpacking a value that can't be unpacked raises, so when the value may not be a
-sequence or keyed value, test its type first:
+described in [What Counts as a Match](./patterns.md#what-counts-as-a-match). A
+value with no items fails to match an unpacking arm, but the type checker warns
+of it, so when the value may not be a sequence or keyed value, test its type
+first:
 
 ```playground
 #> import test:

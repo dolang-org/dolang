@@ -10,6 +10,6 @@ assert_throws $std.UnsupportedError do [...source]
 assert_throws $std.UnsupportedError do capture ...source
 assert_throws $std.UnsupportedError do {...source}
 # Iteration alone supplies no unpacking protocol.
-assert_throws $std.UnsupportedError do let _a _b = source
+assert_throws $std.ShapelessError do let _a _b = source
 assert_eq [...source.iter()] [1, 2]
 

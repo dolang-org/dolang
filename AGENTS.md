@@ -448,9 +448,9 @@ else
 `match` runs the first arm whose pattern (and optional `if` guard) matches. A
 body on the same line follows `=>`; an indented block follows the pattern or
 guard directly, with no `do`. A bare name matches anything, so `_` is the
-fallback arm (`match` has no `else`), and no match gives `nil`. Unpacking a
-value that isn't a sequence or keyed value raises rather than trying the next
-arm, so type-test first:
+fallback arm (`match` has no `else`), and no match gives `nil`. A value that
+isn't a sequence or keyed value fails to match an unpacking arm, but the
+checker warns, so type-test first:
 
 ```
 let label = match value

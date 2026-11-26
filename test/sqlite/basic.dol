@@ -16,11 +16,11 @@ import sqlite
     - MissingKeyError
     - MissingPosError
     - RuntimeError
+    - ShapelessError
     - TimedOutError
     - TypeError
     - UnexpectedKeyError
     - UnexpectedPosError
-    - UnsupportedError
     - ValueError
 
 #[test]
@@ -157,7 +157,7 @@ def query_star_unpack()
 
     conn.prepare t"SELECT n FROM test ORDER BY n" do |stmt|
       let rows = stmt.query()
-      assert_throws $UnsupportedError do
+      assert_throws $ShapelessError do
         let ..._rest = rows
       bind [...rows]
         - first = nil

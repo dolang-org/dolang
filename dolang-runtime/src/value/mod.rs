@@ -1428,10 +1428,7 @@ impl<'v> Value<'v> {
     ) -> Result<'v, 's, ()> {
         match self.case() {
             Case::Object(o) => o.op_unpack(strand, unpack).await,
-            Case::Prim(_) => Err(Error::type_error(
-                strand,
-                "argument expansion not supported",
-            )),
+            Case::Prim(_) => Err(Error::cannot_unpack(strand, self)),
         }
     }
 
@@ -3859,6 +3856,8 @@ pub enum TypeObject {
     DataError,
     /// `std.ShapeError`
     ShapeError,
+    /// `std.ShapelessError`
+    ShapelessError,
     /// `std.MissingItemError`
     MissingItemError,
     /// `std.UnexpectedItemError`
@@ -3931,6 +3930,7 @@ impl TypeObject {
             TypeObject::ValueError => &builtins.error_value,
             TypeObject::DataError => &builtins.error_data,
             TypeObject::ShapeError => &builtins.error_shape,
+            TypeObject::ShapelessError => &builtins.error_shapeless,
             TypeObject::MissingItemError => &builtins.error_missing_item,
             TypeObject::UnexpectedItemError => &builtins.error_unexpected_item,
             TypeObject::StateError => &builtins.error_state,

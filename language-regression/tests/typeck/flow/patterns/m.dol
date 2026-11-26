@@ -197,11 +197,13 @@ pub def possible s @ Str
 
 pub def impossible()
   if let _x _y = 4
-    # error: `4` is not unpackable
+    # warning: `4` is not unpackable, so this pattern never matches it
     #   --> m.dol:LL:LL
     #    |
     # LL |   if let _x _y = 4
     #    |                  ^
+    #    |
+    #    = help: test the type first, as in `Array(...)`, or match it in an earlier arm
     nil
   if let _foo _bar = (4,)
     # error: `(4,)` can never unpack as this pattern

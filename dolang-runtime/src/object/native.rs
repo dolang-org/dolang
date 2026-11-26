@@ -1301,11 +1301,11 @@ pub trait Object<'v>: Sized + 'v {
     /// Implementations must leave the receiver unchanged on success and failure.
     /// See [`Unpack`] documentation for patterns and examples.
     fn unpack<'a, 's>(
-        _this: Instance<'v, 'a, Self>,
+        this: Instance<'v, 'a, Self>,
         strand: &'a mut Strand<'v, 's>,
         _unpack: Unpack<'v, 'a>,
     ) -> impl Future<Output = Result<'v, 's, ()>> {
-        async move { Err(Error::unsupported(strand, "unpacking")) }
+        async move { Err(Error::cannot_unpack(strand, this)) }
     }
 
     /// Offers Rust interfaces to an interface query ([`Value::query`]).
@@ -4654,7 +4654,7 @@ mod tests {
                     )
                     .await
                     .unwrap_err();
-                    assert_eq!(error.kind(), ErrorKind::Unsupported);
+                    assert_eq!(error.kind(), ErrorKind::Shapeless);
                 });
 
                 struct NullSpread;

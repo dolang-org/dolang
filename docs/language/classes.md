@@ -751,6 +751,11 @@ let :x :y = p
 echo "$x, $y"   # 3, 4
 ```
 
+Without `(unpack)`, unpacking an instance raises
+[`ShapelessError`](std.ShapelessError), so a conditional pattern fails to match
+it. An `(unpack)` can raise it as well, as `throw std.ShapelessError "…"`, to
+decline.
+
 ### `(spread)`: Spreading
 
 Return a value for `...` to spread in place of `self`. An instance of

@@ -839,7 +839,7 @@ def geometry_dimensions()
   let unknown = term.Geometry()
   assert_eq $unknown.rows nil
   assert_eq $unknown.cols nil
-  assert_throws $std.UnsupportedError do let ..._ = unknown
+  assert_throws $std.ShapelessError do let ..._ = unknown
   let :rows :cols = fields(unknown)
   assert_eq $rows nil
   assert_eq $cols nil

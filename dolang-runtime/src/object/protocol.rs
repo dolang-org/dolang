@@ -614,7 +614,7 @@ pub(crate) trait Protocol<'v>: Boxable<Header> + Collect + 'v {
         strand: &'a mut Strand<'v, 's>,
         unpack: Unpack<'v, 'a>,
     ) -> Result<'v, 's, ()> {
-        Err(Error::unsupported(strand, "unpacking"))
+        Err(Error::cannot_unpack(strand, &this))
     }
 }
 

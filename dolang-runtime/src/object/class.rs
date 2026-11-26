@@ -2802,7 +2802,7 @@ impl<'v> Protocol<'v> for ClassInstance<'v> {
                         .await
                 })
             }
-            _ => Err(Error::unsupported(strand, "unpacking")),
+            _ => Err(Error::cannot_unpack(strand, &this)),
         }
     }
 

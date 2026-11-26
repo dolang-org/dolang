@@ -70,6 +70,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
     let error_value = &bc.error_value;
     let error_data = &bc.error_data;
     let error_shape = &bc.error_shape;
+    let error_shapeless = &bc.error_shapeless;
     let error_missing_item = &bc.error_missing_item;
     let error_unexpected_item = &bc.error_unexpected_item;
     let error_state = &bc.error_state;
@@ -164,6 +165,7 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .value("ValueError", error_value)
         .value("DataError", error_data)
         .value("ShapeError", error_shape)
+        .value("ShapelessError", error_shapeless)
         .value("MissingItemError", error_missing_item)
         .value("UnexpectedItemError", error_unexpected_item)
         .value("StateError", error_state)
