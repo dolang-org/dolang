@@ -268,7 +268,7 @@ do -> Int
   ...
 
 @def int value @ (Num | Str) -> Int
-@def int value @ Str :base @ Int -> Int
+@def int value@Str :base@Int -> Int
 
 # Coerces or parses a value as an [`Int`](std.Int).
 #
@@ -623,7 +623,7 @@ pub @class AssignMixed[S @ {...}]: Assign[S]
 
 # A [`Mixed`](std.Mixed) supporting assignment and removal.
 pub @class MutMixed[S @ {...}]: Mixed[S] AssignMixed[S]
-  @def delete[K] self @ MutMixed[Deletable[S, K]] key @ K -> Bool
+  @def delete[K] self@MutMixed[Deletable[S, K]] key@K -> Bool
 
   # Removes every value of a key, reporting whether any were present.
   pub def delete self key @ Value -> Bool
@@ -664,7 +664,7 @@ pub @class Map[S @ {*(Value): Value}]: Mixed[S]
   pub def len self -> Int
 
   # Tests for a key, or for a matching key and value.
-  pub def contains self key @ Value value @ Value = ... -> Bool
+  pub def contains self key@Value value@Value = ... -> Bool
 
   # Counts distinct keys, or the values of one key. Missing keys count as zero.
   pub def count self key @ Value = ... -> Int
@@ -2402,7 +2402,7 @@ pub class Dict[S @ {*(Value): Value}]: BaseDict[S] @MutMap[S] @Assign[S]
   pub def copy self -> Dict[S]
     ...
 
-  @def delete[K] self @ Dict[Deletable[S, K]] key @ K -> Bool
+  @def delete[K] self@Dict[Deletable[S, K]] key@K -> Bool
 
   # Indicates whether any values were removed. Removes all values for the key.
   #
@@ -2624,7 +2624,7 @@ pub class Record[...Ts @ {*Value, *(Sym): Value}]: BaseRecord[...Ts] @MutMixed[T
   pub def copy self -> Record[...Ts]
     ...
 
-  @def delete[K] self @ Record[...Deletable[Ts, K]] key @ K -> Bool
+  @def delete[K] self@Record[...Deletable[Ts, K]] key@K -> Bool
 
   # Removes a positional item, shifting the ones after it, or every value of a
   # key. Indicates whether anything was removed.
@@ -3403,7 +3403,7 @@ pub class Fmt[V, S @ {*, *(Int | Sym): Value}]: @Index[FmtSegment[V]] @Spread[Fm
   pub def len self -> Int
     ...
 
-  @def format[B @ {*Value, *(Sym): Value}] self @ Fmt[V, B] ...bindings @ B -> Str
+  @def format[B @ {*Value, *(Sym): Value}] self@Fmt[V, B] ...bindings@B -> Str
 
   # Expands the sequence and returns the result: literal text as it stands, and
   # each interpolation through its own specification. This is the only way to get
@@ -5105,7 +5105,7 @@ do
   # assert (!Struct.contains(s, :port:))
   # ```
   #[class]
-  pub def contains self target @ BaseStruct[...] key @ (Int | Sym) -> Bool
+  pub def contains self target@BaseStruct[...] key@(Int | Sym) -> Bool
     ...
 
   # Reads the item a name keys, as in `s.name`.

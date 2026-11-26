@@ -731,9 +731,10 @@ quantifiers, implicit `<T`/`>T` parameters, vertical schemas):
 [`docs/types/`](./docs/types/index.md).
 
 `@` and a type follow a bound name and precede any default. Write a space on
-each side of `@`, except where several bindings share a line: there write none,
-so whitespace separates only bindings. `->` gives a return type after the
-parameters (or after the `do` ending vertical parameters):
+each side of `@`, except where several annotations share a line: there write
+none, so whitespace separates only bindings (`self x@Int y@Int`, but
+`self x @ Int`). `->` gives a return type after the parameters (or after the
+`do` ending vertical parameters):
 
 ```
 let count @ Int = 0

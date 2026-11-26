@@ -738,7 +738,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def get self url @ (Str | Url) ...options @ Value -> Value
+  pub def get self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a request with a body.
@@ -781,7 +781,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def post self url @ (Str | Url) ...options @ Value -> Value
+  pub def post self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a `HEAD` request, as [`get`](http.Client.get) does.
@@ -805,7 +805,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def head self url @ (Str | Url) ...options @ Value -> Value
+  pub def head self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a `DELETE` request, as [`get`](http.Client.get) does.
@@ -829,7 +829,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def delete self url @ (Str | Url) ...options @ Value -> Value
+  pub def delete self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes an `OPTIONS` request, as [`get`](http.Client.get) does.
@@ -853,7 +853,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def options self url @ (Str | Url) ...options @ Value -> Value
+  pub def options self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a `TRACE` request, as [`get`](http.Client.get) does.
@@ -877,7 +877,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def trace self url @ (Str | Url) ...options @ Value -> Value
+  pub def trace self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a `CONNECT` request, as [`get`](http.Client.get) does.
@@ -901,7 +901,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def connect self url @ (Str | Url) ...options @ Value -> Value
+  pub def connect self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a `PUT` request, as [`post`](http.Client.post) does.
@@ -925,7 +925,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def put self url @ (Str | Url) ...options @ Value -> Value
+  pub def put self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Makes a `PATCH` request, as [`post`](http.Client.post) does.
@@ -949,7 +949,7 @@ pub class Client: Func
     block @ (Response -> R)
   do -> R
 
-  pub def patch self url @ (Str | Url) ...options @ Value -> Value
+  pub def patch self url@(Str | Url) ...options@Value -> Value
     ...
 
   # Closes the client, releasing its connection pool.
@@ -994,7 +994,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def get url @ (Str | Url) ...options @ Value -> Value
+pub def get url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `POST` request through a fresh stateless client.
@@ -1033,7 +1033,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def post url @ (Str | Url) ...options @ Value -> Value
+pub def post url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `HEAD` request through a fresh stateless client, as [`get`](http.get)
@@ -1056,7 +1056,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def head url @ (Str | Url) ...options @ Value -> Value
+pub def head url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `DELETE` request through a fresh stateless client, as
@@ -1079,7 +1079,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def delete url @ (Str | Url) ...options @ Value -> Value
+pub def delete url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes an `OPTIONS` request through a fresh stateless client, as
@@ -1102,7 +1102,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def options url @ (Str | Url) ...options @ Value -> Value
+pub def options url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `TRACE` request through a fresh stateless client, as [`get`](http.get)
@@ -1125,7 +1125,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def trace url @ (Str | Url) ...options @ Value -> Value
+pub def trace url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `CONNECT` request through a fresh stateless client, as
@@ -1148,7 +1148,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def connect url @ (Str | Url) ...options @ Value -> Value
+pub def connect url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `PUT` request through a fresh stateless client, as [`post`](http.post)
@@ -1171,7 +1171,7 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def put url @ (Str | Url) ...options @ Value -> Value
+pub def put url@(Str | Url) ...options@Value -> Value
   ...
 
 # Makes a `PATCH` request through a fresh stateless client, as
@@ -1194,5 +1194,5 @@ do -> Response
   block @ (Response -> R)
 do -> R
 
-pub def patch url @ (Str | Url) ...options @ Value -> Value
+pub def patch url@(Str | Url) ...options@Value -> Value
   ...

@@ -92,14 +92,14 @@ def inline node @ Node -> term.Text
       scalar $node
 
 # Renders the block `node` opens, its lines starting at `indent`.
-def rows node @ Node indent @ Int -> Array[Row]
+def rows node@Node indent@Int -> Array[Row]
   match node
     std.BaseDict(d) => entry_rows $d $indent
     std.BaseArray(a) | Tuple(a) => item_rows $a $indent
     _
       [(indent, scalar(node))]
 
-def entry_rows entries @ BaseDict[Str | Sym, Node] indent @ Int -> Array[Row]
+def entry_rows entries@BaseDict[Str | Sym, Node] indent@Int -> Array[Row]
   # A key that leads into a block is on a line of its own, so it takes no part
   # in the alignment of the keys that share a column with their values.
   let width = 0
@@ -119,7 +119,7 @@ def entry_rows entries @ BaseDict[Str | Sym, Node] indent @ Int -> Array[Row]
       result.push (indent, term.text(label, pad, inline(value)))
   result
 
-def item_rows items @ Iterable[Node] indent @ Int -> Array[Row]
+def item_rows items@Iterable[Node] indent@Int -> Array[Row]
   let result @ Array[Row] = []
   for item = items
     if !opens(item)

@@ -304,7 +304,11 @@ pub class Connection
     func @ (Statement[S] -> R)
   do -> R
 
-  pub def prepare[S @ {*SqlValue, *(Sym): SqlValue}] self sql @ Fmt[SqlValue, S] ...options @ Value -> Value
+  pub def prepare[S @ {*SqlValue, *(Sym): SqlValue}]
+    self
+    sql @ Fmt[SqlValue, S]
+    ...options @ Value
+  do -> Value
     ...
 
   # Runs `func` inside a database transaction.
@@ -668,5 +672,5 @@ do -> Connection
   func @ (Connection -> R)
 do -> R
 
-pub def open path @ (Str | Path) ...options @ Value -> Value
+pub def open path@(Str | Path) ...options@Value -> Value
   ...

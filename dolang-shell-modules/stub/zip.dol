@@ -159,7 +159,7 @@ pub class Archive
     func @ (File -> R)
   do -> R
 
-  pub def open self name @ Str ...options @ Value -> Value
+  pub def open self name@Str ...options@Value -> Value
     ...
 
   # Creates a symbolic link entry pointing to `target`. Write mode only.
@@ -429,5 +429,5 @@ do -> R
   func @ (Archive -> R)
 do -> R
 
-pub def open source @ (Str | Path | Io) ...options @ Value -> Value
+pub def open source@(Str | Path | Io) ...options@Value -> Value
   ...

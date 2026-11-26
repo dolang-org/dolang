@@ -430,7 +430,7 @@ def unknown file@Path prefix@Str rest@Iterable[(Str, toml.DecodeValue)]
 
 # Renders the diagnostics of `report` at or above `diagnose`, or that fail it,
 # and a summary, then exits with failure unless it passed.
-def finish report @ Report diagnose @ compile.Severity fail @ compile.Severity
+def finish report@Report diagnose@compile.Severity fail@compile.Severity
   for diag = report.diagnostics
     if (diag.at_least(diagnose) || diag.at_least(fail))
       echo $diag.render()

@@ -87,12 +87,12 @@ do -> xml.Element
 def wcm_add() -> Dict[(Str, Str), Str]
   {(WCM_NS, "action"): "add"}
 
-def unattend_component name @ Str *items @ UnattendItem -> xml.Element
+def unattend_component name@Str *items@UnattendItem -> xml.Element
   xml.Element component namespace: $UNATTEND_NS attrs: {...COMPONENT_ATTRS, name: name} ...items
 
 # The `<InstallFrom>` selecting an edition off multi-edition media, or `nil`
 # to let Setup pick — which on retail media means stopping to ask.
-def unattend_install_from edition @ (Str | nil) index @ (Int | nil) -> xml.Element
+def unattend_install_from edition@(Str | nil) index@(Int | nil) -> xml.Element
   let key = (edition != nil && "/IMAGE/NAME" || "/IMAGE/INDEX")
   let value = (edition != nil && edition || str(index))
   unattend_node InstallFrom

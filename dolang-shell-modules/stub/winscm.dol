@@ -553,7 +553,7 @@ pub class ScManager
     func @ (Service -> R)
   do -> R
 
-  pub def open_service self name @ Str ...options @ Value -> Value
+  pub def open_service self name@Str ...options@Value -> Value
     ...
 
   # Creates a service.
@@ -631,7 +631,7 @@ pub class ScManager
     func @ (Service -> R)
   do -> R
 
-  pub def create_service self name @ Str ...options @ Value -> Value
+  pub def create_service self name@Str ...options@Value -> Value
     ...
 
   # Opens a live forward enumeration of matching services. Entries are fetched

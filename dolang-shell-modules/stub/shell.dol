@@ -672,7 +672,7 @@ pub @class Env: MutMap[Str, Str] Func
 
   # Calls a block with variables overridden in place, restoring them when it
   # returns.
-  pub def (call)[R] self *args @ Value ...vars @ Value -> R
+  pub def (call)[R] self *args@Value ...vars@Value -> R
 
 
 # The environment of the current context.

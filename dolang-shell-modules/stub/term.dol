@@ -326,7 +326,7 @@ pub class Style: Func
 
   @def (call) self ...options @ StyleOptions -> Style
 
-  @def (call) self value @ Value ...args @ {*Value, ...StyleOptions} -> Text
+  @def (call) self value@Value ...args@{*Value, ...StyleOptions} -> Text
 
   # Applies or derives the saved style.
   #

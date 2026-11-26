@@ -1017,7 +1017,7 @@ do -> Connection
   func @ (Connection -> R)
 do -> R
 
-pub def connect remote @ Str ...options @ Value -> Value
+pub def connect remote@Str ...options@Value -> Value
   ...
 
 # Obtains a handle to an existing connection.

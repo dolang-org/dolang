@@ -67,7 +67,7 @@ def support_end value @ (Str | nil) -> (Date | nil)
 def scopes value @ Str -> Iter[ExtensionScope]
   words(value).map do |item| EXTENSION_SCOPES.get $item default: $item
 
-def sgr_color code @ Int :bright @ Bool = false -> term.Color
+def sgr_color code@Int :bright@Bool = false -> term.Color
   let names @ Array[term.Color] = [:BLACK:, :RED:, :GREEN:, :YELLOW:, :BLUE:, :MAGENTA:, :CYAN:, :WHITE:]
   let bright_names @ Array[term.Color] = [
     :BRIGHT_BLACK:, :BRIGHT_RED:, :BRIGHT_GREEN:, :BRIGHT_YELLOW:,

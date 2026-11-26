@@ -16,7 +16,7 @@ pub @let Prelude = BaseDict[Str | Sym, compile.PreludeBinding]
 
 # Bytecode, the offset of a bundle's archive after an optional `#!` line, or
 # `nil` for source. Only a bounded prefix is read.
-def classify path @ fs.Path :script @ Bool -> (:BYTECODE: | Int | nil)
+def classify path@fs.Path :script@Bool -> (:BYTECODE: | Int | nil)
   if (path.ext == "dolc")
     return :BYTECODE:
   let prefix = path.open do |file| file.read $PREFIX_LEN
@@ -76,7 +76,7 @@ do -> (Bin, Bool)
 
 # Load bytecode, and if it fails verification, the bytecode `retry` returns
 # instead. A `nil` from `retry` rethrows the failure.
-def load_with_fallback bytecode @ Bin retry @ (() -> (Bin | nil)) -> loader.Bytecode
+def load_with_fallback bytecode@Bin retry@(() -> (Bin | nil)) -> loader.Bytecode
   try
     loader.load $bytecode
   catch loader.BytecodeError: error
@@ -98,7 +98,7 @@ class Bundle
   # Modules this strand is loading, to detect a cycle within the guard.
   field pending @ Dict[Str, Bool]
 
-  def (init) self path @ fs.Path members @ Dict[Str, Bin]
+  def (init) self path@fs.Path members@Dict[Str, Bin]
     self.#path = path
     self.#members = members
     self.#modules = {}
@@ -109,7 +109,13 @@ class Bundle
   # recompiled from its source when there is one. Sources compile with default
   # options, whatever the CLI's prelude and diagnostic levels, so a bundle means
   # the same thing however it is invoked.
-  def load_member self stem @ Str mode @ (:SCRIPT: | Str) <strand.ScriptInput >strand.ScriptOutput -> Value
+  def load_member
+    self
+    stem @ Str
+    mode @ (:SCRIPT: | Str)
+    <strand.ScriptInput
+    >strand.ScriptOutput
+  do -> Value
     let label = "$(self.#path)/$stem.dol"
     let source = self.#members.get "$stem.dol"
     def recompile() -> (Bin | nil)
@@ -164,7 +170,7 @@ class Bundle
     self.#load_member main :SCRIPT:
 
 # Read a bundle's program members, so the file is closed before it runs.
-def read_bundle path @ fs.Path offset @ Int -> Bundle
+def read_bundle path@fs.Path offset@Int -> Bundle
   let members @ Dict[Str, Bin] = {}
   path.open do |file|
     zip.open (io.Window(file, (offset..))) r do |archive|
