@@ -30,3 +30,12 @@ optional = true
 [dependencies.console]
 workspace = true
 optional = true
+
+
+[dependencies.futures]
+workspace = true
+
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies.tokio]
+workspace = true
+features = ["rt"]

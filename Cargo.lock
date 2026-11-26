@@ -821,6 +821,8 @@ dependencies = [
  "annotate-snippets",
  "console",
  "dolang",
+ "futures",
+ "tokio",
 ]
 
 [[package]]

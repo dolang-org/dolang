@@ -52,6 +52,10 @@ pub @let Prelude = $
 # Provides diagnostics and document nodes for one source file before emitting
 # bytecode.
 #
+# A running [`check`](compile.check) holds its units until it finishes. Using a
+# unit meanwhile, or adding it to another check, raises
+# [`ConcurrencyError`](std.ConcurrencyError).
+#
 # ## Example
 #
 # ```
@@ -63,7 +67,8 @@ pub @let Prelude = $
 pub class Unit
   # The diagnostics generated while compiling the unit, in order.
   #
-  # The view reads the unit, so it is empty once the unit is emitted.
+  # The view reads the unit, so it is empty once the unit is emitted, and while
+  # a check holds it.
   #
   # ## Errors
   #
@@ -1119,7 +1124,8 @@ do -> Unit
 # | ------------------ | --------------------------------------------------- |
 # | `ValueError`       | A unit was compiled without `typecheck: true`       |
 # | `ValueError`       | Two units are compiled as the same module           |
-# | `StateError`       | A unit was emitted, or a typelib is given twice     |
+# | `StateError`       | A unit was emitted                                  |
+# | `ConcurrencyError` | A unit is given twice, or another check holds it    |
 #
 # ## Example
 #
@@ -1188,6 +1194,7 @@ pub class Check
   # | ---------------- | ---------------------------------------------------------- |
   # | `std.ValueError` | `input` was compiled without `typecheck: true`, or its module was already added |
   # | `std.StateError` | `input` was emitted                                        |
+  # | `std.ConcurrencyError` | A check holds `input`                                |
   pub def add
     self
     input @ (Unit | Typelib)
@@ -1205,7 +1212,10 @@ pub class Check
   #
   # ## Errors
   #
-  # `std.StateError` if a unit was emitted after it was added.
+  # | Exception              | Condition                                     |
+  # | ---------------------- | --------------------------------------------- |
+  # | `std.StateError`       | A unit was emitted after it was added         |
+  # | `std.ConcurrencyError` | A unit is added twice, or another check holds it |
   pub def run self -> Checked
     ...
 
