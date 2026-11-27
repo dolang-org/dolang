@@ -12,6 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 dolang.workspace = true
 dolang-util.workspace = true
+dolang-ide = { workspace = true, features = ["serde"] }
 dolang-ext-base64.workspace = true
 dolang-ext-compile.workspace = true
 dolang-ext-digest.workspace = true

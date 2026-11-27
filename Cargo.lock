@@ -1142,6 +1142,7 @@ dependencies = [
  "backtrace",
  "dirs",
  "dolang-compile",
+ "dolang-private-ide",
  "dunce",
  "env_logger",
  "futures",
@@ -1176,6 +1177,14 @@ dependencies = [
  "slab",
  "time",
  "tokio-util",
+]
+
+[[package]]
+name = "dolang-private-ide"
+version = "0.1.1"
+dependencies = [
+ "dolang-compile",
+ "serde",
 ]
 
 [[package]]
@@ -1404,6 +1413,7 @@ dependencies = [
  "dolang-ext-uuid",
  "dolang-ext-xml",
  "dolang-ext-yaml",
+ "dolang-private-ide",
  "dolang-private-util",
  "dolang-shell-modules",
  "futures",

@@ -176,7 +176,7 @@ pub(crate) fn signature(entry: &DocEntry) -> String {
             let params: Vec<_> = entry
                 .params
                 .iter()
-                .map(|param| signature::Param {
+                .map(|param| dolang_ide::Param {
                     head: param
                         .name
                         .strip_suffix('?')

@@ -65,6 +65,10 @@ version = "0.23.0"
 workspace = true
 
 
+[dependencies.dolang-ide]
+workspace = true
+
+
 [target.'cfg(unix)'.dependencies.libc]
 workspace = true
 

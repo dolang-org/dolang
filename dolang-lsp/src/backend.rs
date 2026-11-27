@@ -22,14 +22,15 @@ use tower_lsp_server::{
 };
 
 use dolang_compile::{
-    Config as CompileConfig, Context, ErrorKind, Kind, Mode, Node, NodeId, Token, Unit, UnitId,
-    diag,
-    typeck::{self, Role, Style},
+    Config as CompileConfig, Context, ErrorKind, Kind, Mode, NodeId, Token, Unit, UnitId, diag,
+    typeck::{self, Role},
 };
+
+use dolang_ide::{Declaration, Highlight, Reference, Shape};
 
 use crate::{
     doc_index,
-    lookup::{self, Modules, Name, Target},
+    lookup::{self, Module, Modules, Name, Target},
     settings::{CONFIG_FILE_NAME, Import, PROJECT_FILE_NAME},
     signature,
     workspace::{Check, Key, Member, PIPES, Round, SCRIPTS, Typelibs, Workspace, Workspaces},
@@ -81,67 +82,25 @@ const MOD_DECLARATION: u32 = 1 << 1;
 const MOD_DEFINITION: u32 = 1 << 2;
 const MOD_STATIC: u32 = 1 << 3;
 
-fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> (u32, u32) {
-    match token {
-        Token::Annotation => (TT_OPERATOR, 0),
-        Token::Binder => (TT_TYPE_PARAMETER, 0),
-        Token::Comment => (TT_COMMENT, 0),
-        Token::Constant => (TT_CONSTANT, 0),
-        Token::Delim | Token::Sigil => (TT_OPERATOR, 0),
-        Token::Escape => (TT_STRING, 0),
-        Token::Field => match context {
-            Context::Call => (TT_FUNCTION, 0),
-            Context::None => (TT_PROPERTY, 0),
-        },
-        Token::Method => (TT_FUNCTION, 0),
-        Token::Key => (TT_PROPERTY, 0),
-        Token::ModuleName => (TT_NAMESPACE, 0),
-        Token::ModuleItem => (TT_PROPERTY, 0),
-        Token::Keyword => (TT_KEYWORD, 0),
-        Token::Literal => (TT_STRING, 0),
-        Token::Number => (TT_NUMBER, 0),
-        Token::Operator => (TT_OPERATOR, 0),
-        Token::StringDelim => (TT_STRING, 0),
-        Token::Type => match kind {
-            Some(Kind::PreludeItem {
-                type_only: true, ..
-            }) => (TT_TYPE, MOD_PRELUDE),
-            Some(Kind::Binder { .. }) => (TT_TYPE_PARAMETER, 0),
-            _ => (TT_TYPE, 0),
-        },
-        Token::TypeKey => (TT_PROPERTY, 0),
-        Token::Variable => match (context, kind) {
-            (
-                _,
-                Some(
-                    Kind::Class { .. }
-                    | Kind::Binder { .. }
-                    | Kind::ImportItem {
-                        type_only: true, ..
-                    },
-                ),
-            ) => (TT_CLASS, 0),
-            (Context::Call, Some(Kind::PreludeItem { .. })) => (TT_FUNCTION, MOD_PRELUDE),
-            (Context::Call, Some(Kind::PreludeModule { .. })) => (TT_FUNCTION, MOD_PRELUDE),
-            (Context::Call, _) => (TT_FUNCTION, 0),
-            (
-                Context::None,
-                Some(
-                    Kind::PositionalParam { .. }
-                    | Kind::KeyParam { .. }
-                    | Kind::RestParam { .. }
-                    | Kind::SelfParam { .. },
-                ),
-            ) => (TT_PARAMETER, 0),
-            (
-                Context::None,
-                Some(Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }),
-            ) => (TT_FUNCTION, 0),
-            (Context::None, Some(Kind::PreludeItem { .. })) => (TT_VARIABLE, MOD_PRELUDE),
-            (Context::None, Some(Kind::PreludeModule { .. })) => (TT_NAMESPACE, MOD_PRELUDE),
-            (Context::None, Some(Kind::ImportModule { .. })) => (TT_NAMESPACE, 0),
-            (Context::None, _) => (TT_VARIABLE, 0),
-        },
+/// The legend index of a highlight
+fn token_type(highlight: Highlight) -> u32 {
+    match highlight {
+        Highlight::Annotation | Highlight::Punctuation | Highlight::Sigil | Highlight::Operator => {
+            TT_OPERATOR
+        }
+        Highlight::TypeParameter => TT_TYPE_PARAMETER,
+        Highlight::Comment => TT_COMMENT,
+        Highlight::Constant => TT_CONSTANT,
+        Highlight::String => TT_STRING,
+        Highlight::Function => TT_FUNCTION,
+        Highlight::Property => TT_PROPERTY,
+        Highlight::Namespace => TT_NAMESPACE,
+        Highlight::Keyword => TT_KEYWORD,
+        Highlight::Number => TT_NUMBER,
+        Highlight::Type => TT_TYPE,
+        Highlight::Class => TT_CLASS,
+        Highlight::Parameter => TT_PARAMETER,
+        Highlight::Variable => TT_VARIABLE,
     }
 }
 
@@ -222,284 +181,6 @@ fn symbol_kind(kind: &Kind<'_>, unit: &Unit<'_>) -> Option<SymbolKind> {
     })
 }
 
-/// Remove the source-level comment markers while preserving Markdown layout.
-fn normalize_doc(unit: &Unit<'_>, span: diag::Span) -> String {
-    normalize_doc_text(unit.text(span))
-}
-
-fn normalize_doc_text(doc: &str) -> String {
-    doc.split('\n')
-        .map(|line| {
-            line.trim()
-                .strip_prefix('#')
-                .expect("a doc span contains only comments")
-                .strip_prefix(' ')
-                .unwrap_or_else(|| {
-                    line.trim()
-                        .strip_prefix('#')
-                        .expect("a doc span contains only comments")
-                })
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn one_line_source(unit: &Unit<'_>, span: diag::Span) -> String {
-    unit.text(span)
-        .lines()
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The source text at `span` with its lines kept, each after the first
-/// indented as it would be under the declaration `decl` at the start of a line
-fn as_written(unit: &Unit<'_>, decl: diag::Span, span: diag::Span) -> String {
-    let source = unit.source();
-    let start = unit.byte_range(decl).start;
-    let line = &source[source[..start].rfind('\n').map_or(0, |at| at + 1)..];
-    let indent = &line[..line.len() - line.trim_start().len()];
-    unit.text(span)
-        .lines()
-        .enumerate()
-        .map(|(index, text)| match index {
-            0 => text.trim(),
-            _ => text
-                .strip_prefix(indent)
-                .unwrap_or(text.trim_start())
-                .trim_end(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// A parameter of a signature, from its declaration
-fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<signature::Param> {
-    let node = unit.node(id)?;
-    let span = node.span()?;
-    let default = match node.kind() {
-        Kind::PositionalParam { default, .. } | Kind::KeyParam { default, .. } => default,
-        Kind::RestParam { .. } | Kind::SelfParam { .. } => None,
-        // An implicit is written as its sigil and type with no `@` between
-        Kind::ImplicitParam { .. } => {
-            return Some(signature::Param {
-                head: one_line_source(unit, span),
-                ty: None,
-                default: false,
-            });
-        }
-        _ => return None,
-    };
-    let ty = node
-        .children()
-        .filter_map(|child| unit.node(child))
-        .find(|child| matches!(child.kind(), Kind::Type { .. }))
-        .and_then(|child| child.span());
-    // The parameter as written ends where its annotation or default starts
-    let range = unit.byte_range(span);
-    let end = [ty, default]
-        .into_iter()
-        .flatten()
-        .map(|span| unit.byte_range(span).start)
-        .min()
-        .unwrap_or(range.end);
-    let head = unit.source().get(range.start..end)?.trim_end();
-    let head = head.strip_suffix('=').unwrap_or(head).trim_end();
-    let head = head.strip_suffix('@').unwrap_or(head).trim_end();
-    Some(signature::Param {
-        head: head.lines().map(str::trim).collect::<Vec<_>>().join(" "),
-        ty: ty.map(|span| one_line_source(unit, span)),
-        default: default.is_some(),
-    })
-}
-
-/// A node's children in source order.
-fn children_in_order(unit: &Unit<'_>, node: &Node<'_>) -> Vec<NodeId> {
-    let mut children: Vec<NodeId> = node.children().collect();
-    // A prelude binding, having no span, sorts first
-    children.sort_by_key(|id| {
-        unit.node(*id)
-            .expect("child node remains in its unit")
-            .span()
-            .map(|span| span.start())
-    });
-    children
-}
-
-/// The source text of the type describing a node, if it has one, given its children.
-fn type_label(unit: &Unit<'_>, children: &[NodeId]) -> Option<String> {
-    children
-        .iter()
-        .filter_map(|child| unit.node(*child))
-        .find(|child| matches!(child.kind(), Kind::Type { .. }))
-        .and_then(|child| child.span())
-        .map(|span| one_line_source(unit, span))
-}
-
-/// A declaration's signature, including any type it is annotated with.
-fn declaration_label(unit: &Unit<'_>, id: NodeId) -> Option<String> {
-    let node = unit.node(id)?;
-    let kind = node.kind();
-    let children = children_in_order(unit, &node);
-    let mut name = node.definition().map(|span| unit.text(span).to_owned())?;
-    let binders = children
-        .iter()
-        .filter_map(|child| unit.node(*child))
-        .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
-        .filter_map(|child| child.span())
-        .map(|span| one_line_source(unit, span))
-        .collect::<Vec<_>>();
-    if !binders.is_empty() {
-        name.push('[');
-        name.push_str(&binders.join(", "));
-        name.push(']');
-    }
-    // A class's types are its superclasses, which describe nothing about it
-    let ty = if matches!(kind, Kind::Class { .. }) {
-        None
-    } else {
-        type_label(unit, &children)
-    };
-    let params = || {
-        children
-            .iter()
-            .filter_map(|child| parameter(unit, *child))
-            .collect::<Vec<_>>()
-    };
-    // Only the decorators the type checker designates say anything about the
-    // declaration, and only when they are `std`'s
-    let designated = |items: &[&str]| -> String {
-        children
-            .iter()
-            .filter_map(|child| {
-                let Kind::Decorator {
-                    target: Some(target),
-                } = unit.node(*child)?.kind()
-                else {
-                    return None;
-                };
-                let item = match unit.node(target)?.kind() {
-                    Kind::PreludeItem {
-                        module: "std",
-                        item,
-                        ..
-                    } => item,
-                    Kind::ImportItem { module, item, .. } if unit.text(module) == "std" => {
-                        unit.text(item)
-                    }
-                    _ => return None,
-                };
-                items.contains(&item).then(|| format!("#[{item}]\n"))
-            })
-            .collect()
-    };
-    let label = match kind {
-        Kind::Class {
-            is_pub, type_only, ..
-        } => {
-            let supers = children
-                .iter()
-                .filter_map(|child| unit.node(*child))
-                .filter(|child| matches!(child.kind(), Kind::Type { .. }))
-                .filter_map(|child| child.span())
-                .map(|span| unit.text(span))
-                .collect::<Vec<_>>();
-            let decorators = designated(&["final", "mixable"]);
-            format!(
-                "{decorators}{}{}class {name}{}",
-                if is_pub { "pub " } else { "" },
-                if type_only { "@" } else { "" },
-                if supers.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", supers.join(" "))
-                }
-            )
-        }
-        Kind::Function {
-            is_pub, type_only, ..
-        }
-        | Kind::Method {
-            is_pub, type_only, ..
-        } => {
-            let params = params();
-            // An overload is written with `@`, but a protocol's member is
-            // type-only without one
-            let protocol = node
-                .parent()
-                .and_then(|parent| unit.node(parent))
-                .is_some_and(|parent| {
-                    matches!(
-                        parent.kind(),
-                        Kind::Class {
-                            type_only: true,
-                            ..
-                        }
-                    )
-                });
-            let at = type_only && !protocol;
-            // A getter or setter is used as a field, not called, and a class
-            // or static method lives on the type object
-            let decorators = match kind {
-                Kind::Method { .. } => designated(&["getter", "setter", "class", "static"]),
-                _ => String::new(),
-            };
-            let prefix = format!(
-                "{decorators}{}{}def {name}",
-                if is_pub && !at { "pub " } else { "" },
-                if at { "@" } else { "" },
-            );
-            signature::def(&prefix, &params, ty.as_deref(), !type_only)
-        }
-        Kind::SpecialMethod { type_only, .. } => {
-            signature::def(&format!("def {name}"), &params(), ty.as_deref(), !type_only)
-        }
-        Kind::Field { is_pub, .. } => signature::binding(
-            &format!("{}field {name}", if is_pub { "pub " } else { "" }),
-            ty.as_deref(),
-        ),
-        Kind::Bind { is_pub, .. } => signature::variable(
-            &format!("{}let {name}", if is_pub { "pub " } else { "" }),
-            ty.as_deref(),
-        ),
-        // An opaque alias has no type, but is written with `...` in its place.
-        // A vertical type keeps its lines.
-        Kind::Alias { is_pub, .. } => {
-            let ty = children
-                .iter()
-                .filter_map(|child| unit.node(*child))
-                .find(|child| matches!(child.kind(), Kind::Type { .. }))
-                .and_then(|child| Some(as_written(unit, node.span()?, child.span()?)));
-            format!(
-                "{}@let {name} = {}",
-                if is_pub { "pub " } else { "" },
-                ty.as_deref().unwrap_or("..."),
-            )
-        }
-        // A parameter is labeled as a `let` binds it
-        Kind::PositionalParam { .. }
-        | Kind::KeyParam { .. }
-        | Kind::RestParam { .. }
-        | Kind::SelfParam { .. } => parameter(unit, id)?.binding(),
-        _ => return None,
-    };
-    Some(label)
-}
-
-/// Hover text for a name that resolves outside this document -- an import or
-/// a prelude binding -- built from the static doc index rather than a local
-/// doc comment, since there is no declaration in this file to read one from.
-fn external_hover(kind: Kind<'_>, unit: &Unit<'_>) -> Vec<Described> {
-    let (module, item) = match kind {
-        Kind::ImportModule { module, .. } => (unit.text(module), ""),
-        Kind::ImportItem { module, item, .. } => (unit.text(module), unit.text(item)),
-        Kind::PreludeModule { module, .. } => (module, ""),
-        Kind::PreludeItem { module, item, .. } => (module, item),
-        _ => return Vec::new(),
-    };
-    bundled_hover(module, item, None)
-}
-
 /// Hover text for an item of a bundled module, from the static doc index: the
 /// overload `chosen` of an overloaded one, or else each overload in turn. The
 /// overloads say all the checker does of its interface, so the implementation
@@ -543,19 +224,38 @@ struct Described {
     shape: Shape,
 }
 
-/// What a declaration's label says
-#[derive(Debug, Clone, Copy)]
-enum Shape {
-    /// A function, method, class or annotated field, whose signature says
-    /// what its checked type would
-    Signature,
-    /// A variable, parameter or unannotated field, whose checked type says
-    /// all its label does
-    Value,
-    Other,
-}
-
 impl Described {
+    /// How hover shows a declaration: one in a unit by its signature, a
+    /// module by its import, and a bundled item from the static doc index
+    fn of(declaration: Declaration) -> Vec<Self> {
+        match declaration {
+            Declaration::Local {
+                shape,
+                class,
+                module,
+                doc,
+                signature,
+            } => {
+                let label = signature::render(&signature);
+                vec![Described {
+                    label: signature::member(module.as_deref(), class.as_deref(), &label),
+                    prose: doc,
+                    shape,
+                }]
+            }
+            Declaration::Module { name, doc } => vec![Described {
+                label: format!("import {name}"),
+                prose: doc,
+                shape: Shape::Other,
+            }],
+            Declaration::Bundled {
+                module,
+                item,
+                overload,
+            } => bundled_hover(&module, &item, overload),
+        }
+    }
+
     /// An entry of the static doc index
     fn entry(entry: &doc_index::DocEntry) -> Self {
         let shape = match entry.kind {
@@ -587,123 +287,6 @@ impl Described {
         }
         Some(markdown)
     }
-}
-
-/// Pre-render local hover text while the compiler unit and its spans live.
-fn build_hovers(unit: &Unit<'_>) -> HashMap<NodeId, Vec<Described>> {
-    unit.nodes()
-        .filter_map(|(id, node)| {
-            let mut docs = external_hover(node.kind(), unit);
-            if docs.is_empty() {
-                docs = overloaded_hover(unit, id, None, None);
-            }
-            (!docs.is_empty()).then_some((id, docs))
-        })
-        .collect()
-}
-
-/// Hover text for a declaration in a unit: its signature, in the classes it's
-/// in and noted with `module`, and its doc comment. `module` is `None` for the
-/// document's own module, which goes unnoted.
-fn local_hover(unit: &Unit<'_>, id: NodeId, module: Option<&str>) -> Option<Described> {
-    let label = declaration_label(unit, id)?;
-    let label = match enclosing_class(unit, id) {
-        Some(class) => signature::member(module, class.as_deref(), &label),
-        None => label,
-    };
-    let node = unit.node(id)?;
-    let annotated = || {
-        node.children()
-            .filter_map(|child| unit.node(child))
-            .any(|child| matches!(child.kind(), Kind::Type { .. }))
-    };
-    let shape = match node.kind() {
-        Kind::Function { .. }
-        | Kind::Method { .. }
-        | Kind::SpecialMethod { .. }
-        | Kind::Class { .. } => Shape::Signature,
-        Kind::Field { .. } if annotated() => Shape::Signature,
-        Kind::Bind { .. }
-        | Kind::PositionalParam { .. }
-        | Kind::KeyParam { .. }
-        | Kind::RestParam { .. }
-        | Kind::SelfParam { .. }
-        | Kind::Field { .. } => Shape::Value,
-        _ => Shape::Other,
-    };
-    Some(Described {
-        label,
-        prose: node
-            .doc()
-            .map(|span| normalize_doc(unit, span))
-            .unwrap_or_default(),
-        shape,
-    })
-}
-
-/// Hover text for a declaration in a unit, as `local_hover` gives it, or for
-/// an overloaded function or method, the overload `chosen` of it, or else each
-/// overload in turn: the overloads say all the checker does of its interface.
-/// An overload with no doc comment of its own has its implementation's.
-fn overloaded_hover(
-    unit: &Unit<'_>,
-    implementation: NodeId,
-    chosen: Option<u32>,
-    module: Option<&str>,
-) -> Vec<Described> {
-    let ids = match chosen {
-        Some(index) => vec![lookup::overload(unit, implementation, index)],
-        None => {
-            let overloads = lookup::overloads(unit, implementation);
-            match overloads.is_empty() {
-                true => vec![implementation],
-                false => overloads,
-            }
-        }
-    };
-    let doc = unit.node(implementation).and_then(|node| node.doc());
-    ids.into_iter()
-        .filter_map(|id| {
-            let mut described = local_hover(unit, id, module)?;
-            if described.prose.is_empty()
-                && let Some(span) = doc
-            {
-                described.prose = normalize_doc(unit, span);
-            }
-            Some(described)
-        })
-        .collect()
-}
-
-/// Where a declaration in a unit is: `Some` at the top level, with the header
-/// of its class when it's a member, and `None` in anything else, such as a
-/// function
-fn enclosing_class(unit: &Unit<'_>, id: NodeId) -> Option<Option<String>> {
-    let parent = unit.node(id)?.parent()?;
-    if parent == unit.root()? {
-        return Some(None);
-    }
-    let node = unit.node(parent)?;
-    let Kind::Class {
-        name, type_only, ..
-    } = node.kind()
-    else {
-        return None;
-    };
-    let binders: Vec<_> = children_in_order(unit, &node)
-        .iter()
-        .filter_map(|child| unit.node(*child))
-        .filter(|child| matches!(child.kind(), Kind::Binder { .. }))
-        .filter_map(|child| child.span())
-        .map(|span| one_line_source(unit, span))
-        .collect();
-    let binders = if binders.is_empty() {
-        String::new()
-    } else {
-        format!("[{}]", binders.join(", "))
-    };
-    let at = if type_only { "@" } else { "" };
-    Some(Some(format!("{at}class {}{binders}", unit.text(name))))
 }
 
 /// Assemble the document outline from the node table.
@@ -801,7 +384,6 @@ struct Patch {
 struct Decl {
     name_range: Range,
     uses: Vec<Range>,
-    hover: Vec<Described>,
 }
 
 /// What the worker made of one revision of a document.
@@ -816,6 +398,8 @@ struct Document {
     /// The unit's compile diagnostics
     diagnostics: Vec<Diagnostic>,
     tokens: Vec<SemanticToken>,
+    /// The tokens naming declarations, sorted by start
+    references: Vec<Reference>,
     /// Token range to the declaration it names, sorted by range start
     refs: Vec<(Range, NodeId)>,
     decls: HashMap<NodeId, Decl>,
@@ -867,38 +451,12 @@ impl Document {
             .clone()
     }
 
-    /// The span of the innermost node the latest check judged at `offset`, and
-    /// the lines of what it concluded there. `reference` is the span of the
-    /// doc-index reference under the cursor, which names a node at just its
-    /// span that has no name of its own.
-    fn checked_at(
-        &self,
-        analyzed: &Analyzed,
-        offset: usize,
-        reference: Option<diag::Span>,
-    ) -> Option<(diag::Span, Vec<String>)> {
-        let node = analyzed.analysis.at(analyzed.unit, self.pos(offset)?)?;
-        let span = node.span();
-        let named = (reference == Some(span)).then(|| self.unit.text(span));
-        Some((span, label(node, named)?))
-    }
-
     /// The position of the byte `offset` of the source
     fn pos(&self, offset: usize) -> Option<diag::Pos> {
         let source = self.unit.source();
         source
             .is_char_boundary(offset)
             .then(|| self.unit.locate(offset..offset).start())
-    }
-
-    /// The span of the type name the latest check judged at `offset`, as the
-    /// item a path through a module names, which no token refers to
-    fn type_name_at(&self, analyzed: &Analyzed, offset: usize) -> Option<diag::Span> {
-        let node = analyzed.analysis.at(analyzed.unit, self.pos(offset)?)?;
-        let named = node
-            .judgments()
-            .any(|judged| judged.role() == Role::Reference);
-        named.then(|| node.span())
     }
 
     /// The declaration named by the token under `pos`, if any.
@@ -910,97 +468,33 @@ impl Document {
     }
 
     /// The declarations the name at `offset` stands for in the modules the
-    /// check has the units of, and the overload a call of it chose. That's a
-    /// module, as its root; an item imported from a module, as the reference
-    /// `id` names it; a function
-    /// declared here, when a call chose one of its overloads; the members a
-    /// member use reached, one for each class of a union receiver; or the
-    /// item a path through a module names.
+    /// check has the units of, and the overload a call of it chose, as
+    /// [`dolang_ide::targets`] finds them for the reference `id`
     fn targets<'a>(
         &self,
         analyzed: &'a Analyzed,
         offset: usize,
         reference: Option<NodeId>,
     ) -> (Vec<Target<'a>>, Option<u32>) {
-        let modules = &analyzed.modules;
+        let checked = analyzed.checked();
         let node = self
             .pos(offset)
             .and_then(|pos| analyzed.analysis.at(analyzed.unit, pos));
-        let chosen = node.and_then(chosen);
-        let found = match reference {
-            Some(id) => {
-                let unit = &self.unit;
-                let root = |module: &str| {
-                    let module = modules.get(module)?;
-                    Some(Target::Source(module, module.unit.root()?))
-                };
-                let target = match self.unit.node(id).map(|node| node.kind()) {
-                    Some(Kind::ImportModule { module, .. }) => root(unit.text(module)),
-                    Some(Kind::PreludeModule { module, .. }) => root(module),
-                    Some(Kind::ImportItem { module, item, .. }) => {
-                        lookup::item(modules, unit.text(module), unit.text(item))
-                    }
-                    Some(Kind::PreludeItem { module, item, .. }) => {
-                        lookup::item(modules, module, item)
-                    }
-                    Some(Kind::Function { .. }) if chosen.is_some() => modules
-                        .get(&analyzed.name)
-                        .map(|module| Target::Source(module, id)),
-                    _ => None,
-                };
-                target.into_iter().collect()
-            }
-            None => node
-                .map(|node| node_targets(modules, node))
-                .unwrap_or_default(),
-        };
-        // A union receiver's calls each chose their own
-        let chosen = chosen.filter(|_| found.len() == 1);
-        (found, chosen)
+        dolang_ide::targets(&self.unit, &checked, node, reference)
     }
 }
 
-/// What the analysis `node` names: the members a member use reached, or else
-/// the item a path through a module names, or the declaration a type names
-fn node_targets<'a>(modules: &'a Modules, node: typeck::Node<'_>) -> Vec<Target<'a>> {
-    let members: Vec<_> = node
-        .judgments()
-        .filter(|judged| judged.role() == Role::Member)
-        .filter_map(|judged| {
-            let class = judged.declaration()?;
-            lookup::member(modules, class.module(), class.name(), judged.name()?)
-        })
-        .collect();
-    if !members.is_empty() {
-        return members;
-    }
-    let item = node
-        .judgments()
-        .find(|judged| matches!(judged.role(), Role::Item | Role::Reference));
-    let item = item.and_then(|judged| judged.declaration());
-    item.and_then(|item| lookup::item(modules, item.module(), item.name()))
-        .into_iter()
-        .collect()
-}
-
-/// The overload chosen by the call of what `node` names. A method call is
-/// judged at its member, and a function call at the whole call, which starts
-/// where its callee does. A union receiver's call reaches several.
-fn chosen(node: typeck::Node<'_>) -> Option<u32> {
-    let start = node.span().start();
-    let callees = node
-        .ancestors()
-        .take_while(|ancestor| ancestor.span().start() == start)
-        .map(|ancestor| {
-            let callees = ancestor.judgments();
-            callees
-                .filter(|judged| judged.role() == Role::Callee)
-                .collect::<Vec<_>>()
-        })
-        .find(|callees| !callees.is_empty())?;
-    match callees[..] {
-        [callee] => callee.overload(),
-        _ => None,
+impl Analyzed {
+    /// What the check concluded, as the shared queries take it
+    fn checked<'a>(
+        &'a self,
+    ) -> dolang_ide::Checked<'a, impl Fn(&str) -> Option<(&'a Unit<'a>, &'a Module)> + 'a> {
+        dolang_ide::Checked {
+            analysis: &self.analysis,
+            unit: self.unit,
+            name: &self.name,
+            resolve: lookup::resolver(&self.modules),
+        }
     }
 }
 
@@ -1010,11 +504,11 @@ fn chosen_node<'m>(
     target: &Target<'m>,
     chosen: Option<u32>,
 ) -> Option<(&'m lookup::Module, NodeId)> {
-    let Target::Source(module, id) = *target else {
+    let Target::Source { module, id, .. } = *target else {
         return None;
     };
     let id = match chosen {
-        Some(index) => lookup::overload(&module.unit, id, index),
+        Some(index) => dolang_ide::overload(&module.unit, id, index),
         None => id,
     };
     Some((module, id))
@@ -1034,82 +528,6 @@ fn location(
         module.uri.clone(),
         index.range_from_span(&span),
     ))
-}
-
-/// What hover shows of a declaration found in another module, or of the
-/// overload `chosen` of it, as `overloaded_hover` and `bundled_hover` give it.
-/// A declaration in `own`, the document's module, is noted as a local one is.
-fn target_hover(target: &Target<'_>, chosen: Option<u32>, own: Option<&str>) -> Vec<Described> {
-    match *target {
-        Target::Source(module, id) => {
-            let unit = &module.unit;
-            // A module is documented by the comment opening its source
-            if unit.root() == Some(id) {
-                let prose = unit.node(id).and_then(|node| node.doc());
-                return vec![Described {
-                    label: format!("import {}", module.name),
-                    prose: prose
-                        .map(|span| normalize_doc(unit, span))
-                        .unwrap_or_default(),
-                    shape: Shape::Other,
-                }];
-            }
-            let name = Some(&module.name[..]).filter(|&name| Some(name) != own);
-            overloaded_hover(unit, id, chosen, name)
-        }
-        Target::Bundled(ref module, ref item) => bundled_hover(module, item, chosen),
-    }
-}
-
-/// What hover shows of a node, a line each, from the first of:
-///
-/// - the variable it reads or binds;
-/// - the signatures a call reached, by its member's name for a method;
-/// - the type of the member a member use reached, by its name in its class;
-/// - the type of the item a path through a module names, by its module;
-/// - its value, by `named` where given.
-fn label(node: typeck::Node<'_>, named: Option<&str>) -> Option<Vec<String>> {
-    let find = |role| node.judgments().find(|judged| judged.role() == role);
-    // A member use's own name is the member's, but its type is the declaring
-    // class
-    let variable = node
-        .judgments()
-        .find(|judged| matches!(judged.role(), Role::Read | Role::Bind));
-    if let Some(judged) = variable {
-        let ty = judged.annotation(Style::Reader);
-        return Some(vec![signature::typed(Some(judged.name()?), &ty, None)]);
-    }
-    // A member by the class declaring it, as `m.Box.item`; a union receiver's
-    // reach one in each alternative's class
-    let members: Vec<_> = node
-        .judgments()
-        .filter(|judged| judged.role() == Role::Member)
-        .filter_map(|judged| {
-            let name = judged.name()?;
-            Some(match judged.declaration() {
-                Some(class) => format!("{}.{}.{name}", class.module(), class.name()),
-                None => name.to_owned(),
-            })
-        })
-        .collect();
-    // An item by the module exporting it, as `m.f`
-    let item = find(Role::Item)
-        .and_then(|judged| judged.declaration())
-        .map(|item| format!("{}.{}", item.module(), item.name()));
-    let member = (!members.is_empty()).then(|| members.join(" | ")).or(item);
-    let member = member.as_deref();
-    let callees: Vec<_> = node
-        .judgments()
-        .filter(|judged| judged.role() == Role::Callee)
-        .map(|judged| {
-            signature::typed(member, &judged.annotation(Style::Reader), judged.overload())
-        })
-        .collect();
-    if !callees.is_empty() {
-        return Some(callees);
-    }
-    let value = find(Role::Value)?.annotation(Style::Reader);
-    Some(vec![signature::typed(member.or(named), &value, None)])
 }
 
 #[derive(Debug, Default)]
@@ -1233,7 +651,7 @@ const REFERENCES_ROUNDS: usize = 256;
 enum Event {
     Projected {
         uri: Uri,
-        document: Document,
+        document: Box<Document>,
         diagnostics: Vec<Diagnostic>,
         done: oneshot::Sender<Arc<Document>>,
     },
@@ -1379,7 +797,7 @@ impl Worker {
         };
         _ = self.events.send(Event::Projected {
             uri,
-            document,
+            document: Box::new(document),
             diagnostics,
             done,
         });
@@ -1511,13 +929,12 @@ impl Worker {
             if member.module() == Some(&*name.module) {
                 let own = Modules::from([(
                     name.module.clone(),
-                    lookup::Module {
+                    Module {
                         uri: uri.clone(),
-                        name: name.module.clone(),
                         unit: unit.clone(),
                     },
                 )]);
-                if let Some(Target::Source(_, id)) = name.find(&own) {
+                if let Some(Target::Source { id, .. }) = name.find(&own) {
                     let uses = uses_of(&unit, |node| node == id);
                     ranges.extend(uses.into_iter().map(|span| unit.byte_range(span)));
                     let declared = unit.node(id).and_then(|node| node.definition());
@@ -1717,7 +1134,7 @@ fn rank(name: &str, query: &str) -> Option<u8> {
 /// name it uses: a member's after its receiver, and a path's at its end.
 fn references_in(analyzed: &Analyzed, unit: &Unit<'_>, name: &Name) -> Vec<ops::Range<usize>> {
     let modules = &analyzed.modules;
-    let names = |target: &Target<'_>| target.name().as_ref() == Some(name);
+    let names = |target: &Target<'_>| Name::of_target(target).as_ref() == Some(name);
     let ident = name.member.as_deref().unwrap_or(&name.item);
     let source = unit.source();
     let nodes: Vec<_> = analyzed.analysis.nodes(analyzed.unit).collect();
@@ -1733,7 +1150,8 @@ fn references_in(analyzed: &Analyzed, unit: &Unit<'_>, name: &Name) -> Vec<ops::
                     && declaration.name() == name.item
             })
         });
-        if !typed && !node_targets(modules, *node).iter().any(names) {
+        let targets = dolang_ide::node_targets(lookup::resolver(modules), *node);
+        if !typed && !targets.iter().any(names) {
             continue;
         }
         let mut bytes = unit.byte_range(node.span());
@@ -1761,10 +1179,14 @@ fn references_in(analyzed: &Analyzed, unit: &Unit<'_>, name: &Name) -> Vec<ops::
         .nodes()
         .filter_map(|(id, node)| {
             let target = match node.kind() {
-                Kind::ImportItem { module, item, .. } => {
-                    lookup::item(modules, unit.text(module), unit.text(item))
+                Kind::ImportItem { module, item, .. } => dolang_ide::item(
+                    lookup::resolver(modules),
+                    unit.text(module),
+                    unit.text(item),
+                ),
+                Kind::PreludeItem { module, item, .. } => {
+                    dolang_ide::item(lookup::resolver(modules), module, item)
                 }
-                Kind::PreludeItem { module, item, .. } => lookup::item(modules, module, item),
                 _ => None,
             };
             target.as_ref().is_some_and(names).then_some(id)
@@ -1804,7 +1226,7 @@ async fn publish(
                 diagnostics,
                 done,
             } => {
-                let document = Arc::new(document);
+                let document = Arc::<Document>::from(document);
                 let version = document.member.version();
                 if lock().project(&uri, &document) {
                     client.publish_diagnostics(uri, diagnostics, version).await;
@@ -1994,9 +1416,8 @@ pub(crate) fn check_units(
                 None => Uri::from_file_path(checked.path(id))?,
             };
             let name = checked.name(id);
-            let module = lookup::Module {
+            let module = Module {
                 uri,
-                name: name.clone(),
                 unit: unit.clone(),
             };
             Some((name, module))
@@ -2014,7 +1435,7 @@ pub(crate) fn check_units(
                         None => Uri::from_file_path(member.path())?,
                     };
                     let unit = workspace.unit(member);
-                    Some((name.clone(), lookup::Module { uri, name, unit }))
+                    Some((name, Module { uri, unit }))
                 }),
         )
         .collect();
@@ -2325,7 +1746,7 @@ impl Backend {
             (document.analyzed(), index.offset_from_position(pos))
         {
             let (targets, _) = document.targets(&analyzed, offset, reference.map(|(_, id, _)| id));
-            if let Some(name) = targets.iter().find_map(Target::name) {
+            if let Some(name) = targets.iter().find_map(Name::of_target) {
                 return Some(name);
             }
         }
@@ -2439,7 +1860,6 @@ fn project(
 
     let content = unit.source();
     let index = DocumentIndex::new(content, encoding.clone());
-    let hovers = build_hovers(&unit);
     for diag in unit.diagnostics() {
         let relate = |_, span: &diag::SourceSpan, message: String| DiagnosticRelatedInformation {
             location: Location::new(uri.clone(), index.range_from_span(&span.span())),
@@ -2453,54 +1873,37 @@ fn project(
         &mut |leaf, span: diag::Span, node: Option<NodeId>, context: Context| {
             // Punctuation and sigils have no semantic token type, so
             // they are left to the client's own syntax highlighting.
-            if !span.is_empty() && !matches!(leaf, Token::Delim | Token::Sigil) {
-                let doc_node = node.and_then(|id| unit.node(id));
-                let kind = doc_node.map(|node| node.kind());
-                let (token_type, mut modifiers) = classify_token(leaf, kind.as_ref(), context);
-                if let Some(id) = node {
-                    let range = index.range_from_span(&span);
-                    match doc_node.and_then(|node| node.definition()) {
-                        Some(def) => {
-                            modifiers |= declaration_modifiers(span, def, id, &statics);
-                            refs.push((range, id));
-                            decls
-                                .entry(id)
-                                .or_insert_with(|| Decl {
-                                    name_range: index.range_from_span(&def),
-                                    uses: Vec::new(),
-                                    hover: hovers.get(&id).cloned().unwrap_or_default(),
-                                })
-                                .uses
-                                .push(range);
-                        }
-                        // A prelude binding has no source text, so
-                        // there is nowhere in this file to jump to --
-                        // but it may still have hover text pulled
-                        // from the static doc index (see
-                        // external_hover), which has nothing to do
-                        // with a definition span. Index it too, using
-                        // its own span as a stand-in "declaration"
-                        // location since there is no real one; this
-                        // also gets it references/highlight for free.
-                        None if hovers.contains_key(&id) => {
-                            refs.push((range, id));
-                            decls
-                                .entry(id)
-                                .or_insert_with(|| Decl {
-                                    name_range: range,
-                                    uses: Vec::new(),
-                                    hover: hovers.get(&id).cloned().unwrap_or_default(),
-                                })
-                                .uses
-                                .push(range);
-                        }
-                        None => {}
-                    }
-                }
-                tokens.push((token_type, modifiers, span));
+            if span.is_empty() || matches!(leaf, Token::Delim | Token::Sigil) {
+                return;
             }
+            let doc_node = node.and_then(|id| unit.node(id));
+            let kind = doc_node.map(|node| node.kind());
+            let (highlight, prelude) = dolang_ide::classify(leaf, kind.as_ref(), context);
+            let mut modifiers = if prelude { MOD_PRELUDE } else { 0 };
+            if let (Some(id), Some(def)) = (node, doc_node.and_then(|node| node.definition())) {
+                modifiers |= declaration_modifiers(span, def, id, &statics);
+            }
+            tokens.push((token_type(highlight), modifiers, span));
         },
     );
+    // A prelude binding has no source text, so there is nowhere in this file
+    // to jump to, but it names an item of the static doc index. Its own span
+    // stands in for its declaration, which also gets it references and
+    // highlights.
+    let references = dolang_ide::references(&unit);
+    for reference in &references {
+        let range = index.range_from_span(&reference.span);
+        let def = unit.node(reference.id).and_then(|node| node.definition());
+        refs.push((range, reference.id));
+        decls
+            .entry(reference.id)
+            .or_insert_with(|| Decl {
+                name_range: def.map_or(range, |def| index.range_from_span(&def)),
+                uses: Vec::new(),
+            })
+            .uses
+            .push(range);
+    }
 
     let mut pre_line = 0;
     let mut pre_start = 0;
@@ -2539,6 +1942,7 @@ fn project(
         unit,
         diagnostics: diags,
         tokens,
+        references,
         refs,
         decls,
         symbols,
@@ -2927,84 +2331,48 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let pos = &params.text_document_position_params.position;
-        let reference = document.reference_at(pos);
         let index = DocumentIndex::new(document.unit.source(), self.position_encoding());
-        let referenced = reference.and_then(|(range, ..)| {
-            let start = index.offset_from_position(&range.start)?;
-            let end = index.offset_from_position(&range.end)?;
-            let source = document.unit.source();
-            (source.is_char_boundary(start) && source.is_char_boundary(end) && start <= end)
-                .then(|| document.unit.locate(start..end))
-        });
+        let source = document.unit.source();
+        let Some(offset) =
+            (index.offset_from_position(pos)).filter(|&offset| source.is_char_boundary(offset))
+        else {
+            return Ok(None);
+        };
+        let at = document.unit.locate(offset..offset);
         let analyzed = document.analyzed();
-        // A module has no node of its own, so the check's is the path through
-        // it, which says nothing about the module
-        let module = reference.is_some_and(|(_, id, _)| {
-            let kind = document.unit.node(id).map(|node| node.kind());
-            matches!(
-                kind,
-                Some(Kind::ImportModule { .. } | Kind::PreludeModule { .. })
-            )
-        });
-        // An item a path through a module names as a type has no token
-        // referring to it, so the check's judgment is what names it
-        let type_name = match (
-            reference,
-            analyzed.as_deref(),
-            index.offset_from_position(pos),
-        ) {
-            (None, Some(analyzed), Some(offset)) => document.type_name_at(analyzed, offset),
-            _ => None,
+        let checked = analyzed.as_deref().map(Analyzed::checked);
+        let Some(hover) = dolang_ide::hover(
+            &document.unit,
+            &document.references,
+            checked.as_ref(),
+            at,
+            Described::of,
+        ) else {
+            return Ok(None);
         };
-        let type_name = type_name.map(|span| index.range_from_span(&span));
-        let (checked, (targets, chosen)) =
-            match (analyzed.as_deref(), index.offset_from_position(pos)) {
-                (Some(analyzed), Some(offset)) => (
-                    (!module)
-                        .then(|| document.checked_at(analyzed, offset, referenced))
-                        .flatten(),
-                    document.targets(analyzed, offset, reference.map(|(_, id, _)| id)),
-                ),
-                _ => (None, (Vec::new(), None)),
-            };
-        // What a check found has its own docs, each union alternative's in
-        // turn; any other reference's were described with the document
-        let own = analyzed.as_deref().map(|analyzed| &analyzed.name[..]);
-        let found: Vec<_> = targets
-            .iter()
-            .map(|target| target_hover(target, chosen, own))
-            .collect();
-        let (docs, complete) = match found.iter().any(|docs| !docs.is_empty()) {
-            true => {
-                let complete = found.iter().all(|docs| !docs.is_empty());
-                (found.into_iter().flatten().collect(), complete)
-            }
-            false => {
-                let docs = reference.map(|(_, _, decl)| decl.hover.clone());
-                (docs.unwrap_or_default(), true)
-            }
-        };
+        let docs = &hover.declarations;
         // Signatures say what the checked type would
-        let signatures = complete
+        let signatures = hover.complete
             && !docs.is_empty()
             && docs.iter().all(|doc| matches!(doc.shape, Shape::Signature));
         let render = |typed| {
             let docs: Vec<_> = docs.iter().filter_map(|doc| doc.render(typed)).collect();
             (!docs.is_empty()).then(|| docs.join("\n\n---\n\n"))
         };
-        let reference = reference.map(|(range, ..)| range).or(type_name);
-        let (range, value) = match checked {
-            None => match (reference, render(false)) {
-                (Some(range), Some(markdown)) => (range, markdown),
-                _ => return Ok(None),
+        let value = match &hover.types[..] {
+            [] => match render(false) {
+                Some(markdown) => markdown,
+                None => return Ok(None),
             },
-            Some((span, lines)) => {
+            lines => {
+                let lines: Vec<_> = (lines.iter())
+                    .map(|line| signature::typed(line.name.as_deref(), &line.ty, line.overload))
+                    .collect();
                 let typed = format!("```dolang\n{}\n```", lines.join("\n"));
-                let range = reference.unwrap_or_else(|| index.range_from_span(&span));
                 match render(!signatures) {
-                    Some(markdown) if signatures => (range, markdown),
-                    Some(markdown) => (range, format!("{typed}\n\n---\n\n{markdown}")),
-                    None => (range, typed),
+                    Some(markdown) if signatures => markdown,
+                    Some(markdown) => format!("{typed}\n\n---\n\n{markdown}"),
+                    None => typed,
                 }
             }
         };
@@ -3013,7 +2381,7 @@ impl LanguageServer for Backend {
                 kind: MarkupKind::Markdown,
                 value,
             }),
-            range: Some(range),
+            range: Some(index.range_from_span(&hover.span)),
         }))
     }
 
@@ -3508,14 +2876,6 @@ mod tests {
         assert_eq!(
             index.range_from_offsets(start, end),
             Range::new(Position::new(0, 5), Position::new(0, 8))
-        );
-    }
-
-    #[test]
-    fn doc_comments_preserve_markdown_after_removing_markers() {
-        assert_eq!(
-            normalize_doc_text("  # Summary.  \n  #\n  #   indented"),
-            "Summary.\n\n  indented"
         );
     }
 
