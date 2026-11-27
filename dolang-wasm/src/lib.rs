@@ -265,6 +265,15 @@ impl Analyzed {
         serde_wasm_bindgen::to_value(&self.0.check()).map_err(Into::into)
     }
 
+    /// The type hints of the last check, as `{ at, label, tooltip?, edit? }`:
+    /// `at` is the UTF-16 offset where an unannotated bound name ends,
+    /// `tooltip` its type in full when `label` cuts it short, and `edit` the
+    /// annotation inserted there, if its type can be written. None before
+    /// `check`.
+    pub fn hints(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.0.hints()).map_err(Into::into)
+    }
+
     /// The UTF-16 ranges, as `{ from, to, write }`, of the names referring
     /// to the same declaration as the name at the UTF-16 offset `pos`, that
     /// one included; `write` marks the name the declaration binds. Empty when

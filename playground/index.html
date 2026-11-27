@@ -20,6 +20,7 @@
         <label for="example">Example</label><select id="example"></select><button id="revert" disabled title="Discard your edits">Revert</button>
         <button id="run" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path class="run-icon" d="M8 5.14v14l11-7z"/><path class="stop-icon" d="M7 7h10v10H7z"/></svg><span id="run-label">Run</span></button>
         <button id="share" disabled>Share link</button><button id="help" aria-haspopup="dialog">Help</button>
+        <label class="toggle" title="Show the checked types of unannotated bindings"><input type="checkbox" id="type-hints">Type hints</label>
         <span id="status" role="status">Loading…</span>
       </div>
       <div class="workspace" id="workspace">
@@ -40,6 +41,8 @@
             <dt><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd></dt><dd>Indent or dedent the selection</dd>
             <dt><kbd>Esc</kbd> then <kbd>Tab</kbd></dt><dd>Leave the editor</dd>
           </dl>
+          <h3>Type hints</h3>
+          <p>Once the source is checked, the type of each unannotated binding shows after its name. Click one to insert it as the annotation. <b>Type hints</b> in the toolbar hides them.</p>
           <h3>Prelude</h3>
           <p>The <a href="../language/prelude/">core prelude</a> is available, plus <a href="../api/term/#term.echo"><code>echo</code></a> and <a href="../api/term/#term.print"><code>print</code></a> from <a href="../api/term/"><code>term</code></a>.</p>
           <h3>Modules</h3>

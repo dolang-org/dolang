@@ -17,6 +17,22 @@ pub(crate) struct Checked {
     pub(crate) analysis: typeck::Analysis,
 }
 
+impl Checked {
+    /// The check as `dolang_ide` takes it, `unit` being the source's unit,
+    /// the only module with one
+    pub(crate) fn ide<'a>(
+        &'a self,
+        unit: &'a Unit<'static>,
+    ) -> dolang_ide::Checked<'a, impl Fn(&str) -> Option<(&'a Unit<'a>, ())>> {
+        dolang_ide::Checked {
+            analysis: &self.analysis,
+            unit: self.unit,
+            name: &self.name[..],
+            resolve: move |module: &str| (module == self.name).then_some((unit, ())),
+        }
+    }
+}
+
 /// What hover shows at a position. Offsets are UTF-16.
 #[derive(Debug, Serialize)]
 pub(crate) struct Hover {
@@ -88,13 +104,7 @@ pub(crate) fn hover(
         return None;
     }
     let at = unit.locate(start..end);
-    // The source is the only module with a unit
-    let checked = checked.map(|checked| dolang_ide::Checked {
-        analysis: &checked.analysis,
-        unit: checked.unit,
-        name: &checked.name[..],
-        resolve: move |module: &str| (module == checked.name).then_some((unit, ())),
-    });
+    let checked = checked.map(|checked| checked.ide(unit));
     let hover = dolang_ide::hover(unit, refs, checked.as_ref(), at, |declared| vec![declared])?;
     let range = unit.byte_range(hover.span);
     Some(Hover {
