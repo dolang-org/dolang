@@ -108,10 +108,10 @@ first instance, which must be below the others.
 
 ## Receiver Binders
 
-A method may take its receiver through a binder bounded by its class. An
-override, or a method meeting a protocol's, may bound that binder by its own
-class instead, provided the binder appears elsewhere in the signature only in
-positive positions, such as the result:
+A method may take its receiver through a binder bounded by its class, or by a
+supertype of it. An override, or a method meeting a protocol's, may bound that
+binder by its own class instead, provided the binder appears elsewhere in the
+signature only in positive positions, such as the result:
 
 ```
 class Base

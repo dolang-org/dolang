@@ -1,0 +1,52 @@
+import std:
+  - Iterable
+  - Sinkable
+
+# `Iter` and `Iterable` methods called through the class take any value with
+# `(next)` or `(iter)`, and wrap the iterator they get without looking the
+# method up on it.
+class Counter
+  field n = 0
+
+  def (next) self
+    self.#n = (self.#n + 1)
+    if (self.#n > 3)
+      throw std.IterStop()
+    self.#n
+
+class Source
+  def (iter) _self
+    Counter()
+
+assert_eq [...Iter.map (Counter()) (do |x| x * 10)] [10, 20, 30]
+assert_eq (Iter.fold (Counter()) 0 (do |acc x| acc + x)) 6
+assert_eq [...Iter.windows (Counter()) 2] [(1, 2), (2, 3)]
+
+assert_eq [...Iterable.map (Source()) (do |x| x + 1)] [2, 3, 4]
+assert_eq [...Iterable.take (Source()) 2] [1, 2]
+assert_eq (Iterable.find (Source()) (do |x| x > 1)) 2
+
+# The same holds for a `(sink)` that gives only `(put)`
+class Collector
+  pub field items = nil
+
+  def (init) self
+    self.items = []
+
+  def (put) self value
+    self.items.push $value
+
+class Target
+  pub field collector = nil
+
+  def (init) self
+    self.collector = Collector()
+
+  def (sink) self
+    self.collector
+
+let target = Target()
+let doubled = Sinkable.premap $target (do |x| x * 2)
+doubled.put 1
+doubled.put 2
+assert_eq $target.collector.items [2, 4]

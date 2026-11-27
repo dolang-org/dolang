@@ -153,18 +153,30 @@ impl Solver<'_> {
         if !members.iter().any(|member| member.solved()) {
             return Ok(None);
         }
+        let variance = |intrinsic| self.schema_variance(intrinsic);
         let members = members
             .iter()
             .map(|&member| match member {
-                UnionMember::IndexItem(schema, key) => {
-                    Ok(UnionMember::Type(self.item(schema, key, false)?))
-                }
-                UnionMember::AssignItem(schema, key) => {
-                    Ok(UnionMember::Type(self.item(schema, key, true)?))
-                }
+                UnionMember::IndexItem(schema, key) => Ok(UnionMember::Type(self.item(
+                    schema,
+                    key,
+                    false,
+                    variance(Intrinsic::IndexItem),
+                )?)),
+                UnionMember::AssignItem(schema, key) => Ok(UnionMember::Type(self.item(
+                    schema,
+                    key,
+                    true,
+                    variance(Intrinsic::AssignItem),
+                )?)),
                 UnionMember::InsertItem(schema, key) => {
                     self.changed(schema, key, Change::Insert)?;
-                    Ok(UnionMember::Type(self.item(schema, key, true)?))
+                    Ok(UnionMember::Type(self.item(
+                        schema,
+                        key,
+                        true,
+                        variance(Intrinsic::InsertItem),
+                    )?))
                 }
                 UnionMember::PushItem(schema) => {
                     let mut met = self.db.top();
@@ -200,7 +212,10 @@ impl Solver<'_> {
             let Ok(schema) = self.reify(view.child(schema)) else {
                 return Ok(None);
             };
-            let Ok(value) = self.bounded_item(schema, Abstract::Skolem(id)) else {
+            let variance = member.intrinsic().map_or(Variance::Invariant, |intrinsic| {
+                self.schema_variance(intrinsic)
+            });
+            let Ok(value) = self.bounded_item(schema, Abstract::Skolem(id), variance) else {
                 return Ok(None);
             };
             if let UnionMember::InsertItem(..) = member {
@@ -259,7 +274,11 @@ impl Solver<'_> {
 
     /// Check that each item of a schema a key selects admits a change
     pub(super) fn changed(&self, schema: TypeId, key: TypeId, change: Change) -> Result<(), Issue> {
-        for selected in self.selected_items(schema, key)? {
+        let variance = self.schema_variance(match change {
+            Change::Insert => Intrinsic::InsertItem,
+            Change::Delete => Intrinsic::Deletable,
+        });
+        for selected in self.selected_items(schema, key, variance)? {
             match selected {
                 Selected::Item {
                     occurrence, key, ..
@@ -300,7 +319,8 @@ impl Solver<'_> {
     /// A position's key is its index. An included schema that isn't known may
     /// hold anything.
     fn clearable(&self, schema: TypeId) -> Result<(), Issue> {
-        let Some(promoted) = self.keyed_view(schema)? else {
+        let variance = self.schema_variance(Intrinsic::Clearable);
+        let Some(promoted) = self.keyed_view(schema, variance)? else {
             return Ok(());
         };
         if !promoted.fixed.is_empty() {
@@ -328,10 +348,15 @@ impl Solver<'_> {
     /// The value a rigid or skolem key selects from a schema: that of every item
     /// one of its bounds selects, where they all have it. Otherwise, why the
     /// first bound selects none.
-    fn bounded_item(&self, schema: TypeId, key: Abstract) -> Result<TypeId, Issue> {
+    fn bounded_item(
+        &self,
+        schema: TypeId,
+        key: Abstract,
+        variance: Variance,
+    ) -> Result<TypeId, Issue> {
         let mut first = None;
         for (bound, _) in self.abstract_bounds(key) {
-            match self.selected_by_bound(schema, bound) {
+            match self.selected_by_bound(schema, bound, variance) {
                 Ok(value) => return Ok(value),
                 Err(issue) => {
                     first.get_or_insert(issue);
@@ -342,10 +367,15 @@ impl Solver<'_> {
     }
 
     /// The value every item of a schema a bound selects has
-    fn selected_by_bound(&self, schema: TypeId, bound: Term) -> Result<TypeId, Issue> {
+    fn selected_by_bound(
+        &self,
+        schema: TypeId,
+        bound: Term,
+        variance: Variance,
+    ) -> Result<TypeId, Issue> {
         let bound = self.reify(bound)?;
-        let joined = self.item(schema, bound, false)?;
-        if joined != self.item(schema, bound, true)? {
+        let joined = self.item(schema, bound, false, variance)?;
+        if joined != self.item(schema, bound, true, variance)? {
             return Err(Residual::Unsupported("a bounded key selecting different values").into());
         }
         Ok(joined)
@@ -354,11 +384,19 @@ impl Solver<'_> {
     /// The join, or with `meet` the meet, of the values of a schema's items a key
     /// selects
     pub(crate) fn schema_item(&self, schema: TypeId, key: TypeId) -> Result<TypeId, Issue> {
-        self.item(schema, key, true)
+        self.item(schema, key, true, Variance::Invariant)
     }
 
-    fn item(&self, schema: TypeId, key: TypeId, meet: bool) -> Result<TypeId, Issue> {
-        let values = self.selected(schema, key)?;
+    /// `variance` is how the projection takes the schema, as in
+    /// [`Self::keyed_view`]
+    fn item(
+        &self,
+        schema: TypeId,
+        key: TypeId,
+        meet: bool,
+        variance: Variance,
+    ) -> Result<TypeId, Issue> {
+        let values = self.selected(schema, key, variance)?;
         if !meet {
             let members = values.into_iter().map(UnionMember::Type).collect();
             return Ok(self.db.intern(Type::Union(members)));
@@ -373,7 +411,8 @@ impl Solver<'_> {
     /// The values of the positions of a closed schema that an appended position
     /// may be: those past its fixed positions, which need a rest
     pub(super) fn pushed(&self, schema: TypeId) -> Result<Vec<TypeId>, Issue> {
-        let Some(promoted) = self.keyed_view(schema)? else {
+        let variance = self.schema_variance(Intrinsic::PushItem);
+        let Some(promoted) = self.keyed_view(schema, variance)? else {
             return Ok(vec![self.db.unknown()]);
         };
         // An included schema not yet known may hold any position
@@ -393,23 +432,36 @@ impl Solver<'_> {
     }
 
     /// The values of a schema's items a key selects
-    pub(super) fn selected(&self, schema: TypeId, key: TypeId) -> Result<Vec<TypeId>, Issue> {
-        self.selected_items(schema, key)?
+    pub(super) fn selected(
+        &self,
+        schema: TypeId,
+        key: TypeId,
+        variance: Variance,
+    ) -> Result<Vec<TypeId>, Issue> {
+        self.selected_items(schema, key, variance)?
             .into_iter()
             .map(|selected| match selected {
                 Selected::Item { value, .. } => Ok(value),
                 // A rigid key is known only by its bounds. Where each item one
                 // of them selects has the same value, the rigid selects that
                 // value too.
-                Selected::Rigid(member) => self.bounded_item(schema, Abstract::Rigid(member)),
+                Selected::Rigid(member) => {
+                    self.bounded_item(schema, Abstract::Rigid(member), variance)
+                }
             })
             .collect()
     }
 
     /// A closed schema's keyed view, through its transparent declarations, or
-    /// `None` for the dynamic schema
-    pub(super) fn keyed_view(&self, schema: TypeId) -> Result<Option<Promoted>, Issue> {
-        let schema = self.exposed_schema(schema)?.unwrap_or(schema);
+    /// `None` for the dynamic schema. `variance` is how the projection taking
+    /// the view takes the schema, which permits approximating it (see
+    /// [`Self::exposed_schema`]).
+    pub(super) fn keyed_view(
+        &self,
+        schema: TypeId,
+        variance: Variance,
+    ) -> Result<Option<Promoted>, Issue> {
+        let schema = self.exposed_schema(schema, variance)?.unwrap_or(schema);
         if let Type::Unknown(_) = self.db.ty(schema) {
             return Ok(None);
         }
@@ -467,13 +519,18 @@ impl Solver<'_> {
     }
 
     /// The items of a schema a key selects
-    fn selected_items(&self, schema: TypeId, key: TypeId) -> Result<Vec<Selected>, Issue> {
+    fn selected_items(
+        &self,
+        schema: TypeId,
+        key: TypeId,
+        variance: Variance,
+    ) -> Result<Vec<Selected>, Issue> {
         let unknown = |key| Selected::Item {
             value: self.db.unknown(),
             occurrence: Occurrence::Unknown,
             key,
         };
-        let Some(promoted) = self.keyed_view(schema)? else {
+        let Some(promoted) = self.keyed_view(schema, variance)? else {
             return Ok(vec![unknown(key)]);
         };
         // An included schema not yet known may hold any item

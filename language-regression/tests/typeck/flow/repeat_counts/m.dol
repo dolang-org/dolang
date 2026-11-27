@@ -1,0 +1,143 @@
+# `Repeat[T, N]` is `N` positions of `T` for a constant count. Any other
+# count stays, and is taken as any number of positions only where that's
+# sound: on the actual side, and by projections that take their schema
+# covariantly. A count binder keeps the literal it's given, so a function can
+# take its result's length as an argument.
+
+import std:
+  - @Repeat
+
+@def fill[T, N @ Int] x@T n@N -> Tuple[...Repeat[T, N]]
+pub def fill x n
+  ...
+
+pub def constant()
+  let _ = fill 1 2
+  #       ^~~~~~~~: value (1, 1)
+  let a b = fill 1 2
+  let _ = a
+  #       ^: flow 1
+  let _ = b
+  #       ^: flow 1
+  let _ = fill "x" 0
+  #       ^~~~~~~~~~: value ()
+  let _ = fill 1 100
+  #       ^~~~~~~~~~: value std.Tuple[...std.Repeat[1, 100]]
+  let x y = fill 1 100
+  let _ = (x, y)
+  #        ^: flow 1
+  nil
+
+pub def too_many()
+  let a b c = fill 1 2
+  # error: `(1, 1)` can never unpack as this pattern
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let a b c = fill 1 2
+  #    |               ^^^^^^^^
+  (a, b, c)
+
+pub def wrong_type()
+  let _ @ Tuple[Str, Str] = fill 1 2
+  # error: `(1, 1)` does not fit the annotation `(std.Str, std.Str)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ @ Tuple[Str, Str] = fill 1 2
+  #    |                             ^^^^^^^^
+  nil
+
+pub def local()
+  let k = 2
+  let _ = fill 1 $k
+  #       ^~~~~~~~~: value (1, 1)
+  nil
+
+pub def dynamic k @ Int
+  let _ = fill 1 $k
+  #       ^~~~~~~~~: value std.Tuple[...std.Repeat[1, std.Int]]
+  let a b = fill 1 $k
+  let _ = (a, b)
+  #        ^: flow 1
+  let _ @ Tuple[*Int] = fill 1 $k
+  let _ @ Tuple[Int, Int] = fill 1 $k
+  # error: `std.Tuple[...std.Repeat[1, std.Int]]` does not fit the annotation `(std.Int, std.Int)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _ @ Tuple[Int, Int] = fill 1 $k
+  #    |                             ^^^^^^^^^
+  nil
+
+pub def union t @ Tuple[...Repeat[Int, (2 | 3)]]
+  let _ = t
+  #       ^: flow std.Tuple[...std.Repeat[std.Int, 2 | 3]]
+  let _ = t[0]
+  #       ^~~~: value std.Int
+  nil
+
+pub def negative t @ Tuple[...Repeat[Int, -1]]
+  # error: a repeated schema can't have a negative count
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def negative t @ Tuple[...Repeat[Int, -1]]
+  #    |                                           ^^
+  t
+
+pub def written t @ Tuple[...Repeat[Int, 2]]
+  let _ = t
+  #       ^: flow (std.Int, std.Int)
+  nil
+
+pub def pass()
+  written (1, 2)
+  written (1,)
+  # error: expected `(std.Int, std.Int)`, found `(1,)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   written (1,)
+  #    |           ^^^^
+  #    |
+  #    = note: `{1}` may be missing positional `std.Int`
+  nil
+
+pub def rigid[N @ Int] n@N t@Tuple[...Repeat[Int, N]] -> Tuple[...Repeat[Int, N]]
+  let _ = t[0]
+  #       ^~~~: value std.Int
+  let _ = fill 1 $n
+  #       ^~~~~~~~~: value std.Tuple[...std.Repeat[1, m.rigid.#0]]
+  fill 1 $n
+
+@def tuples[T, N @ Int] it@Iter[T] n@N -> Iter[Tuple[...Repeat[T, N]]]
+pub def tuples it n
+  ...
+
+pub def iterated it @ Iter[Int]
+  for k v = tuples $it 2
+    let _ = (k, v)
+    #        ^: flow std.Int
+  for k v c = tuples $it 2
+    # error: `(std.Int, std.Int)` can never unpack as this pattern
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   for k v c = tuples $it 2
+    #    |               ^^^^^^^^^^^^
+    let _ = (k, v, c)
+  nil
+
+pub class Chunks[T]
+  pub def windows[N @ Int] self n@N -> Iter[Tuple[...Repeat[T, N]]]
+    ...
+
+pub def method c @ Chunks[Str]
+  let _ = c.windows 3
+  #       ^~~~~~~~~~~: value std.Iter[(std.Str, std.Str, std.Str)]
+  nil
+
+# An invariant argument would decay a key's literal, but not a count's
+@def boxed[N @ Int] n@N -> Array[Tuple[...Repeat[Int, N]]]
+pub def boxed n
+  ...
+
+pub def invariant()
+  let _ = boxed 2
+  #       ^~~~~~~: value std.Array[(std.Int, std.Int)]
+  nil

@@ -18,7 +18,7 @@ pub class Inherited[T]: Box[T]
 # An override callable on fewer of the instances
 pub class Pinned[T]: Box[T]
   pub def only self @ Pinned[Int] -> T
-    # error: only an `@def` overload may specialize `self` to a `Pinned`
+    # error: only an `@def` overload may narrow `self` below a `Pinned`
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def only self @ Pinned[Int] -> T
@@ -37,3 +37,19 @@ pub class Pinned[T]: Box[T]
 #    |
 # LL |     self.item
 #    |     ^^^^^^^^^
+
+# A receiver wider than its class is still narrowed to the subclass, so an
+# override needn't widen it too.
+pub @class Readable[T]
+  pub def read self -> T
+
+pub class Source[T]: @Readable[T]
+  pub def read _self -> T
+    ...
+
+  pub def twice self @ Readable[T] -> T
+    self.read()
+
+pub class Narrow[T]: Source[T]
+  pub def twice self -> T
+    self.read()

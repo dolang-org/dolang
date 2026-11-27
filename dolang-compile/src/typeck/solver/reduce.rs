@@ -851,6 +851,34 @@ impl Solver<'_> {
                 self.derive(obligation, schema, expected, Step::Restricted);
                 Ok(())
             }
+            // Repeated schemas of the same count relate by their items. Their
+            // counts must be the same, since one that isn't exact may stand
+            // for several.
+            (
+                &Type::Repeat {
+                    item: a_item,
+                    count: a_count,
+                },
+                &Type::Repeat {
+                    item: b_item,
+                    count: b_count,
+                },
+            ) if self.same(a.child(a_count), b.child(b_count))? => {
+                self.derive(obligation, a.child(a_item), b.child(b_item), Step::Item(0));
+                Ok(())
+            }
+            // Nothing but itself is known to fit a repeated schema interning
+            // didn't reduce
+            (_, Type::Repeat { .. }) => Err(Issue::Contradiction(Contradiction::Rigid)),
+            // One on the actual side is below whatever any count's is
+            (&Type::Repeat { item, .. }, _) => {
+                let any = Term::View(TypeView {
+                    ty: self.any_count(item),
+                    ..a
+                });
+                self.derive(obligation, any, expected, Step::Repeated);
+                Ok(())
+            }
             // A read schema of a rigid is below its bound's. Any other member
             // schema left as itself is below what every member schema is below,
             // but may be below more, so only that bound's proof counts.

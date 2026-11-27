@@ -1,6 +1,6 @@
 # An overload whose receiver is annotated is specialized: the arguments its
 # receiver reaches the class with replace the class's binders throughout its
-# signature. An implementation's receiver may not specialize its class.
+# signature. An implementation's receiver may not narrow or specialize its class.
 
 pub class Num
 pub class Int: Num
@@ -38,7 +38,7 @@ pub class Box[T]
   # An implementation that specializes keeps the unspecialized signature.
   pub def special _self @ Box[Int] -> T
     #     ^~~~~~~: decl [^T +, in -, out -] (m.Box[m.Int], <in, >out) -> T
-    # error: only an `@def` overload may specialize `self` to a `Box`
+    # error: only an `@def` overload may narrow `self` below a `Box`
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def special _self @ Box[Int] -> T
@@ -48,7 +48,7 @@ pub class Box[T]
   # A receiver that doesn't reach its class keeps the unspecialized signature.
   pub def wrong _self @ Int -> T
     #     ^~~~~: decl [^T +, in -, out -] (m.Int, <in, >out) -> T
-    # error: `self` must be a `Box` or a subtype of it
+    # error: `self` must be a `Box` or a supertype of it
     #   --> m.dol:LL:LL
     #    |
     # LL |   pub def wrong _self @ Int -> T
@@ -70,3 +70,90 @@ pub class Real: Num
   pub def abs[N @ Real] _self @ N -> N
     #     ^~~: decl [N + @ m.Real, in -, out -] (N, <in, >out) -> N
     ...
+
+# An implementation belongs to every instance, so its receiver may be the class
+# or anything wider, and its body sees only the wider type.
+pub @class Shape
+  pub def area self -> Num
+
+pub class Square: @Shape
+  pub field side @ Int = ...
+
+  pub def area _self -> Num
+    ...
+
+  pub def doubled self @ Shape -> Num
+    #     ^~~~~~~: decl [in -, out -] (m.Shape, <in, >out) -> m.Num
+    self.area()
+
+  pub def anything _self @ Value -> Int
+    ...
+
+  pub def through[X @ Shape] self @ X -> X
+    self
+
+  pub def side_of self @ Shape -> Int
+    self.side
+# error: `m.Shape` has no member `side`
+#   --> m.dol:LL:LL
+#    |
+# LL |     self.side
+#    |     ^^^^^^^^^
+
+# A subclass receiver would leave the body assuming more than every instance
+# has, as would a binder bounded by a subclass.
+pub class Base
+  pub def poke self @ Derived -> Int
+    # error: only an `@def` overload may narrow `self` below a `Base`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def poke self @ Derived -> Int
+    #    |                       ^^^^^^^
+    self.extra
+
+  pub def bounded[X @ Derived] self @ X -> X
+    # error: only an `@def` overload may narrow `self` below a `Base`
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   pub def bounded[X @ Derived] self @ X -> X
+    #    |                                       ^
+    self
+
+pub class Derived: Base
+  pub field extra @ Int = ...
+
+# An implementation may take its receiver's items through a binder of its own,
+# which each call solves from its receiver, so its result needn't mention the
+# class's binder. An overload below the implementation's receiver is
+# specialized by what the class's binders are for it.
+pub @class Readable[T]
+  pub def read self -> T
+
+pub class Stream[T]: @Readable[T]
+  pub def read _self -> T
+    ...
+
+  pub def boxed[U] _self @ Readable[U] -> Box[U]
+    #     ^~~~~: decl [^T, U +, in -, out -] (m.Readable[U], <in, >out) -> m.Box[U]
+    ...
+
+  @def loud _self @ Readable[Real] -> T
+  #    ^~~~: decl [^T +, in -, out -] (m.Readable[m.Real], <in, >out) -> m.Real
+  pub def loud _self @ Readable[T] -> T
+    ...
+
+  @def stray _self @ Real -> T
+  # error: `self` must be below the implementation's `self`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   @def stray _self @ Real -> T
+  #    |                      ^^^^
+  pub def stray _self @ Readable[T] -> T
+    ...
+
+pub def called s @ Stream[Real]
+  let _ = s.boxed()
+  #       ^~~~~~~~~: value m.Box[m.Real]
+  let _ = s.loud()
+  #       ^~~~~~~~: value m.Real
+  nil

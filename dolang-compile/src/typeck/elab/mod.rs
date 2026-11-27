@@ -1194,12 +1194,25 @@ impl Report for UnknownTypeKeyword {
     }
 }
 
-/// A receiver annotation that doesn't reach its method's class
+/// A receiver annotation that doesn't relate to its method's class as its
+/// signature requires
 struct BadReceiver {
     span: Span,
     class: String,
-    /// The walk to the class could not be decided either way
+    bound: ReceiverBound,
+    /// The relation could not be decided either way
     undecided: bool,
+}
+
+/// What a receiver annotation must be below or above
+#[derive(Clone, Copy)]
+enum ReceiverBound {
+    /// An overload's is below the class
+    Class,
+    /// An overload's is below its implementation's annotated receiver
+    Implementation,
+    /// An implementation's is above the class
+    Instances,
 }
 
 impl Report for BadReceiver {
@@ -1208,13 +1221,30 @@ impl Report for BadReceiver {
     }
 
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
-        match self.undecided {
-            false => write!(w, "`self` must be a `{}` or a subtype of it", self.class),
-            true => write!(
-                w,
-                "cannot tell whether this is a `{}` or a subtype of it",
-                self.class
-            ),
+        let class = &self.class;
+        match (self.bound, self.undecided) {
+            (ReceiverBound::Implementation, false) => {
+                write!(w, "`self` must be below the implementation's `self`")
+            }
+            (ReceiverBound::Implementation, true) => {
+                write!(
+                    w,
+                    "cannot tell whether this is below the implementation's `self`"
+                )
+            }
+            (bound, undecided) => {
+                let relation = match bound {
+                    ReceiverBound::Instances => "supertype",
+                    _ => "subtype",
+                };
+                match undecided {
+                    false => write!(w, "`self` must be a `{class}` or a {relation} of it"),
+                    true => write!(
+                        w,
+                        "cannot tell whether this is a `{class}` or a {relation} of it"
+                    ),
+                }
+            }
         }
     }
 
@@ -1223,8 +1253,8 @@ impl Report for BadReceiver {
     }
 }
 
-/// A method implementation's receiver annotation that specializes its class,
-/// which only an overload may do
+/// A method implementation's receiver annotation that narrows or specializes
+/// its class, which only an overload may do
 struct SpecializedReceiver {
     span: Span,
     class: String,
@@ -1238,7 +1268,7 @@ impl Report for SpecializedReceiver {
     fn message(&self, w: &mut dyn Write) -> fmt::Result {
         write!(
             w,
-            "only an `@def` overload may specialize `self` to a `{}`",
+            "only an `@def` overload may narrow `self` below a `{}`",
             self.class
         )
     }
@@ -1411,6 +1441,23 @@ impl Report for ParameterKeys {
 /// A quantified function type written as a type argument, which instantiating a
 /// binder with would be impredicative
 struct QuantifiedArgument(Span);
+
+/// A `Repeat` written with a negative count
+struct NegativeCount(Span);
+
+impl Report for NegativeCount {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a repeated schema can't have a negative count")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
 
 impl Report for QuantifiedArgument {
     fn severity(&self) -> Severity {

@@ -114,6 +114,10 @@ pub(crate) enum Ty {
     },
     /// An erased argument, last so earlier nodes keep their tags
     Star(WireKind),
+    Repeat {
+        item: u32,
+        count: u32,
+    },
 }
 
 /// A declaration, by its module and the name the module exports it by, with what
@@ -337,6 +341,10 @@ impl Ty {
                 deletable.iter().copied().for_each(visit);
             }
             Ty::Fields { target, .. } => visit(*target),
+            Ty::Repeat { item, count } => {
+                visit(*item);
+                visit(*count);
+            }
             Ty::Overloaded {
                 overloads,
                 implementation,
@@ -520,6 +528,10 @@ impl Table {
                         true => FieldAccess::Write,
                         false => FieldAccess::Read,
                     },
+                },
+                Ty::Repeat { item, count } => Type::Repeat {
+                    item: at(*item),
+                    count: at(*count),
                 },
                 Ty::Overloaded {
                     overloads,
@@ -707,6 +719,10 @@ impl<'a> Encode<'a> {
             Type::Fields { target, access } => Ty::Fields {
                 target: self.ty(*target),
                 write: *access == FieldAccess::Write,
+            },
+            Type::Repeat { item, count } => Ty::Repeat {
+                item: self.ty(*item),
+                count: self.ty(*count),
             },
             Type::Overloaded {
                 overloads,

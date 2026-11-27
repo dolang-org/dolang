@@ -431,6 +431,8 @@ pub(crate) enum Step {
     /// A restriction that can't be evaluated reduced to its schema, which it
     /// is if it holds
     Restricted,
+    /// A repeated schema with a rigid count widened to any count, `{*T}`
+    Repeated,
     /// The empty schema below a schema that must admit it, once it's solved
     Empty,
     /// A schema variable's lower bound below the lanes its items can occupy
@@ -2295,6 +2297,11 @@ impl<'db> Solver<'db> {
                 };
                 walk(target, variance.compose(used), 0)
             }
+            // Repeated schemas relate only at the same count
+            Type::Repeat { item, count } => {
+                walk(item, variance, 0)?;
+                walk(count, variance.compose(Variance::Invariant), 0)
+            }
             Type::Quantified { .. } => {
                 let mut children = Vec::new();
                 self.db
@@ -3736,13 +3743,23 @@ impl<'db> Solver<'db> {
     /// restriction that doesn't hold is its issue. A schema
     /// included along its own path of inclusions is recursive, which
     /// well-formedness rejects, but this doesn't rely on it.
-    pub(super) fn exposed_schema(&self, schema: TypeId) -> Result<Option<TypeId>, Issue> {
-        self.expose_schema(schema, &mut Vec::new())
+    ///
+    /// `variance` is how the schema is used, which permits approximating it:
+    /// where it's covariant, a repeated schema interning hasn't reduced is
+    /// widened to any count of its positions, `{*T}`, which every count's is
+    /// below. Elsewhere it stays as itself.
+    pub(super) fn exposed_schema(
+        &self,
+        schema: TypeId,
+        variance: Variance,
+    ) -> Result<Option<TypeId>, Issue> {
+        self.expose_schema(schema, variance, &mut Vec::new())
     }
 
     fn expose_schema(
         &self,
         schema: TypeId,
+        variance: Variance,
         path: &mut Vec<TypeId>,
     ) -> Result<Option<TypeId>, Issue> {
         self.spend()?;
@@ -3758,13 +3775,16 @@ impl<'db> Solver<'db> {
         {
             let held = self.restricted(restricted, restriction)?;
             path.push(schema);
-            let exposed = self.expose_schema(held, path);
+            let exposed = self.expose_schema(held, variance, path);
             path.pop();
             return Ok(Some(exposed?.unwrap_or(held)));
         }
         // A member schema is the schema it lists
         if let Type::Fields { target, access } = *self.db.ty(schema) {
             return self.fields(target, access).map(Some);
+        }
+        if let Type::Repeat { item, .. } = *self.db.ty(schema) {
+            return Ok((variance == Variance::Covariant).then(|| self.any_count(item)));
         }
         let mut exposed = None;
         let mut current = schema;
@@ -3788,7 +3808,7 @@ impl<'db> Solver<'db> {
         let mut rebuilt = Vec::with_capacity(items.len());
         for item in items.iter() {
             let element = match item.element {
-                Element::Include(inner) => match self.expose_schema(inner, path) {
+                Element::Include(inner) => match self.expose_schema(inner, variance, path) {
                     Ok(Some(inner)) => {
                         changed = true;
                         Element::Include(inner)
@@ -3811,6 +3831,34 @@ impl<'db> Solver<'db> {
             true => Some(self.db.intern(Type::Schema(rebuilt.into()))),
             false => exposed,
         })
+    }
+
+    /// `{*item}`, which a repeated schema of any count is below
+    pub(super) fn any_count(&self, item: TypeId) -> TypeId {
+        let position = SchemaItem {
+            multiplicity: Multiplicity::Repeated,
+            element: Element::Positional(item),
+        };
+        self.db.intern(Type::Schema(vec![position].into()))
+    }
+
+    /// The variance a projecting intrinsic's declaration gives the schema it
+    /// takes first, which bounds how far evaluating it may approximate the
+    /// schema (see [`Self::exposed_schema`]). Invariant if `std` doesn't
+    /// declare it.
+    pub(super) fn schema_variance(&self, intrinsic: Intrinsic) -> Variance {
+        let binders = self
+            .db
+            .intrinsic(intrinsic)
+            .and_then(|ty| match *self.db.ty(ty) {
+                Type::Decl(decl) => Some(self.db.declaration(decl).ty),
+                _ => None,
+            })
+            .and_then(|ty| match self.db.ty(ty) {
+                Type::Quantified { binders, .. } => binders.first().map(|binder| binder.variance),
+                _ => None,
+            });
+        binders.unwrap_or(Variance::Invariant)
     }
 
     /// A term's head, with a metatype's widened to `Type[C[A]]`'s, as it
