@@ -1,5 +1,9 @@
 use std::ops::ControlFlow;
 
+mod combinators;
+
+pub(crate) use combinators::{Batches, FlatMap, SkipWhile, TakeWhile, Tuples, Windows};
+
 use crate::{
     arg::{Arg, Args},
     bytecode::Variadic,
@@ -52,6 +56,14 @@ const ITERABLE_METHODS: &[sym::Tag] = &[
     sym::FIND,
     sym::MIN,
     sym::MAX,
+    sym::FLAT_MAP,
+    sym::FLATTEN,
+    sym::TAKE_WHILE,
+    sym::SKIP_WHILE,
+    sym::BATCHES,
+    sym::TUPLES,
+    sym::WINDOWS,
+    sym::GROUP_BY,
 ];
 
 /// Methods of [`Iter`] that [`Iterable`] deliberately does *not* forward.
@@ -121,6 +133,14 @@ fn iter_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
         Method(sym::COUNT),
         Method(sym::KV),
         Method(sym::SPREAD_METHOD),
+        Method(sym::FLAT_MAP),
+        Method(sym::FLATTEN),
+        Method(sym::TAKE_WHILE),
+        Method(sym::SKIP_WHILE),
+        Method(sym::BATCHES),
+        Method(sym::TUPLES),
+        Method(sym::WINDOWS),
+        Method(sym::GROUP_BY),
     ]
 }
 
@@ -143,6 +163,14 @@ fn iterable_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
         Method(sym::FIND),
         Method(sym::MIN),
         Method(sym::MAX),
+        Method(sym::FLAT_MAP),
+        Method(sym::FLATTEN),
+        Method(sym::TAKE_WHILE),
+        Method(sym::SKIP_WHILE),
+        Method(sym::BATCHES),
+        Method(sym::TUPLES),
+        Method(sym::WINDOWS),
+        Method(sym::GROUP_BY),
     ]
 }
 
@@ -208,14 +236,21 @@ pub(crate) fn iter_get<'v, 'a, 's>(
     }
 }
 
+/// The least or greatest item, by `key` of each if given. The first of equal
+/// items wins.
 async fn iter_extrema<'v, 'a, 's>(
     strand: &'a mut Strand<'v, 's>,
     obj: &Value<'v>,
     default: Option<Slot<'v, 'a>>,
+    key: Option<Slot<'v, 'a>>,
     mut out: Slot<'v, 'a>,
     is_min: bool,
 ) -> Result<'v, 's, ()> {
-    with_slots!(strand, |mut item| {
+    let keyed = key.is_some();
+    with_slots!(strand, |mut item, mut func, mut best, mut candidate| {
+        if let Some(mut key) = key {
+            strand.store(&mut func, &mut key);
+        }
         if !obj.next(strand, &mut out).await? {
             if let Some(mut default) = default {
                 strand.store(&mut out, &mut default);
@@ -223,14 +258,27 @@ async fn iter_extrema<'v, 'a, 's>(
             }
             return Err(Error::iter_stop(strand));
         }
+        if keyed {
+            call!(strand, &func, &out, &mut best)?;
+        }
         while obj.next(strand, &mut item).await? {
-            let replace = if is_min {
+            let replace = if keyed {
+                call!(strand, &func, &item, &mut candidate)?;
+                if is_min {
+                    candidate.lt(strand, &best)?
+                } else {
+                    best.lt(strand, &candidate)?
+                }
+            } else if is_min {
                 item.lt(strand, &out)?
             } else {
                 out.lt(strand, &item)?
             };
             if replace {
                 strand.swap(Slot::reborrow(&mut out), &mut item);
+                if keyed {
+                    strand.swap(Slot::reborrow(&mut best), &mut candidate);
+                }
             }
             strand.check_trap_gc()?;
         }
@@ -1610,12 +1658,56 @@ impl<'v> Protocol<'v> for Iter {
                 iter_find(strand, &obj, pred, default, or_else, out).await
             }
             sym::MIN => {
-                unpack!(strand, args => obj, ?:default);
-                iter_extrema(strand, &obj, default, out, true).await
+                let key = Sym::well_known(sym::KEY);
+                unpack!(strand, args => obj, ?:default, ?:key);
+                iter_extrema(strand, &obj, default, key, out, true).await
             }
             sym::MAX => {
-                unpack!(strand, args => obj, ?:default);
-                iter_extrema(strand, &obj, default, out, false).await
+                let key = Sym::well_known(sym::KEY);
+                unpack!(strand, args => obj, ?:default, ?:key);
+                iter_extrema(strand, &obj, default, key, out, false).await
+            }
+            sym::FLAT_MAP => {
+                unpack!(strand, args => obj, func);
+                combinators::create_flat_map(strand, &obj, Some(func), out);
+                Ok(())
+            }
+            sym::FLATTEN => {
+                unpack!(strand, args => obj);
+                combinators::create_flat_map(strand, &obj, None, out);
+                Ok(())
+            }
+            sym::TAKE_WHILE => {
+                unpack!(strand, args => obj, pred);
+                combinators::create_take_while(strand, &obj, pred, out);
+                Ok(())
+            }
+            sym::SKIP_WHILE => {
+                unpack!(strand, args => obj, pred);
+                combinators::create_skip_while(strand, &obj, pred, out);
+                Ok(())
+            }
+            sym::BATCHES => {
+                unpack!(strand, args => obj, count);
+                let count = combinators::positive_count(strand, &count)?;
+                combinators::create_batches(strand, &obj, count, out);
+                Ok(())
+            }
+            sym::TUPLES => {
+                unpack!(strand, args => obj, count);
+                let count = combinators::positive_count(strand, &count)?;
+                combinators::create_tuples(strand, &obj, count, out);
+                Ok(())
+            }
+            sym::WINDOWS => {
+                unpack!(strand, args => obj, count);
+                let count = combinators::positive_count(strand, &count)?;
+                combinators::create_windows(strand, &obj, count, out);
+                Ok(())
+            }
+            sym::GROUP_BY => {
+                unpack!(strand, args => obj, key);
+                combinators::iter_group_by(strand, &obj, key, out).await
             }
             _ => Err(Error::field(strand, method)),
         }

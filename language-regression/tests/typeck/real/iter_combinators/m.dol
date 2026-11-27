@@ -1,0 +1,41 @@
+# dolang: strict
+#
+# `tuples` and `windows` give their tuples as many items as a count the checker
+# knows, and any number otherwise. The rest keep their items' type.
+
+pub def counted xs @ Array[Int]
+  for a b = xs.tuples 2
+    let _sum @ Int = (a + b)
+  for a b c = xs.tuples 2
+    # error: `(std.Int, std.Int)` can never unpack as this pattern
+    #   --> m.dol:LL:LL
+    #    |
+    # LL |   for a b c = xs.tuples 2
+    #    |               ^^^^^^^^^^^
+    let _ = (a, b, c)
+  let _window @ Tuple[Int, Int, Int] = xs.iter().windows(3).next()
+  nil
+
+pub def dynamic xs @ Array[Int] n @ Int
+  let _any @ Tuple[*Int] = xs.tuples(n).next()
+  let _exact @ Tuple[Int, Int] = xs.windows(n).next()
+  # error: `(std.Int, std.Int) | std.Tuple[...std.Repeat[std.Int, std.Int]]` does not fit the annotation `(std.Int, std.Int)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   let _exact @ Tuple[Int, Int] = xs.windows(n).next()
+  #    |                                  ^^^^^^^^^^^^^^^^^^^^
+  nil
+
+pub def kept xs @ Array[Int] words @ Iter[Str]
+  let _batches @ Iter[Array[Int]] = xs.batches 2
+  let _groups @ Dict[Int, Array[Str]] = words.group_by(do |s| s.len)
+  let _flat @ Iter[Str] = [["a"], ["b"]].flatten()
+  let _mapped @ Iter[Str] = xs.flat_map(do |x| ["$x"])
+  let _while @ Iter[Int] = xs.take_while(do |x| x > 0).skip_while(do |x| x > 1)
+  let _longest @ Str = words.max key: (do |s| s.len)
+  nil
+
+# Bases that are iterables of a narrower type still fit
+pub def covariant xs @ Array[Int]
+  let _wide @ Iterable[Int | Str] = xs
+  nil

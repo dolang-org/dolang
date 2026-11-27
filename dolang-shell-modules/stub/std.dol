@@ -819,6 +819,23 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def any self pred @ ((T) -> Value) = ... -> Bool
     ...
 
+  @def batches[U] self@Iterable[U] n@Int -> Iter[Array[U]]
+
+  # Returns an iterator of arrays of `n` items each, in order. The last array is
+  # shorter if the items run out partway through it. Each array is new.
+  #
+  # ## Errors
+  #
+  # Raises [`ValueError`](std.ValueError) if `n` isn't positive.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...[1, 2, 3, 4, 5].batches 2] [[1, 2], [3, 4], [5]]
+  # ```
+  pub def batches self n @ Int -> Iter[Array[Value]]
+    ...
+
   # Returns an iterator over the items, followed by the items of each additional
   # iterable.
   pub def chain[*Us] self *values @ ...BaseIterable[Us] -> Iter[Union[T, ...Us]]
@@ -898,9 +915,51 @@ pub class Iterable[T]: @BaseIterable[T]
   do -> (T | D)
     ...
 
+  # Returns an iterator over the items of each iterable that `func` returns, in
+  # order. It calls `func` on an item only once the items before it are used up.
+  #
+  # ```
+  # assert_eq [...["a b", "c"].flat_map(do |s| s.split " ")] ["a", "b", "c"]
+  # ```
+  pub def flat_map[U]
+    self
+    func @ ((T, <Value, >Value) -> BaseIterable[U])
+  do -> Iter[U]
+    ...
+
+  @def flatten[U] self @ Iterable[BaseIterable[U]] -> Iter[U]
+
+  # Returns an iterator over the items of each item, in order.
+  #
+  # ## Errors
+  #
+  # Getting an item raises [`TypeError`](std.TypeError) if the next item isn't
+  # iterable.
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq [...[[1, 2], [], [3]].flatten()] [1, 2, 3]
+  # ```
+  pub def flatten self -> Iter[Value]
+    ...
+
   # Accumulates a value left to right, calling `func` with the accumulated value
   # and each item. Returns `init` if there are no items.
   pub def fold[A] self init@A func@((A, T) -> A) -> A
+    ...
+
+  @def group_by[U, K] self@Iterable[U] key@((U) -> K) -> Dict[K, Array[U]]
+
+  # Collects the items into a dict of arrays by `key` of each item. The groups
+  # are in the order of their first items, and each group's items are in their
+  # original order.
+  #
+  # ```
+  # let groups = ["a", "bb", "c"].group_by(do |s| s.len)
+  # assert_eq $groups {1: ["a", "c"], 2: ["bb"]}
+  # ```
+  pub def group_by self key@((T) -> Value) -> Dict[Value, Array[Value]]
     ...
 
   @def kv[K, V] self @ Iterable[Unpack[{K, V}]] -> Spread[K, V]
@@ -921,20 +980,36 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def map[U] self func @ ((T, <Value, >Value) -> U) -> Iter[U]
     ...
 
-  # Returns the largest item.
+  # Returns the largest item, or the first of the largest. With `key`, it
+  # compares `key` of each item instead, calling it once per item.
   #
   # ## Errors
   #
   # Raises [`IterStop`](std.IterStop) if there are no items and no `default`.
-  pub def max[D = T] self :default @ D = ... -> (T | D)
+  #
+  # ## Example
+  #
+  # ```
+  # assert_eq (["bb", "a", "cc"].max key: (do |s| s.len)) "bb"
+  # ```
+  pub def max[D = T]
+    self
+    :default @ D = ...
+    :key @ ((T) -> Value) = ...
+  do -> (T | D)
     ...
 
-  # Returns the smallest item.
+  # Returns the smallest item, or the first of the smallest. With `key`, it
+  # compares `key` of each item instead, calling it once per item.
   #
   # ## Errors
   #
   # Raises [`IterStop`](std.IterStop) if there are no items and no `default`.
-  pub def min[D = T] self :default @ D = ... -> (T | D)
+  pub def min[D = T]
+    self
+    :default @ D = ...
+    :key @ ((T) -> Value) = ...
+  do -> (T | D)
     ...
 
   # Returns an iterator that discards the first `n` items.
@@ -945,12 +1020,55 @@ pub class Iterable[T]: @BaseIterable[T]
   pub def skip self n @ Int -> Iter[T]
     ...
 
+  # Returns an iterator that discards items while `pred` is truthy, then yields
+  # the rest without calling `pred` again.
+  pub def skip_while self pred @ ((T, <Value, >Value) -> Value) -> Iter[T]
+    ...
+
   # Returns an iterator yielding at most `n` items.
   #
   # ## Errors
   #
   # Raises [`ValueError`](std.ValueError) if `n` is negative.
   pub def take self n @ Int -> Iter[T]
+    ...
+
+  # Returns an iterator that yields items while `pred` is truthy. It ends at the
+  # first item that fails, which it discards.
+  pub def take_while self pred @ ((T, <Value, >Value) -> Value) -> Iter[T]
+    ...
+
+  # Returns an iterator of tuples of `n` items each, in order. When the checker
+  # knows `n`, the tuples have that many items in their type, so they unpack
+  # into that many names:
+  #
+  # ```
+  # for key value = ["a", 1, "b", 2].tuples 2
+  #   echo "$key=$value"
+  # ```
+  #
+  # ## Errors
+  #
+  # Raises [`ValueError`](std.ValueError) if `n` isn't positive. Getting an item
+  # raises `ValueError` if the items run out partway through a tuple.
+  pub def tuples[N @ Int] self n@N -> Iter[Tuple[...Repeat[T, N]]]
+    ...
+
+  # Returns an iterator of tuples of each `n` consecutive items, in order, typed
+  # as [`tuples`](std.Iterable.tuples) types them. There are none if there are
+  # fewer than `n` items.
+  #
+  # ## Errors
+  #
+  # Raises [`ValueError`](std.ValueError) if `n` isn't positive.
+  #
+  # ## Example
+  #
+  # ```
+  # let steps = [1, 4, 9].windows(2).map(do |pair| pair[1] - pair[0])
+  # assert_eq [...steps] [3, 5]
+  # ```
+  pub def windows[N @ Int] self n@N -> Iter[Tuple[...Repeat[T, N]]]
     ...
 
   # Returns an iterator of tuples across this and additional iterables, which
@@ -3683,6 +3801,13 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def any self pred @ ((T) -> Value) = ... -> Bool
     ...
 
+  @def batches[U] self@Iter[U] n@Int -> Iter[Array[U]]
+
+  # Returns an iterator of arrays of `n` values each, as
+  # [`Iterable.batches`](std.Iterable.batches) does.
+  pub def batches self n @ Int -> Iter[Array[Value]]
+    ...
+
   # Returns an iterator over the same items that supports unpacking.
   #
   # Unpacking can't advance an iterator, so only iterators over fixed state,
@@ -3756,9 +3881,31 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   do -> (T | D)
     ...
 
+  # Returns an iterator over the items of each iterable that `func` returns, as
+  # [`Iterable.flat_map`](std.Iterable.flat_map) does.
+  pub def flat_map[U]
+    self
+    func @ ((T, <Value, >Value) -> BaseIterable[U])
+  do -> Iter[U]
+    ...
+
+  @def flatten[U] self @ Iter[BaseIterable[U]] -> Iter[U]
+
+  # Returns an iterator over the items of each value, as
+  # [`Iterable.flatten`](std.Iterable.flatten) does.
+  pub def flatten self -> Iter[Value]
+    ...
+
   # Consumes the iterator, accumulating a value as
   # [`Iterable.fold`](std.Iterable.fold) does.
   pub def fold[A] self init@A func@((A, T) -> A) -> A
+    ...
+
+  @def group_by[U, K] self@Iter[U] key@((U) -> K) -> Dict[K, Array[U]]
+
+  # Consumes the iterator and collects its values into a dict of arrays, as
+  # [`Iterable.group_by`](std.Iterable.group_by) does.
+  pub def group_by self key@((T) -> Value) -> Dict[Value, Array[Value]]
     ...
 
   @def kv[K, V] self @ Iter[Unpack[{K, V}]] -> Spread[K, V]
@@ -3781,12 +3928,20 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
 
   # Consumes the iterator and returns the largest value, as
   # [`Iterable.max`](std.Iterable.max) does.
-  pub def max[D = T] self :default @ D = ... -> (T | D)
+  pub def max[D = T]
+    self
+    :default @ D = ...
+    :key @ ((T) -> Value) = ...
+  do -> (T | D)
     ...
 
   # Consumes the iterator and returns the smallest value, as
   # [`Iterable.min`](std.Iterable.min) does.
-  pub def min[D = T] self :default @ D = ... -> (T | D)
+  pub def min[D = T]
+    self
+    :default @ D = ...
+    :key @ ((T) -> Value) = ...
+  do -> (T | D)
     ...
 
   # Returns the next value from the iterator.
@@ -3807,9 +3962,30 @@ pub class Iter[T]: Iterable[T] @BaseIter[T] @Spread[T]
   pub def skip self n @ Int -> Iter[T]
     ...
 
+  # Returns an iterator that discards values while `pred` is truthy, then
+  # yields the rest, as [`Iterable.skip_while`](std.Iterable.skip_while) does.
+  pub def skip_while self pred @ ((T, <Value, >Value) -> Value) -> Iter[T]
+    ...
+
   # Returns an iterator that yields at most `n` values, as
   # [`Iterable.take`](std.Iterable.take) does.
   pub def take self n @ Int -> Iter[T]
+    ...
+
+  # Returns an iterator that yields values while `pred` is truthy, as
+  # [`Iterable.take_while`](std.Iterable.take_while) does. The first value that
+  # fails is consumed.
+  pub def take_while self pred @ ((T, <Value, >Value) -> Value) -> Iter[T]
+    ...
+
+  # Returns an iterator of tuples of `n` values each, as
+  # [`Iterable.tuples`](std.Iterable.tuples) does.
+  pub def tuples[N @ Int] self n@N -> Iter[Tuple[...Repeat[T, N]]]
+    ...
+
+  # Returns an iterator of tuples of each `n` consecutive values, as
+  # [`Iterable.windows`](std.Iterable.windows) does.
+  pub def windows[N @ Int] self n@N -> Iter[Tuple[...Repeat[T, N]]]
     ...
 
   # Returns an iterator of tuples across this iterator and the additional

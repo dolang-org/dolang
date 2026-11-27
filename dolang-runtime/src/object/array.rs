@@ -37,21 +37,32 @@ pub(crate) struct Iter<'v> {
 struct ArraySpread<'a, 'v>(&'a Value<'v>);
 
 impl<'v> ArraySpread<'_, 'v> {
-    fn push<'s>(&self, strand: &mut Strand<'v, 's>, mut value: Slot<'v, '_>) -> Result<'v, 's, ()> {
-        let array = self
-            .0
-            .downcast_ref(strand.builtin_types().array)
-            .expect("array accumulator");
-        with_pin!(strand, array, |array| {
-            // SAFETY: the value moves straight into the borrowed array
-            array
-                .borrow_mut()
-                .ok_or_else(|| Error::concurrency(strand))?
-                .inner
-                .push(unsafe { value.take(strand) });
-            Ok(())
-        })
+    fn push<'s>(&self, strand: &mut Strand<'v, 's>, value: Slot<'v, '_>) -> Result<'v, 's, ()> {
+        push(strand, self.0, value)
     }
+}
+
+/// Moves `value` onto the end of `array`, an `Array`, leaving the slot nil.
+///
+/// # Panics
+/// If `array` isn't an `Array`.
+pub(crate) fn push<'v, 's>(
+    strand: &mut Strand<'v, 's>,
+    array: &Value<'v>,
+    mut value: Slot<'v, '_>,
+) -> Result<'v, 's, ()> {
+    let array = array
+        .downcast_ref(strand.builtin_types().array)
+        .expect("an array");
+    with_pin!(strand, array, |array| {
+        // SAFETY: the value moves straight into the borrowed array
+        array
+            .borrow_mut()
+            .ok_or_else(|| Error::concurrency(strand))?
+            .inner
+            .push(unsafe { value.take(strand) });
+        Ok(())
+    })
 }
 
 impl<'a, 'v, 's> Spread<'v, 's> for ArraySpread<'a, 'v> {

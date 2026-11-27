@@ -240,6 +240,14 @@ well_known_symbols! {
     (GetMethod, "(get)", GET_METHOD),
     (SetMethod, "(set)", SET_METHOD),
     (HashMethod, "(hash)", HASH_METHOD),
+    (FlatMap, "flat_map", FLAT_MAP),
+    (Flatten, "flatten", FLATTEN),
+    (TakeWhile, "take_while", TAKE_WHILE),
+    (SkipWhile, "skip_while", SKIP_WHILE),
+    (Batches, "batches", BATCHES),
+    (Tuples, "tuples", TUPLES),
+    (Windows, "windows", WINDOWS),
+    (GroupBy, "group_by", GROUP_BY),
 }
 
 /// A symbol
