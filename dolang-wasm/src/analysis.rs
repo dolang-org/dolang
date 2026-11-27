@@ -1,13 +1,13 @@
-//! Playground-local adaptation of the LSP's semantic classification and type
-//! checking.
+//! The playground's highlighting, diagnostics and type checking.
 use crate::{
-    hover::{self, Checked, Hover, Occurrence, Reference},
+    hover::{self, Checked, Hover, Occurrence},
     typelibs::typelibs,
 };
 use dolang::compile::{
-    AnnotationKind, Context, Diag, ErrorKind, Kind, NodeId, NoteKind, Severity, SourceSpan, Span,
-    Token, Unit, UnitId, typeck,
+    AnnotationKind, Diag, ErrorKind, NodeId, NoteKind, Severity, SourceSpan, Span, Unit, UnitId,
+    typeck,
 };
+use dolang_ide::{Highlight, Reference};
 use dolang_util::utf16::Offsets;
 use serde::Serialize;
 use std::{
@@ -226,10 +226,11 @@ impl Analyzed {
             // playground has nothing else to fall back on, so they must be
             // classified here or they render unstyled.
             let kind = node.and_then(|id| unit.node(id)).map(|node| node.kind());
+            let (highlight, _) = dolang_ide::classify(token, kind.as_ref(), context);
             tokens.push(TokenRange {
                 from,
                 to,
-                kind: classify_token(token, kind.as_ref(), context),
+                kind: class_name(highlight),
             });
         });
         tokens.sort_by_key(|token| (token.from, token.to));
@@ -280,7 +281,7 @@ impl Analyzed {
     }
 
     fn refs(&self) -> &[Reference] {
-        self.refs.get_or_init(|| hover::references(&self.unit))
+        self.refs.get_or_init(|| dolang_ide::references(&self.unit))
     }
 
     /// The names of the declaration that the name at the UTF-16 offset
@@ -317,67 +318,26 @@ fn foreign(check: &typeck::Checked, id: UnitId, span: &SourceSpan) -> Option<Pla
     })
 }
 
-fn classify_token(token: Token, kind: Option<&Kind<'_>>, context: Context) -> &'static str {
-    match token {
-        Token::Annotation => "annotation",
-        Token::Binder => "type-parameter",
-        Token::Comment => "comment",
-        Token::Constant => "constant",
-        Token::Delim => "punctuation",
-        Token::Escape => "string",
-        Token::Field => match context {
-            Context::Call => "function",
-            Context::None => "property",
-        },
-        Token::Method => "function",
-        Token::Key => "property",
-        Token::ModuleName => "namespace",
-        Token::ModuleItem => "property",
-        Token::Keyword => "keyword",
-        Token::Literal => "string",
-        Token::Number => "number",
-        Token::Operator => "operator",
-        Token::StringDelim => "string",
-        Token::Type => match kind {
-            Some(Kind::Binder { .. }) => "type-parameter",
-            _ => "type",
-        },
-        Token::TypeKey => "property",
-        Token::Variable => match (context, kind) {
-            (
-                _,
-                Some(
-                    Kind::Class { .. }
-                    | Kind::Binder { .. }
-                    | Kind::ImportItem {
-                        type_only: true, ..
-                    },
-                ),
-            ) => "class",
-            (Context::Call, Some(Kind::PreludeItem { .. } | Kind::PreludeModule { .. })) => {
-                "function"
-            }
-            (Context::Call, _) => "function",
-            (
-                Context::None,
-                Some(
-                    Kind::PositionalParam { .. }
-                    | Kind::KeyParam { .. }
-                    | Kind::RestParam { .. }
-                    | Kind::SelfParam { .. },
-                ),
-            ) => "parameter",
-            (
-                Context::None,
-                Some(Kind::Function { .. } | Kind::Method { .. } | Kind::SpecialMethod { .. }),
-            ) => "function",
-            (Context::None, Some(Kind::PreludeItem { .. })) => "variable",
-            (Context::None, Some(Kind::PreludeModule { .. } | Kind::ImportModule { .. })) => {
-                "namespace"
-            }
-            (Context::None, _) => "variable",
-        },
-        Token::Sigil => "sigil",
+/// The page's class for a highlight
+fn class_name(highlight: Highlight) -> &'static str {
+    match highlight {
+        Highlight::Annotation => "annotation",
+        Highlight::TypeParameter => "type-parameter",
+        Highlight::Comment => "comment",
+        Highlight::Constant => "constant",
+        Highlight::Punctuation => "punctuation",
+        Highlight::Sigil => "sigil",
+        Highlight::String => "string",
+        Highlight::Function => "function",
+        Highlight::Property => "property",
+        Highlight::Namespace => "namespace",
+        Highlight::Keyword => "keyword",
+        Highlight::Number => "number",
+        Highlight::Operator => "operator",
+        Highlight::Type => "type",
+        Highlight::Class => "class",
+        Highlight::Parameter => "parameter",
+        Highlight::Variable => "variable",
     }
 }
 

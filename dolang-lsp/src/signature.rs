@@ -12,45 +12,111 @@
 /// The widest a signature is written on one line
 const WIDTH: usize = 80;
 
-/// A parameter of a signature
-pub(crate) struct Param {
-    /// The parameter as written up to its annotation, sigils included, such
-    /// as `:host`, `foo: local` or `...args`
-    pub(crate) head: String,
-    /// Its annotated type, as written
-    pub(crate) ty: Option<String>,
-    /// Whether it has a default
-    pub(crate) default: bool,
+use dolang_ide::{Param, Signature};
+
+/// `param` with `@` written as `at`
+fn param(param: &Param, at: &str) -> String {
+    let mut text = param.head.clone();
+    if let Some(ty) = &param.ty {
+        text.push_str(at);
+        text.push_str(ty);
+    }
+    if param.default {
+        text.push_str(" = ...");
+    }
+    text
 }
 
-impl Param {
-    /// The parameter with `@` written as `at`
-    fn render(&self, at: &str) -> String {
-        let mut text = self.head.clone();
-        if let Some(ty) = &self.ty {
-            text.push_str(at);
-            text.push_str(ty);
-        }
-        if self.default {
-            text.push_str(" = ...");
-        }
-        text
-    }
+/// `param` as a binding standing alone
+fn alone(param: &Param) -> String {
+    self::param(param, " @ ")
+}
 
-    /// The parameter as a binding standing alone
-    fn alone(&self) -> String {
-        self.render(" @ ")
+/// `param` as a `let` binds it, without its default
+pub(crate) fn parameter(param: &Param) -> String {
+    let mut text = format!("let {}", param.head);
+    if let Some(ty) = &param.ty {
+        text.push_str(" @ ");
+        text.push_str(ty);
     }
+    text.push_str(" = ...");
+    text
+}
 
-    /// The parameter as a `let` binds it, without its default
-    pub(crate) fn binding(&self) -> String {
-        let mut text = format!("let {}", self.head);
-        if let Some(ty) = &self.ty {
-            text.push_str(" @ ");
-            text.push_str(ty);
+/// A declaration's signature as Do: decorators on lines of their own, then
+/// its header, and a `...` body for a function with one
+pub(crate) fn render(signature: &Signature) -> String {
+    let named = |name: &str, binders: &[String]| match binders {
+        [] => name.to_owned(),
+        _ => format!("{name}[{}]", binders.join(", ")),
+    };
+    let decorated = |decorators: &[String]| -> String {
+        decorators
+            .iter()
+            .map(|decorator| format!("#[{decorator}]\n"))
+            .collect()
+    };
+    let public = |is_pub| if is_pub { "pub " } else { "" };
+    match signature {
+        Signature::Class {
+            is_pub,
+            type_only,
+            name,
+            binders,
+            decorators,
+            supers,
+        } => {
+            let supers = match &supers[..] {
+                [] => String::new(),
+                supers => format!(": {}", supers.join(" ")),
+            };
+            format!(
+                "{}{}{}class {}{supers}",
+                decorated(decorators),
+                public(*is_pub),
+                if *type_only { "@" } else { "" },
+                named(name, binders),
+            )
         }
-        text.push_str(" = ...");
-        text
+        Signature::Def {
+            is_pub,
+            type_only,
+            name,
+            binders,
+            decorators,
+            params,
+            body,
+            returns,
+        } => {
+            let prefix = format!(
+                "{}{}{}def {}",
+                decorated(decorators),
+                public(*is_pub),
+                if *type_only { "@" } else { "" },
+                named(name, binders),
+            );
+            def(&prefix, params, returns.as_deref(), *body)
+        }
+        Signature::Field { is_pub, name, ty } => {
+            binding(&format!("{}field {name}", public(*is_pub)), ty.as_deref())
+        }
+        Signature::Let { is_pub, name, ty } => {
+            variable(&format!("{}let {name}", public(*is_pub)), ty.as_deref())
+        }
+        // An opaque alias is written with `...` in place of its type
+        Signature::Alias {
+            is_pub,
+            name,
+            binders,
+            ty,
+        } => format!(
+            "{}@let {} = {}",
+            public(*is_pub),
+            named(name, binders),
+            ty.as_deref().unwrap_or("..."),
+        ),
+        // A parameter is written as a `let` binds it
+        Signature::Param { param } => parameter(param),
     }
 }
 
@@ -62,9 +128,9 @@ pub(crate) fn def(prefix: &str, params: &[Param], returns: Option<&str>, body: b
     let line = match params {
         // A def without parameters needs its `()`
         [] => format!("{prefix}(){arrow}"),
-        [param] => format!("{prefix} {}{arrow}", param.alone()),
+        [param] => format!("{prefix} {}{arrow}", alone(param)),
         _ => {
-            let params: Vec<_> = params.iter().map(|param| param.render("@")).collect();
+            let params: Vec<_> = params.iter().map(|param| self::param(param, "@")).collect();
             format!("{prefix} {}{arrow}", params.join(" "))
         }
     };
@@ -76,7 +142,7 @@ pub(crate) fn def(prefix: &str, params: &[Param], returns: Option<&str>, body: b
         let mut text = prefix.to_owned();
         for param in params {
             text.push_str("\n  ");
-            text.push_str(&param.alone());
+            text.push_str(&alone(param));
         }
         text.push_str("\ndo");
         text.push_str(&arrow);
@@ -246,9 +312,9 @@ mod tests {
             param("self", None, false),
         ];
         for param in &params {
-            assert_parses(&param.binding());
+            assert_parses(&parameter(param));
         }
-        assert_eq!(params[0].binding(), "let :limit @ Int = ...");
+        assert_eq!(parameter(&params[0]), "let :limit @ Int = ...");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "dolang-wasm",
+  "dolang-private-ide",
   "dolang",
   "dolang-private-build",
   "dolang-private-bundle",
@@ -23,6 +24,7 @@ members = [
   "dolang-shell-modules",
   "dolang-shell",
   "dolang-private-util",
+  "dolang-private-ide",
   "dolang-ext-shell",
   "dolang-ext-term",
   "dolang-ext-http",
@@ -70,6 +72,7 @@ default-members = [
   "dolang-shell-modules",
   "dolang-shell",
   "dolang-private-util",
+  "dolang-private-ide",
   "dolang-ext-shell",
   "dolang-ext-term",
   "dolang-ext-http",
@@ -302,6 +305,12 @@ default-features = false
 [workspace.dependencies.dolang-util]
 package = "dolang-private-util"
 path = "dolang-private-util"
+version = "0.1.1"
+
+
+[workspace.dependencies.dolang-ide]
+package = "dolang-private-ide"
+path = "dolang-private-ide"
 version = "0.1.1"
 
 

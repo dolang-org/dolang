@@ -1,0 +1,27 @@
+[package]
+name = "dolang-private-ide"
+version = "0.1.1"
+description = "Editor queries shared by the Do language server and playground."
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+
+[lib]
+doctest = false
+
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+
+[dependencies.dolang-compile]
+workspace = true
+
+
+[dependencies.serde]
+workspace = true
+features = ["derive"]
+optional = true

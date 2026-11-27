@@ -21,7 +21,9 @@ Core crates:
 - **dolang-private-util**: Shared utilities (string interning, arena allocator,
   etc.)
 
-Tooling: **dolang-shell** (CLI/REPL), **dolang-lsp** (LSP server)
+Tooling: **dolang-shell** (CLI/REPL), **dolang-lsp** (LSP server),
+**dolang-private-ide** (hover, lookup and highlighting shared by the LSP and
+the playground's `dolang-wasm`)
 
 Internal support crates: **dolang-private-build**, **dolang-private-test**
 
