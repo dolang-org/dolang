@@ -63,32 +63,32 @@ when source identity must be preserved.
 
 `TypeId` identifies a normalized structural expression in one database. Ordinary
 types such as `Int` and `Sym` are declaration references, not builtin nodes.
-Literal nodes describe exact values only. A literal is regular when written in
-a type, or fresh when a literal term gave it, as TypeScript's widening literal
+Literal nodes describe exact values only. A literal is regular when written in a
+type, or fresh when a literal term gave it, as TypeScript's widening literal
 types are. Only a fresh literal decays to its class, so a signature's or a
 schema's literals are never lost. A union keeps a regular twin over a fresh one;
 otherwise the two relate alike, since the solver exposes a fresh literal as its
 regular twin, and `same` treats them as one. Optional intrinsic slots associate
-`Union`, `Keys`, `Values`, `Entries`, `Tuple`, `Int`, `Bool`, `Sym`, `Nil`,
-`Str` and a few more with their stub types. Each slot
-may be set once before sealing; missing associations are allowed. Elaboration
-supplies these associations, and the solver can use the literal backing types to
-enter the declared supertype hierarchy. Schemas and ordinary types share the ID
-domain but carry distinct kinds; packs are schemas, not a third kind. There are
-no solver variables, skolems, or flow variables. A rigid names one slot of a
+`Union`, `Keys`, `IndexKeys`, `Values`, `Entries`, `Tuple`, `Int`, `Bool`,
+`Sym`, `Nil`, `Str` and a few more with their stub types. Each slot may be set
+once before sealing; missing associations are allowed. Elaboration supplies
+these associations, and the solver can use the literal backing types to enter
+the declared supertype hierarchy. Schemas and ordinary types share the ID domain
+but carry distinct kinds; packs are schemas, not a third kind. There are no
+solver variables, skolems, or flow variables. A rigid names one slot of a
 declaration's binder group, held abstract while that declaration is checked. It
 is closed, since a declaration has exactly one group, and is interned on demand
 after sealing, but a declaration never contains one. `abstract_rigids` turns a
 declaration's rigids back into references to its group, and reports any other
-declaration's rigid as having escaped. `Unknown` is the dynamic type
-that an omitted `def` annotation stands for, and what an erroneous site is
-interned as. It is interned once like top, with a schema-kinded twin for
-erroneous schema positions, and a union keeps it as an ordinary member. How
-checker strictness treats an omission is decided where it was written, not by
-finding `Unknown`. A written type the database can't represent yet, such as a
-rest pattern mapped over packs, is an `Unsupported` stand-in instead: each is
-unique, since what it stands for can't be compared, and the solver reports a
-judgment reaching one as unsupported rather than consistent.
+declaration's rigid as having escaped. `Unknown` is the dynamic type that an
+omitted `def` annotation stands for, and what an erroneous site is interned as.
+It is interned once like top, with a schema-kinded twin for erroneous schema
+positions, and a union keeps it as an ordinary member. How checker strictness
+treats an omission is decided where it was written, not by finding `Unknown`. A
+written type the database can't represent yet, such as a rest pattern mapped
+over packs, is an `Unsupported` stand-in instead: each is unique, since what it
+stands for can't be compared, and the solver reports a judgment reaching one as
+unsupported rather than consistent.
 
 Quantifiers own structural binder groups. References use relative group depth
 and declaration-order slot, each a checked `u16`. The whole group is in scope in
@@ -117,35 +117,39 @@ stable while the interning index uses interior mutability. Elaboration interns
 interns as a union expanding its schema, and an expanded schema of positional
 items contributes their types as members, so `Union[...Ts]` becomes an ordinary
 union once `Ts` is substituted. Other expansions remain symbolic until a
-consumer supplies their schema arguments. The projections `Keys`, `Values` and
-`Entries` intern as unions the same way, each a member projecting its schema.
-Once the schema is known, `Values` folds every item's value, whatever its
-multiplicity, projecting an included schema in turn. `Keys` and `Entries` fold
-the schema's keyed view, as a collection indexes it (`Database::promoted`): each
-position is keyed by its index, a literal `Int` while the positions before it
-are all required, and `Int` from the first that may be missing or repeated on.
-`Keys` takes each keyed item's key, and `Int` for any positions, since an item
-projection selects every position by an `Int`; `Entries` takes each
-`Tuple[key, value]`. An included schema not yet known stays a member beside what
-is known, unless positions, or keys that may be indexes, lie beside it: their
-indexes, or collisions, depend on it, so the whole projection waits. A key that
-may be a position's index conflicts with it: an `Int` literal a position may
-have, counting a negative one from the end, or a domain of `Int` alongside
-positions. The solver also finds a conflict in any other domain alongside
-positions that may hold an `Int`, as `Value` does. A conflicting
+consumer supplies their schema arguments. The projections `Keys`, `IndexKeys`,
+`Values` and `Entries` intern as unions the same way, each a member projecting
+its schema. Once the schema is known, `Values` folds every item's value,
+whatever its multiplicity, projecting an included schema in turn. `Keys`,
+`IndexKeys` and `Entries` fold the schema's keyed view, as a collection indexes
+it (`Database::promoted`): each position is keyed by its index, a literal `Int`
+while the positions before it are all required, and `Int` from the first that
+may be missing or repeated on. `Keys` takes each key a value has: each keyed
+item's, and each fixed position's index, or `Int` for all positions if one
+varies. `IndexKeys` takes the keys indexing accepts: each keyed item's, and
+`Int` for any positions, since an item projection selects every position by an
+`Int`, negative and computed indexes included. So `IndexKeys[S]` is above
+`Keys[S]`, which the solver also proves for a schema not yet known. `Entries`
+takes each `Tuple[key, value]`. An included schema not yet known stays a member
+beside what is known, unless positions, or keys that may be indexes, lie beside
+it: their indexes, or collisions, depend on it, so the whole projection waits. A
+key that may be a position's index conflicts with it: an `Int` literal a
+position may have, counting a negative one from the end, or a domain of `Int`
+alongside positions. The solver also finds a conflict in any other domain
+alongside positions that may hold an `Int`, as `Value` does. A conflicting
 projection stays unevaluated, and a judgment exposing it is contradicted. The
 dynamic schema projects to `Unknown`. Without a designated `Tuple`, `Entries`
-stays whole, and without a designated `Int`, so does `Keys` of a schema with
-positions and `Entries` of a varying position. The item projections
-`IndexItem[S, K]` and `AssignItem[S, K]` intern as union members of a schema and
-a key, and only the dynamic schema reduces them there: selecting by a key takes
-the solver. `Database::normalize` gives a type the canonical form interning
-would, for callers that need it before interning. Declaration wrappers are not
-normalized away. Exposure follows transparent head references and reports direct
-cycles, stopping at nominal declarations, quantifiers, applications, and other
-structural forms. Recursive graphs are representable; this does not establish
-recursive typing rules. Generic exposure returns the definition intact in its
-defining scope.
+stays whole, and without a designated `Int`, so does `IndexKeys` of a schema
+with positions and `Keys` and `Entries` of a varying position. The item
+projections `IndexItem[S, K]` and `AssignItem[S, K]` intern as union members of
+a schema and a key, and only the dynamic schema reduces them there: selecting by
+a key takes the solver. `Database::normalize` gives a type the canonical form
+interning would, for callers that need it before interning. Declaration wrappers
+are not normalized away. Exposure follows transparent head references and
+reports direct cycles, stopping at nominal declarations, quantifiers,
+applications, and other structural forms. Recursive graphs are representable;
+this does not establish recursive typing rules. Generic exposure returns the
+definition intact in its defining scope.
 
 Structural walking and rebuilding report quantifier boundaries and visit
 bounds/defaults along with all other children. Declaration references are
@@ -299,18 +303,19 @@ projection of the same kind on the right by these variances: an `IndexItem`
 whose schema and key are proven wider, or an `AssignItem` of the same schema
 whose key is proven narrower. An unevaluated `IndexItem` is also below the one
 with a rigid in its key widened toward its bound, one step at a time after its
-schema: a rigid key to its bound, then `Keys[S]` of a rigid schema to `Keys` of
-its bound. So `IndexItem[S, K]` with `K @ Keys[S]` is below
-`IndexItem[B, Keys[B]]` for `S @ B`, the join of `B`'s values. `AssignItem` is
-antitone in its key, so its key isn't widened. Schema subtyping never promotes
-positions to `Int` keys, but projecting after it keeps them aligned: a position
-in a value of the narrower schema fits the wider schema's position at the same
-index. A function's result that is an item projection is exposed where the
-function is related, so a call reports a key its schema doesn't admit even when
-nothing uses the result. Quantified types on the right are related through
-skolems (see [Skolems and scopes](#skolems-and-scopes)). Contextual identity and
-top/bottom rules can still settle some judgments involving otherwise unsupported
-forms: anything is below top and `Unknown`, even a type that can't be exposed.
+schema: a rigid key to its bound, then `IndexKeys[S]` of a rigid schema to
+`IndexKeys` of its bound, and likewise `Keys`. So `IndexItem[S, K]` with
+`K @ IndexKeys[S]` is below `IndexItem[B, IndexKeys[B]]` for `S @ B`, the join
+of `B`'s values. `AssignItem` is antitone in its key, so its key isn't widened.
+Schema subtyping never promotes positions to `Int` keys, but projecting after it
+keeps them aligned: a position in a value of the narrower schema fits the wider
+schema's position at the same index. A function's result that is an item
+projection is exposed where the function is related, so a call reports a key its
+schema doesn't admit even when nothing uses the result. Quantified types on the
+right are related through skolems (see
+[Skolems and scopes](#skolems-and-scopes)). Contextual identity and top/bottom
+rules can still settle some judgments involving otherwise unsupported forms:
+anything is below top and `Unknown`, even a type that can't be exposed.
 
 ### Schemas
 
@@ -483,7 +488,7 @@ in the skolemization's environment, which carries F-bounds and outer
 substitutions, and a rest binder without one is bounded by its shape. A
 binder that selects items of a schema `S` in the body, as the key of
 `IndexItem[S, K]` or `AssignItem[S, K]` outside any nested quantifier, is also
-bounded by `Keys[S]`: a key outside them has no item, so the body promises
+bounded by `IndexKeys[S]`: a key outside them has no item, so the body promises
 nothing for it. The implied bound is never declared, so it leaves variance
 alone; it is why `(index) self key@Str -> Int` conforms to `(index)[K] self
 key@K -> IndexItem[{*(Str): Int}, K]`. A rigid has the bounds its
@@ -1439,20 +1444,20 @@ shares that def's channels; elsewhere, the def's body included, they are
 `Value`. A closure is populated with its annotations and `Unknown` for what it
 omits, channels included; CFG flow infers the omissions separately, without
 changing the database. Top-level declarations of a checked `std` module named
-`Value`, `Phantom`, `Union`, `Keys`, `Values`, `Entries`, `Func`, `Int`, `Bool`,
-`Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special treatment; the
-same name in another module is only a lookalike. So are the classes that literal
-and constructor expressions produce, `Float`, `Bin`, `Array`, `Dict`, `Tuple`,
-`Pack`, `Range` and the `Fmt` classes, which the check tables record without the
-database needing them, except `Tuple`, which `Entries` builds. A checked
-`strand` module's opaque `PipeSender`, `PipeReceiver`, `ScriptInput` and
-`ScriptOutput` are designated too: each stands for the class the `Check`
-nominates, resolved as if the placeholder imported it, and is populated as a
-transparent alias of that class applied to its binders, whose variance it takes.
-A nominee in no checked module, or no nominee, leaves the placeholder `Unknown`;
-one that isn't a class, or can't take the placeholder's type arguments
-positionally, is diagnosed on the placeholder. The `kind`, `sig`, `ambient` and
-`designated` judgments report these results.
+`Value`, `Phantom`, `Union`, `Keys`, `IndexKeys`, `Values`, `Entries`, `Func`,
+`Int`, `Bool`, `Sym`, `Nil`, `Str`, `Iter` and `Sink` are designated for special
+treatment; the same name in another module is only a lookalike. So are the
+classes that literal and constructor expressions produce, `Float`, `Bin`,
+`Array`, `Dict`, `Tuple`, `Pack`, `Range` and the `Fmt` classes, which the check
+tables record without the database needing them, except `Tuple`, which `Entries`
+builds. A checked `strand` module's opaque `PipeSender`, `PipeReceiver`,
+`ScriptInput` and `ScriptOutput` are designated too: each stands for the class
+the `Check` nominates, resolved as if the placeholder imported it, and is
+populated as a transparent alias of that class applied to its binders, whose
+variance it takes. A nominee in no checked module, or no nominee, leaves the
+placeholder `Unknown`; one that isn't a class, or can't take the placeholder's
+type arguments positionally, is diagnosed on the placeholder. The `kind`, `sig`,
+`ambient` and `designated` judgments report these results.
 
 Variance is inferred for every binder, and for each outer binder a nested
 declaration uses, before anything is interned, since a quantified type's binders

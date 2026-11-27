@@ -588,9 +588,9 @@ fn projections_are_evaluated_before_narrowing() {
     let mut s = Solver::new(&w.db, &gas);
     s.assume(decl);
     let rigid = w.db.rigids(decl)[0];
-    // `Keys[S]` is `Int` by its bound's shape, so never `Nil`
+    // `IndexKeys[S]` is `Int` by its bound's shape, so never `Nil`
     let keys =
-        w.db.intern(Type::Union(vec![UnionMember::Keys(rigid)].into()));
+        w.db.intern(Type::Union(vec![UnionMember::IndexKeys(rigid)].into()));
     assert_eq!(
         class(&s, keys, Relation::Upper, false, w.nil),
         w.db.bottom()

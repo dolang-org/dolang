@@ -39,6 +39,7 @@ Projections are aliases that compute a type or schema from their arguments:
 | ------------------------------ | -------------------------------------------------------------------------- |
 | [`Union`](std.Union)           | The union of its type arguments, including expanded schemas                |
 | [`Keys`](std.Keys)             | The union of a schema's keys                                               |
+| [`IndexKeys`](std.IndexKeys)   | The union of the keys indexing accepts                                     |
 | [`Values`](std.Values)         | The union of a schema's values                                             |
 | [`Entries`](std.Entries)       | The union of a key and value tuple for each item                           |
 | [`IndexItem`](std.IndexItem)   | What a read at a key may give                                              |

@@ -20,11 +20,17 @@ pub @let Never = Union[]
 # one declaration unchecked.
 pub @let Unknown = ...
 
-# The union of a schema's keys, as a collection indexes it: positional items
-# are indexed by `Int`. `Keys[{a: Int, b: Str}]` is `(:a: | :b:)`,
-# `Keys[{*(Sym): Int}]` is `Sym`, and `Keys[{Int, Str}]` and `Keys[{*Int}]`
-# are `Int`.
+# The union of the keys a value of a schema has: a positional item's key is its
+# index, or `Int` if a position before it may be missing or repeated.
+# `Keys[{a: Int, b: Str}]` is `(:a: | :b:)`, `Keys[{*(Sym): Int}]` is `Sym`,
+# `Keys[{Int, Str}]` is `(0 | 1)`, and `Keys[{*Int}]` is `Int`.
 pub @let Keys[S @ {...}] = ...
+
+# The union of the keys indexing a value of a schema accepts: any positional
+# item is indexed by `Int`, which includes negative and computed indexes.
+# `IndexKeys[{Int, Str, a: Bool}]` is `(Int | :a:)`. A key a method selects
+# items of `S` by is implicitly bounded by `IndexKeys[S]`.
+pub @let IndexKeys[S @ {...}] = ...
 
 # The union of the values of a schema's items, positional or keyed.
 # `Values[{Bool, a: Int, b: Str}]` is `(Bool | Int | Str)`.

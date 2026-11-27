@@ -70,6 +70,7 @@ fn a_projection_of_a_rigid_is_below_that_of_its_bound() {
         ],
     );
     let keys = projection(db, UnionMember::Keys, schema_reference(db, 0));
+    let index_keys = projection(db, UnionMember::IndexKeys, schema_reference(db, 0));
     let values = projection(db, UnionMember::Values, schema_reference(db, 0));
     let ab = union(db, &[a, b]);
     let one_two = union(db, &[one, two]);
@@ -88,6 +89,8 @@ fn a_projection_of_a_rigid_is_below_that_of_its_bound() {
     ));
     // A projection is only ever itself above
     assert_eq!(under(db, decl, keys, keys).status, Status::Proven);
+    // Indexing accepts every key `S` has
+    assert_eq!(under(db, decl, keys, index_keys).status, Status::Proven);
     // Every schema below the bound admits its required key, but may omit the
     // optional one
     assert_eq!(under(db, decl, a, keys).status, Status::Proven);
@@ -817,8 +820,8 @@ fn projections_evaluate_by_shape_or_get_stuck() {
     let gas = Gas::default();
     let mut s = Solver::new(&db, &gas);
     let fixed = [Multiplicity::Required, Multiplicity::Required];
-    // `Keys` of positions alone is `Int`, whatever their types
-    let (view, _) = projected(&mut s, &fixed, UnionMember::Keys);
+    // `IndexKeys` of positions alone is `Int`, whatever their types
+    let (view, _) = projected(&mut s, &fixed, UnionMember::IndexKeys);
     match s.evaluate(view, Approximation::Exact) {
         Ok(Evaluation::Exact(term)) => assert_eq!(s.reify(term), Ok(int)),
         other => panic!("{other:?}"),

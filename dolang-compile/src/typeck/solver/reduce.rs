@@ -1121,7 +1121,9 @@ impl Solver<'_> {
     }
 
     /// Whether a projection on the left is also a member of the union on the
-    /// right, as a projection of a skolem's schema must be to be below it
+    /// right, as a projection of a skolem's schema must be to be below it. A
+    /// schema's `Keys` is also below its `IndexKeys`, which every key it has
+    /// selects by.
     fn shares(&self, view: TypeView, member: UnionMember, b: &Head) -> Result<bool, Issue> {
         let Head::Structural(other_view) = b else {
             return Ok(false);
@@ -1132,6 +1134,10 @@ impl Solver<'_> {
         let single = |member: UnionMember| self.db.intern(Type::Union(vec![member].into()));
         let left = view.child(single(member));
         for &other in others.iter() {
+            let other = match (member, other) {
+                (UnionMember::Keys(_), UnionMember::IndexKeys(schema)) => UnionMember::Keys(schema),
+                _ => other,
+            };
             if std::mem::discriminant(&member) == std::mem::discriminant(&other)
                 && self.same(left, other_view.child(single(other)))?
             {

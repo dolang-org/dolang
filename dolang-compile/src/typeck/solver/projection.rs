@@ -243,7 +243,7 @@ impl Solver<'_> {
         }
     }
 
-    /// A lone `Keys` projection in `view` evaluated by the shape of its schema,
+    /// A lone `IndexKeys` projection in `view` evaluated by the shape of its schema,
     /// whose items' types may be unsolved: `Int` for a schema of positions only,
     /// or the closed keys of one with keyed items only. `None` if it has both,
     /// as a key may then be an index, or the shape isn't known. A rigid schema
@@ -253,7 +253,7 @@ impl Solver<'_> {
         let Type::Union(members) = self.db.ty(view.ty) else {
             return Ok(None);
         };
-        let &[UnionMember::Keys(schema)] = &members[..] else {
+        let &[UnionMember::IndexKeys(schema)] = &members[..] else {
             return Ok(None);
         };
         let mut positions = false;
@@ -304,7 +304,7 @@ impl Solver<'_> {
     }
 
     /// Whether a key is shown to be an index, an `Int`: a skolem or an unsolved
-    /// variable by one of its (upper) bounds, and a `Keys` projection by its
+    /// variable by one of its (upper) bounds, and an `IndexKeys` projection by its
     /// schema's shape if its items' types are unsolved
     pub(super) fn index_key(&self, key: Term) -> Result<bool, Residual> {
         self.spend()?;
@@ -428,6 +428,7 @@ impl Solver<'_> {
             UnionMember::IndexItem(schema, _)
             | UnionMember::Expand(schema)
             | UnionMember::Keys(schema)
+            | UnionMember::IndexKeys(schema)
             | UnionMember::Values(schema)
             | UnionMember::Entries(schema)
                 if let Some((fields, step)) =
@@ -479,7 +480,7 @@ impl Solver<'_> {
         let mut step = None;
         for member in members {
             let bound = match member {
-                UnionMember::Type(ty) | UnionMember::Keys(ty)
+                UnionMember::Type(ty) | UnionMember::Keys(ty) | UnionMember::IndexKeys(ty)
                     if step.is_none() && self.rigid(ty)?.is_some() =>
                 {
                     self.rigid_bounds(ty).first().cloned()
@@ -494,7 +495,7 @@ impl Solver<'_> {
             match (member, self.db.ty(bound)) {
                 (UnionMember::Type(_), Type::Union(members)) => widened.extend(members.iter()),
                 (UnionMember::Type(_), _) => widened.push(UnionMember::Type(bound)),
-                _ => widened.push(UnionMember::Keys(bound)),
+                _ => widened.push(member.with(bound)),
             }
         }
         Ok(step.map(|step| (self.db.intern(Type::Union(widened.into())), step)))
@@ -511,7 +512,7 @@ impl Solver<'_> {
     /// bound is known to admit: a rigid schema is any schema below its bound,
     /// which may omit every item the bound doesn't require, so those are the
     /// keys of the bound's required literal items, and the index of each fixed
-    /// position. A read schema of a rigid's class lists every member its bound
+    /// position, or for `IndexKeys`, `Int` if it has one. A read schema of a rigid's class lists every member its bound
     /// does, which are required. They're only some of the keys it admits, so
     /// they're only sufficient.
     fn lowered_projection(
@@ -522,7 +523,9 @@ impl Solver<'_> {
         let mut written = Vec::with_capacity(members.len());
         let mut reduced = None;
         for &member in members {
-            if let UnionMember::AssignItem(schema, _) | UnionMember::Keys(schema) = member
+            if let UnionMember::AssignItem(schema, _)
+            | UnionMember::Keys(schema)
+            | UnionMember::IndexKeys(schema) = member
                 && let Some((fields, step)) =
                     self.widened_fields(view.child(schema), FieldAccess::Write)?
             {
@@ -540,7 +543,7 @@ impl Solver<'_> {
         let mut known = Vec::with_capacity(members.len());
         let mut changed = false;
         for &member in members {
-            let UnionMember::Keys(schema) = member else {
+            let (UnionMember::Keys(schema) | UnionMember::IndexKeys(schema)) = member else {
                 known.push(member);
                 continue;
             };
@@ -553,16 +556,29 @@ impl Solver<'_> {
                 known.push(member);
                 continue;
             };
-            let promoted = match self.keyed_view(bound, self.schema_variance(Intrinsic::Keys)) {
+            let variance = member.intrinsic().map_or(Variance::Invariant, |intrinsic| {
+                self.schema_variance(intrinsic)
+            });
+            let promoted = match self.keyed_view(bound, variance) {
                 Ok(Some(promoted)) => promoted,
                 Ok(None) | Err(Issue::Residual(_)) => return Ok(None),
                 Err(issue) => return Err(issue),
             };
             changed = true;
-            known.extend((0..promoted.fixed.len()).map(|index| {
-                let index = Literal::Int(index as i128);
-                UnionMember::Type(self.db.intern(Type::Literal(index)))
-            }));
+            match member {
+                // Every instance has the bound's fixed positions, which `Int`
+                // selects
+                UnionMember::IndexKeys(_) if !promoted.fixed.is_empty() => {
+                    let Some(int) = self.db.intrinsic(Intrinsic::Int) else {
+                        return Ok(None);
+                    };
+                    known.push(UnionMember::Type(int));
+                }
+                _ => known.extend((0..promoted.fixed.len()).map(|index| {
+                    let index = Literal::Int(index as i128);
+                    UnionMember::Type(self.db.intern(Type::Literal(index)))
+                })),
+            }
             known.extend(
                 promoted
                     .keyed

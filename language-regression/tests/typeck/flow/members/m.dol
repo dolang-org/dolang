@@ -342,10 +342,25 @@ pub def promoted p @ Record[Int, Str] v @ Record[Int, *Bool]
     #       ^: flow std.Int | std.Str
   let pk = p.keys()
   let _ = pk
-  #       ^~: flow std.UnpackIter[std.Int]
+  #       ^~: flow std.UnpackIter[0 | 1]
   let vk = v.keys()
   let _ = vk
   #       ^~: flow std.UnpackIter[std.Int]
+
+# Indexing selects a position by any `Int`, counting a negative one from the
+# end.
+pub def indexed t @ Tuple[Int, Str] i @ Int
+  let _ = t[-1]
+  #   ^: flow std.Str
+  let _ = t[i]
+  #   ^: flow std.Int | std.Str
+
+# A collection is indexed by each of its keys, whatever its schema.
+pub def rekeyed[S @ {*(Sym): Int}] d @ Dict[S] r @ Record[...S]
+  for k = d.keys()
+    let _ = (d[k] @ Int)
+  for k = r.keys()
+    let _ = (r[k] @ Int)
 
 # A key selects items, positions by their indexes. A read gives the join of what
 # it selects, and a write must fit their meet.

@@ -666,6 +666,7 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
         }
     };
     let keys = project(&mut db, Intrinsic::Keys, "Keys");
+    let index_keys = project(&mut db, Intrinsic::IndexKeys, "IndexKeys");
     let values = project(&mut db, Intrinsic::Values, "Values");
     let entries = project(&mut db, Intrinsic::Entries, "Entries");
     let item = |multiplicity, element| SchemaItem {
@@ -691,6 +692,8 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
             item(Multiplicity::Required, Element::Positional(three)),
         ],
     );
+    let keys_expected = union(&mut db, &[a, b, zero]);
+    assert_eq!(keys(&mut db, closed), keys_expected);
     let values_expected = union(&mut db, &[one, two, three]);
     assert_eq!(values(&mut db, closed), values_expected);
     // Without a designated `Tuple`, entries stay whole
@@ -699,12 +702,15 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
         db.ty(kept),
         Type::Union(members) if members[..] == [UnionMember::Entries(closed)]
     ));
-    // An empty schema projects to nothing
+    // A position's key is its index, and an empty schema projects to nothing
     let positional = schema(&mut db, &[three]);
+    assert_eq!(keys(&mut db, positional), zero);
     let empty = schema(&mut db, &[]);
     assert_eq!(values(&mut db, empty), bottom);
-    // Positions are selected by `Int`, so their key is `Int`, which stays a
-    // projection until `Int` is designated, whether or not they vary
+    assert_eq!(keys(&mut db, empty), bottom);
+    assert_eq!(index_keys(&mut db, empty), bottom);
+    // A position that may be missing varies, so its key is `Int`, which stays a
+    // projection until `Int` is designated
     let varying = items(
         &mut db,
         vec![
@@ -712,20 +718,28 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
             item(Multiplicity::Optional, Element::Positional(two)),
         ],
     );
+    let kept = keys(&mut db, varying);
+    assert!(matches!(
+        db.ty(kept),
+        Type::Union(members) if members[..] == [UnionMember::Keys(varying)]
+    ));
+    // Indexing selects positions by `Int`, so their index key is `Int`, which
+    // stays a projection until `Int` is designated, whether or not they vary
     for schema in [varying, closed, positional] {
-        let kept = keys(&mut db, schema);
+        let kept = index_keys(&mut db, schema);
         assert!(matches!(
             db.ty(kept),
-            Type::Union(members) if members[..] == [UnionMember::Keys(schema)]
+            Type::Union(members) if members[..] == [UnionMember::IndexKeys(schema)]
         ));
     }
     let (id, int, source) = declare(&mut db, DeclKind::Class, "Int");
     db.set_intrinsic(Intrinsic::Int, int);
     db.populate(id, definition(source, int));
     assert_eq!(keys(&mut db, varying), int);
-    assert_eq!(keys(&mut db, positional), int);
-    let keys_expected = union(&mut db, &[a, b, int]);
-    assert_eq!(keys(&mut db, closed), keys_expected);
+    assert_eq!(index_keys(&mut db, varying), int);
+    assert_eq!(index_keys(&mut db, positional), int);
+    let index_expected = union(&mut db, &[a, b, int]);
+    assert_eq!(index_keys(&mut db, closed), index_expected);
     // `{...}` has every key and value
     let open = items(
         &mut db,
@@ -755,6 +769,14 @@ fn projections_fold_what_their_schemas_are_known_to_hold() {
     assert_eq!(keys(&mut db, partial), expected);
     // Substituting the pack evaluates the rest
     let substituted = db.substitute(expected, &[positional]);
+    let a_zero = union(&mut db, &[a, zero]);
+    assert_eq!(substituted, a_zero);
+    let index_expected = intern(
+        &mut db,
+        Type::Union(vec![UnionMember::Type(a), UnionMember::IndexKeys(pack)].into()),
+    );
+    assert_eq!(index_keys(&mut db, partial), index_expected);
+    let substituted = db.substitute(index_expected, &[positional]);
     let a_int = union(&mut db, &[a, int]);
     assert_eq!(substituted, a_int);
     // Beside a position, its positions' indexes depend on it, so the whole
@@ -2304,7 +2326,7 @@ fn restrictions_lower_and_imply_key_bounds() {
         }),
     );
     let f = quantify(&mut db, vec![binder(Kind::Type)], body);
-    let keys = intern(&mut db, Type::Union(vec![UnionMember::Keys(s)].into()));
+    let keys = intern(&mut db, Type::Union(vec![UnionMember::IndexKeys(s)].into()));
     db.seal();
     assert_eq!(db.item_keys(f), [0]);
     assert_eq!(db.implied_bounds(f), [(0, keys)]);
@@ -2636,14 +2658,14 @@ fn copies_remap_symbols_and_declarations() {
 #[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
 fn copies_designate_intrinsics() {
     let mut db = Database::new();
-    let (keys, keys_ty, source) = declare(&mut db, DeclKind::OpaqueAlias, "Keys");
-    db.set_intrinsic(Intrinsic::Keys, keys_ty);
+    let (keys, keys_ty, source) = declare(&mut db, DeclKind::OpaqueAlias, "IndexKeys");
+    db.set_intrinsic(Intrinsic::IndexKeys, keys_ty);
     db.populate(keys, definition(source, keys_ty));
     let (int_id, int_ty, source) = declare(&mut db, DeclKind::Class, "Int");
     db.set_intrinsic(Intrinsic::Int, int_ty);
     db.populate(int_id, definition(source, int_ty));
     let one = int(&mut db, 1);
-    // `Keys[(1,)]`
+    // `IndexKeys[(1,)]`
     let schema = schema(&mut db, &[one]);
     let apply = |db: &mut Database, base, schema| {
         intern(
@@ -2663,7 +2685,7 @@ fn copies_designate_intrinsics() {
     let mut copier = into.copier(&db, &mut copies);
     let [keys_copy, int_copy, schema_copy] = [keys_ty, int_ty, schema].map(|ty| copier.ty(ty));
     drop(copier);
-    assert_eq!(into.intrinsic(Intrinsic::Keys), Some(keys_copy));
+    assert_eq!(into.intrinsic(Intrinsic::IndexKeys), Some(keys_copy));
     assert_eq!(into.intrinsic(Intrinsic::Int), Some(int_copy));
     assert_eq!(apply(&mut into, keys_copy, schema_copy), int_copy);
 }
