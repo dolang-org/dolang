@@ -1,8 +1,9 @@
 # dolang: strict
 # Downloads, uploads, packs, and safely extracts artifacts.
 #
-# A URL source is resolved through `get` wherever one is accepted, so its cache
-# serves `put`, `pack`, and `unpack` as well.
+# Each operation moves data between a local path and at most one HTTP(S) URL.
+# `unpack` resolves a URL source through `get`, so its cache serves `unpack` as
+# well.
 #
 # Results are published atomically: output is staged and renamed into place, so
 # an interrupted operation leaves no partial destination behind.
@@ -536,16 +537,10 @@ do -> Path
     (fs.cache_dir app: (normalize_app app) / "transfer")
   (Cache root).get(location, digest)
 
-def put_path source@Path destination@Path -> nil
-  let parent = destination.parent
-  if (parent != nil)
-    parent.create_dir all: true
-  let tmp = destination.add_ext tmp
-  try
-    source.copy $tmp
-    tmp.rename $destination
-  finally
-    tmp.remove ignore: true
+def local_source value@(Str | Path) operation@Str -> Path
+  match parse_location(value)
+    Url(_) => throw std.ValueError "$operation source must be a local path"
+    path => path
 
 def put_url source@Path destination@Url headers@(BaseDict[Str | Sym, Str] | nil) -> nil
   let total = source.metadata().size
@@ -559,31 +554,22 @@ def put_url source@Path destination@Url headers@(BaseDict[Str | Sym, Str] | nil)
       let response = http.put(destination, headers: (headers || ({} @ Dict[Str, Str])), body: chunks)
       response.close()
 
-# Copies or uploads `source` to `destination`.
+# Uploads a local file to an HTTP(S) URL with a `PUT` request.
+#
+# To copy between local paths, use [`Path.copy`](fs.Path.copy).
 pub def put
-  # Local path or HTTP(S) URL to copy from.
-  #
-  # A URL is resolved through [`get`](transfer.get) first.
-  source @ (Str | Url | Path)
-  # Local path or HTTP(S) URL to write to.
-  destination @ (Str | Url | Path)
-  # Request headers for an HTTP(S) destination.
-  #
-  # Only valid for an HTTP(S) destination.
+  # Local file to upload.
+  source @ (Str | Path)
+  # HTTP(S) URL to upload to.
+  destination @ (Str | Url)
+  # Request headers.
   :headers @ BaseDict[Str | Sym, Str] = nil
 do -> nil
-  let from = (parse_location source)
-  let local = if (type from Url)
-    get $from
-  else
-    from
-  let to = (parse_location destination)
-  if (type to Url)
-    put_url $local (require_http to) $headers
-  else
-    if (headers != nil)
-      throw std.ValueError "headers: only valid for an HTTP destination"
-    put_path $local $to
+  let from = (local_source source "put")
+  let to = match parse_location(destination)
+    Path(_) => throw std.ValueError "put destination must be an HTTP(S) URL"
+    url => url
+  put_url $from (require_http to) $headers
 
 let ARCHIVE_FORMATS @ Set[ArchiveFormat] = Set $
   :TAR: :TAR_GZIP: :TAR_ZSTD: :ZIP:
@@ -856,9 +842,11 @@ pub @let PackOptions = $
 #
 # Directory contents are relative to the source root.
 pub def pack
-  # File or directory to pack.
-  source @ (Str | Url | Path)
-  # Archive to write.
+  # Local file or directory to pack.
+  source @ (Str | Path)
+  # Local path or HTTP(S) URL to write the archive to.
+  #
+  # A URL receives the archive through [`put`](transfer.put).
   destination @ (Str | Url | Path)
   # Archive format.
   #
@@ -867,16 +855,18 @@ pub def pack
   :format @ ArchiveFormat = nil
   # Relative path prepended to every archive entry.
   :prefix @ (Str | Path) = nil
+  # Request headers for the upload.
+  #
+  # Only valid for an HTTP(S) destination.
+  :headers @ BaseDict[Str | Sym, Str] = nil
   # Overrides for the metadata of each entry.
   ...options @ PackOptions
 do -> nil
   let overrides @ Dict[PackOptions] = {...options}
-  let from = (parse_location source)
-  let local = if (type from Url)
-    get $from
-  else
-    from
+  let local = (local_source source "pack")
   let to = (parse_location destination)
+  if (headers != nil && !(type to Url))
+    throw std.ValueError "headers: only valid for an HTTP destination"
   let parts @ Seq[Str] = if (prefix == nil)
     ([] @ Array[Str])
   else
@@ -887,6 +877,8 @@ do -> nil
       let temporary = (dir / (to.name || "archive"))
       pack_local $local $temporary $to $selected $parts $overrides
       put $temporary $to
+        if (headers != nil)
+          :headers
   else
     let parent = to.parent
     if (parent != nil)
@@ -1246,7 +1238,8 @@ do -> nil
 # Extraction validates the whole manifest before writing anything, rejecting
 # unsafe or conflicting paths.
 pub def unpack
-  # Archive or compressed file to extract.
+  # Archive or compressed file to extract: a local path, or an HTTP(S) URL
+  # resolved through [`get`](transfer.get).
   source @ (Str | Url | Path)
   # Path to create.
   #
@@ -1264,17 +1257,29 @@ pub def unpack
   # `:ROOT:` strips one component, and requires a non-empty archive whose
   # entries share a single root component. Raw streams require `0`.
   :strip @ (Int | :ROOT:) = 0
-  # Application name selecting the cache directory,
-  # for a URL source.
+  # Application name selecting the cache directory for a URL source.
+  #
+  # Defaults to the name of the running program. Not valid together with
+  # `cache`.
   :app @ Str = nil
+  # Expected digest of the source, as `algorithm:hex`.
+  #
+  # Accepts the algorithms [`get`](transfer.get) does, and is checked before
+  # anything is extracted.
+  :digest @ Str = nil
+  # Explicit cache directory for a URL source.
+  #
+  # Bypasses `app` and `fs.cache_dir` entirely, and is not valid together with
+  # `app`.
+  :cache @ (Str | Path) = nil
 do -> nil
-  let from = (parse_location source)
-  let local = if (type from Url)
-    get $from
-      if (app != nil)
-        :app
-  else
-    from
+  let local = get $source
+    if (app != nil)
+      :app
+    if (digest != nil)
+      :digest
+    if (cache != nil)
+      :cache
   let to = match parse_location(destination)
     Url(_) => throw std.ValueError "unpack destination must be a path"
     path => path

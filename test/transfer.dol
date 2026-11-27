@@ -20,11 +20,18 @@ import time:
 
 #[test]
 #[vfs]
-def local_get_and_put()
+def local_get_returns_path()
   Path("source.bin").write b"hello"
   assert_eq (transfer.get "source.bin") (Path "source.bin")
-  transfer.put "source.bin" "output.bin"
-  assert_eq (Path("output.bin").read()) b"hello"
+
+#[test]
+#[vfs]
+def put_requires_local_source_and_url_destination()
+  Path("source.bin").write b"hello"
+  assert_throws $ValueError do transfer.put "source.bin" "output.bin"
+  assert (!(Path("output.bin").exists()))
+  assert_throws $ValueError do
+    transfer.put "https://example.invalid/source.bin" "https://example.invalid/upload"
 
 #[test]
 #[vfs]
@@ -393,6 +400,71 @@ def http_put_propagates_error_on_failure_status()
       do |_handle|
         assert_throws $http.Error do
           transfer.put "upload.bin" (server.url / "/upload")
+
+#[test]
+#[vfs]
+def pack_requires_local_source()
+  assert_throws $ValueError do
+    transfer.pack "https://example.invalid/source" archive.tar
+  assert (!(Path("archive.tar").exists()))
+
+#[test]
+#[vfs]
+def pack_uploads_with_headers()
+  let source = Path "source"
+  source.create_dir()
+  (source / "hello.txt").write hello
+  assert_throws $ValueError do
+    transfer.pack $source archive.tar headers: {"x-token": "secret"}
+  assert (!(Path("archive.tar").exists()))
+  http.mock.Server do |server|
+    server.mock
+      - method: PUT
+        path: /archive.tar
+        headers:
+          "x-token": secret
+        respond:
+          status: 201
+      do |handle|
+        transfer.pack $source (server.url / "/archive.tar") headers: {"x-token": "secret"}
+        assert_eq $handle.received().len 1
+
+#[test]
+#[vfs]
+def unpack_downloads_and_verifies_url()
+  let source = Path "source"
+  source.create_dir()
+  (source / "hello.txt").write hello
+  transfer.pack $source archive.tar.gz prefix: root
+  let body = Path("archive.tar.gz").read()
+  let good = "sha256:${digest.sha256(body):x}"
+  let bad = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  http.mock.Server do |server|
+    server.mock
+      - method: GET
+        path: /archive.tar.gz
+        respond:
+          status: 200
+          :body
+      do |_handle|
+        let url = (server.url / "/archive.tar.gz")
+        assert_throws $ValueError do
+          transfer.unpack $url bad-out digest: $bad cache: (Path "bad-cache") strip: :ROOT:
+        assert (!(Path("bad-out").exists()))
+        # No `format:`: it is inferred from the URL's name.
+        transfer.unpack $url out digest: $good cache: (Path "cache") strip: :ROOT:
+        assert_eq $(Path("out") / "hello.txt").read_str() hello
+
+#[test]
+#[vfs]
+def unpack_verifies_local_digest()
+  let source = Path "source"
+  source.create_dir()
+  (source / "hello.txt").write hello
+  transfer.pack $source archive.tar
+  let bad = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  assert_throws $ValueError do transfer.unpack archive.tar out digest: $bad
+  assert (!(Path("out").exists()))
 
 #[test]
 #[vfs]
