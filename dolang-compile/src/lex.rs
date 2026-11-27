@@ -925,7 +925,14 @@ impl<'a, I: Iterator<Item = u8>> Iterator for RawLexer<'a, I> {
                     };
                     lex! {
                         self: token => {
-                            match None => self.skip(End),
+                            // A here string's last line break is content, even at EOF
+                            match None => if self.state == Indent
+                                && matches!(self.mode, Mode::Heredoc | Mode::RawHeredoc)
+                            {
+                                return self.token(RawToken::NewlineIndent, End)
+                            } else {
+                                self.skip(End)
+                            },
                             // A pending `NewlineIndent` keeps its start, so its span covers
                             // every blank and comment line in the gap
                             match Some(b'\n') => if self.keep_newlines

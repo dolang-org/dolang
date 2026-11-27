@@ -1,0 +1,6 @@
+# A here string ending the script keeps its last line break, and the blank
+# lines after it are dropped (#1933).
+assert_eq "hello\n" |
+  hello
+
+
