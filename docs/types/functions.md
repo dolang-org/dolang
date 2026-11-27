@@ -157,8 +157,7 @@ decorated.
 
 A method's overload may annotate its receiver with a narrower type, so that it
 applies only to those instances. The class's binders in the overload then stand
-for the receiver's type arguments, so `shout` below returns `Str`. An
-implementation's receiver annotation can't narrow the class this way.
+for the receiver's type arguments, so `shout` below returns `Str`.
 
 ```
 class Box[T]
@@ -168,6 +167,47 @@ class Box[T]
   pub def shout self
     (self.item !@ Str).upper()
 ```
+
+An implementation belongs to every instance, so its receiver annotation can't
+narrow the class. It may be the class or a supertype of it, and the body sees
+only that type. Called through the class, as in `Square.describe $shape`, the
+method then takes any value of that type:
+
+```
+@class Shape
+  pub def area self -> Float
+
+class Square: @Shape
+  pub field side @ Float = 1.0
+
+  pub def area self -> Float
+    (self.side * self.side)
+
+  pub def describe self @ Shape -> Str
+    "area $(self.area())"
+```
+
+The annotation may use the method's own binders, which each call solves from
+its receiver. The check needs only some choice of them that every instance
+fits. A method that returns a new array of the items can take their type this
+way, so that its result doesn't make the class's binder invariant (see
+[Generic Variance](./checking.md#generic-variance)):
+
+```
+@class Readable[T]
+  pub def read self -> T
+
+class Reader[T]: @Readable[T]
+  pub def read _self -> T
+    ...
+
+  pub def batch[U] self @ Readable[U] -> Array[U]
+    [self.read(), self.read()]
+```
+
+An overload's receiver must then be below the implementation's rather than
+the class, as `self @ Readable[Str]` is. The class's binders in the overload
+stand for what that receiver gives them.
 
 Overloads have relaxed parameter shape requirements: rest parameters may appear
 anywhere and more than once, and a required parameter may follow an optional

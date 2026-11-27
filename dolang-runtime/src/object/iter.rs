@@ -805,16 +805,15 @@ pub(crate) async fn sinkable_mcall<'v, 'a, 's>(
     })
 }
 
-/// Forward an `Iterable`/`Sinkable` method onto a materialized `Iter`/`Sink`.
+/// Run an `Iterable`/`Sinkable` method as `Iter`'s/`Sink`'s on the value the
+/// receiver materializes.
 ///
 /// `args` arrives with the receiver as the leading positional argument (either
 /// prepended for delegated dispatch, or written explicitly as in `Iterable.map(x, f)`).
-/// Popping it leaves exactly the method's own arguments behind, so dispatching
-/// `method` onto the materialized value is literally `x.iter().foo(..)`.
-///
-/// Materialization is idempotent — `iter` on an `Iter` returns self — so this
-/// costs one extra vtable call when the receiver was already an iterator, and
-/// nothing at all in the common case where it was a container.
+/// Popping it leaves exactly the method's own arguments behind. The method isn't
+/// looked up on the materialized value, which need only implement `(next)` or
+/// `(put)`: `Iter`'s or `Sink`'s implementation wraps it directly, as
+/// `Iter.map(x.iter(), f)` does.
 async fn forward<'v, 'a, 's>(
     strand: &'a mut Strand<'v, 's>,
     mut args: Args<'v, 'a>,
@@ -827,10 +826,15 @@ async fn forward<'v, 'a, 's>(
     };
     with_slots!(strand, |mut target| {
         match surface {
-            Surface::Iterable => obj.iter(strand, &mut target).await?,
-            Surface::Sinkable => obj.sink(strand, &mut target).await?,
+            Surface::Iterable => {
+                obj.iter(strand, &mut target).await?;
+                iter_mcall(strand, &target, method, args, out).await
+            }
+            Surface::Sinkable => {
+                obj.sink(strand, &mut target).await?;
+                sink_mcall(strand, &target, method, args, out).await
+            }
         }
-        target.op_mcall(strand, method, args, out).await
     })
 }
 

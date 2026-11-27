@@ -1,0 +1,45 @@
+# dolang: strict
+#
+# `Iter` and `Iterable` methods take any value with `(next)` or `(iter)` when
+# called through the class, but a value's own members are still only its type's.
+
+import std:
+  - @BaseIter
+  - @BaseIterable
+
+pub def through_iter it @ BaseIter[Int]
+  let _ = Iter.map $it (do |x| x + 1)
+  #       ^~~~~~~~~~~~~~~~~~~~~~~~~~~: value std.Iter[std.Int]
+  let _total @ Int = Iter.fold $it 0 (do |a x| a + x)
+  let _pairs @ Iter[Tuple[Int, Int]] = Iter.windows $it 2
+  nil
+
+pub def through_iterable xs @ BaseIterable[Str]
+  let _ = Iterable.map $xs (do |s| s.len)
+  #       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~: value std.Iter[std.Int]
+  let _first @ (Str | nil) = Iterable.find $xs (do |s| s.len > 1) default: nil
+  nil
+
+pub def overloaded it @ BaseIter[Str] xs @ BaseIterable[BaseIterable[Int]]
+  let _ = Iter.chomp $it
+  #       ^~~~~~~~~~~~~~: value std.Iter[std.Str]
+  let _ = Iterable.flatten $xs
+  #       ^~~~~~~~~~~~~~~~~~~~: value std.Iter[std.Int]
+  nil
+
+# A fresh result takes any element type above the items'
+pub def fresh it @ BaseIter[Int] xs @ Array[Int]
+  let _ = Iter.batches $it 2
+  #       ^~~~~~~~~~~~~~~~~~: value std.Iter[std.Array[std.Int]]
+  let _wider @ Iter[Array[Int | Str]] = xs.batches 2
+  let _ = xs.group_by(do |x| x % 2)
+  #       ^~~~~~~~~~~~~~~~~~~~~~~~~: value std.Dict[std.Int, std.Array[std.Int]]
+  nil
+
+pub def member it @ BaseIter[Int]
+  it.map(do |x| x)
+# error: `std.BaseIter[std.Int]` has no member `map`
+#   --> m.dol:LL:LL
+#    |
+# LL |   it.map(do |x| x)
+#    |   ^^^^^^^^^^^^^^^^
