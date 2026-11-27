@@ -1,0 +1,5 @@
+# A raw here string ending a nested block at the end of the script keeps its
+# last line break (#1933).
+if true
+  assert_eq "\$x\n" r|
+    $x

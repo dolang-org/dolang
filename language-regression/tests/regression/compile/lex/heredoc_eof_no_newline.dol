@@ -1,0 +1,4 @@
+# As in YAML, a here string ending a script without a final newline has no
+# last line break to keep.
+assert_eq hello |
+  hello
