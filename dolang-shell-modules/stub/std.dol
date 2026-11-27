@@ -95,6 +95,18 @@ pub @let Fields[T] = ...
 # `MutFields[C]` can, since an override can't narrow what a member accepts.
 pub @let MutFields[T] = ...
 
+# The schema of `N` positions of `T`. `Repeat[Int, 2]` is `{Int, Int}`, and
+# `Repeat[Int, 0]` is `{}`. Any other count, such as `Int`, `(2 | 3)`, or a
+# constant above 64, may stand for several: a value of the schema fits
+# `{*T}`, but only a value of the same schema fits it. A negative count is an
+# error. A function can take its count as an argument to give its result a
+# length:
+#
+# ```
+# @def pairs_of[T, N @ Int] it@Iter[T] n@N -> Iter[Tuple[...Repeat[T, N]]]
+# ```
+pub @let Repeat[T, N @ Int] = ...
+
 # The singleton [`Null`](std.Null) value.
 #
 # As an iterator it ends immediately; as a sink it discards every value.

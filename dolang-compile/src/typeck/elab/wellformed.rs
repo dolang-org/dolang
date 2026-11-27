@@ -22,8 +22,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    ParameterKeys, QuantifiedArgument, Referent, Role, SettledCycle, SettledValue, Tables,
-    UnitDiag, UnquotableResult, interface,
+    NegativeCount, ParameterKeys, QuantifiedArgument, Referent, Role, SettledCycle, SettledValue,
+    Tables, UnitDiag, UnquotableResult, interface,
     quote::Unquotable,
     sig::{self, Form},
     surface::{Class, Interned, Ref, TypeExpr, TypeParam, TypeQuant},
@@ -34,8 +34,8 @@ use crate::{
         report::Report,
         solver::{EnvironmentId, Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Function, Rest,
-            SettledMember, Type, TypeId, UnionMember, UnitId, UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Function, Literal,
+            Rest, SettledMember, Type, TypeId, UnionMember, UnitId, UnitSpan,
         },
     },
 };
@@ -422,6 +422,18 @@ impl Check<'_, '_> {
                 }
             }
             TypeExpr::App { args, interned, .. } => {
+                // Interning keeps a negative constant count as written
+                if let Some(id) = interned.get()
+                    && let Type::Repeat { count, .. } = *self.db.ty(id)
+                    && let Some(&Literal::Int(..0)) = self.db.literal(count)
+                {
+                    let at = args.get(1).map_or(ty.span(), TypeParam::span);
+                    self.report(
+                        Verdict::Fails,
+                        UnitSpan { unit, span: at },
+                        NegativeCount(at),
+                    );
+                }
                 let phantom = self.application(unit, scope, ty.span(), interned, args) || phantom;
                 for ty in args.iter().flat_map(TypeParam::tys) {
                     self.ty(unit, scope, ty, phantom);

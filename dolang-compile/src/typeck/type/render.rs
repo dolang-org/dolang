@@ -621,6 +621,14 @@ impl Renderer<'_> {
                 self.render_into(*target, naming, out);
                 out.push(']');
             }
+            Type::Repeat { item, count } => {
+                self.head(Intrinsic::Repeat, naming, out);
+                out.push('[');
+                self.render_into(*item, naming, out);
+                out.push_str(", ");
+                self.render_into(*count, naming, out);
+                out.push(']');
+            }
         }
     }
 

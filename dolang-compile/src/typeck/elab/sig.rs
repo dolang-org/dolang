@@ -580,6 +580,10 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
             Designated::Intrinsic(Intrinsic::MutFields),
             DeclKind::OpaqueAlias,
         ),
+        ("std", "Repeat") => (
+            Designated::Intrinsic(Intrinsic::Repeat),
+            DeclKind::OpaqueAlias,
+        ),
         ("std", "Func") => (Designated::Intrinsic(Intrinsic::Func), DeclKind::Class),
         ("std", "Int") => (Designated::Intrinsic(Intrinsic::Int), DeclKind::Class),
         ("std", "Bool") => (Designated::Intrinsic(Intrinsic::Bool), DeclKind::Class),

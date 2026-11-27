@@ -1412,6 +1412,23 @@ impl Report for ParameterKeys {
 /// binder with would be impredicative
 struct QuantifiedArgument(Span);
 
+/// A `Repeat` written with a negative count
+struct NegativeCount(Span);
+
+impl Report for NegativeCount {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        write!(w, "a repeated schema can't have a negative count")
+    }
+
+    fn span(&self) -> Span {
+        self.0
+    }
+}
+
 impl Report for QuantifiedArgument {
     fn severity(&self) -> Severity {
         Severity::Error

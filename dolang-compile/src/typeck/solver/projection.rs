@@ -70,11 +70,11 @@ pub(super) enum Evaluation {
 
 impl Solver<'_> {
     /// Whether a type is one [`Self::evaluate`] evaluates: a union with a
-    /// projection, a restriction or a member schema
+    /// projection, a restriction, a member schema or a repeated schema
     pub(super) fn projective(&self, ty: TypeId) -> bool {
         match self.db.ty(ty) {
             Type::Union(members) => members.iter().any(|member| member.projected().is_some()),
-            Type::Restricted { .. } | Type::Fields { .. } => true,
+            Type::Restricted { .. } | Type::Fields { .. } | Type::Repeat { .. } => true,
             _ => false,
         }
     }
@@ -230,6 +230,15 @@ impl Solver<'_> {
                 Err(Issue::Residual(_)) => stuck(false),
                 Err(issue) => Err(issue),
             },
+            // A repeated schema is reduced once its count is substituted (see
+            // `Database::reduce_repeat`). One whose count is rigid or a skolem
+            // relates only as itself, or by what it exposes.
+            Type::Repeat { .. } if open => match self.reify(Term::View(view)) {
+                Ok(reified) => exact(reified),
+                Err(Residual::Escape) => stuck(false),
+                Err(Residual::Inference) => stuck(true),
+                Err(residual) => Err(residual.into()),
+            },
             _ => stuck(false),
         }
     }
@@ -371,7 +380,13 @@ impl Solver<'_> {
         let mut changed = false;
         let mut exposed = Vec::with_capacity(members.len());
         for &member in members {
-            match member.projected().map(|schema| self.exposed_schema(schema)) {
+            let variance = member.intrinsic().map_or(Variance::Invariant, |intrinsic| {
+                self.schema_variance(intrinsic)
+            });
+            match member
+                .projected()
+                .map(|schema| self.exposed_schema(schema, variance))
+            {
                 Some(Ok(Some(schema))) => {
                     changed = true;
                     exposed.push(member.with(schema));
@@ -538,7 +553,7 @@ impl Solver<'_> {
                 known.push(member);
                 continue;
             };
-            let promoted = match self.keyed_view(bound) {
+            let promoted = match self.keyed_view(bound, self.schema_variance(Intrinsic::Keys)) {
                 Ok(Some(promoted)) => promoted,
                 Ok(None) | Err(Issue::Residual(_)) => return Ok(None),
                 Err(issue) => return Err(issue),
@@ -616,7 +631,10 @@ impl Solver<'_> {
             return Ok(None);
         }
         // Anything else relates as the meet does
-        let Ok(values) = self.selected(schema, key) else {
+        let variance = member.intrinsic().map_or(Variance::Invariant, |intrinsic| {
+            self.schema_variance(intrinsic)
+        });
+        let Ok(values) = self.selected(schema, key, variance) else {
             return Ok(None);
         };
         Ok(selected(values))

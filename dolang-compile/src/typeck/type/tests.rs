@@ -2310,6 +2310,96 @@ fn restrictions_lower_and_imply_key_bounds() {
     assert_eq!(db.implied_bounds(f), [(0, keys)]);
 }
 
+#[test]
+#[cfg_attr(miri, ignore = "type checker is safe code and too slow under Miri")]
+fn repeats_reduce_by_exact_count_and_keep_their_count_binder_exact() {
+    let mut db = Database::new();
+    let (int, int_ty, int_source) = declare(&mut db, DeclKind::Class, "Int");
+    db.populate(int, definition(int_source, int_ty));
+    db.set_intrinsic(Intrinsic::Int, int_ty);
+    let (id, repeat, mut source) = declare(&mut db, DeclKind::OpaqueAlias, "Repeat");
+    source.result_kind = Kind::Schema;
+    db.set_intrinsic(Intrinsic::Repeat, repeat);
+    db.populate(id, definition(source, repeat));
+    let a = db.intern_symbol("a");
+    let item = intern(&mut db, Type::Literal(Literal::Sym(a)));
+    let apply = |db: &mut Database, count| {
+        intern(
+            db,
+            Type::Apply {
+                base: repeat,
+                args: vec![Argument::Positional(item), Argument::Positional(count)].into(),
+                kind: Kind::Schema,
+            },
+        )
+    };
+    let positions = |db: &mut Database, multiplicity, n| {
+        let position = SchemaItem {
+            multiplicity,
+            element: Element::Positional(item),
+        };
+        intern(db, Type::Schema(vec![position; n].into()))
+    };
+    let literal = |db: &mut Database, n| intern(db, Type::Literal(Literal::Int(n)));
+    let fresh = |db: &mut Database, n| intern(db, Type::Fresh(Literal::Int(n)));
+
+    // A constant count gives that many required positions
+    for n in [0, 2, REPEAT_LIMIT] {
+        let count = literal(&mut db, i128::try_from(n).unwrap());
+        let expected = positions(&mut db, Multiplicity::Required, n);
+        assert_eq!(apply(&mut db, count), expected);
+    }
+    let count = fresh(&mut db, 3);
+    let expected = positions(&mut db, Multiplicity::Required, 3);
+    assert_eq!(apply(&mut db, count), expected);
+    let unknown = db.unknown();
+    assert_eq!(apply(&mut db, unknown), db.unknown_schema());
+    // Any other count stays, as a variable does
+    let above = literal(&mut db, i128::try_from(REPEAT_LIMIT).unwrap() + 1);
+    let below = literal(&mut db, -1);
+    let two = literal(&mut db, 2);
+    let three = literal(&mut db, 3);
+    let either = union(&mut db, &[two, three]);
+    let n = reference(&mut db, 0, 0, Kind::Type);
+    for count in [above, below, int_ty, either, n] {
+        let repeated = apply(&mut db, count);
+        assert_eq!(*db.ty(repeated), Type::Repeat { item, count });
+        assert_eq!(db.kind(repeated), Kind::Schema);
+    }
+    let repeated = apply(&mut db, n);
+
+    // [N] (N, ...Repeat[:a:, N]) -> :a:: `N` is exact, with no bound implied
+    let params = intern(
+        &mut db,
+        Type::Schema(
+            vec![
+                SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Positional(n),
+                },
+                SchemaItem {
+                    multiplicity: Multiplicity::Required,
+                    element: Element::Include(repeated),
+                },
+            ]
+            .into(),
+        ),
+    );
+    let body = intern(
+        &mut db,
+        Type::Function(Function {
+            params,
+            result: item,
+            input: None,
+            output: None,
+        }),
+    );
+    let f = quantify(&mut db, vec![binder(Kind::Type)], body);
+    db.seal();
+    assert_eq!(db.item_keys(f), [0]);
+    assert_eq!(db.implied_bounds(f), []);
+}
+
 /// Names a declaration by its source name
 struct Named<'a>(&'a Database);
 

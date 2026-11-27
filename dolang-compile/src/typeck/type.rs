@@ -280,6 +280,21 @@ impl UnionMember {
         }
     }
 
+    /// The projecting intrinsic it applies, if it's a projection
+    pub(crate) fn intrinsic(self) -> Option<Intrinsic> {
+        Some(match self {
+            Self::Type(_) => return None,
+            Self::Expand(_) => Intrinsic::Union,
+            Self::Keys(_) => Intrinsic::Keys,
+            Self::Values(_) => Intrinsic::Values,
+            Self::Entries(_) => Intrinsic::Entries,
+            Self::IndexItem(..) => Intrinsic::IndexItem,
+            Self::AssignItem(..) => Intrinsic::AssignItem,
+            Self::InsertItem(..) => Intrinsic::InsertItem,
+            Self::PushItem(_) => Intrinsic::PushItem,
+        })
+    }
+
     /// The same kind of member of another type or schema
     pub(crate) fn with(self, id: TypeId) -> Self {
         match self {
@@ -459,6 +474,13 @@ pub(crate) enum Type {
         target: TypeId,
         access: FieldAccess,
     },
+    /// `Repeat[T, N]`: a schema of `N` required positions of `T`. Interning
+    /// reduces it once its count is exact (see [`Database::reduce_repeat`]), so
+    /// it stands only while the count is a variable, rigid, or several counts.
+    Repeat {
+        item: TypeId,
+        count: TypeId,
+    },
     /// An overloaded function's value: its `@def` signatures, one of which a call
     /// or a function type it's passed as chooses, and its implementation's
     /// signature, which it relates as anywhere else. Never written; a solver
@@ -548,6 +570,10 @@ impl Type {
                 }
             }
             Self::Fields { target, .. } => visit(*target, 0),
+            Self::Repeat { item, count } => {
+                visit(*item, 0);
+                visit(*count, 0);
+            }
             Self::Overloaded {
                 overloads,
                 implementation,
@@ -632,6 +658,7 @@ impl Type {
                 discriminant(a) == discriminant(b)
             }
             (Self::Fields { access: a, .. }, Self::Fields { access: b, .. }) => a == b,
+            (Self::Repeat { .. }, Self::Repeat { .. }) => true,
             (
                 Self::Overloaded {
                     overloads: a,
@@ -729,6 +756,10 @@ impl Type {
                 }
             }
             Self::Fields { target, .. } => *target = f(*target, 0)?,
+            Self::Repeat { item, count } => {
+                *item = f(*item, 0)?;
+                *count = f(*count, 0)?;
+            }
             Self::Overloaded {
                 overloads,
                 implementation,
@@ -958,6 +989,11 @@ pub(crate) struct Exposure {
 }
 
 /// Stub types recognized by elaboration and intrinsic subtype rules.
+/// The largest constant count `Repeat` expands to its positions. A larger one
+/// stays unreduced, which the solver takes as any count, `{*T}`, where that's
+/// sound.
+pub(crate) const REPEAT_LIMIT: usize = 64;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Intrinsic {
     Union,
@@ -984,6 +1020,8 @@ pub(crate) enum Intrinsic {
     Fields,
     /// `MutFields[T]`, the keyed schema of a type's settable public members
     MutFields,
+    /// `Repeat[T, N]`, the schema of `N` required positions of `T`
+    Repeat,
     /// The class of a tuple, which `Entries` builds
     Tuple,
     /// The class of function values, and of every function type (see
@@ -1002,7 +1040,7 @@ pub(crate) enum Intrinsic {
 }
 
 impl Intrinsic {
-    const ALL: [Self; 21] = [
+    const ALL: [Self; 22] = [
         Self::Union,
         Self::Keys,
         Self::Values,
@@ -1015,6 +1053,7 @@ impl Intrinsic {
         Self::Clearable,
         Self::Fields,
         Self::MutFields,
+        Self::Repeat,
         Self::Tuple,
         Self::Func,
         Self::Int,
@@ -1042,6 +1081,7 @@ struct Intrinsics {
     clearable: Option<TypeId>,
     fields: Option<TypeId>,
     mut_fields: Option<TypeId>,
+    repeat: Option<TypeId>,
     tuple: Option<TypeId>,
     func: Option<TypeId>,
     int: Option<TypeId>,
@@ -1068,6 +1108,7 @@ impl Intrinsics {
             Intrinsic::Clearable => self.clearable,
             Intrinsic::Fields => self.fields,
             Intrinsic::MutFields => self.mut_fields,
+            Intrinsic::Repeat => self.repeat,
             Intrinsic::Tuple => self.tuple,
             Intrinsic::Func => self.func,
             Intrinsic::Int => self.int,
@@ -1094,6 +1135,7 @@ impl Intrinsics {
             Intrinsic::Clearable => &mut self.clearable,
             Intrinsic::Fields => &mut self.fields,
             Intrinsic::MutFields => &mut self.mut_fields,
+            Intrinsic::Repeat => &mut self.repeat,
             Intrinsic::Tuple => &mut self.tuple,
             Intrinsic::Func => &mut self.func,
             Intrinsic::Int => &mut self.int,
@@ -1652,7 +1694,8 @@ impl Database {
             Intrinsic::Deletable
             | Intrinsic::Clearable
             | Intrinsic::Fields
-            | Intrinsic::MutFields => Kind::Schema,
+            | Intrinsic::MutFields
+            | Intrinsic::Repeat => Kind::Schema,
             _ => Kind::Type,
         };
         self.expect_kind(ty, kind);
@@ -1968,9 +2011,11 @@ impl Database {
 
     fn known_kind(&self, id: TypeId) -> Option<Kind> {
         match self.ty(id) {
-            Type::Schema(_) | Type::Map { .. } | Type::Restricted { .. } | Type::Fields { .. } => {
-                Some(Kind::Schema)
-            }
+            Type::Schema(_)
+            | Type::Map { .. }
+            | Type::Restricted { .. }
+            | Type::Fields { .. }
+            | Type::Repeat { .. } => Some(Kind::Schema),
             Type::Bound { kind, .. } | Type::Rigid { kind, .. } | Type::Apply { kind, .. } => {
                 Some(*kind)
             }
@@ -2029,7 +2074,9 @@ impl Database {
     /// `Values` or `Entries` intrinsic is a union of its projection, and one of
     /// `Deletable` or `Clearable` a restricted schema, which leaves the dynamic
     /// schema as it is. One of `Fields` or `MutFields` is a member schema, which
-    /// is the dynamic schema for the dynamic type. A union is
+    /// is the dynamic schema for the dynamic type. One of `Repeat` is a
+    /// repeated schema, reduced once its count is exact (see
+    /// [`Self::reduce_repeat`]). A union is
     /// flattened, with its members sorted and deduplicated, and each projection of
     /// a schema among them is evaluated as far as the schema is known (see
     /// [`Self::project`]), a projection of `{...S}` being one of `S`. A union
@@ -2051,6 +2098,9 @@ impl Database {
                 if let Some(fields) = self.fields(base, &args) {
                     return self.normalize(fields);
                 }
+                if let Some(repeat) = self.repeat(base, &args) {
+                    return self.normalize(repeat);
+                }
                 match self.projection(base, &args) {
                     Some(members) => self.normalize(Type::Union(members.into())),
                     None => Type::Apply { base, args, kind },
@@ -2060,6 +2110,10 @@ impl Database {
             Type::Restricted { schema, .. } if matches!(self.ty(schema), Type::Unknown(_)) => {
                 self.ty(schema).clone()
             }
+            Type::Repeat { item, count } => match self.reduce_repeat(item, count) {
+                Some(reduced) => reduced,
+                None => Type::Repeat { item, count },
+            },
             // The dynamic type's members are the dynamic schema
             Type::Fields { target, .. } if matches!(self.ty(target), Type::Unknown(_)) => {
                 Type::Unknown(Kind::Schema)
@@ -2160,6 +2214,38 @@ impl Database {
             return None;
         };
         Some(Type::Fields { target, access })
+    }
+
+    /// The repeated schema an application of `Repeat` stands for
+    fn repeat(&self, base: TypeId, args: &[Argument]) -> Option<Type> {
+        if self.intrinsic(Intrinsic::Repeat) != Some(base) {
+            return None;
+        }
+        let [Argument::Positional(item), Argument::Positional(count)] = *args else {
+            return None;
+        };
+        Some(Type::Repeat { item, count })
+    }
+
+    /// The schema `Repeat[item, count]` stands for, if its count is exact: a
+    /// constant up to [`REPEAT_LIMIT`] gives that many required positions of
+    /// `item`, and the dynamic count the dynamic schema. Any other count stays,
+    /// as `Int`, a union of counts, or a variable may stand for several, and
+    /// only where the schema is used covariantly may the solver take it as any
+    /// count, `{*item}` (see `Solver::exposed_schema`).
+    fn reduce_repeat(&self, item: TypeId, count: TypeId) -> Option<Type> {
+        if let Type::Unknown(_) = self.ty(count) {
+            return Some(Type::Unknown(Kind::Schema));
+        }
+        let &Literal::Int(n) = self.literal(count)? else {
+            return None;
+        };
+        let n = usize::try_from(n).ok().filter(|&n| n <= REPEAT_LIMIT)?;
+        let position = SchemaItem {
+            multiplicity: Multiplicity::Required,
+            element: Element::Positional(item),
+        };
+        Some(Type::Schema(vec![position; n].into()))
     }
 
     /// The union members an application of a projecting intrinsic stands for, one
@@ -2636,6 +2722,10 @@ impl Database {
                 }
             }
             Type::Fields { target, .. } => self.expect_kind(*target, Kind::Type),
+            Type::Repeat { item, count } => {
+                self.expect_kind(*item, Kind::Type);
+                self.expect_kind(*count, Kind::Type);
+            }
         }
     }
 
@@ -3096,11 +3186,18 @@ impl Database {
     }
 
     /// The binders of a quantified type's group that an item projection or a
-    /// restriction in its body selects by, by slot. Its variables keep the
-    /// literals they're given, since a decayed key would select differently.
+    /// restriction in its body selects by, or that a repeated schema in it
+    /// counts by, by slot. Its variables keep the literals they're given, since
+    /// a decayed key would select differently, and a decayed count would admit
+    /// any length.
     pub(crate) fn item_keys(&self, quantified: TypeId) -> Vec<u16> {
         let mut slots = Vec::new();
-        for (slot, _, _) in self.key_projections(quantified) {
+        let projections = self.key_projections(quantified).into_iter();
+        let counts = self.binder_uses(quantified, |ty| match *ty {
+            Type::Repeat { item, count } => vec![(item, count)],
+            _ => Vec::new(),
+        });
+        for (slot, _, _) in projections.chain(counts) {
             if !slots.contains(&slot) {
                 slots.push(slot);
             }
@@ -3130,6 +3227,18 @@ impl Database {
     /// [`Type::keyed_projections`]): the binder's slot, the schema, and the
     /// number of groups the projection is under within the body
     fn key_projections(&self, quantified: TypeId) -> Vec<(u16, TypeId, u32)> {
+        self.binder_uses(quantified, Type::keyed_projections)
+    }
+
+    /// Each use `uses` finds in a quantified type's body, as a type it's of and
+    /// the type that uses it, whose user is one of its group's binders: the
+    /// binder's slot, the type it's of, and the number of groups the use is
+    /// under within the body
+    fn binder_uses(
+        &self,
+        quantified: TypeId,
+        uses: impl Fn(&Type) -> Vec<(TypeId, TypeId)>,
+    ) -> Vec<(u16, TypeId, u32)> {
         let Type::Quantified { body, .. } = self.ty(quantified) else {
             return Vec::new();
         };
@@ -3140,11 +3249,11 @@ impl Database {
             if !seen.insert((ty, depth)) {
                 continue;
             }
-            for (schema, key) in self.ty(ty).keyed_projections() {
-                if let Type::Bound { reference, .. } = *self.ty(key)
+            for (of, user) in uses(self.ty(ty)) {
+                if let Type::Bound { reference, .. } = *self.ty(user)
                     && u32::from(reference.depth) == depth
                 {
-                    found.push((reference.slot, schema, depth));
+                    found.push((reference.slot, of, depth));
                 }
             }
             self.ty(ty)

@@ -1379,6 +1379,18 @@ impl Solver<'_> {
             Type::Map { .. } => {
                 Err(Residual::Unsupported("an optional or repeated included mapping").into())
             }
+            // A repeated schema interning didn't reduce may stand for several
+            // counts, so it's opaque as a rigid is: on the actual side, one
+            // without a counterpart stands for any count, and on the expected
+            // side, nothing but itself is known to fit it
+            &Type::Repeat { item: repeated, .. } => {
+                let any = Term::View(TypeView {
+                    ty: self.any_count(repeated),
+                    environment: view.environment,
+                });
+                let repeat = Term::View(view);
+                self.include_rigid(repeat, any, multiplicity, item, keep, shape, depth)
+            }
             _ => Err(Residual::Unsupported("this kind of included schema").into()),
         }
     }

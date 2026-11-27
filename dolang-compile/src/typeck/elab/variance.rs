@@ -359,7 +359,9 @@ impl<'t> Collect<'t, '_> {
         // schema where every item they remove admits zero, which neither a wider
         // nor a narrower schema keeps, and a wider key removes more items.
         // `MutFields` takes its target contravariantly: a subclass sets the same
-        // members at the same types, and its own only optionally.
+        // members at the same types, and its own only optionally. `Repeat` is
+        // invariant in its count, since one that isn't exact may stand for
+        // several.
         if let Some(
             designated @ (Designated::Phantom
             | Designated::PipeStages
@@ -375,7 +377,8 @@ impl<'t> Collect<'t, '_> {
                 | Intrinsic::Deletable
                 | Intrinsic::Clearable
                 | Intrinsic::Fields
-                | Intrinsic::MutFields,
+                | Intrinsic::MutFields
+                | Intrinsic::Repeat,
             )),
         ) = tables.designated.get(&id)
         {
@@ -398,6 +401,7 @@ impl<'t> Collect<'t, '_> {
                 let used = match slot {
                     0 if antitone => Use::BOTH,
                     0 if *designated == Designated::Intrinsic(Intrinsic::MutFields) => Use::CONTRA,
+                    1 if *designated == Designated::Intrinsic(Intrinsic::Repeat) => Use::BOTH,
                     1 if antitone => Use::CONTRA,
                     _ => Use::CO,
                 };

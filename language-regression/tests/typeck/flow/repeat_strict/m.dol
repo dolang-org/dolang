@@ -1,0 +1,56 @@
+# dolang: strict
+#
+# What can't be verified is reported in a strict unit, so these show where a
+# repeated schema that interning didn't reduce stays stuck, and where it is
+# taken as any count.
+
+import std:
+  - @AssignItem
+  - @IndexItem
+  - @Repeat
+
+pub def need[N @ Int] _n@N _t@Tuple[...Repeat[Int, N]]
+  nil
+
+pub def fill[N @ Int] n@N -> Tuple[...Repeat[Int, N]]
+  ...
+
+# Nothing but the same schema fits one whose count isn't exact
+pub def expected k @ Int
+  need 2 (1, 2)
+  need $k (1, 2)
+  # error: expected `std.Tuple[...std.Repeat[std.Int, std.Int]]`, found `(1, 2)`
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   need $k (1, 2)
+  #    |           ^^^^^^
+  #    |
+  #    = note: `{1, 2}` does not fit `std.Repeat[std.Int, std.Int]`
+  need $k $ fill $k
+  nil
+
+# On the actual side, it's any count
+pub def widened t @ Tuple[...Repeat[Int, Int]] -> Tuple[*Int]
+  t
+
+pub def rigid[N @ Int] n@N -> Tuple[...Repeat[Int, N]]
+  fill $n
+
+pub @class Box[S @ {...}]
+  pub def (index)[K] self key@K -> IndexItem[S, K]
+  pub def (assign)[K] self key@K value@AssignItem[S, K]
+
+# A read takes its schema covariantly, so it may take any count; a write
+# doesn't
+pub def projected b @ Box[{...Repeat[Int, Int]}]
+  let _ = b[0]
+  #       ^~~~: value std.Int
+  b[0] = 1
+  # warning: the checker can't verify this
+  #   --> m.dol:LL:LL
+  #    |
+  # LL |   b[0] = 1
+  #    |   ^^^^^^^^
+  #    |
+  #    = note: it doesn't handle a type that may be inside a union member
+  nil

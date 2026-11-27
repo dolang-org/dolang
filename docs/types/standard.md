@@ -49,6 +49,7 @@ Projections are aliases that compute a type or schema from their arguments:
 | [`Clearable`](std.Clearable)   | The schema, provided removing every item leaves a value of it              |
 | [`Fields`](std.Fields)         | The schema of a class's readable public members                            |
 | [`MutFields`](std.MutFields)   | The schema of a class's settable public members                            |
+| [`Repeat`](std.Repeat)         | The schema of a given number of positions of one type                      |
 
 The standard collection protocols use them in their signatures: `Index[S]`
 reads a key `K` as `IndexItem[S, K]`, and `MutMixed[S]`'s `delete` requires

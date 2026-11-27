@@ -50,7 +50,8 @@ pub(crate) fn kinds(tables: &mut Tables<'_>, diags: &mut Vec<UnitDiag>) {
                             Intrinsic::Deletable
                             | Intrinsic::Clearable
                             | Intrinsic::Fields
-                            | Intrinsic::MutFields,
+                            | Intrinsic::MutFields
+                            | Intrinsic::Repeat,
                         ),
                         _,
                     )) => Kind::Schema,
