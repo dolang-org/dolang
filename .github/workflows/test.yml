@@ -130,11 +130,36 @@ jobs:
           cache: npm
           cache-dependency-path: dolang-code/package-lock.json
 
+      # The VS Code release the extension's tests run against, pinned in
+      # `test/vscode-version.mjs`. With it already downloaded, the tests make no
+      # network requests at all, so the update server being slow or unreachable
+      # can't fail the run. Restore and save are split so the save can follow
+      # `save-cache`'s policy of saving only on master.
+      - name: Restore VS Code test install
+        id: vscode-cache
+        if: matrix.target == 'x86_64-linux'
+        uses: actions/cache/restore@v5
+        with:
+          path: dolang-code/.vscode-test/vscode-linux-x64-*
+          key: vscode-test-linux-x64-${{ hashFiles('dolang-code/test/vscode-version.mjs') }}
+
       - name: Test and package VS Code extension
         if: matrix.target == 'x86_64-linux'
         run: |
           run npm --prefix dolang-code ci
           dodo.run vscode-test
+
+      # `path`/`key` are repeated from "Restore VS Code test install": GitHub's
+      # workflow parser doesn't resolve YAML anchors.
+      - name: Save VS Code test install
+        if: >
+          matrix.target == 'x86_64-linux' &&
+          github.ref == 'refs/heads/master' &&
+          steps.vscode-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: dolang-code/.vscode-test/vscode-linux-x64-*
+          key: vscode-test-linux-x64-${{ hashFiles('dolang-code/test/vscode-version.mjs') }}
 
       # Runs on the runner rather than in the VM, and before teardown: the
       # domain disk drops guest flushes, so the caches have to be copied out
