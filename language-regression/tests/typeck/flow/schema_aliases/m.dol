@@ -34,8 +34,8 @@ pub def missing x @ Struct[...Fields]
   # LL |   let _ = x.missing
   #    |           ^^^^^^^^^
   #    |
-  #    = note: `(get)`: expected `std.Keys[...m.Fields]`, found `:missing:`
-  #    = note: `:missing:` does not fit `std.Keys[...m.Fields]`
+  #    = note: `(get)`: expected `std.IndexKeys[...m.Fields]`, found `:missing:`
+  #    = note: `:missing:` does not fit `std.IndexKeys[...m.Fields]`
 
 pub def subclass x @ Sized
   let _ = x.size

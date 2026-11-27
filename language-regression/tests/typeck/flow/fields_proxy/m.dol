@@ -180,7 +180,7 @@ pub def bounded[T @ Point] v @ T
   #    |
   #    = note: `"x"` does not fit `std.Int`
   view[:label:] = ""
-# error: expected `std.Keys[...std.MutFields[T]]`, found `:label:`
+# error: expected `std.IndexKeys[...std.MutFields[T]]`, found `:label:`
 #   --> m.dol:LL:LL
 #    |
 # LL |   view[:label:] = ""

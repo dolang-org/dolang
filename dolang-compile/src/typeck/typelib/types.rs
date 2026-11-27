@@ -166,6 +166,7 @@ pub(crate) enum Member {
     Type(u32),
     Expand(u32),
     Keys(u32),
+    IndexKeys(u32),
     Values(u32),
     Entries(u32),
     IndexItem(u32, u32),
@@ -288,6 +289,7 @@ impl Ty {
                         Member::Type(ty)
                         | Member::Expand(ty)
                         | Member::Keys(ty)
+                        | Member::IndexKeys(ty)
                         | Member::Values(ty)
                         | Member::Entries(ty)
                         | Member::PushItem(ty) => visit(ty),
@@ -449,6 +451,7 @@ impl Table {
                             Member::Type(ty) => UnionMember::Type(at(ty)),
                             Member::Expand(ty) => UnionMember::Expand(at(ty)),
                             Member::Keys(ty) => UnionMember::Keys(at(ty)),
+                            Member::IndexKeys(ty) => UnionMember::IndexKeys(at(ty)),
                             Member::Values(ty) => UnionMember::Values(at(ty)),
                             Member::Entries(ty) => UnionMember::Entries(at(ty)),
                             Member::PushItem(ty) => UnionMember::PushItem(at(ty)),
@@ -644,6 +647,7 @@ impl<'a> Encode<'a> {
                         UnionMember::Type(ty) => Member::Type(self.ty(ty)),
                         UnionMember::Expand(ty) => Member::Expand(self.ty(ty)),
                         UnionMember::Keys(ty) => Member::Keys(self.ty(ty)),
+                        UnionMember::IndexKeys(ty) => Member::IndexKeys(self.ty(ty)),
                         UnionMember::Values(ty) => Member::Values(self.ty(ty)),
                         UnionMember::Entries(ty) => Member::Entries(self.ty(ty)),
                         UnionMember::PushItem(ty) => Member::PushItem(self.ty(ty)),

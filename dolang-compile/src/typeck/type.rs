@@ -223,6 +223,8 @@ pub(crate) enum UnionMember {
     Expand(TypeId),
     /// A schema's keys, as `Keys[S]`
     Keys(TypeId),
+    /// The keys indexing a schema's value accepts, as `IndexKeys[S]`
+    IndexKeys(TypeId),
     /// A schema's items' values, positional or keyed, as `Values[S]`
     Values(TypeId),
     /// A `Tuple[key, value]` for each of a schema's items, as `Entries[S]`
@@ -247,6 +249,7 @@ impl UnionMember {
         let (Self::Type(id)
         | Self::Expand(id)
         | Self::Keys(id)
+        | Self::IndexKeys(id)
         | Self::Values(id)
         | Self::Entries(id)
         | Self::IndexItem(id, _)
@@ -286,6 +289,7 @@ impl UnionMember {
             Self::Type(_) => return None,
             Self::Expand(_) => Intrinsic::Union,
             Self::Keys(_) => Intrinsic::Keys,
+            Self::IndexKeys(_) => Intrinsic::IndexKeys,
             Self::Values(_) => Intrinsic::Values,
             Self::Entries(_) => Intrinsic::Entries,
             Self::IndexItem(..) => Intrinsic::IndexItem,
@@ -301,6 +305,7 @@ impl UnionMember {
             Self::Type(_) => Self::Type(id),
             Self::Expand(_) => Self::Expand(id),
             Self::Keys(_) => Self::Keys(id),
+            Self::IndexKeys(_) => Self::IndexKeys(id),
             Self::Values(_) => Self::Values(id),
             Self::Entries(_) => Self::Entries(id),
             Self::IndexItem(_, key) => Self::IndexItem(id, key),
@@ -999,6 +1004,8 @@ pub(crate) enum Intrinsic {
     Union,
     /// `Keys[S]`, the union of a schema's keys
     Keys,
+    /// `IndexKeys[S]`, the union of the keys indexing a schema's value accepts
+    IndexKeys,
     /// `Values[S]`, the union of a schema's values
     Values,
     /// `Entries[S]`, the union of a schema's keyed items as key-value tuples
@@ -1040,9 +1047,10 @@ pub(crate) enum Intrinsic {
 }
 
 impl Intrinsic {
-    const ALL: [Self; 22] = [
+    const ALL: [Self; 23] = [
         Self::Union,
         Self::Keys,
+        Self::IndexKeys,
         Self::Values,
         Self::Entries,
         Self::IndexItem,
@@ -1071,6 +1079,7 @@ impl Intrinsic {
 struct Intrinsics {
     union: Option<TypeId>,
     keys: Option<TypeId>,
+    index_keys: Option<TypeId>,
     values: Option<TypeId>,
     entries: Option<TypeId>,
     index_item: Option<TypeId>,
@@ -1098,6 +1107,7 @@ impl Intrinsics {
         match intrinsic {
             Intrinsic::Union => self.union,
             Intrinsic::Keys => self.keys,
+            Intrinsic::IndexKeys => self.index_keys,
             Intrinsic::Values => self.values,
             Intrinsic::Entries => self.entries,
             Intrinsic::IndexItem => self.index_item,
@@ -1125,6 +1135,7 @@ impl Intrinsics {
         match intrinsic {
             Intrinsic::Union => &mut self.union,
             Intrinsic::Keys => &mut self.keys,
+            Intrinsic::IndexKeys => &mut self.index_keys,
             Intrinsic::Values => &mut self.values,
             Intrinsic::Entries => &mut self.entries,
             Intrinsic::IndexItem => &mut self.index_item,
@@ -2274,6 +2285,7 @@ impl Database {
                 UnionMember::Expand as fn(TypeId) -> UnionMember,
             ),
             (Intrinsic::Keys, UnionMember::Keys),
+            (Intrinsic::IndexKeys, UnionMember::IndexKeys),
             (Intrinsic::Values, UnionMember::Values),
             (Intrinsic::Entries, UnionMember::Entries),
             (Intrinsic::PushItem, UnionMember::PushItem),
@@ -2295,12 +2307,14 @@ impl Database {
     /// way in turn, so a known item is reduced beside a pack. `Values` folds each
     /// item's value, ignoring its multiplicity, and projects an included schema
     /// the same way in turn. `Keys` and `Entries` fold the schema's keyed view
-    /// (see [`Self::promoted`]): `Keys` takes each key, and `Int` for any
-    /// positions, since an `Int` selects them all; `Entries` takes each
-    /// `Tuple[key, value]`. A schema not yet known keeps the projection, and the
-    /// dynamic schema projects to the dynamic type. `Entries` stays whole without
-    /// a designated `Tuple`, `Keys` of a schema with positions without a
-    /// designated `Int`, and `Entries` with a varying position without one.
+    /// (see [`Self::promoted`]): `Keys` takes each key, a fixed position's
+    /// being its index, or `Int` for all positions if one varies; `IndexKeys` takes each
+    /// keyed item's key, and `Int` for any positions, since an `Int` selects
+    /// them all; `Entries` takes each `Tuple[key, value]`. A schema not yet
+    /// known keeps the projection, and the dynamic schema projects to the
+    /// dynamic type. `Entries` stays whole without a designated `Tuple`,
+    /// `IndexKeys` of a schema with positions without a designated `Int`, and
+    /// `Keys` and `Entries` with a varying position without one.
     pub(crate) fn project(&self, member: UnionMember) -> Projected {
         let Some(schema) = member.projected() else {
             return Projected::Pending;
@@ -2350,6 +2364,21 @@ impl Database {
         let mut members = Vec::new();
         match member {
             UnionMember::Keys(_) => {
+                // A varying position's `Int` covers the fixed ones' indexes
+                match (promoted.varying.is_empty(), int) {
+                    (true, _) => members
+                        .extend((0..promoted.fixed.len()).map(|i| UnionMember::Type(index(i)))),
+                    (false, Some(int)) => members.push(UnionMember::Type(int)),
+                    (false, None) => return Projected::Pending,
+                }
+                members.extend(
+                    promoted
+                        .keyed
+                        .iter()
+                        .map(|&(_, key, _)| UnionMember::Type(key)),
+                );
+            }
+            UnionMember::IndexKeys(_) => {
                 // An `Int` selects every position, as an index does
                 if !promoted.fixed.is_empty() || !promoted.varying.is_empty() {
                     let Some(int) = int else {
@@ -3206,15 +3235,15 @@ impl Database {
     }
 
     /// The bounds item projections in a quantified type's body imply for its
-    /// group's binders, with the binder's slot: `Keys[S]` for each schema `S`
-    /// the body selects items of by the binder, since a key outside them
+    /// group's binders, with the binder's slot: `IndexKeys[S]` for each schema
+    /// `S` the body selects items of by the binder, since a key outside them
     /// selects nothing. Each is interpreted in the group's environment. Only
     /// the body's own projections count: one under a nested quantifier may
     /// select from a schema of that quantifier's binders.
     pub(crate) fn implied_bounds(&self, quantified: TypeId) -> Vec<(u16, TypeId)> {
         let mut bounds = Vec::new();
         for (slot, schema, depth) in self.key_projections(quantified) {
-            let keys = self.intern(Type::Union(vec![UnionMember::Keys(schema)].into()));
+            let keys = self.intern(Type::Union(vec![UnionMember::IndexKeys(schema)].into()));
             if depth == 0 && !bounds.contains(&(slot, keys)) {
                 bounds.push((slot, keys));
             }

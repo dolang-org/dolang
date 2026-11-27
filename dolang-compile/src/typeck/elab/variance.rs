@@ -368,6 +368,7 @@ impl<'t> Collect<'t, '_> {
             | Designated::Intrinsic(
                 Intrinsic::Union
                 | Intrinsic::Keys
+                | Intrinsic::IndexKeys
                 | Intrinsic::Values
                 | Intrinsic::Entries
                 | Intrinsic::IndexItem

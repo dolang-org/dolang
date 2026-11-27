@@ -540,6 +540,10 @@ pub(super) fn designation(tables: &Tables<'_>, decl: DeclId) -> Option<(Designat
             Designated::Intrinsic(Intrinsic::Keys),
             DeclKind::OpaqueAlias,
         ),
+        ("std", "IndexKeys") => (
+            Designated::Intrinsic(Intrinsic::IndexKeys),
+            DeclKind::OpaqueAlias,
+        ),
         ("std", "Values") => (
             Designated::Intrinsic(Intrinsic::Values),
             DeclKind::OpaqueAlias,
