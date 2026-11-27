@@ -1,0 +1,6 @@
+# The Binaryen release `wasm-opt` comes from. `dodo` builds it from source
+# through the `wasm-opt` crate of the matching `0.<version>.0` version unless
+# that release is on PATH; CI installs the prebuilt x86_64 Linux archive, whose
+# SHA-256 is pinned here.
+version = 133
+x86_64-linux-sha256 = "2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489"

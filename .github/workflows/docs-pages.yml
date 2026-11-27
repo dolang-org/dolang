@@ -48,15 +48,33 @@ jobs:
       # prebuilt install instead of compiling one when the versions agree.
       - name: Find wasm-bindgen version
         id: wasm-bindgen
-        shell: bash
         run: |
-          version=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"$/\1/p')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          import toml
+
+          let "package": packages ... = toml.decode $fs.Path("Cargo.lock").read_str()
+          let version = packages.find(do |package| package["name"] == "wasm-bindgen")["version"]
+          fs.append $env["GITHUB_OUTPUT"] |
+            version=$version
 
       - name: Install wasm-bindgen
         uses: taiki-e/install-action@v2
         with:
           tool: wasm-bindgen@${{ steps.wasm-bindgen.outputs.version }}
+
+      # `dodo` builds the pinned Binaryen from source unless a `wasm-opt` of
+      # that release is on PATH, so install the prebuilt one.
+      - name: Install wasm-opt
+        run: |
+          import toml transfer
+
+          let "version": version "x86_64-linux-sha256": sha256 = toml.decode $fs.Path("tools/binaryen.toml").read_str()
+          let release = "https://github.com/WebAssembly/binaryen/releases/download/version_$version"
+          let archive = transfer.get "$release/binaryen-version_$version-x86_64-linux.tar.gz" digest: sha256:$sha256
+          let dir = (fs.Path(env["RUNNER_TEMP"]) / "binaryen")
+          transfer.unpack $archive $dir format: :TAR_GZIP: strip: :ROOT:
+          run (dir / "bin" / "wasm-opt") --version
+          fs.append $env["GITHUB_PATH"] |
+            $(dir / "bin")
 
       - name: Setup Python
         uses: actions/setup-python@v6

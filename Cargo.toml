@@ -498,6 +498,15 @@ incremental = false
 panic = "abort"
 
 
+# The playground's Wasm module, where download size matters more than raw
+# speed. Fat LTO shrinks it noticeably; native distribution builds see little
+# benefit.
+[profile.wasm]
+inherits = "dist"
+opt-level = "s"
+lto = "fat"
+
+
 # Lightly optimized, for tests that are slow or memory-hungry unoptimized:
 # AddressSanitizer and the wasm tests, whose runner holds the whole module and
 # its debug info. Line tables are enough for symbolized backtraces.
