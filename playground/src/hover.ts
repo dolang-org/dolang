@@ -85,6 +85,8 @@ export function signature(signature: Signature): string {
       return binding(`${pub(signature.pub)}field ${signature.name}`, signature.type);
     case 'let':
       return `${binding(`${pub(signature.pub)}let ${signature.name}`, signature.type)} = ...`;
+    case 'alias':
+      return `${pub(signature.pub)}@let ${named(signature.name, signature.binders)} = ${signature.type ?? '...'}`;
     case 'param':
       return paramBinding(signature.param);
   }

@@ -140,6 +140,15 @@ pub(crate) enum Signature {
         #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
         ty: Option<String>,
     },
+    /// A type alias, `type` absent for an opaque one, written `...`
+    Alias {
+        #[serde(rename = "pub")]
+        is_pub: bool,
+        name: String,
+        binders: Vec<String>,
+        #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+        ty: Option<String>,
+    },
     Param {
         param: Param,
     },
@@ -1001,6 +1010,12 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
             name,
             ty: ty(),
         },
+        Kind::Alias { is_pub, .. } => Signature::Alias {
+            is_pub,
+            name,
+            binders: binders(),
+            ty: ty(),
+        },
         // A parameter is as written, but for its default
         Kind::PositionalParam { .. }
         | Kind::KeyParam { .. }
@@ -1130,6 +1145,53 @@ mod tests {
             panic!("{:?}", hover.declarations)
         };
         assert_eq!(name, "count");
+    }
+
+    #[wasm_bindgen_test]
+    fn local_alias_has_its_signature_where_a_type_names_it() {
+        // A comment opening the source documents the module instead
+        let source = "let w = 0\n# Two of a kind.\npub @let Pair[T] = Tuple[T, T]\n@let Hidden = ...\ndef swap p@(Pair[Hidden])\n  (p[1], p[0])\n";
+        let analyzed = checked(source);
+        let alias = |at: usize| {
+            let hover = analyzed.hover(at, at).unwrap();
+            let [
+                Declaration::Local {
+                    doc,
+                    signature:
+                        Signature::Alias {
+                            is_pub,
+                            name,
+                            binders,
+                            ty,
+                        },
+                    ..
+                },
+            ] = &hover.declarations[..]
+            else {
+                panic!("{:?}", hover.declarations)
+            };
+            (
+                doc.clone(),
+                *is_pub,
+                name.clone(),
+                binders.clone(),
+                ty.clone(),
+            )
+        };
+        let pair = (
+            "Two of a kind.".to_owned(),
+            true,
+            "Pair".to_owned(),
+            vec!["T".to_owned()],
+            Some("Tuple[T, T]".to_owned()),
+        );
+        // Its declaration, and its use in an annotation
+        let declared = source.find("Pair").unwrap() + 1;
+        assert_eq!(alias(declared), pair);
+        assert_eq!(alias(last(source, "Pair") + 1), pair);
+        // An opaque alias has no type to write
+        let hidden = (String::new(), false, "Hidden".to_owned(), Vec::new(), None);
+        assert_eq!(alias(last(source, "Hidden") + 1), hidden);
     }
 
     #[wasm_bindgen_test]

@@ -441,6 +441,12 @@ fn declaration_label(unit: &Unit<'_>, id: NodeId) -> Option<String> {
             &format!("{}let {name}", if is_pub { "pub " } else { "" }),
             ty.as_deref(),
         ),
+        // An opaque alias has no type, but is written with `...` in its place
+        Kind::Alias { is_pub, .. } => format!(
+            "{}@let {name} = {}",
+            if is_pub { "pub " } else { "" },
+            ty.as_deref().unwrap_or("..."),
+        ),
         // A parameter is labeled as a `let` binds it
         Kind::PositionalParam { .. }
         | Kind::KeyParam { .. }
@@ -3829,6 +3835,32 @@ let f = twice
         };
         assert_fences_parse(&content.value);
         Some(content.value)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hover_shows_a_local_alias_where_a_type_names_it() {
+        let mut harness = Harness::new();
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///alias-hover.dol".parse().unwrap();
+        // A comment opening the source documents the module instead
+        let text = "\
+let w = 0
+# Two of a kind.
+pub @let Pair[T] = Tuple[T, T]
+@let Hidden = ...
+def swap p@(Pair[Hidden])
+  (p[1], p[0])
+";
+        harness.open(uri.clone(), text, 1).await;
+        let pair = "```dolang\npub @let Pair[T] = Tuple[T, T]\n```\n\nTwo of a kind.";
+        // Its declaration, and its use in an annotation
+        for (line, character) in [(2, 10), (4, 13)] {
+            let hover = hover_text(&mut harness, uri.clone(), line, character).await;
+            assert_eq!(hover.as_deref(), Some(pair), "line {line}");
+        }
+        // An opaque alias has no type to write
+        let hidden = hover_text(&mut harness, uri, 4, 20).await;
+        assert_eq!(hidden.as_deref(), Some("```dolang\n@let Hidden = ...\n```"));
     }
 
     #[tokio::test(flavor = "current_thread")]
