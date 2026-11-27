@@ -98,16 +98,13 @@ test("increaseIndentPattern never matches (onEnterRules decide)", () => {
     }
 });
 
-for (const [line, expected] of [
-    ["catch err", true],
-    ["  finally", true],
-    ["else", false],
-    ["catcher", false]
-]) {
-    test(`decreaseIndent: ${JSON.stringify(line)} -> ${expected}`, () => {
-        assert.equal(decrease.test(line), expected);
-    });
-}
+// `catch`, `finally` and `else` move to their headers as they're typed, which
+// the extension's on-type formatting does; VS Code would move them first
+test("decreaseIndentPattern never matches (on-type formatting decides)", () => {
+    for (const line of ["catch err", "  finally", "else", "catcher"]) {
+        assert.ok(!decrease.test(line), line);
+    }
+});
 
 // VS Code's default word pattern, used because the configuration sets none.
 const DEFAULT_WORD_REGEXP = /(-?\d*\.\d\w*)|([^`~!@#$%^&*()\-=+[{\]}\\|;:'",.<>/?\s]+)/g;

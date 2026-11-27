@@ -29,7 +29,7 @@
     },
     "indentationRules": {
         "increaseIndentPattern": "^(?!)",
-        "decreaseIndentPattern": "^\\s*(?:catch|finally)\\b"
+        "decreaseIndentPattern": "^(?!)"
     },
     "onEnterRules": [
         {

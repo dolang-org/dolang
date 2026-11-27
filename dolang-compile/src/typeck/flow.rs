@@ -196,8 +196,8 @@ pub enum Role {
     /// A module's item, named by a path through the module, which sees the
     /// item's value
     Item,
-    /// A name written in a type, by the span of its head, which refers to a
-    /// declaration or a binder
+    /// A name written in a type, which refers to a declaration or a binder. A
+    /// path through a module is judged at the name ending it.
     Reference,
     /// A type written in source: an annotation, a return type, a bound or
     /// default, an alias's definition or a supertype

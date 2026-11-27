@@ -120,7 +120,7 @@ pub(crate) struct Shard<'u> {
     pub(crate) referents: Vec<Referent>,
     /// The link of each name a unit with source writes, by the span of its head.
     /// Only lowering and the analysis, which read syntax, look a name up.
-    pub(crate) refs: FxHashMap<source::Span, LinkId>,
+    pub(crate) refs: FxHashMap<source::Span, Written>,
     /// The modules the unit imports, and the prelude modules it uses, by
     /// [`ModuleId`]
     pub(crate) modules: Vec<Module>,
@@ -397,7 +397,8 @@ impl<'u> Tables<'u> {
 
     /// What a name written in a unit with source refers to, by the span of its head
     pub(crate) fn written(&self, unit: UnitId, head: source::Span) -> Option<&Referent> {
-        self.linked(self.shards[unit.index()].refs.get(&head).copied())
+        let written = self.shards[unit.index()].refs.get(&head);
+        self.linked(written.map(|written| written.link))
     }
 
     /// The number of signatures of a declaration: its defs or methods, or 1
@@ -848,6 +849,14 @@ pub(crate) enum Referent {
     /// A checked module, reached by a name that is not dotted, which a shard
     /// names only once linked
     Module(UnitId),
+}
+
+/// A name a unit with source writes: its link, and where the name ends, which
+/// for a path is its last field
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Written {
+    pub(crate) link: LinkId,
+    pub(crate) name: source::Span,
 }
 
 /// What an unresolved name or export refers to. A module is one of its unit's

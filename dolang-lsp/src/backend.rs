@@ -836,6 +836,8 @@ struct Analyzed {
     analysis: Arc<typeck::Analysis>,
     /// The modules the check has the units of
     modules: Arc<Modules>,
+    /// The fixes the check's diagnostics of the document offer
+    patches: Vec<Patch>,
 }
 
 /// A document's check
@@ -889,38 +891,14 @@ impl Document {
             .then(|| self.unit.locate(offset..offset).start())
     }
 
-    /// The item a path through a module names as a type, as `json.DecodeValue`
-    /// does, when the byte `offset` falls in the item's name: the module, the
-    /// item, and where its name is
-    fn type_item_at(&self, offset: usize) -> Option<(&str, &str, ops::Range<usize>)> {
-        let unit = &self.unit;
-        unit.nodes().find_map(|(_, node)| {
-            let Kind::NameType {
-                head,
-                target: Some(target),
-            } = node.kind()
-            else {
-                return None;
-            };
-            let source = unit.source();
-            let dot = unit.byte_range(head).end;
-            // The span covers any grouping parentheses
-            let path = source.get(dot..unit.byte_range(node.span()?).end)?;
-            let rest = path.strip_prefix('.')?;
-            let len = rest
-                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .unwrap_or(rest.len());
-            let item = dot + 1..dot + 1 + len;
-            if !(item.start..=item.end).contains(&offset) {
-                return None;
-            }
-            let module = match unit.node(target)?.kind() {
-                Kind::ImportModule { module, .. } => unit.text(module),
-                Kind::PreludeModule { module, .. } => module,
-                _ => return None,
-            };
-            Some((module, &source[item.clone()], item))
-        })
+    /// The span of the type name the latest check judged at `offset`, as the
+    /// item a path through a module names, which no token refers to
+    fn type_name_at(&self, analyzed: &Analyzed, offset: usize) -> Option<diag::Span> {
+        let node = analyzed.analysis.at(analyzed.unit, self.pos(offset)?)?;
+        let named = node
+            .judgments()
+            .any(|judged| judged.role() == Role::Reference);
+        named.then(|| node.span())
     }
 
     /// The declaration named by the token under `pos`, if any.
@@ -945,15 +923,6 @@ impl Document {
         reference: Option<NodeId>,
     ) -> (Vec<Target<'a>>, Option<u32>) {
         let modules = &analyzed.modules;
-        // The check sees no use of an item a type names
-        if reference.is_none()
-            && let Some((module, item, _)) = self.type_item_at(offset)
-        {
-            return (
-                lookup::item(modules, module, item).into_iter().collect(),
-                None,
-            );
-        }
         let node = self
             .pos(offset)
             .and_then(|pos| analyzed.analysis.at(analyzed.unit, pos));
@@ -992,7 +961,7 @@ impl Document {
 }
 
 /// What the analysis `node` names: the members a member use reached, or else
-/// the item a path through a module names
+/// the item a path through a module names, or the declaration a type names
 fn node_targets<'a>(modules: &'a Modules, node: typeck::Node<'_>) -> Vec<Target<'a>> {
     let members: Vec<_> = node
         .judgments()
@@ -1005,7 +974,9 @@ fn node_targets<'a>(modules: &'a Modules, node: typeck::Node<'_>) -> Vec<Target<
     if !members.is_empty() {
         return members;
     }
-    let item = node.judgments().find(|judged| judged.role() == Role::Item);
+    let item = node
+        .judgments()
+        .find(|judged| matches!(judged.role(), Role::Item | Role::Reference));
     let item = item.and_then(|judged| judged.declaration());
     item.and_then(|item| lookup::item(modules, item.module(), item.name()))
         .into_iter()
@@ -1995,6 +1966,7 @@ pub(crate) fn check_units(
         })
         .collect();
     let mut diagnostics = vec![Vec::new(); units.len()];
+    let mut patches = vec![Vec::new(); units.len()];
     for diag in checked.diagnostics() {
         let Some((id, &at)) = diag.span().unit().and_then(|id| Some((id, at.get(&id)?))) else {
             continue;
@@ -2004,6 +1976,9 @@ pub(crate) fn check_units(
                 relate_checked(uri, index, &checked, id, range, span, message)
             };
             convert_diag(index, diag, relate, &mut diagnostics[at]);
+            // A fix in another unit can't be applied to the document
+            let own = |span: &diag::SourceSpan| span.unit() == Some(id);
+            collect_patches(index, diag, own, &mut patches[at]);
         }
     }
     let names: Vec<_> = ids.iter().map(|id| id.map(|id| checked.name(id))).collect();
@@ -2049,7 +2024,8 @@ pub(crate) fn check_units(
         .into_iter()
         .zip(names)
         .zip(diagnostics)
-        .map(|((id, name), diagnostics)| {
+        .zip(patches)
+        .map(|(((id, name), diagnostics), patches)| {
             let analyzed = id
                 .zip(name)
                 .zip(analysis.as_ref())
@@ -2059,6 +2035,7 @@ pub(crate) fn check_units(
                         name,
                         analysis: analysis.clone(),
                         modules: modules.clone(),
+                        patches,
                     })
                 });
             Checked {
@@ -2160,6 +2137,28 @@ fn convert_diag(
             _ => DiagnosticSeverity::INFORMATION,
         });
         out.push(converted);
+    }
+}
+
+/// Adds the fixes `diag` offers whose spans are `own` to `out`
+fn collect_patches(
+    index: &DocumentIndex<'_>,
+    diag: &diag::Diag,
+    own: impl Fn(&diag::SourceSpan) -> bool,
+    out: &mut Vec<Patch>,
+) {
+    let diagnostic_range = index.range_from_span(&diag.span().span());
+    let diagnostic_message = diag.message().to_string();
+    let diagnostic_severity = severity(diag.severity());
+    for patch in diag.patches().filter(|patch| own(&patch.span())) {
+        out.push(Patch {
+            diagnostic_range,
+            diagnostic_severity,
+            diagnostic_message: diagnostic_message.clone(),
+            patch_range: index.range_from_span(&patch.span().span()),
+            replacement: patch.sub().to_string(),
+            title: patch.message().to_string(),
+        });
     }
 }
 
@@ -2447,21 +2446,7 @@ fn project(
             message,
         };
         convert_diag(&index, &diag, relate, &mut diags);
-
-        let diagnostic_range = index.range_from_span(&diag.span().span());
-        let diagnostic_message = diag.message().to_string();
-        let diagnostic_severity = severity(diag.severity());
-
-        for patch in diag.patches() {
-            patches.push(Patch {
-                diagnostic_range,
-                diagnostic_severity,
-                diagnostic_message: diagnostic_message.clone(),
-                patch_range: index.range_from_span(&patch.span().span()),
-                replacement: patch.sub().to_string(),
-                title: patch.message().to_string(),
-            });
-        }
+        collect_patches(&index, &diag, |_| true, &mut patches);
     }
     let statics = static_fields(&unit);
     unit.tokens(
@@ -2772,10 +2757,13 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
 
-        let patches = &document.patches;
+        // The check's fixes are of the text it checked, which is the
+        // document's while it keeps the check
+        let analyzed = document.analyzed();
+        let checked = analyzed.iter().flat_map(|analyzed| &analyzed.patches);
         let mut actions = Vec::new();
 
-        for patch in patches {
+        for patch in document.patches.iter().chain(checked) {
             let cursor_in_diagnostic =
                 range_contains_position(patch.diagnostic_range, params.range.start);
             let cursor_in_patch = range_contains_position(patch.patch_range, params.range.start);
@@ -2958,17 +2946,21 @@ impl LanguageServer for Backend {
                 Some(Kind::ImportModule { .. } | Kind::PreludeModule { .. })
             )
         });
-        // An item a type names has no node, so what the check concluded at it
-        // is about what encloses it
-        let type_item = (reference.is_none())
-            .then(|| index.offset_from_position(pos))
-            .flatten()
-            .and_then(|offset| document.type_item_at(offset))
-            .map(|(.., item)| index.range_from_offsets(item.start, item.end));
+        // An item a path through a module names as a type has no token
+        // referring to it, so the check's judgment is what names it
+        let type_name = match (
+            reference,
+            analyzed.as_deref(),
+            index.offset_from_position(pos),
+        ) {
+            (None, Some(analyzed), Some(offset)) => document.type_name_at(analyzed, offset),
+            _ => None,
+        };
+        let type_name = type_name.map(|span| index.range_from_span(&span));
         let (checked, (targets, chosen)) =
             match (analyzed.as_deref(), index.offset_from_position(pos)) {
                 (Some(analyzed), Some(offset)) => (
-                    (!module && type_item.is_none())
+                    (!module)
                         .then(|| document.checked_at(analyzed, offset, referenced))
                         .flatten(),
                     document.targets(analyzed, offset, reference.map(|(_, id, _)| id)),
@@ -3000,7 +2992,7 @@ impl LanguageServer for Backend {
             let docs: Vec<_> = docs.iter().filter_map(|doc| doc.render(typed)).collect();
             (!docs.is_empty()).then(|| docs.join("\n\n---\n\n"))
         };
-        let reference = reference.map(|(range, ..)| range).or(type_item);
+        let reference = reference.map(|(range, ..)| range).or(type_name);
         let (range, value) = match checked {
             None => match (reference, render(false)) {
                 (Some(range), Some(markdown)) => (range, markdown),
@@ -3946,11 +3938,14 @@ def fail() -> std.Never
   throw std.ValueError \"failed\"
 def g x@(s.Never | nil)
   x
+def h x @ Int
+  (x !@ s.Never)
 ";
         harness.open(uri.clone(), text, 1).await;
         harness.next_publish().await;
-        // Through the prelude's module, and through an import inside a group
-        for (line, start) in [(1, 18), (3, 11)] {
+        // Through the prelude's module, through an import inside a group, and
+        // in a cast
+        for (line, start) in [(1, 18), (3, 11), (6, 10)] {
             let hover = hover_at(&mut harness, uri.clone(), line, start + 2).await;
             let hover = hover.unwrap_or_else(|| panic!("no hover on line {line}"));
             let HoverContents::Markup(content) = hover.contents else {
@@ -5211,6 +5206,10 @@ f 1
         let found = references(&mut harness, &a, 5, 10, true).await;
         let get = [at(&a, 5, 10, 13), at(&a, 8, 10, 13), at(&user, 2, 4, 7)];
         assert_eq!(found, get);
+
+        // A class a type names through its module, at its name alone
+        let found = references(&mut harness, &a, 4, 10, false).await;
+        assert_eq!(found, [at(&user, 1, 16, 17)]);
     }
 
     #[test]

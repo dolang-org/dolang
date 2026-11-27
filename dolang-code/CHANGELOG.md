@@ -30,3 +30,5 @@
 - Do: Build Project and Do: Check Project run `doze bundle` and `doze check`
   on the language server's project root, with `doze` tasks for `tasks.json`
   and Run Build Task; the check's report fills the Problems panel
+- A typed `catch` or `finally` moves out to its `try`, and an `else` to its
+  `if`, through format on type, which the extension turns on for Do

@@ -5,7 +5,7 @@ use std::{borrow::Cow, sync::Arc};
 
 use rustc_hash::FxHashMap;
 
-use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables, sig};
+use super::{Ambient, BinderRef, DeclNode, Designated, Referent, Tables, Written, sig};
 use crate::{
     diag::Span,
     typeck::{
@@ -97,8 +97,8 @@ impl Tables<'_> {
             .file;
         let mut refs: Vec<_> = shard.refs.iter().collect();
         refs.sort_unstable_by_key(|&(head, _)| (head.start, head.end));
-        for (&head, &link) in refs {
-            let head = file.locate(head);
+        for (_, &Written { link, name: at }) in refs {
+            let at = file.locate(at);
             let (decl, name, ty) = match *self.linked(Some(link)).expect("a link refers") {
                 Referent::Decl(id) => {
                     let ty = copier.ty(db.intern(Type::Decl(id)));
@@ -111,7 +111,7 @@ impl Tables<'_> {
                 Referent::Module(_) | Referent::Value(_) | Referent::Error => continue,
             };
             entries.push((
-                head,
+                at,
                 Entry {
                     decl,
                     name,

@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import { DOZE_TASK_TYPE, DozeRunner } from "./doze";
+import { dedentOnType, TRIGGERS } from "./formatting";
 import { DoLanguageServer } from "./lsp";
 import { DoScriptRunner, requireTrustedWorkspace, TASK_TYPE } from "./runner";
 import { DoInteractiveShell } from "./shell";
@@ -53,6 +54,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<DoExte
         languageServer,
         vscode.tasks.registerTaskProvider(TASK_TYPE, runner),
         vscode.tasks.registerTaskProvider(DOZE_TASK_TYPE, doze),
+        vscode.languages.registerOnTypeFormattingEditProvider(
+            { language: "dolang" },
+            dedentOnType,
+            ...TRIGGERS
+        ),
         vscode.commands.registerCommand("dolang.runScript", () => ignore(runner.run())),
         vscode.commands.registerCommand("dolang.runScriptFile", (uri?: vscode.Uri) =>
             ignore(runner.run(uri))
