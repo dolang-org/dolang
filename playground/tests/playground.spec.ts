@@ -372,6 +372,14 @@ test('hover shows a local alias where a type names it', async ({ page }) => {
   await expect(tip).toContainText('Two of a kind.');
 });
 
+test('hover keeps the lines of a vertical alias', async ({ page }) => {
+  const text = 'let w = 0\n@let Service = Dict $\n  "name": Str\n  ?"replicas": Int\ndef name service @ Service\n  service["name"]';
+  await source(page, text);
+  const tip = await hoverAt(page, text.lastIndexOf('Service') + 1);
+  await expect(tip.locator('pre')).toHaveText('@let Service = Dict $\n  "name": Str\n  ?"replicas": Int');
+  await expect(tip.locator('pre .token-keyword').first()).toHaveText('let');
+});
+
 test('hover shows a prelude function signature and doc', async ({ page }) => {
   await source(page, 'echo hi');
   const tip = await hoverAt(page, 1);
