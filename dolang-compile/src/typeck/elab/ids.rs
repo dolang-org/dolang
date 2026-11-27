@@ -36,8 +36,8 @@ impl Shard<'_> {
         self.decls.visit(ids);
         self.sites.visit(ids);
         self.links.visit(ids);
-        for link in self.refs.values_mut() {
-            ids.link(link);
+        for written in self.refs.values_mut() {
+            ids.link(&mut written.link);
         }
         self.exports.visit(ids);
         self.values.visit(ids);

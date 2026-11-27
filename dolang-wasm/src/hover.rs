@@ -264,12 +264,6 @@ pub(crate) fn hover(
             Some(Kind::ImportModule { .. } | Kind::PreludeModule { .. })
         )
     });
-    // An item a type names has no node, so what the check concluded at it is
-    // about what encloses it
-    let type_item = reference
-        .is_none()
-        .then(|| type_item_at(unit, start, end))
-        .flatten();
     let node = checked.and_then(|checked| {
         let range = unit.locate(start..end);
         let (start, end) = (range.start(), unit.end(range));
@@ -277,25 +271,26 @@ pub(crate) fn hover(
         node.ancestors()
             .find(|node| node.span().start() <= start && end <= node.end())
     });
-    let types = node
-        .filter(|_| !module && type_item.is_none())
-        .and_then(|node| {
-            let span = node.span();
-            let range = unit.byte_range(span);
-            let spans = reference.map(|reference| (reference.start, reference.end));
-            let named = (spans == Some((range.start, range.end))).then(|| unit.text(span));
-            Some((range, type_lines(node, named)?))
-        });
-    let (targets, chosen) = match (checked, &type_item) {
-        (_, Some((module, item, _))) => {
-            let own = checked.map_or("", |checked| &checked.name[..]);
-            let target = item_target(unit, own, module, item);
-            (target.into_iter().collect(), None)
-        }
-        (Some(checked), None) => {
-            targets(unit, checked, node, reference.map(|reference| reference.id))
-        }
-        (None, None) => (Vec::new(), None),
+    // An item a path through a module names as a type has no token referring
+    // to it, so the check's judgment is what names it
+    let type_name = node
+        .filter(|node| {
+            reference.is_none()
+                && node
+                    .judgments()
+                    .any(|judged| judged.role() == Role::Reference)
+        })
+        .map(|node| unit.byte_range(node.span()));
+    let types = node.filter(|_| !module).and_then(|node| {
+        let span = node.span();
+        let range = unit.byte_range(span);
+        let spans = reference.map(|reference| (reference.start, reference.end));
+        let named = (spans == Some((range.start, range.end))).then(|| unit.text(span));
+        Some((range, type_lines(node, named)?))
+    });
+    let (targets, chosen) = match checked {
+        Some(checked) => targets(unit, checked, node, reference.map(|reference| reference.id)),
+        None => (Vec::new(), None),
     };
     // What a check found has its own docs, each union alternative's in turn;
     // any other reference's are its declaration's
@@ -315,7 +310,7 @@ pub(crate) fn hover(
     };
     let reference = reference
         .map(|reference| (reference.start, reference.end))
-        .or(type_item.map(|(.., item)| (item.start, item.end)));
+        .or(type_name.map(|name| (name.start, name.end)));
     let ((start, end), types) = match types {
         None if declarations.is_empty() => return None,
         None => (reference?, Vec::new()),
@@ -327,53 +322,6 @@ pub(crate) fn hover(
         types,
         declarations,
         complete,
-    })
-}
-
-/// The item a path through a module names as a type, as `json.DecodeValue`
-/// does, at the bytes `start` to `end` of the source: a position in the item's
-/// name, or a range that is exactly it. Gives the module, the item, and where
-/// its name is.
-///
-/// The index has no nodes for types outside declarations, such as a cast's,
-/// so the path is read from the tokens: the module's name refers to its
-/// import, and the item's name, just after the dot, refers to nothing. That
-/// covers only a single step through a module, not a deeper path or a type
-/// held in a local; it stands in until the check judges what a type names
-/// wherever it's written.
-fn type_item_at<'u>(
-    unit: &'u Unit<'_>,
-    start: usize,
-    end: usize,
-) -> Option<(&'u str, &'u str, Range<usize>)> {
-    let mut types = Vec::new();
-    unit.tokens(&mut |token, span: Span, node: Option<NodeId>, _| {
-        if matches!(token, Token::Type) {
-            types.push((unit.byte_range(span), node));
-        }
-    });
-    types.sort_by_key(|(range, _)| range.start);
-    let source = unit.source();
-    types.windows(2).find_map(|pair| {
-        let [(head, Some(target)), (item, None)] = pair else {
-            return None;
-        };
-        if source.get(head.end..item.start) != Some(".") {
-            return None;
-        }
-        let under = match start == end {
-            true => (item.start..=item.end).contains(&start),
-            false => (item.start, item.end) == (start, end),
-        };
-        if !under {
-            return None;
-        }
-        let module = match unit.node(*target)?.kind() {
-            Kind::ImportModule { module, .. } => unit.text(module),
-            Kind::PreludeModule { module, .. } => module,
-            _ => return None,
-        };
-        Some((module, &source[item.clone()], item.clone()))
     })
 }
 
@@ -449,7 +397,7 @@ enum Target {
 /// it chose: an item imported from a bundled module, as the reference `id`
 /// names it; a function declared here, when a call chose one of its
 /// overloads; the members a member use reached, one for each class of a
-/// union receiver; or the item a path through a module names.
+/// union receiver; or the item a path through a module or a type names.
 fn targets(
     unit: &Unit<'_>,
     checked: &Checked,
@@ -482,7 +430,7 @@ fn targets(
 }
 
 /// What the analysis `node` names: the members a member use reached, or else
-/// the item a path through a module names
+/// the item a path through a module names, or the declaration a type names
 fn node_targets(unit: &Unit<'_>, own: &str, node: typeck::Node<'_>) -> Vec<Target> {
     let members: Vec<_> = node
         .judgments()
@@ -495,7 +443,9 @@ fn node_targets(unit: &Unit<'_>, own: &str, node: typeck::Node<'_>) -> Vec<Targe
     if !members.is_empty() {
         return members;
     }
-    let item = node.judgments().find(|judged| judged.role() == Role::Item);
+    let item = node
+        .judgments()
+        .find(|judged| matches!(judged.role(), Role::Item | Role::Reference));
     let item = item.and_then(|judged| judged.declaration());
     item.and_then(|item| item_target(unit, own, item.module(), item.name()))
         .into_iter()

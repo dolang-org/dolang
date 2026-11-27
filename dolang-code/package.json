@@ -47,6 +47,11 @@
         "workspaceContains:**/doze.toml"
     ],
     "contributes": {
+        "configurationDefaults": {
+            "[dolang]": {
+                "editor.formatOnType": true
+            }
+        },
         "configuration": {
             "title": "Do Language",
             "properties": {

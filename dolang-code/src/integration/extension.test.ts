@@ -152,6 +152,28 @@ suite("Integration", () => {
         await vscode.commands.executeCommand("workbench.action.revertAndCloseActiveEditor");
     });
 
+    test("a typed catch moves out to its try", async () => {
+        const formatOnType = vscode.workspace
+            .getConfiguration("editor", { languageId: "dolang" })
+            .get("formatOnType");
+        assert.strictEqual(formatOnType, true, "the extension turns on format on type");
+        const document = await vscode.workspace.openTextDocument({
+            language: "dolang",
+            content: "try\n  if x\n    risky()\n    catch"
+        });
+        const edits = await vscode.commands.executeCommand<vscode.TextEdit[] | undefined>(
+            "vscode.executeFormatOnTypeProvider",
+            document.uri,
+            new vscode.Position(3, 9),
+            "h",
+            { tabSize: 2, insertSpaces: true }
+        );
+        const edit = new vscode.WorkspaceEdit();
+        edit.set(document.uri, edits ?? []);
+        assert.ok(await vscode.workspace.applyEdit(edit));
+        assert.strictEqual(document.lineAt(3).text, "catch");
+    });
+
     test("a script runs with the project's module path", async () => {
         const output = fixture("greeting.txt");
         await fs.rm(output.fsPath, { force: true });

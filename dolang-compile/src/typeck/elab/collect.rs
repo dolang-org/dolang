@@ -12,7 +12,7 @@ use rustc_hash::FxHashMap;
 use super::{
     Bases, BinderRef, Decl, DeclAst, DeclNode, Diag, Facts, ImportCycle, MissingExport,
     MissingModule, Nominations, PLACEHOLDERS, Referent, Role, Shard, Site, Tables, Target,
-    UnitDiag, UnitInfo,
+    UnitDiag, UnitInfo, Written,
     ids::Rebase,
     interface::PrivateInInterface,
     local,
@@ -466,7 +466,7 @@ struct Walk<'c, 'u> {
     /// Each link, by its target
     linked: FxHashMap<(Target, Option<StrId>), LinkId>,
     /// The link of each name, by its head
-    refs: FxHashMap<Span, LinkId>,
+    refs: FxHashMap<Span, Written>,
     /// The module table: each module's name, at the first import statement naming
     /// it, if one does
     modules: Vec<(StrId, Option<Span>)>,
@@ -546,7 +546,7 @@ impl<'u> Walk<'_, 'u> {
     fn reference(&mut self, head: Span, fields: &[Span]) -> Ref {
         Ref {
             span: self.at(fields.last().map_or(head, |field| head | field)),
-            link: self.refs.get(&head).copied(),
+            link: self.refs.get(&head).map(|written| written.link),
         }
     }
 
@@ -963,7 +963,9 @@ impl<'u> Walk<'_, 'u> {
                 *entry.insert(LinkId::from_index(self.links.len() - 1))
             }
         };
-        self.refs.insert(head, link);
+        // What a path names is at its end
+        let name = fields.last().copied().unwrap_or(head);
+        self.refs.insert(head, Written { link, name });
     }
 
     fn name_ref(

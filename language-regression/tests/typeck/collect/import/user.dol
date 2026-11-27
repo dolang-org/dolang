@@ -36,13 +36,13 @@ pub let outline @ Outline = ...
 
 # A dotted name picks its module through the name the import binds
 pub let dotted @ g.Point = g
-#                ^: ref geo.Point
+#                  ^~~~~: ref geo.Point
 pub let typed @ tg.Shape = ...
-#               ^~: ref geo.Shape
+#                  ^~~~~: ref geo.Shape
 pub let mode @ security.unix.Mode = ...
-#              ^~~~~~~~: ref security.unix.Mode
+#                            ^~~~: ref security.unix.Mode
 pub let acl @ security.nfs4.Acl = ...
-#             ^~~~~~~~: ref security.nfs4.Acl
+#                           ^~~: ref security.nfs4.Acl
 
 # A module no checked unit provides
 pub let thing @ Thing = nil
@@ -54,3 +54,11 @@ pub let module @ hubgeo = nil
 #    |
 # LL | pub let module @ hubgeo = nil
 #    |                  ^^^^^^
+
+# A type a cast writes, and a binder it names
+pub def cast[T] x @ T
+  let point = (x !@ g.Point)
+  #                   ^~~~~: ref geo.Point
+  let same = (x @ T)
+  #               ^: ref binder T
+  [point, same]
