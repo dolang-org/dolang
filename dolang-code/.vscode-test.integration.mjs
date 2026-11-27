@@ -5,6 +5,7 @@ import { defineConfig } from "@vscode/test-cli";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { version } from "./test/vscode-version.mjs";
 
 function tool(variable) {
     const value = process.env[variable];
@@ -44,6 +45,7 @@ fs.writeFileSync(
 );
 
 export default defineConfig({
+    version,
     label: "integration",
     files: "out/integration/**/*.test.js",
     workspaceFolder: workspace,
