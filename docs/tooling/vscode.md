@@ -13,6 +13,8 @@ The `dolang-code` extension adds Do support to VS Code, using the
     - Go to definition and document highlights
     - Document outline
     - Semantic highlighting
+    - Inlay hints with checked binding types, which `editor.inlayHints.enabled`
+      turns off
 - Extensionless scripts are recognized by a `dolang` shebang line, such as
   `#!/usr/bin/env dolang`
 - Script execution:

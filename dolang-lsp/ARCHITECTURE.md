@@ -58,7 +58,12 @@ publishes the compile diagnostics again, merged with the checker's, if its
 member is still current, and the applier attaches the analysis to that stored
 document. Hover asks the analysis what the checker concluded at the cursor,
 and for a variable shows its name and type above the declaration's doc
-comment, without its `let` label.
+comment, without its `let` label. Inlay hints pair the document's unannotated
+bindings with their `Bind` judgments (`dolang_ide::hints`), written with the
+names the document reaches declarations by, so a hint inserts as an
+annotation. A document edited since its check has none, and once the applier
+has attached the checks it has, it asks a client that supports it to refresh
+its hints.
 
 The check also keeps the units of the modules it read from source, keyed by the
 checker's name for each, with the document's own. Go to definition and hover on

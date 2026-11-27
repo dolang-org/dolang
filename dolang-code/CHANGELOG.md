@@ -32,3 +32,5 @@
   and Run Build Task; the check's report fills the Problems panel
 - A typed `catch` or `finally` moves out to its `try`, and an `else` to its
   `if`, through format on type, which the extension turns on for Do
+- Inlay hints show the checked types of unannotated bindings, and insert as
+  annotations

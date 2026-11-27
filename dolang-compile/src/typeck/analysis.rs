@@ -457,6 +457,31 @@ impl<'a> Judged<'a> {
     pub fn none(self) -> bool {
         self.entry.ty == Database::fork(&self.analysis.types.db).bottom()
     }
+
+    /// Whether its type says nothing of a value: `Value`, `Never`, the dynamic
+    /// type, as an unannotated def parameter's is, or a function whose every
+    /// part is one of them, as an unannotated `do` block's is
+    pub fn vague(self) -> bool {
+        fn vague(db: &Database, id: TypeId) -> bool {
+            let ty = db.ty(id);
+            let mut parts = true;
+            match ty {
+                Type::Top | Type::Unknown(_) => true,
+                Type::Function(_) | Type::Schema(_) => {
+                    ty.visit_children(|part, _| parts &= vague(db, part));
+                    parts
+                }
+                _ => id == db.bottom(),
+            }
+        }
+        vague(&Database::fork(&self.analysis.types.db), self.entry.ty)
+    }
+
+    /// Whether its type is a single literal, as `let x = 42` binds `42`
+    pub fn literal(self) -> bool {
+        let db = Database::fork(&self.analysis.types.db);
+        matches!(db.ty(self.entry.ty), Type::Literal(_) | Type::Fresh(_))
+    }
 }
 
 /// A declaration, as a module's document index finds it

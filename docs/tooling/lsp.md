@@ -23,6 +23,15 @@ features in any LSP-compatible editor.
   fields, bindings and imports, nested under whatever declares them
 - **Highlight**: Every use in the file of the name under the cursor,
   highlighted as the cursor moves
+- **Inlay hints**: The checked type of each binding without an annotation,
+  shown after its name, for `let`, `bind`, `for` and `if let` names and `do`
+  block parameters. Applying a hint, as by double-clicking it in VS Code,
+  inserts it as the annotation. A binding whose type is `Value`, `Unknown` or
+  the literal it's bound to gets none, and neither does a parameter of a `def`.
+  A hint shows the type where the name is bound, not one narrowed in a branch,
+  as hover can. An edited file has no hints until its next check finishes. The
+  editor's own setting turns them off, such as `editor.inlayHints.enabled` in
+  VS Code.
 
 Highlighting covers names the compiler resolves: a field access such as
 `self.count` is dynamic, so only the field's declaration is highlighted. Go to
