@@ -1,6 +1,6 @@
 import init, { Analyzed } from '../pkg/dolang_wasm.js';
 import wasmUrl from '../pkg/dolang_wasm_bg.wasm?url';
-import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover, Occurrence, TokenRange } from './protocol';
+import type { AnalysisReply, AnalysisRequest, Diagnostic, Hover, InlayHint, Occurrence, TokenRange } from './protocol';
 import { html, markdown, spans, type BundledKey, type Described } from './hover';
 import { Docs, link, type ModuleJson, type Pages } from './docs';
 
@@ -9,10 +9,13 @@ const checkDelayMs = 300;
 
 const reply = (message: AnalysisReply) => self.postMessage(message);
 
-// The latest source, compiled, and its type diagnostics once checked, with the
-// request and page version it last answered. It's freed when a different
+// The latest source, compiled, and its type diagnostics and hints once
+// checked, with the request and page version it last answered. It's freed when a different
 // source replaces it.
-interface Entry { source: string; analyzed: Analyzed; id: number; version: number; diagnostics?: Diagnostic[] }
+interface Entry {
+  source: string; analyzed: Analyzed; id: number; version: number;
+  checked?: { diagnostics: Diagnostic[]; hints: InlayHint[] };
+}
 let current: Entry | undefined;
 let checkTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -36,8 +39,9 @@ function locateDocs(url: string) {
 function check(entry: Entry) {
   clearTimeout(checkTimer);
   const diagnostics: Diagnostic[] = entry.analyzed.check();
-  entry.diagnostics = diagnostics;
-  reply({ type: 'checked', id: entry.id, version: entry.version, diagnostics });
+  const hints: InlayHint[] = entry.analyzed.hints();
+  entry.checked = { diagnostics, hints };
+  reply({ type: 'checked', id: entry.id, version: entry.version, diagnostics, hints });
 }
 
 function analyze(id: number, version: number, source: string) {
@@ -52,8 +56,8 @@ function analyze(id: number, version: number, source: string) {
   entry.version = version;
   const { analyzed } = entry;
   reply({ type: 'analysis', id, version, value: { tokens: analyzed.tokens(), diagnostics: analyzed.diagnostics() } });
-  if (entry.diagnostics) {
-    reply({ type: 'checked', id, version, diagnostics: entry.diagnostics });
+  if (entry.checked) {
+    reply({ type: 'checked', id, version, ...entry.checked });
     return;
   }
   checkTimer = setTimeout(() => check(entry), checkDelayMs);
@@ -77,7 +81,7 @@ function highlight(code: string): string {
 async function hover(id: number, version: number, pos: number) {
   const entry = current;
   if (entry?.version !== version) return;
-  if (!entry.diagnostics) check(entry);
+  if (!entry.checked) check(entry);
   const found: Hover | undefined = entry.analyzed.hover(pos, pos);
   if (!found) return reply({ type: 'hover', id, version });
   const keys = found.declarations.filter(declaration => declaration.kind === 'bundled');

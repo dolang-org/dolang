@@ -33,6 +33,11 @@ fetched a module at a time as hovers need them. Their cross-references link to
 `../api/`, where the documentation site serves its API pages beside the
 playground.
 
+Type hints show the checked type of each unannotated binding after its name,
+from the same `dolang_ide::hints` as the LSP's inlay hints. Clicking one whose
+type can be written inserts it as the annotation. An edit drops them until the
+next check, and a toolbar checkbox, kept in `localStorage`, hides them.
+
 The adapter installs the host console for `term`, so `echo`, `print`, and
 `term.console` write to the output panel. The console reports `can_style` as
 `true` and `is_tty` as `false`, and has no geometry. The page renders SGR
@@ -81,14 +86,14 @@ relative worker and Wasm URLs.
 
 `src/protocol.ts` declares requests and replies separately for each worker.
 `analyze` and `run` requests carry an ID, source version, and complete source.
-The analysis worker replies to `analyze` with tokens and compiler diagnostics
-at once, then with `checked` type diagnostics once the source has gone 300 ms
-without another request, as the LSP delays its checks. A newer request cancels
-a pending check, and an unchanged source reuses its last check.
-The page tracks readiness and generation per worker and ignores obsolete
-analysis and replies from replaced workers. Analysis continues during execution,
-and replacing the run worker leaves the analysis worker alone. If analysis makes
-its worker fail, the worker is replaced and analysis resumes at the next edit.
+The analysis worker replies to `analyze` with tokens and compiler diagnostics at
+once, then with `checked` type diagnostics and hints once the source has gone
+300 ms without another request, as the LSP delays its checks. A newer request
+cancels a pending check, and an unchanged source reuses its last check. The page
+tracks readiness and generation per worker and ignores obsolete analysis and
+replies from replaced workers. Analysis continues during execution, and
+replacing the run worker leaves the analysis worker alone. If analysis makes its
+worker fail, the worker is replaced and analysis resumes at the next edit.
 Loading failures are displayed and can be retried by reloading the page.
 
 ### Host

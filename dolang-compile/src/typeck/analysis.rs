@@ -4,11 +4,14 @@
 //! syntax tree they were copied from, so sorted by start ascending and end
 //! descending, each node's parent is the innermost node before it containing it.
 
-use std::{cmp::Reverse, fmt::Write, iter, ops::Range, sync::Arc};
+use std::{borrow::Cow, cmp::Reverse, fmt::Write, iter, ops::Range, sync::Arc};
 
 use super::{
     flow::Role,
-    r#type::{BinderOrigin, Database, DeclId, Labels, Shared, Style, Type, TypeId, Variance},
+    r#type::{
+        BinderOrigin, Collection, Database, DeclId, Labels, Names, Shared, Style, Type, TypeId,
+        Variance,
+    },
 };
 use crate::{
     UnitId,
@@ -33,16 +36,7 @@ impl Types {
     pub(crate) fn annotation(&self, ty: TypeId, binders: &[String], style: Style) -> String {
         let db = Database::fork(&self.db);
         let rendered = db.render_in(ty, binders, &self.labels, style);
-        let compact = match db.ty(ty) {
-            Type::Union(members) => members.len() < 2,
-            Type::Function(_) | Type::Quantified { .. } | Type::Overloaded { .. } => false,
-            _ => true,
-        };
-        if compact {
-            rendered
-        } else {
-            format!("({rendered})")
-        }
+        compact(&db, ty, rendered)
     }
 
     /// A declaration: its outer group's binders, each with its origin, name,
@@ -108,6 +102,47 @@ impl Types {
             out.push_str(&render(body));
         }
         out
+    }
+}
+
+/// `rendered`, the rendering of `ty`, parenthesized unless an annotation can
+/// write it bare
+fn compact(db: &Database, ty: TypeId, rendered: String) -> String {
+    let compact = match db.ty(ty) {
+        Type::Union(members) => members.len() < 2,
+        Type::Function(_) | Type::Quantified { .. } | Type::Overloaded { .. } => false,
+        _ => true,
+    };
+    if compact {
+        rendered
+    } else {
+        format!("({rendered})")
+    }
+}
+
+/// A check's names, with each declaration spelled as a site names it
+struct Spelled<'a> {
+    analysis: &'a Analysis,
+    spell: &'a dyn Fn(Declaration<'_>) -> Option<String>,
+}
+
+impl Names for Spelled<'_> {
+    fn declaration(&self, id: DeclId) -> Cow<'_, str> {
+        self.analysis.types.labels.declaration(id)
+    }
+
+    fn collection(&self, id: DeclId) -> Option<Collection> {
+        self.analysis.types.labels.collection(id)
+    }
+
+    fn spelled(&self, id: DeclId) -> Option<Cow<'_, str>> {
+        let (module, name) = self.analysis.places.get(id.index())?.as_ref()?;
+        (self.spell)(Declaration { module, name }).map(Cow::Owned)
+    }
+
+    fn builtin(&self, name: &'static str) -> Option<Cow<'_, str>> {
+        let module = "std";
+        (self.spell)(Declaration { module, name }).map(Cow::Owned)
     }
 }
 
@@ -394,6 +429,26 @@ impl<'a> Judged<'a> {
         }
     }
 
+    /// Its type as an annotation at its span would write it, parenthesized
+    /// unless compact, if one can: with each declaration named as `spell` says
+    /// source there names it, and a rigid by its binder's name. Where an erased
+    /// argument varies, it's written as what bounds it there, `Value` or
+    /// `Never`. `None` for a declaration, which has no annotation, and for a
+    /// type with a part no annotation writes, such as an overloaded function, a
+    /// class object, or a declaration `spell` doesn't name.
+    pub fn written(self, spell: &dyn Fn(Declaration<'_>) -> Option<String>) -> Option<String> {
+        if self.entry.role == Role::Declaration {
+            return None;
+        }
+        let names = Spelled {
+            analysis: self.analysis,
+            spell,
+        };
+        let db = Database::fork(&self.analysis.types.db);
+        let rendered = db.written(self.entry.ty, self.binders(), &names)?;
+        Some(compact(&db, self.entry.ty, rendered))
+    }
+
     fn binders(self) -> &'a [String] {
         self.entry.group.as_deref().unwrap_or_default()
     }
@@ -401,6 +456,31 @@ impl<'a> Judged<'a> {
     /// Whether it saw no value at all, as a read no path assigns doesn't
     pub fn none(self) -> bool {
         self.entry.ty == Database::fork(&self.analysis.types.db).bottom()
+    }
+
+    /// Whether its type says nothing of a value: `Value`, `Never`, the dynamic
+    /// type, as an unannotated def parameter's is, or a function whose every
+    /// part is one of them, as an unannotated `do` block's is
+    pub fn vague(self) -> bool {
+        fn vague(db: &Database, id: TypeId) -> bool {
+            let ty = db.ty(id);
+            let mut parts = true;
+            match ty {
+                Type::Top | Type::Unknown(_) => true,
+                Type::Function(_) | Type::Schema(_) => {
+                    ty.visit_children(|part, _| parts &= vague(db, part));
+                    parts
+                }
+                _ => id == db.bottom(),
+            }
+        }
+        vague(&Database::fork(&self.analysis.types.db), self.entry.ty)
+    }
+
+    /// Whether its type is a single literal, as `let x = 42` binds `42`
+    pub fn literal(self) -> bool {
+        let db = Database::fork(&self.analysis.types.db);
+        matches!(db.ty(self.entry.ty), Type::Literal(_) | Type::Fresh(_))
     }
 }
 

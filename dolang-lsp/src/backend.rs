@@ -4,7 +4,11 @@ use std::{
     iter, mem, ops,
     panic::{self, AssertUnwindSafe},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, RwLock, Weak, mpsc},
+    sync::{
+        Arc, Mutex, MutexGuard, RwLock, Weak,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -591,6 +595,9 @@ pub(crate) struct Backend {
     client: Client,
     config: AsyncMutex<Config>,
     position_encoding: RwLock<PositionEncodingKind>,
+    /// Whether the client asks for inlay hints again when the server says
+    /// they've changed, which a finished check does
+    refresh_hints: Arc<AtomicBool>,
 }
 
 /// A revision of an open document to compile and project.
@@ -1211,13 +1218,17 @@ fn uses_of(unit: &Unit<'_>, named: impl Fn(NodeId) -> bool) -> Vec<diag::Span> {
     spans
 }
 
-/// Publishes what the worker made of current revisions, in order.
+/// Publishes what the worker made of current revisions, in order. Once the
+/// checks it has are applied, it asks a client that `refresh_hints` for
+/// inlay hints again.
 async fn publish(
     client: Client,
     documents: Arc<Mutex<Documents>>,
     mut events: UnboundedReceiver<Event>,
+    refresh_hints: Arc<AtomicBool>,
 ) {
     let lock = || documents.lock().expect("documents lock poisoned");
+    let mut checked_any = false;
     while let Some(event) = events.recv().await {
         match event {
             Event::Projected {
@@ -1245,7 +1256,17 @@ async fn publish(
                     client
                         .publish_diagnostics(uri, diagnostics, member.version())
                         .await;
+                    checked_any = true;
                 }
+            }
+        }
+        if mem::take(&mut checked_any) && refresh_hints.load(Ordering::Relaxed) {
+            if events.is_empty() {
+                // The client answers when it likes, so the events don't wait
+                let client = client.clone();
+                tokio::spawn(async move { client.inlay_hint_refresh().await });
+            } else {
+                checked_any = true;
             }
         }
     }
@@ -1722,13 +1743,20 @@ impl Backend {
             .stack_size(8 << 20)
             .spawn(move || worker_state.run(requests))
             .expect("failed to spawn the compile worker");
-        tokio::spawn(publish(client.clone(), documents.clone(), applied));
+        let refresh_hints = Arc::<AtomicBool>::default();
+        tokio::spawn(publish(
+            client.clone(),
+            documents.clone(),
+            applied,
+            refresh_hints.clone(),
+        ));
         Self {
             documents,
             worker,
             client,
             config: Default::default(),
             position_encoding: RwLock::new(PositionEncodingKind::UTF16),
+            refresh_hints,
         }
     }
 
@@ -1987,6 +2015,11 @@ impl LanguageServer for Backend {
                 .and_then(|workspace| workspace.did_change_watched_files.as_ref())
                 .and_then(|watched| watched.dynamic_registration)
                 .unwrap_or(false);
+            let refresh = (params.capabilities.workspace.as_ref())
+                .and_then(|workspace| workspace.inlay_hint.as_ref())
+                .and_then(|hints| hints.refresh_support)
+                .unwrap_or(false);
+            self.refresh_hints.store(refresh, Ordering::Relaxed);
         }
         *self
             .position_encoding
@@ -2049,6 +2082,7 @@ impl LanguageServer for Backend {
                 code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                inlay_hint_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
                 workspace_symbol_provider: Some(OneOf::Left(true)),
                 references_provider: Some(OneOf::Left(true)),
@@ -2385,6 +2419,40 @@ impl LanguageServer for Backend {
         }))
     }
 
+    /// The checked types of the range's unannotated bindings. A document
+    /// edited since its last check has none until the next one finishes.
+    async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
+        let Some(document) = self.document(&params.text_document.uri).await else {
+            return Ok(None);
+        };
+        let Some(analyzed) = document.analyzed() else {
+            return Ok(Some(vec![]));
+        };
+        let index = DocumentIndex::new(document.unit.source(), self.position_encoding());
+        let range = params.range;
+        let hints = dolang_ide::hints(&document.unit, &analyzed.checked())
+            .into_iter()
+            .filter_map(|hint| {
+                let end = index.byte_range(hint.name).end;
+                let position = index.position_from_offset(end);
+                (range.start <= position && position <= range.end).then(|| InlayHint {
+                    position,
+                    label: InlayHintLabel::String(hint.label),
+                    kind: Some(InlayHintKind::TYPE),
+                    text_edits: hint.edit.map(|new_text| {
+                        let range = Range::new(position, position);
+                        vec![TextEdit { range, new_text }]
+                    }),
+                    tooltip: hint.tooltip.map(InlayHintTooltip::String),
+                    padding_left: None,
+                    padding_right: None,
+                    data: None,
+                })
+            })
+            .collect();
+        Ok(Some(hints))
+    }
+
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
@@ -2538,6 +2606,8 @@ mod tests {
         service: LspService<Backend>,
         socket: ClientSocket,
         next_id: i64,
+        /// Whether it initializes as a client that refreshes inlay hints
+        refreshes_hints: bool,
     }
 
     impl Harness {
@@ -2557,6 +2627,7 @@ mod tests {
                 service,
                 socket,
                 next_id: 1,
+                refreshes_hints: false,
             }
         }
 
@@ -2673,6 +2744,12 @@ mod tests {
                     capabilities: ClientCapabilities {
                         general: Some(GeneralClientCapabilities {
                             position_encodings: Some(offered),
+                            ..Default::default()
+                        }),
+                        workspace: self.refreshes_hints.then(|| WorkspaceClientCapabilities {
+                            inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
+                                refresh_support: Some(true),
+                            }),
                             ..Default::default()
                         }),
                         ..Default::default()
@@ -2904,6 +2981,10 @@ mod tests {
         assert_eq!(
             result.capabilities.hover_provider,
             Some(HoverProviderCapability::Simple(true))
+        );
+        assert_eq!(
+            result.capabilities.inlay_hint_provider,
+            Some(OneOf::Left(true))
         );
     }
 
@@ -3251,6 +3332,73 @@ def name service @ Service
         let service = hover_text(&mut harness, uri, 9, 20).await;
         let lines = "@let Service = Dict $\n  \"name\": Str\n  ?\"replicas\": Int";
         assert_eq!(service, Some(format!("```dolang\n{lines}\n```")));
+    }
+
+    /// The inlay hints of a whole document
+    async fn inlay_hints(harness: &mut Harness, uri: Uri) -> Vec<InlayHint> {
+        let range = Range::new(Position::new(0, 0), Position::new(u32::MAX, 0));
+        harness
+            .send_request::<request::InlayHintRequest>(InlayHintParams {
+                work_done_progress_params: Default::default(),
+                text_document: TextDocumentIdentifier { uri },
+                range,
+            })
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn inlay_hints_show_checked_types_until_an_edit() {
+        if typelib_index::lookup("std").is_none() {
+            return;
+        }
+        let mut harness = Harness::checking(Duration::from_millis(50));
+        harness.refreshes_hints = true;
+        harness.initialize(vec![PositionEncodingKind::UTF16]).await;
+        let uri: Uri = "file:///inlay-hints.dol".parse().unwrap();
+        let text = "let s = 1\nlet n = (s + 1)\nlet a b = [n, n]\n";
+        harness.open(uri.clone(), text, 1).await;
+        assert!(inlay_hints(&mut harness, uri.clone()).await.is_empty());
+        harness.next_publish().await;
+        // A finished check asks for hints again
+        let refresh = harness.next_client_request().await;
+        assert_eq!(refresh.method(), request::InlayHintRefreshRequest::METHOD);
+        let (_, id, _) = refresh.into_parts();
+        (harness
+            .socket
+            .send(Response::from_ok(id.unwrap(), Value::Null)))
+        .await
+        .unwrap();
+
+        let hints = inlay_hints(&mut harness, uri.clone()).await;
+        let found: Vec<_> = (hints.iter())
+            .map(|hint| {
+                let InlayHintLabel::String(label) = &hint.label else {
+                    panic!("expected a plain label");
+                };
+                let edits = hint.text_edits.as_deref().unwrap_or_default();
+                let edits: Vec<_> = (edits.iter())
+                    .map(|edit| (edit.range.start, edit.new_text.as_str()))
+                    .collect();
+                (hint.position, label.as_str(), edits)
+            })
+            .collect();
+        let at = |line, character| Position::new(line, character);
+        assert_eq!(
+            found,
+            [
+                (at(1, 5), " @ Int", vec![(at(1, 5), " @ Int")]),
+                (at(2, 5), "@Int", vec![(at(2, 5), "@Int")]),
+                (at(2, 7), "@Int", vec![(at(2, 7), "@Int")]),
+            ]
+        );
+
+        // An edit leaves no hints until the next check
+        harness
+            .change(uri.clone(), &format!("{text}let c = n\n"), 2)
+            .await;
+        harness.next_publish().await;
+        assert!(inlay_hints(&mut harness, uri.clone()).await.is_empty());
     }
 
     #[tokio::test(flavor = "current_thread")]

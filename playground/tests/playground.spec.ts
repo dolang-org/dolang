@@ -404,6 +404,8 @@ test('hover on an overloaded bundled call shows the chosen overload', async ({ p
 test('hover on an overloaded bundled name shows its overloads with the implementation doc', async ({ page }) => {
   const text = 'let f = int\necho $f';
   await source(page, text);
+  // The hint after `f` moves the name once the check finishes
+  await expect(page.locator('.cm-inlay-hint')).toHaveCount(1);
   const tip = await hoverAt(page, text.indexOf('int') + 1);
   await expect(tip.locator('pre', { hasText: '# module' })).toHaveText([
     '# module std\ndef int value @ (Num | Str) -> Int\n  ...',
@@ -423,6 +425,7 @@ test('hover on an overloaded local function shows its overloads', async ({ page 
   const text = 'let n = 1\n# Twice a number\n@def twice x @ Int -> Int\n@def twice x @ Str -> Str\n'
     + '# Twice anything\ndef twice x\n  (x + x)\nlet f = twice\necho $f';
   await source(page, text);
+  await expect(page.locator('.cm-inlay-hint')).toHaveCount(1);
   const tip = await hoverAt(page, text.lastIndexOf('twice') + 1);
   await expect(tip.locator('pre')).toHaveText(['@def twice x @ Int -> Int', '@def twice x @ Str -> Str']);
   await expect(tip).toContainText('Twice a number');
@@ -618,6 +621,51 @@ test('the cursor marks the names of its declaration', async ({ page }) => {
     view.dispatch({ selection: { anchor: view.state.doc.length - 2 } });
   });
   await expect(page.locator('.cm-occurrence')).toHaveCount(0);
+});
+
+test('type hints follow checks, and clicking one inserts its annotation', async ({ page }) => {
+  await source(page, 'let a = (1 + 2)\nlet x = 1\necho $a $x');
+  await expect(page.locator('#problems')).toHaveAttribute('data-checked');
+  // A literal binding gets none
+  const hint = page.locator('.cm-inlay-hint');
+  await expect(hint).toHaveText([' @ Int']);
+  await expect(hint).toHaveAttribute('title', 'Int\nClick to insert');
+  // An edit drops them until the next check
+  await source(page, 'let b = (1 + 2)\necho $b');
+  await expect(hint).toHaveCount(0);
+  await expect(page.locator('#problems')).toHaveAttribute('data-checked');
+  await hint.click();
+  expect(await doc(page)).toBe('let b @ Int = (1 + 2)\necho $b');
+  await expect(page.locator('#problems')).toHaveAttribute('data-checked');
+  await expect(hint).toHaveCount(0);
+});
+
+test('the type hints toggle hides them and is kept across reloads', async ({ page }) => {
+  const toggle = page.getByLabel('Type hints');
+  await expect(toggle).toBeChecked();
+  await source(page, 'let a = (1 + 2)\necho $a');
+  const hint = page.locator('.cm-inlay-hint');
+  await expect(hint).toHaveCount(1);
+  await toggle.uncheck();
+  await expect(hint).toHaveCount(0);
+  await expect.poll(() => savedDraft(page)).toContain('let a');
+  await page.reload();
+  await expect(page.locator('#problems')).toHaveAttribute('data-checked');
+  await expect(toggle).not.toBeChecked();
+  await expect(hint).toHaveCount(0);
+  // Shown again without another check
+  await toggle.check();
+  await expect(hint).toHaveText([' @ Int']);
+});
+
+test('a long type hint is cut short and titled in full', async ({ page }) => {
+  await source(page, 'let long = [{a: 1, b: [(1 + 2)], c: :x:, d: nil, e: [(1 + 2.0)]}]\necho $long');
+  const hint = page.locator('.cm-inlay-hint');
+  await expect(hint).toHaveText(/^ @ Array\[Dict\[.*…$/);
+  const label = (await hint.textContent())!;
+  const title = (await hint.getAttribute('title'))!;
+  expect(title.startsWith(label.slice(3, -1))).toBe(true);
+  expect(title.split('\n')[0].length).toBeGreaterThan(label.length - 3);
 });
 
 test('a summary says how each run ended', async ({ page }) => {

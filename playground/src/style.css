@@ -13,6 +13,8 @@ footer { color: #a3a9bf; line-height: 1.6; }
 .toolbar { display: flex; align-items: center; gap: .65rem; flex-wrap: wrap; margin: 0 0 1rem; }
 button, select { font: inherit; border: 1px solid #454b65; background: #252a3b; color: #f0f1f8; border-radius: 5px; padding: .5rem .9rem; }
 button { cursor: pointer; }
+.toolbar .toggle { display: flex; align-items: center; gap: .4rem; cursor: pointer; color: #c8cde0; }
+.toolbar .toggle input { margin: 0; accent-color: #7f8fe0; }
 button:hover:enabled { background: #39415d; }
 button:disabled { opacity: .4; cursor: default; }
 #run { display: inline-flex; align-items: center; justify-content: center; gap: .35em; min-width: 5.6em; background: #7185e7; color: #101425; font-weight: 700; border-color: #7185e7; }
@@ -189,5 +191,8 @@ footer { margin-top: 2rem; font-size: .85rem; }
 .cm-panel.cm-search input[type=checkbox] { margin-right: .2rem; }
 .cm-textfield { background: #1d202d; color: #e6e8f0; border: 1px solid #454b65; border-radius: 4px; }
 .cm-panel.cm-search button[name=close] { color: #a3a9bf; background: none; border: 0; }
+.cm-inlay-hint { color: #7f88a4; background: #232838; border-radius: 3px; font-size: .9em; }
+.cm-inlay-hint-edit { cursor: pointer; }
+.cm-inlay-hint-edit:hover { color: #c8cde0; background: #2f3650; }
 .cm-occurrence { background: #2f3a58; border-radius: 2px; }
 .cm-occurrence-write { background: #3d3550; outline: 1px solid #6a5a8f; }

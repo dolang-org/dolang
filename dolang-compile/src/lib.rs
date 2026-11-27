@@ -1526,6 +1526,15 @@ impl Unit<'_> {
         })
     }
 
+    /// The name the unit's prelude binds `module`'s item `item` to, unless a
+    /// later prelude item binds that name too.
+    pub fn prelude_name(&self, module: &str, item: &str) -> Option<&str> {
+        let items = || prelude_items(&self.prelude).rev();
+        let (_, found) = items().find(|&(from, found)| from == module && found.item == item)?;
+        let (_, first) = items().find(|(_, first)| first.bind == found.bind)?;
+        std::ptr::eq(first, found).then_some(found.bind.as_str())
+    }
+
     /// The text of a span of this unit.
     pub fn text(&self, span: diag::Span) -> &str {
         &self.file.content()[self.file.byte_range(span)]

@@ -81,6 +81,20 @@ pub(crate) struct Fix {
     pub title: String,
 }
 
+/// A type hint after a bound name: its checked type, which `edit` inserts
+/// as an annotation where it can be written.
+#[derive(Debug, Serialize)]
+pub(crate) struct Hint {
+    /// The UTF-16 offset where the name ends
+    pub at: usize,
+    pub label: String,
+    /// The type in full, when the label cuts it short
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tooltip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<String>,
+}
+
 /// A span's UTF-16 range; all positions exposed to the editor are UTF-16.
 fn range(offsets: &Offsets, unit: &Unit<'_>, span: Span) -> (usize, usize) {
     let range = unit.byte_range(span);
@@ -280,6 +294,24 @@ impl Analyzed {
         result
     }
 
+    /// The type hints of the source's unannotated bindings, as
+    /// [`dolang_ide::hints`] finds them, in source order. None before a
+    /// check.
+    pub(crate) fn hints(&self) -> Vec<Hint> {
+        let Some(checked) = &self.checked else {
+            return Vec::new();
+        };
+        let unit = &self.unit;
+        (dolang_ide::hints(unit, &checked.ide(unit)).into_iter())
+            .map(|hint| Hint {
+                at: self.offsets.utf16(unit.byte_range(hint.name).end),
+                label: hint.label,
+                tooltip: hint.tooltip,
+                edit: hint.edit,
+            })
+            .collect()
+    }
+
     fn refs(&self) -> &[Reference] {
         self.refs.get_or_init(|| dolang_ide::references(&self.unit))
     }
@@ -460,6 +492,21 @@ pub mod tests {
             error.to,
             error.message
         );
+    }
+
+    #[wasm_bindgen_test]
+    fn hints_follow_a_check() {
+        let source = "# é 😀\nlet a = (1 + 2)\nlet x = 1\n";
+        let mut analyzed = Analyzed::new(source.to_owned());
+        assert!(analyzed.hints().is_empty());
+        analyzed.check();
+        let byte = source.find("a =").unwrap() + 1;
+        let at = source[..byte].encode_utf16().count();
+        let hints: Vec<_> = (analyzed.hints().into_iter())
+            .map(|hint| (hint.at, hint.label, hint.tooltip, hint.edit))
+            .collect();
+        let label = " @ Int".to_owned();
+        assert_eq!(hints, [(at, label.clone(), None, Some(label))]);
     }
 
     #[wasm_bindgen_test]

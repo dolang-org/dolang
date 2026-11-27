@@ -1,6 +1,6 @@
-import { EditorState, StateEffect, StateField } from '@codemirror/state';
+import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state';
 import {
-  Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter, hoverTooltip, keymap, lineNumbers,
+  Decoration, EditorView, highlightActiveLine, highlightActiveLineGutter, hoverTooltip, keymap, lineNumbers, WidgetType,
   type DecorationSet, type Tooltip,
 } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from '@codemirror/commands';
@@ -8,10 +8,12 @@ import { bracketMatching } from '@codemirror/language';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 import { AnsiUp } from 'ansi_up';
-import type { AnalysisReply, AnalysisRequest, Diagnostic, HoverTip, PageCall, RunReply, RunRequest, Occurrence, TokenRange } from './protocol';
+import type {
+  AnalysisReply, AnalysisRequest, Diagnostic, HoverTip, InlayHint, PageCall, RunReply, RunRequest, Occurrence, TokenRange,
+} from './protocol';
 import { exampleGroups, examples } from './examples';
 import { decodeSource, encodeSource } from './share';
-import { loadDraft, saveDraft } from './drafts';
+import { loadDraft, saveDraft, store, stored } from './drafts';
 import { doIndentation } from './indent';
 import { layout, tabs } from './layout';
 import { problems } from './problems';
@@ -66,6 +68,57 @@ const occurrences = StateField.define<DecorationSet>({
   },
   provide: field => EditorView.decorations.from(field),
 });
+// The checked types of the latest check's unannotated bindings, after their
+// names. Clicking one that can be written inserts it as the annotation.
+class HintWidget extends WidgetType {
+  constructor(readonly hint: InlayHint) { super(); }
+  override eq(other: HintWidget) {
+    const [a, b] = [this.hint, other.hint];
+    return a.at === b.at && a.label === b.label && a.edit === b.edit && a.tooltip === b.tooltip;
+  }
+  override toDOM(view: EditorView) {
+    const { at, label, tooltip, edit } = this.hint;
+    const dom = document.createElement('span');
+    dom.className = edit === undefined ? 'cm-inlay-hint' : 'cm-inlay-hint cm-inlay-hint-edit';
+    dom.textContent = label;
+    const type = tooltip ?? label.replace(/^ ?@ ?/, '');
+    dom.title = edit === undefined ? type : `${type}\nClick to insert`;
+    if (edit !== undefined) {
+      dom.onmousedown = event => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        view.dispatch({ changes: { from: at, insert: edit } });
+      };
+    }
+    return dom;
+  }
+  override ignoreEvent() { return true; }
+}
+const hintEffect = StateEffect.define<InlayHint[]>();
+// Kept whether or not they're shown, so showing them needs no new check
+const inlayHints = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, transaction) {
+    // An edit leaves them for a source no longer there, as the LSP's are
+    if (transaction.docChanged) value = Decoration.none;
+    for (const effect of transaction.effects) {
+      if (effect.is(hintEffect)) {
+        value = Decoration.set(effect.value.map(hint =>
+          Decoration.widget({ widget: new HintWidget(hint), side: 1 }).range(hint.at)), true);
+      }
+    }
+    return value;
+  },
+});
+const showHints = new Compartment();
+const hintsShown = (on: boolean) => on ? EditorView.decorations.from(inlayHints) : [];
+const hintToggle = element<HTMLInputElement>('type-hints');
+hintToggle.checked = stored('hints') !== false;
+hintToggle.onchange = () => {
+  store('hints', hintToggle.checked);
+  view.dispatch({ effects: showHints.reconfigure(hintsShown(hintToggle.checked)) });
+};
+
 // How long the cursor must rest before its name's occurrences are marked.
 // Longer than the analysis delay, so typing doesn't analyze early.
 const occurrenceDelayMs = 250;
@@ -330,6 +383,7 @@ function startAnalysisWorker() {
         problemList.show(compileDiagnostics);
       } else {
         problemList.show([...compileDiagnostics, ...reply.diagnostics]);
+        view.dispatch({ effects: hintEffect.of(reply.hints) });
         element('problems').dataset.checked = '';
       }
     },
@@ -473,7 +527,8 @@ async function init() {
     parent: element('editor'),
     state: EditorState.create({
       doc,
-      extensions: [lineNumbers(), history(), highlights, occurrences, EditorView.lineWrapping, doIndentation(),
+      extensions: [lineNumbers(), history(), highlights, occurrences, inlayHints, showHints.of(hintsShown(hintToggle.checked)),
+        EditorView.lineWrapping, doIndentation(),
         highlightActiveLine(), highlightActiveLineGutter(), highlightSelectionMatches(), bracketMatching(),
         closeBrackets(), EditorState.languageData.of(() => [{ closeBrackets: { brackets: ['(', '[', '{', '"'] } }]),
         search({ top: true }),

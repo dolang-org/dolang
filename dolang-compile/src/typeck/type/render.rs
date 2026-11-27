@@ -5,14 +5,15 @@
 
 use std::{
     borrow::Cow,
+    cell::Cell,
     convert::Infallible,
     fmt::{self, Write},
 };
 
 use super::{
-    Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, Element, FieldAccess,
-    Intrinsic, Kind, Literal, MemberKey, Multiplicity, Rest, Restriction, SchemaItem, Type, TypeId,
-    UnionMember,
+    Argument, Binder, BinderOrigin, Binding, BoundRef, Database, DeclId, DeclKind, Element,
+    FieldAccess, Intrinsic, Kind, Literal, MemberKey, Multiplicity, Rest, Restriction, SchemaItem,
+    Type, TypeId, UnionMember, Variance,
 };
 
 /// What the environment a type is rendered in knows about it
@@ -24,6 +25,16 @@ pub(crate) trait Names {
     /// Whether `decl`'s binders are in scope, so its rigids are named bare
     fn in_scope(&self, _decl: DeclId) -> bool {
         false
+    }
+    /// How source at the site a type is written for names a declaration, if it
+    /// can (see [`Style::Source`])
+    fn spelled(&self, _id: DeclId) -> Option<Cow<'_, str>> {
+        None
+    }
+    /// How source at that site names a `std` item a type is written with
+    /// though no declaration of it refers there, such as `Value` or `Unknown`
+    fn builtin(&self, name: &'static str) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(name))
     }
 }
 
@@ -71,6 +82,11 @@ pub enum Style {
     /// As [`Style::Reader`], but with every function's channels shown, to tell
     /// apart types only they do
     Channels,
+    /// As [`Style::Reader`], but as an annotation at some site writes it: a
+    /// declaration as [`Names::spelled`] says the site names it, a rigid by its
+    /// binder's name alone, and an erased argument as what bounds it where it
+    /// varies. A type with a part no annotation can write has no rendering.
+    Source,
 }
 
 /// A type as the subject of a diagnostic's sentence
@@ -149,11 +165,7 @@ impl Database {
                     }
                     declared.drain(..lifted);
                 }
-                let renderer = Renderer {
-                    db: self,
-                    names,
-                    style,
-                };
+                let renderer = Renderer::new(self, names, style);
                 let naming = Naming {
                     names: &[],
                     depth: 0,
@@ -254,11 +266,7 @@ impl Database {
         names: &dyn Names,
         style: Style,
     ) -> String {
-        let renderer = Renderer {
-            db: self,
-            names,
-            style,
-        };
+        let renderer = Renderer::new(self, names, style);
         let naming = Naming {
             names: binders,
             depth: 0,
@@ -267,6 +275,31 @@ impl Database {
         let mut out = String::new();
         renderer.render_into(ty, naming, &mut out);
         out
+    }
+
+    /// A type with the binders of its group named by `binders`, as an
+    /// annotation writes it (see [`Style::Source`]), if one can. Braces are a
+    /// schema, never a type, so a schema has none.
+    pub(crate) fn written(
+        &self,
+        ty: TypeId,
+        binders: &[String],
+        names: &dyn Names,
+    ) -> Option<String> {
+        if matches!(self.ty(ty), Type::Schema(_) | Type::Map { .. }) {
+            return None;
+        }
+        let renderer = Renderer::new(self, names, Style::Source);
+        // What it's written as is what the site's binding holds
+        renderer.position.set(Variance::Covariant);
+        let naming = Naming {
+            names: binders,
+            depth: 0,
+            groups: None,
+        };
+        let mut out = String::new();
+        renderer.render_into(ty, naming, &mut out);
+        (!renderer.unwritable.get()).then_some(out)
     }
 
     /// `ty` with each function's channel left out where it's an implicit binder of
@@ -300,9 +333,54 @@ struct Renderer<'a> {
     db: &'a Database,
     names: &'a dyn Names,
     style: Style,
+    /// The variance of the position of the type rendered next, which
+    /// [`Style::Source`] writes an erased argument by. Rendering a type takes it,
+    /// leaving its parts invariant unless they're given another.
+    position: Cell<Variance>,
+    /// Whether [`Style::Source`] met a part no annotation can write
+    unwritable: Cell<bool>,
 }
 
-impl Renderer<'_> {
+impl<'a> Renderer<'a> {
+    fn new(db: &'a Database, names: &'a dyn Names, style: Style) -> Self {
+        Self {
+            db,
+            names,
+            style,
+            position: Cell::new(Variance::Invariant),
+            unwritable: Cell::new(false),
+        }
+    }
+
+    /// Whether a declaration's name names a type
+    fn typed(&self, id: DeclId) -> bool {
+        matches!(
+            self.db.declaration(id).source.kind,
+            DeclKind::Class | DeclKind::Protocol | DeclKind::OpaqueAlias | DeclKind::Alias
+        )
+    }
+
+    /// Marks the type unwritable if it's rendered as source
+    fn unwritable(&self) {
+        if self.style == Style::Source {
+            self.unwritable.set(true);
+        }
+    }
+
+    /// Renders `ty` at a position of variance `variance` within the current
+    /// type's, `here`
+    fn at(
+        &self,
+        here: Variance,
+        variance: Variance,
+        ty: TypeId,
+        naming: Naming<'_>,
+        out: &mut String,
+    ) {
+        self.position.set(here.compose(variance));
+        self.render_into(ty, naming, out);
+    }
+
     /// The class a projecting intrinsic is applied as: its designated declaration,
     /// or its bare name where none is designated
     fn head(&self, intrinsic: Intrinsic, naming: Naming<'_>, out: &mut String) {
@@ -314,38 +392,85 @@ impl Renderer<'_> {
         }
     }
 
+    /// A `std` item's name, as source at the site spells it under
+    /// [`Style::Source`]
+    fn builtin(&self, name: &'static str, out: &mut String) {
+        if self.style != Style::Source {
+            return out.push_str(name);
+        }
+        match self.names.builtin(name) {
+            Some(spelled) => out.push_str(&spelled),
+            None => {
+                self.unwritable();
+                out.push_str(name)
+            }
+        }
+    }
+
     fn render_into(&self, ty: TypeId, naming: Naming<'_>, out: &mut String) {
         let db = self.db;
+        let here = self.position.replace(Variance::Invariant);
         match db.ty(ty) {
-            Type::Top => out.push_str("Value"),
-            Type::Unknown(Kind::Type) => out.push_str("Unknown"),
-            Type::Unknown(Kind::Schema) => out.push_str("Unknown{}"),
+            Type::Top => self.builtin("Value", out),
+            Type::Unknown(Kind::Type) => self.builtin("Unknown", out),
+            Type::Unknown(Kind::Schema) => {
+                self.unwritable();
+                out.push_str("Unknown{}")
+            }
             Type::Unsupported {
                 kind: Kind::Type, ..
-            } => out.push_str("Unsupported"),
+            } => {
+                self.unwritable();
+                out.push_str("Unsupported")
+            }
             Type::Unsupported {
                 kind: Kind::Schema, ..
-            } => out.push_str("Unsupported{}"),
+            } => {
+                self.unwritable();
+                out.push_str("Unsupported{}")
+            }
             // Freshness is the checker's concern, not the reader's
             Type::Literal(literal) | Type::Fresh(literal) => {
                 let _ = match literal {
                     Literal::Nil => write!(out, "nil"),
                     Literal::Bool(value) => write!(out, "{value}"),
                     Literal::Int(value) => write!(out, "{value}"),
-                    Literal::Str(value) => write!(out, "{value:?}"),
+                    // `$` would interpolate
+                    Literal::Str(value) => {
+                        write!(out, "{}", format!("{value:?}").replace('$', "\\$"))
+                    }
                     Literal::Sym(sym) => write!(out, ":{}:", db.symbol(*sym)),
                 };
             }
+            // A function's own type, which its name has, names no type
+            Type::Decl(id) if self.style == Style::Source => match self.names.spelled(*id) {
+                Some(name) if self.typed(*id) => out.push_str(&name),
+                _ => {
+                    self.unwritable();
+                    out.push_str(&self.names.declaration(*id))
+                }
+            },
             Type::Decl(id) => out.push_str(&self.names.declaration(*id)),
             // A metatype can't be written, so it's spelled as no type is
             Type::Meta(id) => {
+                self.unwritable();
                 let _ = write!(out, "<type {}>", self.names.declaration(*id));
             }
+            // Where it varies, an erased argument is written as what bounds it
+            Type::Star(_) if self.style == Style::Source => match here {
+                Variance::Covariant => self.builtin("Value", out),
+                Variance::Contravariant => self.builtin("Never", out),
+                Variance::Invariant => {
+                    self.unwritable();
+                    out.push('*')
+                }
+            },
             Type::Star(_) => out.push('*'),
             Type::Rigid { decl, slot, .. } => self.rigid(*decl, *slot, out),
             Type::Bound { reference, .. } => match naming.name(*reference) {
                 Some(name) => out.push_str(name),
                 None => {
+                    self.unwritable();
                     let _ = write!(out, "#{}.{}", reference.depth, reference.slot);
                 }
             },
@@ -357,6 +482,7 @@ impl Renderer<'_> {
                         args: args.clone(),
                         kind: *kind,
                     });
+                    self.unwritable();
                     out.push_str("<type ");
                     self.render_into(class, naming, out);
                     out.push('>');
@@ -424,19 +550,21 @@ impl Renderer<'_> {
                     if index < lifted {
                         match self.style {
                             Style::Full => out.push('^'),
-                            Style::Reader | Style::Channels => continue,
+                            Style::Reader | Style::Channels | Style::Source => continue,
                         }
                     }
                     let binder = binders.get(index);
+                    let variance = binder.map_or(Variance::Invariant, |binder| binder.variance);
+                    let within = here.compose(variance);
                     match arg {
                         Argument::Positional(ty) => match binder.map(|binder| binder.binding) {
                             Some(Binding::Keyword(name)) => {
                                 let _ = write!(out, "{}: ", db.symbol(name));
-                                self.render_into(*ty, naming, &mut out)
+                                self.at(here, variance, *ty, naming, &mut out)
                             }
                             Some(Binding::Rest(_)) if index >= lifted => {
                                 if let Some(items) = self.flat(*ty) {
-                                    shown_args.extend(self.arguments(&items, naming));
+                                    shown_args.extend(self.arguments(&items, within, naming));
                                     continue;
                                 }
                                 // A pack that isn't written out, such as a binder,
@@ -449,16 +577,16 @@ impl Renderer<'_> {
                             {
                                 match element {
                                     Element::Keyed { key, value } => {
-                                        self.render_into(key, naming, &mut out);
+                                        self.at(here, variance, key, naming, &mut out);
                                         out.push_str(", ");
-                                        self.render_into(value, naming, &mut out);
+                                        self.at(here, variance, value, naming, &mut out);
                                     }
                                     Element::Positional(ty) | Element::Include(ty) => {
-                                        self.render_into(ty, naming, &mut out)
+                                        self.at(here, variance, ty, naming, &mut out)
                                     }
                                 }
                             }
-                            _ => self.render_into(*ty, naming, &mut out),
+                            _ => self.at(here, variance, *ty, naming, &mut out),
                         },
                         Argument::Keyword(name, ty) => {
                             let _ = write!(out, "{}: ", db.symbol(*name));
@@ -470,7 +598,8 @@ impl Renderer<'_> {
                             if let Some(items) = self.flat(*ty)
                                 && !items.iter().any(|item| self.plain(item))
                             {
-                                shown_args.extend(self.arguments(&items, naming));
+                                let invariant = Variance::Invariant;
+                                shown_args.extend(self.arguments(&items, invariant, naming));
                                 continue;
                             }
                             out.push_str("...");
@@ -493,6 +622,7 @@ impl Renderer<'_> {
             }
             // Its signatures, any of which it's called as
             Type::Overloaded { overloads, .. } => {
+                self.unwritable();
                 for (index, &overload) in overloads.iter().enumerate() {
                     if index != 0 {
                         out.push_str(" & ");
@@ -504,7 +634,7 @@ impl Renderer<'_> {
             }
             Type::Union(members) => {
                 if members.is_empty() {
-                    out.push_str("Never");
+                    self.builtin("Never", out);
                 }
                 // Members are interned in ID order, which isn't stable across runs
                 let mut rendered: Vec<String> = members
@@ -520,10 +650,12 @@ impl Renderer<'_> {
                                 ) =>
                             {
                                 out.push('(');
-                                self.render_into(*ty, naming, &mut out);
+                                self.at(here, Variance::Covariant, *ty, naming, &mut out);
                                 out.push(')');
                             }
-                            UnionMember::Type(ty) => self.render_into(*ty, naming, &mut out),
+                            UnionMember::Type(ty) => {
+                                self.at(here, Variance::Covariant, *ty, naming, &mut out)
+                            }
                             UnionMember::Expand(ty) => {
                                 out.push_str("...");
                                 self.render_into(*ty, naming, &mut out);
@@ -567,10 +699,16 @@ impl Renderer<'_> {
                 rendered.sort();
                 out.push_str(&rendered.join(" | "));
             }
+            // A function reads its parameters and input, and gives its result
+            // and output
             Type::Function(func) => {
                 out.push('(');
-                self.items(func.params, Keys::Sym, naming, out);
-                for (sigil, channel) in [('<', func.input), ('>', func.output)] {
+                let params = here.compose(Variance::Contravariant);
+                self.items(func.params, Keys::Sym, params, naming, out);
+                for (sigil, channel, variance) in [
+                    ('<', func.input, Variance::Contravariant),
+                    ('>', func.output, Variance::Covariant),
+                ] {
                     if let Some(channel) = channel
                         && !self.omits(channel)
                     {
@@ -578,19 +716,22 @@ impl Renderer<'_> {
                             out.push_str(", ");
                         }
                         out.push(sigil);
-                        self.render_into(channel, naming, out);
+                        self.at(here, variance, channel, naming, out);
                     }
                 }
                 out.push(')');
                 out.push_str(" -> ");
-                self.render_into(func.result, naming, out);
+                self.at(here, Variance::Covariant, func.result, naming, out);
             }
             Type::Schema(_) => {
                 out.push('{');
-                self.items(ty, Keys::Value, naming, out);
+                self.items(ty, Keys::Value, here, naming, out);
                 out.push('}');
             }
-            Type::Quantified { binders, body } => self.quantified(binders, *body, &[], naming, out),
+            Type::Quantified { binders, body } => {
+                self.position.set(here);
+                self.quantified(binders, *body, &[], naming, out)
+            }
             Type::Map { packs, pattern } => {
                 out.push_str("{...");
                 self.pattern(packs, *pattern, naming, out);
@@ -646,10 +787,11 @@ impl Renderer<'_> {
         out: &mut String,
     ) {
         let db = self.db;
+        let here = self.position.replace(Variance::Invariant);
         let implicit = |slot: u16| binders[usize::from(slot)].binding == Binding::Implicit;
         let body = db.without_channels(body, &implicit, 0);
         if binders.is_empty() {
-            return self.render_into(body, naming, out);
+            return self.at(here, Variance::Covariant, body, naming, out);
         }
         let offset = binders.len() - declared.len();
         let (mut next_type, mut next_schema) = (1, 1);
@@ -712,7 +854,7 @@ impl Renderer<'_> {
             }
             out.push_str("] ");
         }
-        self.render_into(body, within, out);
+        self.at(here, Variance::Covariant, body, within, out);
     }
 
     /// A rigid: everything shows its slot; a reader sees its binder's name, or
@@ -723,17 +865,20 @@ impl Renderer<'_> {
         if self.style == Style::Full {
             let _ = write!(out, "{owner}.#{slot}");
         } else if let Some(input) = db.channel(decl, slot) {
+            self.unwritable();
             let role = if input { "input" } else { "output" };
             let _ = write!(out, "({role} of {owner})");
         } else if let Some(binder) = db.declaration(decl).binders.get(usize::from(slot)) {
             let name = db.symbol(binder.name);
-            match self.names.in_scope(decl) {
+            // A rigid is only seen while its declaration is checked, within it
+            match self.style == Style::Source || self.names.in_scope(decl) {
                 true => out.push_str(name),
                 false => {
                     let _ = write!(out, "{owner}.{name}");
                 }
             }
         } else {
+            self.unwritable();
             let _ = write!(out, "{owner}.#{slot}");
         }
     }
@@ -741,7 +886,7 @@ impl Renderer<'_> {
     /// Whether a function's channel is left out (see [`Style::Reader`])
     fn omits(&self, channel: TypeId) -> bool {
         let db = self.db;
-        self.style == Style::Reader
+        matches!(self.style, Style::Reader | Style::Source)
             && match *db.ty(channel) {
                 Type::Rigid { decl, slot, .. } => db.channel(decl, slot).is_some(),
                 _ => channel == db.top(),
@@ -783,7 +928,8 @@ impl Renderer<'_> {
             Collection::Pack => return false,
         };
         out.push_str(open);
-        self.item_list(&items, Keys::Sym, naming, out);
+        let here = self.position.replace(Variance::Invariant);
+        self.item_list(&items, Keys::Sym, here, naming, out);
         out.push_str(close);
         true
     }
@@ -824,7 +970,12 @@ impl Renderer<'_> {
 
     /// A pack's items as the type arguments that give them, keyed by symbols as in
     /// parentheses
-    fn arguments(&self, items: &[SchemaItem], naming: Naming<'_>) -> Vec<String> {
+    fn arguments(
+        &self,
+        items: &[SchemaItem],
+        position: Variance,
+        naming: Naming<'_>,
+    ) -> Vec<String> {
         let mut args = Vec::new();
         let mut rest = items;
         while let [item, after @ ..] = rest {
@@ -838,7 +989,7 @@ impl Renderer<'_> {
                 continue;
             }
             let mut out = String::new();
-            self.item(item, Keys::Sym, naming, &mut out);
+            self.item(item, Keys::Sym, position, naming, &mut out);
             args.push(out);
             rest = after;
         }
@@ -862,19 +1013,34 @@ impl Renderer<'_> {
         self.render_into(pattern, naming.within(&group), out);
     }
 
-    /// The items of a schema, or what stands for one, in a list keyed by `keys`
-    fn items(&self, ty: TypeId, keys: Keys, naming: Naming<'_>, out: &mut String) {
+    /// The items of a schema, or what stands for one, in a list keyed by `keys`,
+    /// at a position of variance `position`
+    fn items(
+        &self,
+        ty: TypeId,
+        keys: Keys,
+        position: Variance,
+        naming: Naming<'_>,
+        out: &mut String,
+    ) {
         match self.flat(ty) {
-            Some(items) => self.item_list(&items, keys, naming, out),
+            Some(items) => self.item_list(&items, keys, position, naming, out),
             None => {
                 out.push_str("...");
-                self.render_into(ty, naming, out);
+                self.at(position, Variance::Covariant, ty, naming, out);
             }
         }
     }
 
     /// A list's items, written with the shorthands of a list keyed by `keys`
-    fn item_list(&self, items: &[SchemaItem], keys: Keys, naming: Naming<'_>, out: &mut String) {
+    fn item_list(
+        &self,
+        items: &[SchemaItem],
+        keys: Keys,
+        position: Variance,
+        naming: Naming<'_>,
+        out: &mut String,
+    ) {
         let mut rest = items;
         let mut first = true;
         while let [item, after @ ..] = rest {
@@ -891,7 +1057,7 @@ impl Renderer<'_> {
                 rest = after;
                 continue;
             }
-            self.item(item, keys, naming, out);
+            self.item(item, keys, position, naming, out);
             rest = after;
         }
     }
@@ -930,13 +1096,21 @@ impl Renderer<'_> {
         }
     }
 
-    fn item(&self, item: &SchemaItem, keys: Keys, naming: Naming<'_>, out: &mut String) {
+    fn item(
+        &self,
+        item: &SchemaItem,
+        keys: Keys,
+        position: Variance,
+        naming: Naming<'_>,
+        out: &mut String,
+    ) {
         let db = self.db;
+        let co = Variance::Covariant;
         // A repeat of the list's own keys is written `**V`, or `**` for any value
         if let Some(any) = self.any_keyed(item, keys) {
             out.push_str("**");
             if !any && let Element::Keyed { value, .. } = item.element {
-                self.render_into(value, naming, out);
+                self.at(position, co, value, naming, out);
             }
             return;
         }
@@ -950,7 +1124,7 @@ impl Renderer<'_> {
             Multiplicity::Repeated => "*",
         });
         match item.element {
-            Element::Positional(ty) => self.render_into(ty, naming, out),
+            Element::Positional(ty) => self.at(position, co, ty, naming, out),
             Element::Keyed { key, value } => {
                 match db.ty(key) {
                     Type::Literal(Literal::Sym(sym)) => out.push_str(db.symbol(*sym)),
@@ -961,18 +1135,18 @@ impl Renderer<'_> {
                     }
                     _ => {
                         out.push('(');
-                        self.render_into(key, naming, out);
+                        self.at(position, co, key, naming, out);
                         out.push(')');
                     }
                 }
                 out.push_str(": ");
-                self.render_into(value, naming, out);
+                self.at(position, co, value, naming, out);
             }
             Element::Include(ty) => {
                 out.push_str("...");
                 match db.ty(ty) {
                     Type::Map { packs, pattern } => self.pattern(packs, *pattern, naming, out),
-                    _ => self.render_into(ty, naming, out),
+                    _ => self.at(position, co, ty, naming, out),
                 }
             }
         }

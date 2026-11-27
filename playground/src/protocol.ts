@@ -24,6 +24,16 @@ export interface Fix { from: number; to: number; insert: string; title: string }
 export interface TokenRange { from: number; to: number; kind: string }
 /** A name of a declaration; `write` marks the one it binds */
 export interface Occurrence { from: number; to: number; write: boolean }
+/** A checked type after an unannotated bound name, from `Analyzed.hints` */
+export interface InlayHint {
+  /** Where the name ends */
+  at: number;
+  label: string;
+  /** The type in full, when the label cuts it short */
+  tooltip?: string;
+  /** The annotation inserted at `at`, if the type can be written */
+  edit?: string;
+}
 export interface Analysis { tokens: TokenRange[]; diagnostics: Diagnostic[] }
 /** What hover shows at a position, from `Analyzed.hover`. */
 export interface Hover {
@@ -138,7 +148,7 @@ export interface HoverTip { from: number; to: number; html: string }
 export type AnalysisReply =
   | Lifecycle
   | { type: 'analysis'; id: number; version: number; value: Analysis }
-  | { type: 'checked'; id: number; version: number; diagnostics: Diagnostic[] }
+  | { type: 'checked'; id: number; version: number; diagnostics: Diagnostic[]; hints: InlayHint[] }
   | { type: 'hover'; id: number; version: number; value?: HoverTip }
   | { type: 'occurrences'; id: number; version: number; spans: Occurrence[] };
 export type RunRequest =

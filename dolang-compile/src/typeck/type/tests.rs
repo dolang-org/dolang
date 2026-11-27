@@ -2439,6 +2439,10 @@ impl Names for Named<'_> {
     fn collection(&self, _id: DeclId) -> Option<Collection> {
         None
     }
+
+    fn spelled(&self, id: DeclId) -> Option<std::borrow::Cow<'_, str>> {
+        Some(self.declaration(id))
+    }
 }
 
 fn field(db: &mut Database, name: &str, ty: TypeId) -> (MemberKey, Member) {
@@ -2936,4 +2940,64 @@ fn made_up_binder_names_follow_their_kind_and_show_bounds() {
         db.render(quantified, &Named(&db), Style::Full),
         "@[T1 @ Int, S1, T2 @ T1] (T1, T2) -> T1"
     );
+}
+
+#[test]
+fn erased_arguments_are_written_as_their_bounds_where_they_vary() {
+    let mut db = Database::new();
+    let class = |db: &mut Database, name, variance| {
+        let (id, ty, source) = declare(db, DeclKind::Class, name);
+        let quantified = quantify(
+            db,
+            vec![Binder {
+                variance,
+                ..binder(Kind::Type)
+            }],
+            ty,
+        );
+        let metadata = BinderSource {
+            name: source.name.unwrap(),
+            span: source.span,
+            default: None,
+            origin: BinderOrigin::Written,
+        };
+        db.populate(
+            id,
+            Declaration {
+                binders: vec![metadata].into(),
+                ..definition(source, quantified)
+            },
+        );
+        move |db: &mut Database, arg| {
+            intern(
+                db,
+                Type::Apply {
+                    base: ty,
+                    args: vec![Argument::Positional(arg)].into(),
+                    kind: Kind::Type,
+                },
+            )
+        }
+    };
+    let reader = class(&mut db, "Reader", Variance::Covariant);
+    let writer = class(&mut db, "Writer", Variance::Contravariant);
+    let cell = class(&mut db, "Cell", Variance::Invariant);
+    let star = db.star(Kind::Type);
+    let nil = intern(&mut db, Type::Literal(Literal::Nil));
+    let read = reader(&mut db, star);
+    let write = writer(&mut db, star);
+    let held = cell(&mut db, star);
+    let taken = function(&mut db, &[read], nil);
+    let both = writer(&mut db, write);
+    db.seal();
+    let written = |ty| db.written(ty, &[], &Named(&db));
+    assert_eq!(written(read).as_deref(), Some("Reader[Value]"));
+    assert_eq!(written(write).as_deref(), Some("Writer[Never]"));
+    // A parameter's position is the reverse of the function's
+    assert_eq!(written(taken).as_deref(), Some("(Reader[Never]) -> nil"));
+    assert_eq!(written(both).as_deref(), Some("Writer[Writer[Value]]"));
+    // An invariant position has no bound to write
+    assert_eq!(written(held), None);
+    // Other styles show the erasure
+    assert_eq!(db.render(held, &Named(&db), Style::Reader), "Cell[*]");
 }
