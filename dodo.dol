@@ -198,41 +198,63 @@ def default_shell_tests slow release
     else
       --timeout 3600
 
+let WASM_TUPLE = "wasm32-unknown-unknown"
+
+# Finds a build tool on PATH whose `--version` prints `expected`, such as a
+# prebuilt one CI provides, or else installs `crate` from source under `dir`.
+def cargo_tool name crate version expected dir
+  let found = run[name].which()
+  if found
+    let output = sub do run $found --version
+    if (output.trim() == expected)
+      return found
+  run_cargo install $crate --version $version --locked --root $dir
+  let bin = (dir / "bin" / name).absolute()
+  if (sys.os_info().family == :WINDOWS:)
+    bin = bin.add_ext exe
+  bin
+
 def wasm_tool name
   # The CLI must exactly match the locked library version.
   let lock = toml.decode $str(Path("Cargo.lock").read())
   let package = lock["package"].find(do |package| package["name"] == "wasm-bindgen")
   let version = package["version"]
-  # Prefer a matching install on PATH, such as a prebuilt one CI provides.
-  let found = run[name].which()
-  if found
-    let output = sub do run $found --version
-    if (output.trim() == "$name $version")
-      return found
-  let tools_dir = Path "target/wasm-bindgen/$version"
-  run_cargo install wasm-bindgen-cli --version $version --locked --root $tools_dir
-  let bin = (tools_dir / "bin" / name).absolute()
-  if (sys.os_info().family == :WINDOWS:)
-    bin = bin.add_ext exe
-  bin
+  cargo_tool $name wasm-bindgen-cli $version "$name $version" $Path("target/wasm-bindgen/$version")
 
-def wasm_build()
+def binaryen_tool name
+  # The `wasm-opt` crate's version tracks the Binaryen release it builds.
+  let Dict("version": Int(v) ...) = toml.decode $str(Path("tools/binaryen.toml").read())
+  cargo_tool $name wasm-opt 0.$v.0 "$name version $v (version_$v)" $Path("target/binaryen/$v")
+
+# The features rustc enables by default for `wasm32-unknown-unknown`, which
+# `wasm-opt` must be told to accept.
+let WASM_FEATURES = $
+  bulk-memory nontrapping-float-to-int sign-ext mutable-globals multivalue
+  reference-types
+
+def wasm_build spec
   let bindgen = wasm_tool wasm-bindgen
-  run_cargo build -p dolang-wasm --target wasm32-unknown-unknown --release
-  let wasm = "target/wasm32-unknown-unknown/release/dolang_wasm.wasm"
-  dodo.make inputs: [bindgen, wasm] outputs: ["playground/pkg"] do |_ctx|
+  let wasm_opt = binaryen_tool wasm-opt
+  spec.cargo build -p dolang-wasm
+  let wasm = (spec.target_dir / "dolang_wasm.wasm")
+  dodo.make inputs: [bindgen, wasm_opt, wasm] outputs: ["playground/pkg"] do |_ctx|
     dodo.show $bindgen --target web --out-dir playground/pkg $wasm
+    let module = "playground/pkg/dolang_wasm_bg.wasm"
+    dodo.show $wasm_opt -Os --strip-debug
+      for feature = WASM_FEATURES
+        --enable-$feature
+      $module -o $module
 
-def wasm_test()
+def wasm_test spec
   let runner = wasm_tool wasm-bindgen-test-runner
   env CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: $runner do
-    run_cargo test -p dolang-wasm --target wasm32-unknown-unknown --profile opt --lib
+    spec.cargo test -p dolang-wasm --lib
 
 # Vite copies the hover docs from `playground/public/` with the page.
-def playground_build()
+def playground_build wasm_spec
   native.cargo build --bin dolang
   docgen().extract_playground_docs $native $Path("playground/public/docs").absolute()
-  wasm_build()
+  wasm_build $wasm_spec
   dodo.make
     inputs: ["playground/package.json", "playground/package-lock.json"]
     outputs: ["playground/node_modules"]
@@ -470,12 +492,12 @@ def pts spec args
     CARGO_TARGET_DIR: $(PTS_DIR / "build").absolute()
     do spec.cargo build ...args
 
-def build_pages()
+def build_pages wasm_spec
   with_mkdocs do dodo.show mkdocs build --strict
   rustdoc_build()
   copy target/doc site/rustdoc all: true
   copy .github/rustdoc-index.html site/rustdoc/index.html
-  playground_build()
+  playground_build $wasm_spec
   copy target/playground site/playground all: true
 
 return $
@@ -710,33 +732,33 @@ return $
 
   "wasm-build":
     help: build browser Wasm adapter
-    do |_|
-      wasm_build()
+    do |args| wasm_build (Spec args tuple: WASM_TUPLE profile: "wasm")
 
   playground:
     help: build the static browser playground into target/playground
-    do |_| playground_build()
+    do |args| playground_build (Spec args tuple: WASM_TUPLE profile: "wasm")
 
   "serve-playground":
     help: build and serve the static browser playground
-    do |_|
-      playground_build()
+    do |args|
+      playground_build (Spec args tuple: WASM_TUPLE profile: "wasm")
       dodo.show python3 -m http.server 8080 -d target/playground/ -b localhost
 
   "wasm-test":
     help: run adapter tests as Wasm in Node
-    do |_| wasm_test()
+    do |args| wasm_test (Spec args tuple: WASM_TUPLE profile: "opt")
 
   "playground-test":
     help: build and test the browser playground (requires Playwright Chromium)
-    do |_|
-      playground_build()
+    do |args|
+      playground_build (Spec args tuple: WASM_TUPLE profile: "wasm")
       dodo.show npm --prefix playground test
 
   "wasm-lint":
     help: check dolang-wasm for clippy warnings
-    do |_|
-      run_cargo clippy -p dolang-wasm --target wasm32-unknown-unknown --all-targets -- -D warnings
+    do |args|
+      let spec = Spec $args tuple: $WASM_TUPLE
+      spec.cargo clippy -p dolang-wasm --all-targets -- -D warnings
 
   "syntax-test":
     help: test TextMate/Vim highlighting and VS Code editing rules (requires npm
@@ -757,13 +779,12 @@ return $
 
   pages:
     help: build the complete GitHub Pages site
-    do |_|
-      build_pages()
+    do |args| build_pages (Spec args tuple: WASM_TUPLE profile: "wasm")
 
   "serve-pages":
     help: build and serve the complete GitHub Pages site
-    do |_|
-      build_pages()
+    do |args|
+      build_pages (Spec args tuple: WASM_TUPLE profile: "wasm")
       dodo.show python3 -m http.server 8080 -d site/ -b localhost
 
   fmt:
