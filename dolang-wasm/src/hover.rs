@@ -830,6 +830,27 @@ fn one_line(unit: &Unit<'_>, span: Span) -> String {
         .join(" ")
 }
 
+/// The source text at `span` with its lines kept, each after the first
+/// indented as it would be under the declaration `decl` at the start of a line
+fn as_written(unit: &Unit<'_>, decl: Span, span: Span) -> String {
+    let source = unit.source();
+    let start = unit.byte_range(decl).start;
+    let line = &source[source[..start].rfind('\n').map_or(0, |at| at + 1)..];
+    let indent = &line[..line.len() - line.trim_start().len()];
+    unit.text(span)
+        .lines()
+        .enumerate()
+        .map(|(index, text)| match index {
+            0 => text.trim(),
+            _ => text
+                .strip_prefix(indent)
+                .unwrap_or(text.trim_start())
+                .trim_end(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A parameter of a signature, from its declaration
 fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<Param> {
     let source = unit.source();
@@ -1010,11 +1031,15 @@ fn signature(unit: &Unit<'_>, id: NodeId) -> Option<Signature> {
             name,
             ty: ty(),
         },
+        // A vertical type keeps its lines
         Kind::Alias { is_pub, .. } => Signature::Alias {
             is_pub,
             name,
             binders: binders(),
-            ty: ty(),
+            ty: spans(|kind| matches!(kind, Kind::Type { .. }))
+                .first()
+                .zip(node.span())
+                .map(|(&span, decl)| as_written(unit, decl, span)),
         },
         // A parameter is as written, but for its default
         Kind::PositionalParam { .. }
@@ -1150,7 +1175,7 @@ mod tests {
     #[wasm_bindgen_test]
     fn local_alias_has_its_signature_where_a_type_names_it() {
         // A comment opening the source documents the module instead
-        let source = "let w = 0\n# Two of a kind.\npub @let Pair[T] = Tuple[T, T]\n@let Hidden = ...\ndef swap p@(Pair[Hidden])\n  (p[1], p[0])\n";
+        let source = "let w = 0\n# Two of a kind.\npub @let Pair[T] = Tuple[T, T]\n@let Hidden = ...\ndef swap p@(Pair[Hidden])\n  (p[1], p[0])\n@let Service = Dict $\n  \"name\": Str\n  ?\"replicas\": Int\ndef name service @ Service\n  service[\"name\"]\n";
         let analyzed = checked(source);
         let alias = |at: usize| {
             let hover = analyzed.hover(at, at).unwrap();
@@ -1192,6 +1217,10 @@ mod tests {
         // An opaque alias has no type to write
         let hidden = (String::new(), false, "Hidden".to_owned(), Vec::new(), None);
         assert_eq!(alias(last(source, "Hidden") + 1), hidden);
+        // A vertical type keeps its lines
+        let (.., ty) = alias(last(source, "Service") + 1);
+        let lines = "Dict $\n  \"name\": Str\n  ?\"replicas\": Int";
+        assert_eq!(ty.as_deref(), Some(lines));
     }
 
     #[wasm_bindgen_test]

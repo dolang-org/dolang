@@ -252,6 +252,27 @@ fn one_line_source(unit: &Unit<'_>, span: diag::Span) -> String {
         .join(" ")
 }
 
+/// The source text at `span` with its lines kept, each after the first
+/// indented as it would be under the declaration `decl` at the start of a line
+fn as_written(unit: &Unit<'_>, decl: diag::Span, span: diag::Span) -> String {
+    let source = unit.source();
+    let start = unit.byte_range(decl).start;
+    let line = &source[source[..start].rfind('\n').map_or(0, |at| at + 1)..];
+    let indent = &line[..line.len() - line.trim_start().len()];
+    unit.text(span)
+        .lines()
+        .enumerate()
+        .map(|(index, text)| match index {
+            0 => text.trim(),
+            _ => text
+                .strip_prefix(indent)
+                .unwrap_or(text.trim_start())
+                .trim_end(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// A parameter of a signature, from its declaration
 fn parameter(unit: &Unit<'_>, id: NodeId) -> Option<signature::Param> {
     let node = unit.node(id)?;
@@ -441,12 +462,20 @@ fn declaration_label(unit: &Unit<'_>, id: NodeId) -> Option<String> {
             &format!("{}let {name}", if is_pub { "pub " } else { "" }),
             ty.as_deref(),
         ),
-        // An opaque alias has no type, but is written with `...` in its place
-        Kind::Alias { is_pub, .. } => format!(
-            "{}@let {name} = {}",
-            if is_pub { "pub " } else { "" },
-            ty.as_deref().unwrap_or("..."),
-        ),
+        // An opaque alias has no type, but is written with `...` in its place.
+        // A vertical type keeps its lines.
+        Kind::Alias { is_pub, .. } => {
+            let ty = children
+                .iter()
+                .filter_map(|child| unit.node(*child))
+                .find(|child| matches!(child.kind(), Kind::Type { .. }))
+                .and_then(|child| Some(as_written(unit, node.span()?, child.span()?)));
+            format!(
+                "{}@let {name} = {}",
+                if is_pub { "pub " } else { "" },
+                ty.as_deref().unwrap_or("..."),
+            )
+        }
         // A parameter is labeled as a `let` binds it
         Kind::PositionalParam { .. }
         | Kind::KeyParam { .. }
@@ -3846,21 +3875,30 @@ let f = twice
         let text = "\
 let w = 0
 # Two of a kind.
-pub @let Pair[T] = Tuple[T, T]
+pub @let Pair[T] = (T, T)
 @let Hidden = ...
 def swap p@(Pair[Hidden])
   (p[1], p[0])
+@let Service = Dict $
+  \"name\": Str
+  ?\"replicas\": Int
+def name service @ Service
+  service[\"name\"]
 ";
         harness.open(uri.clone(), text, 1).await;
-        let pair = "```dolang\npub @let Pair[T] = Tuple[T, T]\n```\n\nTwo of a kind.";
+        let pair = "```dolang\npub @let Pair[T] = (T, T)\n```\n\nTwo of a kind.";
         // Its declaration, and its use in an annotation
         for (line, character) in [(2, 10), (4, 13)] {
             let hover = hover_text(&mut harness, uri.clone(), line, character).await;
             assert_eq!(hover.as_deref(), Some(pair), "line {line}");
         }
         // An opaque alias has no type to write
-        let hidden = hover_text(&mut harness, uri, 4, 20).await;
+        let hidden = hover_text(&mut harness, uri.clone(), 4, 20).await;
         assert_eq!(hidden.as_deref(), Some("```dolang\n@let Hidden = ...\n```"));
+        // A vertical type keeps its lines
+        let service = hover_text(&mut harness, uri, 9, 20).await;
+        let lines = "@let Service = Dict $\n  \"name\": Str\n  ?\"replicas\": Int";
+        assert_eq!(service, Some(format!("```dolang\n{lines}\n```")));
     }
 
     #[tokio::test(flavor = "current_thread")]
