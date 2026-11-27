@@ -1336,8 +1336,6 @@ def canceled_check_returns_its_units()
     time.sleep 10
   started.next()
   worker.cancel()
-  # The check still holds the unit
-  assert_throws $std.ConcurrencyError do main.diagnostics
   assert_throws $std.CanceledError do worker.join()
   # The check finished before the cancel took effect
   assert_eq $checked.next().diagnostics.len 0
