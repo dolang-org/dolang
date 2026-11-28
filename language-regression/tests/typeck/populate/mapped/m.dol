@@ -42,7 +42,7 @@ pub def plain[*Us] *values @ Us
   values
 
 pub @let Known = {Num, ?Text, *Num, key: Text}
-pub def known *values @ ...Box[Known]
+pub def known ...values @ ...Box[Known]
   #     ^~~~~: decl [in -, out -] (...m.Box[m.Known], <in, >out) -> Unknown
   values
 

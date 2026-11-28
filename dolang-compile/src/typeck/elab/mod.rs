@@ -1421,7 +1421,7 @@ impl Report for UnquotableResult {
     }
 }
 
-/// A function type or signature whose parameters admit keys that aren't symbols
+/// A function type whose parameters admit keys that aren't symbols
 struct ParameterKeys(Span);
 
 impl Report for ParameterKeys {
@@ -1435,6 +1435,39 @@ impl Report for ParameterKeys {
 
     fn span(&self) -> Span {
         self.0
+    }
+}
+
+/// A rest whose schema, or a pack its pattern maps over, may have items outside
+/// its lanes
+struct RestLanes {
+    span: Span,
+    kind: RestKind,
+    pattern: bool,
+}
+
+impl Report for RestLanes {
+    fn severity(&self) -> Severity {
+        Severity::Error
+    }
+
+    fn message(&self, w: &mut dyn Write) -> fmt::Result {
+        let (sigil, items) = match self.kind {
+            RestKind::Pos => ("*", "positional items"),
+            RestKind::Key => ("**", "items keyed by symbols"),
+            RestKind::Mixed => ("...", "positional items and items keyed by symbols"),
+        };
+        match self.pattern {
+            true => write!(
+                w,
+                "a `{sigil}` rest's pattern must map over packs of only {items}"
+            ),
+            false => write!(w, "a `{sigil}` rest's schema must have only {items}"),
+        }
+    }
+
+    fn span(&self) -> Span {
+        self.span
     }
 }
 

@@ -67,3 +67,22 @@ pub def overloaded_axes()
   let bound = axes $takes_both kind: ["a", Marked("b")] n: [1, 2]
   #   ^~~~~: flow (<m.overloaded_axes.#0, >m.overloaded_axes.#1) -> nil
   bound()
+
+# A key rest's pack is chosen from the key arguments beside a positional rest,
+# whether or not that is passed anything
+pub class Param[T]
+  pub field value @ T = ...
+pub class Parsed[S @ {*(Sym): Value}]
+  pub field values @ Record[...S] = ...
+
+pub def flag() -> Param[Bool]
+  ...
+
+pub def with_rest[S @ {*(Sym): Value}] *_prior@Parsed[S] **_specs@...Param[S] -> Parsed[S]
+  ...
+
+pub def keyed()
+  let _none = with_rest verbose: (flag())
+  #   ^~~~~: flow m.Parsed[{verbose: std.Bool}]
+  let _some = with_rest (with_rest verbose: (flag())) verbose: (flag())
+  #   ^~~~~: flow m.Parsed[{verbose: std.Bool}]

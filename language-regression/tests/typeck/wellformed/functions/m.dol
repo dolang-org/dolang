@@ -1,5 +1,6 @@
-# A function's parameters have symbol keys, except within `Phantom`. Its
-# written channels may be any type.
+# A function's parameters have symbol keys, except within `Phantom`, and a `*`
+# or `**` rest takes only the items of its lane. Its written channels may be
+# any type.
 
 import std:
   - @Iter
@@ -66,3 +67,53 @@ pub def pipe <Iter[Int] >Sink[Int]
 
 pub def bounded[N @ Iter[Int]] <N
   nil
+
+# A `*` rest's schema has only positional items, and a `**` rest's only items
+# keyed by symbols. A `...` rest takes both, but no other keys.
+pub def positional[S @ {*Int}] *items @ S
+  items
+
+pub def keyed[S @ {*(Sym): Int}] **items @ S
+  items
+
+pub def both[S @ {*Int, *(Sym): Int}] ...items @ S
+  items
+
+pub def any_key ...items @ {**Int}
+  # error: a `...` rest's schema must have only positional items and items keyed by symbols
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def any_key ...items @ {**Int}
+  #    |                            ^^^^^^^
+  items
+
+pub def keys_positional[S @ {*(Sym): Int}] *items @ S
+  # error: a `*` rest's schema must have only positional items
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def keys_positional[S @ {*(Sym): Int}] *items @ S
+  #    |                                                     ^
+  items
+
+pub def items_keyed[S @ {*Int}] **items @ S
+  # error: a `**` rest's schema must have only items keyed by symbols
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def items_keyed[S @ {*Int}] **items @ S
+  #    |                                           ^
+  items
+
+# A mapping keeps each item's lane, so a pattern's packs must fit the rest's
+pub class Box[T]
+  field item @ Phantom[T]
+
+pub def mapped[S @ {*(Sym): Int}] **items @ ...Box[S]
+  items
+
+pub def mapped_positional[S @ {*Int}] **items @ ...Box[S]
+  # error: a `**` rest's pattern must map over packs of only items keyed by symbols
+  #   --> m.dol:LL:LL
+  #    |
+  # LL | pub def mapped_positional[S @ {*Int}] **items @ ...Box[S]
+  #    |                                                    ^^^^^^
+  items

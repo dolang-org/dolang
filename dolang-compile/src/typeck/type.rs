@@ -3415,6 +3415,34 @@ impl Database {
         result
     }
 
+    /// Which lanes a schema has items in, positional then keyed, as written: a
+    /// mapping's are its packs', and both where it isn't a literal schema
+    pub(crate) fn schema_lanes(&self, schema: TypeId) -> (bool, bool) {
+        let items = match self.ty(schema) {
+            Type::Schema(items) => items,
+            Type::Map { packs, .. } => {
+                return packs.iter().fold((false, false), |(p, k), &pack| {
+                    let (pack_p, pack_k) = self.schema_lanes(pack);
+                    (p || pack_p, k || pack_k)
+                });
+            }
+            _ => return (true, true),
+        };
+        let (mut positional, mut keyed) = (false, false);
+        for item in items.iter() {
+            match item.element {
+                Element::Positional(_) => positional = true,
+                Element::Keyed { .. } => keyed = true,
+                Element::Include(inner) => {
+                    let (inner_positional, inner_keyed) = self.schema_lanes(inner);
+                    positional |= inner_positional;
+                    keyed |= inner_keyed;
+                }
+            }
+        }
+        (positional, keyed)
+    }
+
     /// The shape of a rest mode: `{*Value}`, `{**Sym: Value}` or both. The key is
     /// `Unknown` when `Sym` is not designated, which `std` reports if it was
     /// checked from source; what that hides is a cascade.

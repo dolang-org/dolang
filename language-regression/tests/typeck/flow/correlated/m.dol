@@ -106,7 +106,7 @@ pub def scrutinee e @ ((Int, Str) | (:run:, Bool) | (:add:, Int))
       #       ^: flow std.Int
 
 # A test on an item that creates no unpack keeps the item's link
-pub def key **opts @ {*add: Str, *run: (() -> nil), *Bool}
+pub def key ...opts @ {*add: Str, *run: (() -> nil), *Bool}
   for k v = opts
     match k
       Int(_) => nil
