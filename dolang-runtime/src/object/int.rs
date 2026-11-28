@@ -876,9 +876,6 @@ impl<'v> Protocol<'v> for Int {
     ) -> bool {
         supertype.eq(strand, &this).unwrap_or(false)
             || supertype
-                .eq(strand, &strand.singletons().num)
-                .unwrap_or(false)
-            || supertype
                 .eq(strand, crate::value::TypeObject::Value)
                 .unwrap_or(false)
     }

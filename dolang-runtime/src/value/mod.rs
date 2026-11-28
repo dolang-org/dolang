@@ -715,34 +715,6 @@ impl<'v> Value<'v> {
         }
     }
 
-    pub(crate) fn op_add_direct<'s>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        other: &Value<'v>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.binop_direct(
-            strand,
-            other,
-            |this, strand, other, out| this.op_add(strand, other, out),
-            out,
-        )
-    }
-
-    pub(crate) fn op_mul_direct<'s>(
-        &self,
-        strand: &mut Strand<'v, 's>,
-        other: &Value<'v>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        self.binop_direct(
-            strand,
-            other,
-            |this, strand, other, out| this.op_mul(strand, other, out),
-            out,
-        )
-    }
-
     pub(crate) fn op_eq_direct<'s>(
         &self,
         strand: &mut Strand<'v, 's>,
@@ -4085,8 +4057,6 @@ impl ExactSizeIterator for SlotsIntoIter<'_, '_> {}
 pub enum TypeObject {
     /// `std.Value`, the universal supertype
     Value,
-    /// `std.Num`, the abstract numeric supertype
-    Num,
     /// `std.Type`, the type of types
     Type,
     /// `std.Error`, the supertype of every error type
@@ -4169,7 +4139,6 @@ impl TypeObject {
         let builtins = vm.singletons();
         match self {
             TypeObject::Value => &builtins.value,
-            TypeObject::Num => &builtins.num,
             TypeObject::Type => &builtins.type_obj,
             TypeObject::Error => &builtins.error,
             TypeObject::UnsupportedError => &builtins.error_unsupported,

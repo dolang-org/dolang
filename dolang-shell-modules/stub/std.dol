@@ -236,7 +236,7 @@ pub def mixable[T @ Type[Value]] cls @ T -> T
 # | --- | --- |
 # | [`DataError`](std.DataError) | The string is empty or malformed. |
 # | [`TypeError`](std.TypeError) | The value cannot be converted. |
-pub def float value @ (Num | Str) -> Float
+pub def float value @ (Bool | Int | Float | Str) -> Float
   ...
 
 # Makes a field getter from a function of the object read.
@@ -285,7 +285,7 @@ pub def hash
 do -> Int
   ...
 
-@def int value @ (Num | Str) -> Int
+@def int value @ (Bool | Int | Float | Str) -> Int
 @def int value@Str :base@Int -> Int
 
 # Coerces or parses a value as an [`Int`](std.Int).
@@ -312,7 +312,7 @@ do -> Int
 # assert_eq (int "1_000") 1000
 # ```
 pub def int
-  value @ (Num | Str)
+  value @ (Bool | Int | Float | Str)
   # Base from 2 to 36, using digits `0-9` and letters `a-z` (in either case).
   # When supplied, the string contains raw digits: no prefix is stripped.
   :base @ Int = ...
@@ -2832,98 +2832,11 @@ pub class FieldError: RuntimeError
     ...
 
 
-# Abstract supertype for numeric values.
-pub class Num
-  # Returns the magnitude of the value.
-  #
-  # Raises [`OverflowError`](std.OverflowError) if the result is not
-  # representable.
-  pub def abs[N @ Num] self @ N -> N
-    ...
-
-  # Returns the signum of the value: negative one, zero, or positive one.
-  pub def signum[N @ Num] self @ N -> N
-    ...
-
-  # Rounds to the nearest integral value, with halfway cases away from zero.
-  pub def round[N @ Num] self @ N -> N
-    ...
-
-  # Rounds toward negative infinity.
-  pub def floor[N @ Num] self @ N -> N
-    ...
-
-  # Rounds toward positive infinity.
-  pub def ceil[N @ Num] self @ N -> N
-    ...
-
-  # Rounds toward zero.
-  pub def trunc[N @ Num] self @ N -> N
-    ...
-
-  # Returns the smallest of this value and `others`.
-  #
-  # If a comparison is unordered, which input is returned is unspecified.
-  pub def min[N @ Num] self@N *others@N -> N
-    ...
-
-  # Returns the largest of this value and `others`.
-  #
-  # If a comparison is unordered, which input is returned is unspecified.
-  pub def max[N @ Num] self@N *others@N -> N
-    ...
-
-  # Restricts the value to the inclusive interval from `lower` to `upper`.
-  #
-  # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
-  # is unordered, which input is returned is unspecified.
-  pub def clamp[N @ Num] self@N lower@N upper@N -> N
-    ...
-
-  @def (add) self other@Int -> Num
-  @def (add) self other@Float -> Float
-  pub def (add) self other @ Num -> Num
-    ...
-
-  pub def (radd) self other @ Num -> Num
-    ...
-
-  @def (sub) self other@Int -> Num
-  @def (sub) self other@Float -> Float
-  pub def (sub) self other @ Num -> Num
-    ...
-
-  @def (mul) self other@Int -> Num
-  @def (mul) self other@Float -> Float
-  pub def (mul) self other @ Num -> Num
-    ...
-
-  pub def (rmul) self other @ Num -> Num
-    ...
-
-  pub def (div) self other @ Num -> Float
-    ...
-
-  pub def (ediv) self other @ Num -> Int
-    ...
-
-  @def (mod) self other@Int -> Num
-  @def (mod) self other@Float -> Float
-  pub def (mod) self other @ Num -> Num
-    ...
-
-  pub def (neg)[N @ Num] self @ N -> N
-    ...
-
-  pub def (lt) self other @ Num -> Bool
-    ...
-
-
 # 64-bit floating point numbers.
 #
 # Rounding preserves signed zero and rounds halfway cases away from zero.
 # `signum` returns NaN for NaN and distinguishes positive and negative zero.
-pub class Float: Num
+pub class Float
   # Difference between `1.0` and the next greater representable value.
   #[static]
   pub field EPSILON @ Float = ...
@@ -2936,39 +2849,98 @@ pub class Float: Num
   #[static]
   pub field NAN @ Float = ...
 
-  # Converts a number to a float.
+  # Converts a value to a float.
   #
-  # `Float` accepts a float or an integer that can be represented exactly.
+  # `Float` accepts a float, a boolean, or an integer that can be represented
+  # exactly. It rejects interpretive conversions such as parsing strings.
   #
   # ```
   # assert_eq (Float 42) 42.0
+  # assert_eq (Float true) 1.0
   # ```
   #
-  # The lowercase `float` function performs numeric coercion and parsing:
+  # The lowercase `float` function performs coercion and parsing:
   #
   # ```
   # assert_eq (float "3.14") 3.14
-  # assert_eq (float true) 1.0
   # ```
-  pub def (init) self
+  pub def (init) self value @ (Bool | Int | Float)
     ...
 
-  pub def (add) self other @ Num -> Float
+  # Returns the magnitude of the value.
+  #
+  # Raises [`OverflowError`](std.OverflowError) if the result is not
+  # representable.
+  pub def abs self -> Float
     ...
 
-  pub def (radd) self other @ Num -> Float
+  # Returns the signum of the value: negative one, zero, or positive one.
+  pub def signum self -> Float
     ...
 
-  pub def (sub) self other @ Num -> Float
+  # Rounds to the nearest integral value, with halfway cases away from zero.
+  pub def round self -> Float
     ...
 
-  pub def (mul) self other @ Num -> Float
+  # Rounds toward negative infinity.
+  pub def floor self -> Float
     ...
 
-  pub def (rmul) self other @ Num -> Float
+  # Rounds toward positive infinity.
+  pub def ceil self -> Float
     ...
 
-  pub def (mod) self other @ Num -> Float
+  # Rounds toward zero.
+  pub def trunc self -> Float
+    ...
+
+  # Returns the smallest of this value and `others`.
+  #
+  # If a comparison is unordered, which input is returned is unspecified.
+  pub def min[N @ (Int | Float)] self@N *others@N -> N
+    ...
+
+  # Returns the largest of this value and `others`.
+  #
+  # If a comparison is unordered, which input is returned is unspecified.
+  pub def max[N @ (Int | Float)] self@N *others@N -> N
+    ...
+
+  # Restricts the value to the inclusive interval from `lower` to `upper`.
+  #
+  # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
+  # is unordered, which input is returned is unspecified.
+  pub def clamp[N @ (Int | Float)] self@N lower@N upper@N -> N
+    ...
+
+  pub def (div) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (ediv) self other @ (Int | Float) -> Int
+    ...
+
+  pub def (neg) self -> Float
+    ...
+
+  pub def (lt) self other @ (Int | Float) -> Bool
+    ...
+
+  pub def (add) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (radd) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (sub) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (mul) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (rmul) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (mod) self other @ (Int | Float) -> Float
     ...
 
   # Tests whether the value is NaN.
@@ -3674,7 +3646,7 @@ pub class IndexError: RuntimeError
 # 128-bit signed integers.
 #
 # The rounding methods return the receiver unchanged.
-pub class Int: Num
+pub class Int
   # Smallest representable integer.
   #[static]
   pub field MIN @ Int = ...
@@ -3699,27 +3671,91 @@ pub class Int: Num
   # assert_eq (int "42") 42
   # assert_eq (int 3.14) 3
   # ```
-  pub def (init) self
+  pub def (init) self value @ (Bool | Int | Float)
+    ...
+
+  # Returns the magnitude of the value.
+  #
+  # Raises [`OverflowError`](std.OverflowError) if the result is not
+  # representable.
+  pub def abs self -> Int
+    ...
+
+  # Returns the signum of the value: negative one, zero, or positive one.
+  pub def signum self -> Int
+    ...
+
+  # Rounds to the nearest integral value, with halfway cases away from zero.
+  pub def round self -> Int
+    ...
+
+  # Rounds toward negative infinity.
+  pub def floor self -> Int
+    ...
+
+  # Rounds toward positive infinity.
+  pub def ceil self -> Int
+    ...
+
+  # Rounds toward zero.
+  pub def trunc self -> Int
+    ...
+
+  # Returns the smallest of this value and `others`.
+  #
+  # If a comparison is unordered, which input is returned is unspecified.
+  pub def min[N @ (Int | Float)] self@N *others@N -> N
+    ...
+
+  # Returns the largest of this value and `others`.
+  #
+  # If a comparison is unordered, which input is returned is unspecified.
+  pub def max[N @ (Int | Float)] self@N *others@N -> N
+    ...
+
+  # Restricts the value to the inclusive interval from `lower` to `upper`.
+  #
+  # Raises [`ValueError`](std.ValueError) if `lower > upper`. If a comparison
+  # is unordered, which input is returned is unspecified.
+  pub def clamp[N @ (Int | Float)] self@N lower@N upper@N -> N
+    ...
+
+  pub def (div) self other @ (Int | Float) -> Float
+    ...
+
+  pub def (ediv) self other @ (Int | Float) -> Int
+    ...
+
+  pub def (neg) self -> Int
+    ...
+
+  pub def (lt) self other @ (Int | Float) -> Bool
     ...
 
   @def (add) self other@Int -> Int
   @def (add) self other@Float -> Float
-  pub def (add) self other @ Num -> Num
+  pub def (add) self other @ (Int | Float) -> (Int | Float)
+    ...
+
+  pub def (radd) self other @ (Int | Float) -> (Int | Float)
     ...
 
   @def (sub) self other@Int -> Int
   @def (sub) self other@Float -> Float
-  pub def (sub) self other @ Num -> Num
+  pub def (sub) self other @ (Int | Float) -> (Int | Float)
     ...
 
   @def (mul) self other@Int -> Int
   @def (mul) self other@Float -> Float
-  pub def (mul) self other @ Num -> Num
+  pub def (mul) self other @ (Int | Float) -> (Int | Float)
+    ...
+
+  pub def (rmul) self other @ (Int | Float) -> (Int | Float)
     ...
 
   @def (mod) self other@Int -> Int
   @def (mod) self other@Float -> Float
-  pub def (mod) self other @ Num -> Num
+  pub def (mod) self other @ (Int | Float) -> (Int | Float)
     ...
 
   # Computes bitwise AND.

@@ -1,64 +1,13 @@
-use std::ops::ControlFlow;
-
 use crate::{
     arg::Args,
     error::{Error, Result},
-    gc::{Collect, arena::Visit},
-    object::{
-        BoundMethod,
-        protocol::{
-            Inspect, Member, Protocol, Recv, abstract_call, abstract_init, instance_get_fallback,
-            is_special_mcall, members, recv_special_mcall,
-        },
-    },
+    object::{BoundMethod, protocol::instance_get_fallback},
     strand::Strand,
     sym::{self, Sym},
     unpack,
-    value::{Input, Slot, Value, prim::Prim},
-    vm::{AllocExt, Vm},
+    value::{Input, Slot, prim::Prim},
+    vm::AllocExt,
 };
-
-pub(crate) struct Num;
-
-unsafe impl Collect for Num {
-    const CYCLIC: bool = false;
-    type Annex = ();
-
-    fn accept(&self, _visit: &mut dyn Visit) -> ControlFlow<()> {
-        ControlFlow::Continue(())
-    }
-
-    fn clear(&mut self) {}
-}
-
-fn num_members<'v, 'a>() -> &'a [Member<'v, 'a>] {
-    members![
-        Method(sym::ADD_METHOD),
-        Method(sym::RADD_METHOD),
-        Method(sym::SUB_METHOD),
-        Method(sym::RSUB_METHOD),
-        Method(sym::MUL_METHOD),
-        Method(sym::RMUL_METHOD),
-        Method(sym::DIV_METHOD),
-        Method(sym::RDIV_METHOD),
-        Method(sym::EDIV_METHOD),
-        Method(sym::REDIV_METHOD),
-        Method(sym::MOD_METHOD),
-        Method(sym::RMOD_METHOD),
-        Method(sym::NEG_METHOD),
-        Method(sym::EQ_METHOD),
-        Method(sym::LT_METHOD),
-        Method(sym::ABS),
-        Method(sym::SIGNUM),
-        Method(sym::ROUND),
-        Method(sym::FLOOR),
-        Method(sym::CEIL),
-        Method(sym::TRUNC),
-        Method(sym::MIN),
-        Method(sym::MAX),
-        Method(sym::CLAMP),
-    ]
-}
 
 pub(crate) fn int_get<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
@@ -152,23 +101,6 @@ fn default_mcall<'v, 'a, 's>(
     }
 }
 
-async fn fallback_mcall<'v, 'a, 's>(
-    strand: &mut Strand<'v, 's>,
-    rcvr: impl Input<'v>,
-    method: Sym<'v, 'a>,
-    args: Args<'v, 'a>,
-    out: Slot<'v, 'a>,
-) -> Result<'v, 's, ()> {
-    match method.tag() {
-        sym::MIN | sym::MAX | sym::CLAMP => default_mcall(strand, rcvr, method, args, out),
-        sym::ABS | sym::SIGNUM | sym::ROUND | sym::FLOOR | sym::CEIL | sym::TRUNC => {
-            let msg = format!("abstract method `{}`", method.as_str(strand));
-            Err(Error::unsupported(strand, msg))
-        }
-        _ => Err(Error::field(strand, method)),
-    }
-}
-
 pub(crate) fn int_mcall<'v, 'a, 's>(
     strand: &mut Strand<'v, 's>,
     rcvr: impl Input<'v>,
@@ -229,93 +161,5 @@ pub(crate) fn float_mcall<'v, 'a, 's>(
         default_mcall(strand, rcvr, method, args, out)
     } else {
         Err(Error::field(strand, method))
-    }
-}
-
-impl<'v> Protocol<'v> for Num {
-    const MODULE: &'v str = "std";
-    const NAME: &'v str = "Num";
-    const TYPE_OBJECT: bool = true;
-
-    fn op_radd<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        other: &Value<'v>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        this.delegator()
-            .ok_or_else(|| Error::unsupported(strand, "reflected `+`"))?
-            .op_add_direct(strand, other, out)
-    }
-
-    fn op_rmul<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &mut Strand<'v, 's>,
-        other: &Value<'v>,
-        out: Slot<'v, '_>,
-    ) -> Result<'v, 's, ()> {
-        this.delegator()
-            .ok_or_else(|| Error::unsupported(strand, "reflected `*`"))?
-            .op_mul_direct(strand, other, out)
-    }
-
-    fn op_type<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        out: Slot<'v, 'a>,
-    ) {
-        strand.store(out, &strand.singletons().type_obj)
-    }
-
-    fn op_inspect<'a>(_this: Recv<'v, 'a, Self>, _vm: &Vm<'v>) -> Option<Inspect<'v, 'a>> {
-        Some(Inspect {
-            is_abstract: true,
-            is_final: false,
-            members: num_members(),
-            type_members: members![
-                Method(sym::VERBATIM_METHOD),
-                Method(sym::STR_METHOD),
-                Method(sym::DBG_METHOD),
-            ],
-        })
-    }
-
-    fn op_get<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        field: Sym<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        if field.tag() == sym::INIT_METHOD && this.delegator().is_none() {
-            BoundMethod::create(strand, &this, field, out);
-            Ok(())
-        } else {
-            int_get(strand, &this, field, out)
-        }
-    }
-
-    async fn op_mcall<'a, 's>(
-        this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        method: Sym<'v, 'a>,
-        args: Args<'v, 'a>,
-        out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        if method.tag() == sym::INIT_METHOD && this.delegator().is_none() {
-            return abstract_init(strand, &this, args);
-        }
-        if is_special_mcall(method.tag()) {
-            return recv_special_mcall(strand, this, method, args, out).await;
-        }
-        fallback_mcall(strand, &this, method, args, out).await
-    }
-
-    async fn op_call<'a, 's>(
-        _this: Recv<'v, 'a, Self>,
-        strand: &'a mut Strand<'v, 's>,
-        _args: Args<'v, 'a>,
-        _out: Slot<'v, 'a>,
-    ) -> Result<'v, 's, ()> {
-        Err(abstract_call(strand, "std.Num"))
     }
 }

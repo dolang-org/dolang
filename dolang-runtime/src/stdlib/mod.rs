@@ -27,7 +27,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
 
     // Core types
     let value = &bc.value;
-    let num = &bc.num;
     let type_obj = &bc.type_obj;
     let int = &bc.int;
     let float = &bc.float;
@@ -94,7 +93,6 @@ pub(crate) fn configure<'v>(builder: &mut Builder<'v>) {
         .module("std")
         // Core types
         .value("Value", value)
-        .value("Num", num)
         .value("Type", type_obj)
         .value("Int", int)
         .value("Float", float)

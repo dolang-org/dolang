@@ -27,9 +27,9 @@ pub def caller() -> Str
   r
 
 # `Value` is top: it admits every value, but a use needs narrowing
-pub def top v @ Value -> std.Num
+pub def top v @ Value -> (Int | Float)
   (v * 2)
-# error: expected `std.Num`, found `Value`
+# error: expected `std.Float | std.Int`, found `Value`
 #   --> m.dol:LL:LL
 #    |
 # LL |   (v * 2)

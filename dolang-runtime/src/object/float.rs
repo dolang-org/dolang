@@ -552,6 +552,7 @@ pub(crate) fn coerce<'v, 's>(
 fn construct<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'v, 's, f64> {
     match value.to_prim(strand) {
         Ok(Prim::F64(value)) => Ok(value),
+        Ok(Prim::Bool(value)) => Ok(if value { 1.0 } else { 0.0 }),
         Ok(Prim::Int(value)) => {
             let converted = value as f64;
             if converted.is_finite()
@@ -567,7 +568,10 @@ fn construct<'v, 's>(value: &Value<'v>, strand: &mut Strand<'v, 's>) -> Result<'
                 ))
             }
         }
-        _ => Err(Error::type_error(strand, "Float: expected Float or Int")),
+        _ => Err(Error::type_error(
+            strand,
+            "Float: expected Float, Int, or Bool",
+        )),
     }
 }
 
@@ -603,9 +607,6 @@ impl<'v> Protocol<'v> for Float {
         supertype: &Value<'v>,
     ) -> bool {
         supertype.eq(strand, &this).unwrap_or(false)
-            || supertype
-                .eq(strand, &strand.singletons().num)
-                .unwrap_or(false)
             || supertype
                 .eq(strand, crate::value::TypeObject::Value)
                 .unwrap_or(false)
