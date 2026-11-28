@@ -227,12 +227,12 @@ A function type is a subtype of another when its parameter list includes the
 other's (see [Schemas](#schemas)), its result is a subtype of the other's, and
 its ambient channels are supertypes of the other's. Channels are implicit
 arguments, so both are contravariant; since `Sink` is contravariant in its
-element type, a function that writes `Int`s can be given a `Sink[Num]`. A def's
-omitted channel is an unbounded implicit binder, which a use instantiates as it
-does any other. Union-left judgments require every member. A closed union-right
-judgment accepts a member proved by an isolated, closed subtype query, which
-cannot add inference bounds or diagnostic edges to the calling solver; one with
-a term still to infer chooses a member by trials (see
+element type, a function that writes `Int`s can be given a `Sink[Int | Float]`.
+A def's omitted channel is an unbounded implicit binder, which a use
+instantiates as it does any other. Union-left judgments require every member. A
+closed union-right judgment accepts a member proved by an isolated, closed
+subtype query, which cannot add inference bounds or diagnostic edges to the
+calling solver; one with a term still to infer chooses a member by trials (see
 [Alternatives and trials](#alternatives-and-trials)). Expanded union packs and
 alternatives that cannot be proved remain residual. The exception is a literal,
 a function, or a concrete class on the left: when every member refutes it, it

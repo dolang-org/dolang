@@ -54,7 +54,9 @@ assert_throws $std.RuntimeError str: "type error: Int: expected Int, Bool, or in
 assert_eq (Float 2.5) 2.5
 assert_eq (Float 9007199254740992) 9007199254740992.0
 assert_throws $std.RuntimeError str: "type error: Float: Int cannot be represented exactly" do Float 9007199254740993
-assert_throws $std.RuntimeError str: "type error: Float: expected Float or Int" do Float true
+assert_eq (Float true) 1.0
+assert_eq (Float false) 0.0
+assert_throws $std.RuntimeError str: "type error: Float: expected Float, Int, or Bool" do Float "2.5"
 
 assert_eq (Str "foo") "foo"
 assert_eq (Str b"foo") "foo"

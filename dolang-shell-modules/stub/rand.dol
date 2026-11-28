@@ -7,9 +7,6 @@
 # passwords, and keys. For a reproducible sequence, create an
 # [`Rng`](rand.Rng) with a seed.
 
-import std:
-  - @Num
-
 # Generator algorithm for [`Rng`](rand.Rng).
 pub @let Algorithm = (:CHACHA8: | :CHACHA12: | :CHACHA20: | :XOSHIRO128PP: | :XOSHIRO256PP:)
 
@@ -61,7 +58,7 @@ do -> Int
 # ```
 pub def float
   # Half-open range to sample from; `0.0..1.0` by default.
-  range @ Range[Num] = ...
+  range @ (Range[Int] | Range[Float]) = ...
 do -> Float
   ...
 
@@ -79,7 +76,7 @@ do -> Float
 # ```
 pub def bool
   # Probability of `true`; 0.5 by default.
-  p @ Num = ...
+  p @ (Int | Float) = ...
 do -> Bool
   ...
 
@@ -228,7 +225,7 @@ pub class Rng
   pub def float
     self
     # Half-open range to sample from; `0.0..1.0` by default.
-    range @ Range[Num] = ...
+    range @ (Range[Int] | Range[Float]) = ...
   do -> Float
     ...
 
@@ -236,7 +233,7 @@ pub class Rng
   pub def bool
     self
     # Probability of `true`; 0.5 by default.
-    p @ Num = ...
+    p @ (Int | Float) = ...
   do -> Bool
     ...
 

@@ -9,8 +9,13 @@ def first_or[T] items@Seq[T] fallback@T -> T
   else
     items[0]
 
+# A protocol lists methods a type must have. `Int` and `Float` both meet
+# `Ordered`, though neither names it.
+@class Ordered[T]
+  pub def (lt) self other@T -> Bool
+
 # A bound limits what `T` may be, which makes `>` available on it.
-def largest[T @ std.Num] items @ Seq[T] -> (T | nil)
+def largest[T @ Ordered[T]] items @ Seq[T] -> (T | nil)
   let best @ (T | nil) = nil
   for item = items
     if (best == nil || item > best)

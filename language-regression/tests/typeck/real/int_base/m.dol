@@ -14,7 +14,7 @@ pub def invalid() -> Int
   # LL |   int 42 base: 16
   #    |   ^^^^^^^^^^^^^^^
   #    |
-  #    = note: `(std.Num | std.Str) -> std.Int`: the callee takes no such argument
+  #    = note: `(std.Bool | std.Float | std.Int | std.Str) -> std.Int`: the callee takes no such argument
   #    = note: `(std.Str, base: std.Int) -> std.Int`: expected `std.Str`, found `42`
   int "42" base: "10"
   # error: no overload of `std.int` accepts these arguments
@@ -23,7 +23,7 @@ pub def invalid() -> Int
   # LL |   int "42" base: "10"
   #    |   ^^^^^^^^^^^^^^^^^^^
   #    |
-  #    = note: `(std.Num | std.Str) -> std.Int`: the callee takes no such argument
+  #    = note: `(std.Bool | std.Float | std.Int | std.Str) -> std.Int`: the callee takes no such argument
   #    = note: `(std.Str, base: std.Int) -> std.Int`: expected `std.Int`, found `"10"`
   int "42" base: nil
 # error: no overload of `std.int` accepts these arguments
@@ -32,5 +32,5 @@ pub def invalid() -> Int
 # LL |   int "42" base: nil
 #    |   ^^^^^^^^^^^^^^^^^^
 #    |
-#    = note: `(std.Num | std.Str) -> std.Int`: the callee takes no such argument
+#    = note: `(std.Bool | std.Float | std.Int | std.Str) -> std.Int`: the callee takes no such argument
 #    = note: `(std.Str, base: std.Int) -> std.Int`: expected `std.Int`, found `nil`

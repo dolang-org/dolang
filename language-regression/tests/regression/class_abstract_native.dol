@@ -10,10 +10,6 @@ class MyError: std.Error
   pub def (str) _self
     "mine"
 
-class MyNum: std.Num
-  def (init) self
-    std.Num.(init) $self
-
 class MyValue: Value
   def (init) self
     Value.(init) $self
@@ -60,8 +56,6 @@ class MyType: Type
 
 let my_error = MyError()
 assert_eq (str my_error) "mine"
-let my_num = MyNum()
-assert (type my_num std.Num)
 let my_value = MyValue()
 assert (type my_value MyValue)
 let my_func = MyFunc()
@@ -81,7 +75,6 @@ assert (type my_type Type)
 
 assert_throws $std.TypeError str: "type error: std.Error is abstract" do std.Error()
 assert_throws $std.TypeError str: "type error: std.Error is abstract" do std.Error "x"
-assert_throws $std.TypeError str: "type error: std.Num is abstract" do std.Num()
 assert_throws $std.TypeError str: "type error: Value is abstract" do Value()
 assert_throws $std.TypeError str: "type error: Func is abstract" do Func()
 assert_throws $std.TypeError str: "type error: Iterable is abstract" do Iterable()

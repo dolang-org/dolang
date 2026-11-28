@@ -4,7 +4,6 @@
 
 import std:
   - IterStop
-  - Num
   - RuntimeError
   - ValueError
   - FmtValue
@@ -32,7 +31,7 @@ pub def decoded d @ DecodeValue
   else if let Int(n) = d
     let _ = n
     #       ^: flow std.Int
-  else if let Num(n) = d
+  else if let Float(n) = d
     let _ = n
     #       ^: flow std.Float
 
@@ -103,7 +102,6 @@ pub class Both: Int Str
 #    |
 # LL | pub class Both: Int Str
 #    |           ^^^^
-pub class Wide: Int Num
 pub class Quantity: Float
 
 # A module's error may also be one of the error kinds, but not a stop signal

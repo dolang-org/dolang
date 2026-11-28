@@ -1,9 +1,6 @@
 # dolang: strict
-# `Num`'s arithmetic takes an `Int` or a `Float`, which `Int` and `Float` each
-# meet with one of their own overloads.
-
-import std:
-  - @Num
+# `Int`'s and `Float`'s arithmetic takes an `Int` or a `Float`, through one
+# overload for each.
 
 pub def ints a @ Int b @ Int -> Int
   (a + b * a - b % a)
@@ -14,14 +11,15 @@ pub def mixed a @ Int b @ Float -> Float
 pub def floats a @ Float b @ Int -> Float
   (a * b)
 
-pub def by_int[N @ Num] n @ N -> Num
+# A union receiver takes each member's operator
+pub def by_int n @ (Int | Float) -> (Int | Float)
   (n + 1)
 
-pub def by_float[N @ Num] n @ N -> Float
+pub def by_float n @ (Int | Float) -> Float
   (n - 1.5)
 
-# Only an `Int` or a `Float` is an operand
-pub def nums a @ Num b @ Num -> Num
+# Overloads don't distribute over a union argument
+pub def nums a @ (Int | Float) b @ (Int | Float) -> (Int | Float)
   (a + b)
 # error: no overload of `(add)` accepts these arguments
 #   --> m.dol:LL:LL
@@ -29,5 +27,5 @@ pub def nums a @ Num b @ Num -> Num
 # LL |   (a + b)
 #    |    ^^^^^
 #    |
-#    = note: `(std.Num, std.Int) -> std.Num`: expected `std.Int`, found `std.Num`
-#    = note: `(std.Num, std.Float) -> std.Float`: expected `std.Float`, found `std.Num`
+#    = note: `(std.Int, std.Int) -> std.Int`: expected `std.Int`, found `std.Float | std.Int`
+#    = note: `(std.Int, std.Float) -> std.Float`: expected `std.Float`, found `std.Float | std.Int`

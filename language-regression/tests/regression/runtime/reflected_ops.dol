@@ -62,15 +62,6 @@ assert_eq (left ^ forward) 50
 assert (left == forward)
 assert (left != forward)
 
-class NumericForward: std.Num
-  def (add) _self _other
-    60
-  def (mul) _self _other
-    70
-let numeric_forward = NumericForward()
-assert_eq (left + numeric_forward) 60
-assert_eq (left * numeric_forward) 70
-
 class Mixed
   def (add) _self other
     "add:$other"
