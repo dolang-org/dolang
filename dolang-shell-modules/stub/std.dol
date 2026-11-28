@@ -4128,8 +4128,31 @@ pub class OverflowError: RuntimeError
     ...
 
 
+# Values a [`Range`](std.Range) counts through.
+#
+# Adding and comparing two values of type `T` gives a `T` and a
+# [`Bool`](std.Bool). [`Int`](std.Int) and [`Float`](std.Float) are steps; a
+# literal type such as `1` is not, since `1 + 1` is an `Int`.
+pub @class Step[T]
+  # Adds `other`.
+  pub def (add) self other@T -> T
+
+  # Tests whether this value is less than `other`.
+  pub def (lt) self other@T -> Bool
+
+
+# A [`Step`](std.Step) that also subtracts and takes remainders, so a value can
+# be measured in whole steps.
+pub @class Stride[T]: Step[T]
+  # Subtracts `other`.
+  pub def (sub) self other@T -> T
+
+  # Takes the remainder of division by `other`.
+  pub def (mod) self other@T -> T
+
+
 # Describes a numeric interval for iteration and slicing.
-pub class Range[T @ Num]: Iterable[T] @Spread[T]
+pub class Range[T @ Step[T]]: Iterable[T] @Spread[T]
   # Creates a range from `start` to `end`, counting by `step`.
   #
   # ```
@@ -4165,11 +4188,13 @@ pub class Range[T @ Num]: Iterable[T] @Spread[T]
   pub def step self -> (T | nil)
     ...
 
+  @def contains[U @ Stride[U]] self @ Range[U] value@U -> Bool
+
   # Tests whether the given value lies in the range: from `start` (inclusive)
   # toward `end` (exclusive) in the step's direction. With an explicit `step`,
   # the value must also be a whole number of steps from `start`. Without one,
-  # any value in the interval matches, so ranges of any ordered type work.
-  # Raises [`ValueError`](std.ValueError) for a zero step.
+  # any value in the interval matches. Raises [`ValueError`](std.ValueError)
+  # for a zero step.
   #
   # ## Example
   #

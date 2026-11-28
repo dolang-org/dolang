@@ -1,0 +1,85 @@
+# dolang: strict
+# A range's element type is the class its endpoints step through, never a
+# literal type: `Range`'s parameter is bounded by `Step`.
+
+import std:
+  - @Step
+
+pub def literal_loop()
+  for x = (0..3)
+    let _ = x
+    #       ^: flow std.Int
+  nil
+
+pub def constructed_loop()
+  for x = (Range 0 3)
+    let _ = x
+    #       ^: flow std.Int
+  nil
+
+pub def annotated x @ (1 | 2) y @ 5
+  let r = (x..y)
+  let _ = r
+  #       ^: flow std.Range[std.Int]
+  nil
+
+pub def floats()
+  let r = (1.0..2.5)
+  let _ = r
+  #       ^: flow std.Range[std.Float]
+  nil
+
+pub def symbols()
+  Range :a: :b:
+# error: `:a:` does not fit this parameter
+#   --> m.dol:LL:LL
+#    |
+# LL |   Range :a: :b:
+#    |         ^^^
+# error: `:b:` does not fit this parameter
+#   --> m.dol:LL:LL
+#    |
+# LL |   Range :a: :b:
+#    |             ^^^
+# warning: the checker can't verify this
+#   --> m.dol:LL:LL
+#    |
+# LL |   Range :a: :b:
+#    |   ^^^^^^^^^^^^^
+#    |
+#    = note: it doesn't handle a type nothing determines
+
+pub def contains() -> Bool
+  (Range 0 10 2).contains 4
+
+# A range written in Do with the same bound steps through `T`
+class Counting[T @ Step[T]]: Iterable[T]
+  field start @ T
+  field end @ T
+  field step @ T
+
+  def (init) self start@T end@T step@T
+    self.#start = start
+    self.#end = end
+    self.#step = step
+
+  pub def values self -> Array[T]
+    let out @ Array[T] = []
+    let step = self.#step
+    let end = self.#end
+    let at = self.#start
+    while (at < end)
+      out.push $at
+      at = (at + step)
+    # Stepping stays in `T`
+    let _next @ T = (at + step)
+    out
+
+  pub def (iter) self -> Iter[T]
+    self.values().iter()
+
+pub def counting()
+  for x = (Counting 0 3 1)
+    let _ = x
+    #       ^: flow std.Int
+  nil
