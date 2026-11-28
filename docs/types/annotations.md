@@ -48,6 +48,16 @@ def fork[*Rs] *blocks @ ...(() -> Rs) -> Tuple[...Rs]
 
 The mapping marker is accepted only on rest bindings.
 
+A `*` rest collects only positional arguments and a `**` rest only key
+arguments, so a schema annotating one, or each schema binder its mapping names,
+must be bounded to that lane: `{*Value}` for `*`, `{*(Sym): Value}` for `**`.
+Only a `...` rest takes both:
+
+```
+def options[S @ {*(Sym): Value}] **specs @ ...Option[S] -> Parsed[S]
+  ...
+```
+
 ## Return Types
 
 `->` followed by whitespace and a type gives a function's return type. It comes

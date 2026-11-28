@@ -1447,7 +1447,21 @@ impl Solver<'_> {
                         match (fixed, binder.binding) {
                             (Some(&(_, term)), _) => term,
                             (None, Binding::Rest(rest)) => self.fresh(binder.kind, rest, scope),
-                            (None, _) => self.fresh(binder.kind, Rest::All, scope),
+                            // A schema binder's items occupy the lanes its bound
+                            // has, as written
+                            (None, _) => {
+                                let lanes = match binder.bound {
+                                    Some(bound) if binder.kind == Kind::Schema => {
+                                        match self.db.schema_lanes(bound) {
+                                            (true, false) => Rest::Positional,
+                                            (false, true) => Rest::Keyed,
+                                            _ => Rest::All,
+                                        }
+                                    }
+                                    _ => Rest::All,
+                                };
+                                self.fresh(binder.kind, lanes, scope)
+                            }
                         }
                     })
                     .collect();

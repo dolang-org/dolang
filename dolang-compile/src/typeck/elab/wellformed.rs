@@ -15,27 +15,30 @@
 //! keys, except within a `Phantom` argument, which only marks variance. An
 //! ambient channel may be any type, except that a getter's or setter's must admit
 //! `Value`, since it runs with none wherever its field is accessed; reading or
-//! writing a channel is checked where that happens. A declaration's own signature and binder defaults are checked as
-//! declared. Recursion among transparent aliases must be contractive and regular.
+//! writing a channel is checked where that happens. A declaration's own signature
+//! and binder defaults are checked as declared: each rest's schema against its
+//! lanes, which leaves no other way for a signature to admit a key that isn't a
+//! symbol. Recursion among transparent aliases must be contractive and regular.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     AccessorChannel, BadRecursion, BoundViolation, DeclNode, Designated, Diag, Fill, Head,
-    NegativeCount, ParameterKeys, QuantifiedArgument, Referent, Role, SettledCycle, SettledValue,
-    Tables, UnitDiag, UnquotableResult, interface,
+    NegativeCount, ParameterKeys, QuantifiedArgument, Referent, RestLanes, Role, SettledCycle,
+    SettledValue, Tables, UnitDiag, UnquotableResult, interface,
     quote::Unquotable,
     sig::{self, Form},
-    surface::{Class, Interned, Ref, TypeExpr, TypeParam, TypeQuant},
+    surface::{Class, Interned, ParamKind, Ref, TypeExpr, TypeParam, TypeQuant},
 };
 use crate::{
+    RestKind,
     diag::Span,
     typeck::{
         report::Report,
         solver::{EnvironmentId, Gas, Issue, Provenance, Residual, Solver, Status},
         r#type::{
-            Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Function, Literal,
-            Rest, SettledMember, Type, TypeId, UnionMember, UnitId, UnitSpan,
+            Argument, Binder, Binding, BoundRef, Database, DeclId, DeclKind, Function, Kind,
+            Literal, Rest, SettledMember, Type, TypeId, UnionMember, UnitId, UnitSpan,
         },
     },
 };
@@ -598,7 +601,7 @@ impl Check<'_, '_> {
     }
 
     /// Check a declaration signature as declared: its binder defaults, and a def's
-    /// or method's parameter keys and written channels
+    /// or method's rests and written channels
     fn signature(&mut self, id: DeclId, sig: usize) {
         let decl = self.declaration((id, sig));
         if let DeclNode::Class(class) = &self.tables.decl(id).node {
@@ -658,10 +661,53 @@ impl Check<'_, '_> {
         let Type::Function(function) = self.db.ty(body) else {
             return;
         };
-        let name = self.db.declaration(decl).source.span;
-        let verdict = self.relate(Some(decl), function.params, self.db.rest_shape(Rest::All));
-        self.report(verdict, name, ParameterKeys(name.span));
+        self.rest_lanes(id, sig, decl);
         self.accessor_channels(id, sig, decl, function);
+    }
+
+    /// Check that each rest annotated with a schema or pattern takes only the
+    /// items of its lanes: positional for `*`, keyed by symbols for `**`, and
+    /// either for `...`. Every other parameter is positional or has a symbol key.
+    /// A mapping keeps each item's lane and key, so a pattern's expansion does
+    /// exactly when every pack it maps over does.
+    fn rest_lanes(&mut self, id: DeclId, sig: usize, decl: DeclId) {
+        let tables = self.tables;
+        let unit = tables.decl(id).unit;
+        for param in &tables.decl(id).node.signature(sig).params {
+            let (ParamKind::Rest { kind, pattern }, Some(annot)) = (&param.kind, param.annot)
+            else {
+                continue;
+            };
+            let lanes = match kind {
+                RestKind::Pos => Rest::Positional,
+                RestKind::Key => Rest::Keyed,
+                RestKind::Mixed => Rest::All,
+            };
+            let site = tables.site(annot);
+            let Some(ty) = site.interned.get() else {
+                continue;
+            };
+            let schemas = match (*pattern, self.db.ty(ty)) {
+                (true, Type::Map { packs, .. }) => packs.to_vec(),
+                (true, _) => continue,
+                (false, _) if self.db.kind(ty) == Kind::Schema => vec![ty],
+                (false, _) => continue,
+            };
+            let shape = self.db.rest_shape(lanes);
+            let span = UnitSpan {
+                unit,
+                span: site.ty.span(),
+            };
+            for schema in schemas {
+                let verdict = self.relate(Some(decl), schema, shape);
+                let diag = RestLanes {
+                    span: span.span,
+                    kind: *kind,
+                    pattern: *pattern,
+                };
+                self.report(verdict, span, diag);
+            }
+        }
     }
 
     /// A getter or setter runs wherever its field is accessed, with no input and

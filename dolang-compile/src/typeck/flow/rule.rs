@@ -3768,30 +3768,9 @@ impl<'a> Flow<'a, '_> {
         solver.constrain(solver.closed(ty), target, Provenance::default());
         default_where(&mut solver, |_| true, None);
         match solver.reify(schema) {
-            Ok(schema) => self.schema_lanes(schema),
+            Ok(schema) => self.db.schema_lanes(schema),
             Err(_) => (true, true),
         }
-    }
-
-    /// Which lanes a schema has items in, positional then keyed; both where it
-    /// isn't known
-    fn schema_lanes(&self, schema: TypeId) -> (bool, bool) {
-        let Type::Schema(items) = self.db.ty(schema) else {
-            return (true, true);
-        };
-        let (mut positional, mut keyed) = (false, false);
-        for item in items.iter() {
-            match item.element {
-                Element::Positional(_) => positional = true,
-                Element::Keyed { .. } => keyed = true,
-                Element::Include(inner) => {
-                    let (inner_positional, inner_keyed) = self.schema_lanes(inner);
-                    positional |= inner_positional;
-                    keyed |= inner_keyed;
-                }
-            }
-        }
-        (positional, keyed)
     }
 
     /// What a fresh collection of `class` can be to be `expected`, one candidate for
