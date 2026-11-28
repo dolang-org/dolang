@@ -408,7 +408,7 @@ test('hover on an overloaded bundled name shows its overloads with the implement
   await expect(page.locator('.cm-inlay-hint')).toHaveCount(1);
   const tip = await hoverAt(page, text.indexOf('int') + 1);
   await expect(tip.locator('pre', { hasText: '# module' })).toHaveText([
-    '# module std\ndef int value @ (Num | Str) -> Int\n  ...',
+    '# module std\ndef int value @ (Bool | Int | Float | Str) -> Int\n  ...',
     '# module std\ndef int value@Str :base@Int -> Int\n  ...',
   ]);
   await expect(tip.getByText('Coerces or parses a value as an Int.')).toHaveCount(2);
